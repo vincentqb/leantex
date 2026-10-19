@@ -1512,8 +1512,8 @@ private structure FlattenSt where
   steps : Nat := 0
 
 private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
-    (help : Option String := none) : FlattenSt :=
-  { st with diags := st.diags.push (Diag.of code msg (help := help)) }
+    (help : Option String := none) (output : Option Diag.Output := none) : FlattenSt :=
+  { st with diags := st.diags.push (Diag.of code msg (help := help) (output := output)) }
 
 /-- Small caps at synthesis size relative to the surrounding
 text: 800‰, the fontinst fake-caps tradition. -/
@@ -1663,7 +1663,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
       let st := if st.warnedMath then st
         else { warn st .W0003 "no math font is available; math is set as plain text"
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
-OpenType math face; `leantex fonts` lists families") with warnedMath := true }
+OpenType math face; `leantex fonts` lists families") (output := some .pdf) with warnedMath := true }
       pushText st sty (Ir.formulaFloor body)
   | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
@@ -7823,9 +7823,9 @@ public def boxPastJoined (d : Diag) (o : Length) : Diag :=
            carries := d.carries ++ [.W0400] }
 
 /-- W0372: a note block pushes its band `over` past the page's floor. -/
-private def noteOverrunDiag (over : Length) : Diag :=
+private def noteOverrunDiag (over : Length) (output : Option Diag.Output) : Diag :=
   Diag.of .W0372 "a footnote is taller than the text block; it overruns its page"
-    (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
+    (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })") (output := output)
     (detail := some s!"{over.toBpString}pt taller")
 
 /-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
@@ -7900,7 +7900,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Length := 0) (flush : Bool :
     else b.cur.inks
   let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
       "a page set short of its height: its skips gave part of their shrink"
-      (span := b.neededSource)
+      (span := b.neededSource) (output := if b.curStage then none else some .pdf)
       (detail := some (s!"page {b.pages.size + 1}: {b.needed / pt 1}pt short, its skips gave " ++ -- in points
         s!"{100 * b.needed / b.pageShrink}% of their {b.pageShrink / pt 1}pt of shrink"))) -- in points
     else b.diags
@@ -8214,10 +8214,11 @@ private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Length) : B :=
   let named : Option Diag :=
     if b.noBreak then none
     else if byNotes then
-      if over > 0 then some (noteOverrunDiag over) else none
+      if over > 0 then some (noteOverrunDiag over (if b.curStage then none else some .pdf)) else none
     else if 0 < beyond && !recorded then some (Diag.of .W0358
       "a box is taller than the text block; it overruns its page"
       (span := b.lastSource <|> b.frameSource) (subject := b.curFrameLabel)
+      (output := if b.curStage then none else some .pdf)
       (help := "shrink the box, or raise the text height (\\page{ vmargin = ... })")
       (detail := some s!"{who}{own.toBpString}pt taller"))
     else none
@@ -10807,6 +10808,8 @@ private def collectTable (r : Rd) (a0 : Acc)
             (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
         else "the table is wider than the measure")
       (detail := some s!"{(tableW - total).toBpString}pt wider")
+      -- a flow's web page sets a table of natural columns at its natural width past the measure
+      (output := if !r.slides && cols.all (·.width matches .natural) then some .pdf else none)
       (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
       (help := if web then
           "shorten the longest word in each column, or split the table into narrower ones"
@@ -16810,9 +16813,11 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let named : Option Diag :=
       if 0 < own then some (Diag.of .W0358
         "a figure or table is taller than the text block; it overruns its page"
+        (output := if b2.curStage then none else some .pdf)
         (help := "shrink the float's content, or raise the text height (\\page{ vmargin = ... })")
         (detail := some s!"{own.toBpString}pt taller"))
-      else if 0 < b2.notesH && 0 < over then some (noteOverrunDiag over)
+      else if 0 < b2.notesH && 0 < over then
+        some (noteOverrunDiag over (if b2.curStage then none else some .pdf))
       else none
     { st2 with b := { b2 with diags := (named.map b2.diags.push).getD b2.diags, noBreak := false } }
 
@@ -19200,6 +19205,8 @@ public def runPost (sh : Shipped) : Out := Id.run do
   let footY := sh.footY
   let mutedC := sh.muted
   let pages := sh.pages
+  -- a flow's running furniture is its paper's alone
+  let furniture : Option Diag.Output := if doc.docClass.record.model == .flow then some .pdf else none
   -- Running content is laid out per page once the count is known, into the margin.
   let total := pages.size
   let furnGround := Ir.Design.declared? doc.palette .page
@@ -19222,7 +19229,8 @@ public def runPost (sh : Shipped) : Out := Id.run do
     -- A running line is one line by construction; content that wraps is named (W0328).
     let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
         "running content wraps at the text width; only its first line is kept"
-        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
+        (help := "the head, foot, and chrome bands hold one line each: shorten the content")
+        (output := furniture))
       else ds
     match breaks[0]? with
     | none => (none, ds, cache)
@@ -19246,7 +19254,8 @@ public def runPost (sh : Shipped) : Out := Id.run do
       { baseStyle with ground := baseStyle.ground.or furnGround } (substPage n total content) cache
     let ds := if wraps then ds.push (Diag.of .W0328
         "running content wraps at the text width; only its first line is kept"
-        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
+        (help := "the head, foot, and chrome bands hold one line each: shorten the content")
+        (output := furniture))
       else ds
     match set? with
     | none => (none, ds, cache)
@@ -19361,7 +19370,7 @@ shown, whatever reads the file"
               (help := "a band holds one line at a fixed position: shorten \
 the content, or widen the page (\\page{ width = ... })")
               (detail := some s!"on page {i + 1}, \
-{(geom.offMedium l.x l.setWidth).toBpString}pt past its edge"))
+{(geom.offMedium l.x l.setWidth).toBpString}pt past its edge") (output := furniture))
           placed := placed.push (slot, { l with furniture := true })
       let slots := placed
       for hj : j in [0:slots.size] do
@@ -19374,7 +19383,7 @@ the content, or widen the page (\\page{ width = ... })")
               s!"the footer's slots collide: {lo.label} yields, painted over by {hi.label}"
               (help := "slot positions are fixed and the lower-priority \
 slot yields in place: shorten the content or drop a slot")
-              (detail := some s!"on page {i + 1}"))
+              (detail := some s!"on page {i + 1}") (output := furniture))
       for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
         lines := lines.push p.2
     let logoContent := Ir.logoInForce doc.logo logoSpans i
@@ -19528,7 +19537,7 @@ public def drawnInkDiags (doc : Doc) : Array Diag :=
     |>.map fun c => Diag.of .W0304
       s!"'{c}' is not a colour here; the rules the page draws in it paint black"
       (help := "declare colours with \\palette{ name = #RRGGBB }")
-      (subject := some ("palette:" ++ c))
+      (subject := some ("palette:" ++ c)) (output := some .pdf)
 
 /-- The document as the paged backend reads it, backend
 conditionals resolved (`Ir.keepFor_covers`). -/
@@ -20437,7 +20446,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
         acc.diags.push (Diag.of .N0021
           (s!"header and footer gaps differ by " ++
             s!"{(if gt > gb then gt - gb else gb - gt).toBpString}pt as declared; " ++
-            "equal gaps are the default"))
+            "equal gaps are the default") (output := some .pdf))
       else acc.diags
     else acc.diags
   -- A heading's declared space above must not be the smaller (Butterick); defaults satisfy it.
@@ -20497,7 +20506,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                 "per line than the readable band")
               (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
                 "is the ideal) or declare \\page{ measure = free }")
-              (detail := some s!"about {(cpl10 + 5) / 10} characters per line, outside 45\u201390"))
+              (detail := some s!"about {(cpl10 + 5) / 10} characters per line, outside 45\u201390")
+              (output := some .pdf))
           else b.diags
         else b.diags
       else b.diags
@@ -21094,6 +21104,26 @@ public theorem ladderDiags_accounts (labels : Array (Option String))
         Array.mem_append.mpr (Or.inr (Array.mem_filterMap.mpr ⟨_, entry, ?_⟩)), rfl,
         fun h => absurd h still⟩
       simp [hb, fitDiag]
+
+/-- The losses a flow's setting raises that its paper alone shows, each scoped to the PDF: an
+overfull line, a page short of its height, the measure's band, a natural table, box, float or
+footnote past the text block, running furniture, page rules and math set without a math face. -/
+public def paperLossCodes : List DiagCode :=
+  [.W0003, .W0005, .N0200, .W0201, .W0338, .W0358, .W0372, .W0328, .W0333, .W0388, .N0021, .W0304,
+   .W0386, .E0405, .W0009, .W0016]
+
+/-- Whether a flow sets nothing whose setting raises a loss its web page shares (a frame, a picture,
+a row of boxes, a table of declared widths, five nested lists, a heading's spacing declared both
+ways) and accepts no paper loss by name, so its setting raises only losses its PDF alone shows. -/
+public def paperLossesOnly (doc : Doc) : Bool :=
+  doc.docClass.record.model == .flow &&
+    !Ir.foldBlocks (fun acc b => acc || b matches .frame .. || b matches .picture _ ||
+      b matches .columns _ || if let .table cols .. := b then
+        !cols.all (·.width matches .natural) else false) (fun acc _ => acc) false doc.body &&
+    !Ir.holdsNestedLists 5 doc.body &&
+    ["section", "subsection", "subsubsection"].all (fun element =>
+      (doc.styles.find? element).all fun st => st.before.isNone || st.after.isNone) &&
+    doc.allow.all fun code => !paperLossCodes.any (·.code == code)
 
 /-- The overflow ladder's result: the pages, the IR document they set,
 each frame step's decision, and the frames the web deck squeezes. -/

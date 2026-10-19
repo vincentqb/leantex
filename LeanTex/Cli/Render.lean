@@ -96,15 +96,17 @@ public def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat)
       s!"; wrote {humanText "\\n" (", ".intercalate written.toList)}"
     s!"{sgr color "1;31" "✖"} {file} — {errors} {noun}{wrote} ({ms} ms)"
 
-public def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
-    String :=
+public def humanDone (color : Bool) (file output : String) (pages : Option Nat) (ms : Nat)
+    (notes : Nat := 0) : String :=
   let file := humanText "\\n" file
   let output := humanText "\\n" output
-  let noun := if pages == 1 then "page" else "pages"
+  let set := match pages with
+    | some n => s!" — {n} {if n == 1 then "page" else "pages"}"
+    | none => ""
   -- Notes print only under -v; the summary counts them.
   let hint := if notes == 0 then "" else
     sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
-  s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms){hint}"
+  s!"{sgr color "1;32" "✔"} {file} → {output}{set} ({ms} ms){hint}"
 
 public def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
   let parts := counts.map fun (c, n) => if n == 1 then c else s!"{c} ×{n}"
@@ -209,11 +211,11 @@ public def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat)
     (if written.isEmpty then [] else [("output", jstr (", ".intercalate written.toList))]) ++
     [("errors", toString errors)] ++ costFields ms rssKiB)
 
-public def porcelainDone (file output : String) (pages ms : Nat)
+public def porcelainDone (file output : String) (pages : Option Nat) (ms : Nat)
     (rssKiB : Option Nat := none) : String :=
   obj ([("event", jstr "summary"), ("file", jstr file), ("ok", "true"),
-    ("output", jstr output), ("pages", toString pages), ("errors", "0")] ++
-    costFields ms rssKiB)
+    ("output", jstr output)] ++ (pages.map fun n => ("pages", toString n)).toList ++
+    [("errors", "0")] ++ costFields ms rssKiB)
 
 public def porcelainAccepted (counts : List (String × Nat)) : String :=
   let total := counts.foldl (fun t (_, n) => t + n) 0

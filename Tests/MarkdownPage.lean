@@ -39,8 +39,8 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
     String.join (head.toList.filterMap fun
       | .style rules => some rules
       | _ => none)
-  t "the markdown page's HTML measure is the same text block, in em"
-    (hasStr (measureOf mdDoc) "--measure: 38.4em;" && hasStr (measureOf texDoc) "--measure: 31.2em;")
+  t "the markdown page's HTML measure is the same text block, in rem"
+    (hasStr (measureOf mdDoc) "--measure: 38.4rem;" && hasStr (measureOf texDoc) "--measure: 31.2rem;")
   let mut faces := 0
   for file in ["OpenSans-Regular.ttf", "FiraSans-Regular.otf", "SourceSerifPro-Regular.otf"] do
     let some font ← loadTestFont file | t s!"markdown page: {file} loads" false; continue

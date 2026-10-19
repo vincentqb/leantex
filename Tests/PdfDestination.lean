@@ -61,7 +61,8 @@ and back-link are the endnote list's own apparatus, and a pinned navigation a sc
 private def htmlLinks (doc : Ir.Doc) : Array String :=
   let w : Html.Walk Unit (Array String) :=
     { inner := fun _ tag attrs =>
-        if tag == "nav" && hasStr ((HtmlDoc.attrOf? attrs "style").getD "") "position: fixed"
+        if tag == "nav" && (hasStr ((HtmlDoc.attrOf? attrs "style").getD "") "position: fixed" ||
+            (HtmlDoc.classTokens attrs).contains HtmlDoc.outlineClass)
         then none else some ()
       enter := fun _ acc tag attrs _ =>
         if tag != "a" then acc else

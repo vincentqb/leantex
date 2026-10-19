@@ -119,6 +119,22 @@ public def flowContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
                             title := if blankTitle title then #[] else title }
   return out
 
+/-- A flow's outline: its anchored, titled headings of the two shallowest contents ranks, starred
+or not, each by its short title and opening its heading. -/
+public def flowOutline (doc : Doc) : Array ContentsEntry := Id.run do
+  let anchors := flowAnchors doc.body
+  let shorts := shortTitlesAt doc.shortTitles doc.body
+  let mut out : Array ContentsEntry := #[]
+  for h : i in [0:doc.body.size] do
+    if let .section level _ num title := doc.body[i] then
+      if let some rank := contentsLevel level then
+        if let some a := anchors[i]?.join then
+          let title := nameOf (listedTitleAt shorts i title)
+          if rank ≤ 2 && !blankTitle title then
+            out := out.push { depth := rank - 1, number := num, target := some a.id
+                              shaded := false, title }
+  return out
+
 mutual
 
 /-- A block with every table of contents in it replaced by what `f` makes of its options and

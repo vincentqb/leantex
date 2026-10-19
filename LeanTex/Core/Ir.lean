@@ -9591,6 +9591,12 @@ public def blockLabelKeys (body : Array Block) : Array String :=
 public def holdsList (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .list ..) (fun acc _ => acc) false body
 
+/-- Whether blocks hold `k` lists, each inside an item of the one before. -/
+public def holdsNestedLists : Nat → Array Block → Bool
+  | 0, _ => true
+  | k + 1, body => foldBlocks (fun acc b => acc || if let .list _ _ items := b then
+      items.any (holdsNestedLists k) else false) (fun acc _ => acc) false body
+
 /-- Whether blocks hold a frame anywhere. -/
 public def holdsFrame (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .frame ..) (fun acc _ => acc) false body

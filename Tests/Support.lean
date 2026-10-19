@@ -2610,6 +2610,27 @@ def artCssRules (css : String) : Array (Nat × String × String) :=
   (sheetRules css).filterMap fun (conds, sel, decls) =>
     if decls.contains ':' then some (conds.length, sel, decls) else none
 
+/-- Every innermost declaration block of a stylesheet with its enclosing at-rule preludes, outermost
+first. -/
+def cssBlocksIn (css : String) : Array (List String × String × String) := Id.run do
+  let mut out : Array (List String × String × String) := #[]
+  let mut sels : Array String := #[]
+  let mut cur := ""
+  for c in css.toList do
+    if c == '{' then
+      sels := sels.push cur.trimAscii.toString
+      cur := ""
+    else if c == '}' then
+      let decls := cur.trimAscii.toString
+      if decls.contains ':' then
+        out := out.push (sels.pop.toList.filter (·.startsWith "@"),
+          (sels.back?.getD "").trimAscii.toString, decls)
+      sels := sels.pop
+      cur := ""
+    else
+      cur := cur.push c
+  return out
+
 /-- Every innermost declaration block, as its selector and declarations. -/
 def artCssBlocks (css : String) : Array (String × String) := (artCssRules css).map (·.2)
 

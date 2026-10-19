@@ -218,6 +218,12 @@ def printOffences (fonts : Font.FontSet) (doc : Ir.Doc) (more : Bool := false) :
   let (inks, fills) := shippedColors (layoutOf fonts doc (Layout.Geom.ofPage doc.page))
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
+  -- the margin outline is a screen's alone: paper sets it `display: none`
+  let body := if hasStr css s!"nav.{HtmlDoc.outlineClass} \{ display: none;" then
+      body.filter fun n => match n with
+        | .elem "nav" attrs _ => !(HtmlDoc.classTokens attrs).contains HtmlDoc.outlineClass
+        | _ => true
+    else body
   let (root, dark) := schemeRoot css .print more
   let rules := sheetRules css
   let ruleDecl (sel prop : String) : Option String :=

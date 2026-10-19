@@ -713,8 +713,9 @@ def parseSample (log : String) : Except String Sample := do
       unless (← j.getObjValAs? Bool "ok") && (← j.getObjValAs? Nat "errors") == 0 do
         throw "unsuccessful output summary"
       if (← j.getObjValAs? String "output").isEmpty then throw "summary names no output"
-      let pages ← j.getObjValAs? Nat "pages"
-      if pages == 0 then throw "summary has no pages"
+      -- a build that sets no pages states none
+      let pages := (j.getObjValAs? Nat "pages").toOption.getD 0
+      if pages == 0 && (j.getObjValAs? Nat "pages").isOk then throw "summary has no pages"
       let rss := (j.getObjValAs? Nat "rssKiB").toOption
       summary := some (pages, ← j.getObjValAs? Nat "ms", rss)
     | event => throw s!"unexpected porcelain event: {event}"

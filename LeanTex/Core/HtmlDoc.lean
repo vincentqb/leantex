@@ -13,6 +13,7 @@ public import LeanTex.Core.GfxSvg
 public import LeanTex.Core.GfxPicture
 public import LeanTex.Core.FigureSvg
 import LeanTex.Core.Listing
+import LeanTex.Core.Contents
 import LeanTex.Core.NameClaim
 import LeanTex.Core.StageNames
 import LeanTex.Core.ContrastSolve
@@ -248,11 +249,11 @@ public def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up", "see-through",
    "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
-   "bt-light-above", "bt-nowrap", "bt-overhang", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
+   "bt-light-above", "bt-natural", "bt-nowrap", "bt-overhang", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
    "frame-body-start", "group", "icon", "lines", "lines-line", "lines-mark", "lines-scope",
-   "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
+   "math", "math-display", "nopadl", "nopadr", "note", "outline", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "step-hide", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
@@ -455,10 +456,11 @@ public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
   simp only [toString, String.append_assoc]
   rfl
 
-/-- The content measure: text width over the base font size, in `em`. -/
-public def measureEm (page : PageSpec) : String :=
+/-- The content measure: text width over the base font size, in `rem`, the reader's size the body
+sets at. -/
+public def measureRem (page : PageSpec) : String :=
   let textWidth := page.width - 2 * page.hmargin
-  s!"{decMilli (textWidth * 1000 / page.fontSize)}em"
+  s!"{decMilli (textWidth * 1000 / page.fontSize)}rem"
 
 /-- Removes the selector's transition under `prefers-reduced-motion: reduce`. -/
 public def reducedMotionGuard (sel : String) : String :=
@@ -5704,6 +5706,19 @@ private def disclosurePrintCss : String :=
   "  summary { list-style: none; }\n" ++
   "  summary::-webkit-details-marker { display: none; }\n"
 
+/-- The class of a flow page's margin outline. -/
+public def outlineClass : String := "outline"
+
+/-- The outline a flow's page sets in its margin where it lists two headings or more, unless the page
+declares its own navigation or contents or its class binds it to its pages. -/
+public def outlineOf (doc : Doc) : Array Ir.ContentsEntry :=
+  if doc.docClass.record.model != .flow || doc.docClass.record.pagesBound.isSome ||
+      Ir.foldBlocks (fun acc b => acc || b matches .nav .. || b matches .contents ..)
+        (fun acc _ => acc) false doc.body then #[]
+  else
+    let entries := Ir.flowOutline doc
+    if entries.size < 2 then #[] else entries
+
 /-- Whether the document carries a table of contents, gating its rules. -/
 private def docHasContents (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .contents ..) (fun b _ => b) false doc.body
@@ -5833,13 +5848,75 @@ public def figureWordsNode (words : String) : Node :=
   Html.elem "span" #[Html.text words]
     #[("class", figureWordsClass), ("aria-hidden", "true"), ("style", visuallyHidden)]
 
+/-- A page's inline padding on screen, in milli-rem. -/
+public def pageInlinePadMilli : Nat := 1250
+
+/-- The margin outline's inline size in milli-rem: about thirty characters of its small sans. -/
+public def outlineWidthMilli : Nat := 15000
+
+/-- The outline's gap to the text in milli-rem: the page's inline padding on both sides of it. -/
+public def outlineGapMilli : Nat := 2 * pageInlinePadMilli
+
+/-- The content measure in milli-rem. -/
+public def measureMilli (page : PageSpec) : Int :=
+  (page.width - 2 * page.hmargin) * 1000 / page.fontSize
+
+/-- The narrowest viewport, in milli-rem, whose margin holds the outline beside the text with a gap's
+room past it. -/
+public def outlineBreakMilli (page : PageSpec) : Int :=
+  2 * pageInlinePadMilli + outlineWidthMilli + 2 * outlineGapMilli + measureMilli page
+
+private def remMilli (k : Int) : String := s!"{decMilli k}rem"
+
+/-- What does not reflow, its natural width deciding: code, a display, a table of natural columns. -/
+public def naturalBlocks : String := "pre, .display, div.math-display, table.bt-natural"
+
+/-- What keeps the room past the text for what it holds: the flow's own containers, which end where
+the text ends; any other box ends it. -/
+public def roomKeepers : String :=
+  "main > section, ul, ol, li, dl, dt, dd, figure, p, blockquote, div:not(.columns), " ++
+    naturalBlocks
+
+/-- A flow's screen geometry: prose at the measure, what does not reflow at its natural width up to
+the outline's column past it, and the outline after the text, fixed beside it where the margin holds
+it; paper and every box but the flow's own containers keep the measure. -/
+public def flowPageCss (doc : Doc) : String :=
+  let pad := remMilli pageInlinePadMilli
+  let n := remMilli outlineWidthMilli
+  let ng := remMilli (outlineWidthMilli + outlineGapMilli)
+  let free := s!"(100vw - 2 * {pad} - var(--measure))"
+  let indent := Ir.contentsFlowLevel 1
+  "main { --wide-room: 0px; }\n" ++
+  s!":where(main) :not({roomKeepers}) \{ --wide-room: 0px; }\n" ++
+  "@media screen {\n" ++
+  s!"  main \{ --wide-room: clamp(0px, {free} / 2, {ng}); }\n" ++
+  s!"  :where(main) :is({naturalBlocks}) \{ max-inline-size: calc(100% + var(--wide-room)); }\n" ++
+  s!"  :where(main) :is({naturalBlocks}) \{ inline-size: max-content; }\n" ++
+  "  :where(main) :is(pre, .display, div.math-display) { min-inline-size: 100%; }\n" ++
+  "}\n" ++
+  (if (outlineOf doc).isEmpty then "" else
+    s!"nav.{outlineClass} \{ display: none; row-gap: {quantaRem 1}; align-content: start;\n" ++
+    s!"  font-family: var(--font-sans); font-size: {scaleSize doc.page.scale "small" "rem"};\n" ++
+    s!"  line-height: {milliFactor Ir.leadingMilli}; color: {roleRef .muted}; }\n" ++
+    s!"nav.{outlineClass} > div:hover \{ color: {roleRef .ink}; }\n" ++
+    s!"nav.{outlineClass} .level-1 \{ padding-inline-start: {decMilli indent.indent}em; }\n" ++
+    s!"nav.{outlineClass} a \{ text-decoration: none; }\n" ++
+    s!"nav.{outlineClass} a:hover \{ text-decoration: underline; }\n" ++
+    s!"@media screen and (min-width: {decMilli (outlineBreakMilli doc.page)}em) \{\n" ++
+    s!"  main \{ margin-inline-start: max({ng}, (100% - var(--measure)) / 2);\n" ++
+    s!"    --wide-room: clamp(0px, 100vw - 2 * {pad} - max({ng}, {free} / 2) - var(--measure), {ng}); }\n" ++
+    s!"  nav.{outlineClass} \{ display: grid; position: fixed; inset-block: 0;\n" ++
+    s!"    inset-inline-start: max({pad}, {pad} + {free} / 2 - {ng}); inline-size: {n};\n" ++
+    s!"    padding-block: {quantaRem 3}; overflow-y: auto; overscroll-behavior: contain; }\n" ++
+    "}\n")
+
 /-- The base stylesheet's rules, after its custom properties. -/
 public def baseRules (doc : Doc) (ex : Length) (pairs : List (Nat × Nat) := []) : String :=
   let tl := tableLengthFallback doc
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
   "  margin: 0;\n" ++
-  s!"  padding: {quantaRem 3} 1.25rem {quantaRem 6};\n" ++
+  s!"  padding: {quantaRem 3} {remMilli pageInlinePadMilli} {quantaRem 6};\n" ++
   s!"  background: {roleRef .page};\n" ++
   s!"  color: {roleRef .ink};\n" ++
   "  font-family: var(--font-body);\n" ++
@@ -5851,6 +5928,7 @@ public def baseRules (doc : Doc) (ex : Length) (pairs : List (Nat × Nat) := [])
   "  -webkit-font-smoothing: antialiased;\n" ++
   "}\n" ++
   "main { max-width: var(--measure); margin: 0 auto; }\n" ++
+  (if doc.docClass.record.model == .flow then flowPageCss doc else "") ++
   -- headings from the IR's own scale; margins belong to `blockGapRules` alone
   "h1, h2, h3, h4, h5, h6 {\n" ++
   "  font-family: var(--font-sans);\n" ++
@@ -6099,7 +6177,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
   let floorPal := cfg.floorPal
   ":root {\n" ++
   s!"    color-scheme: {if cfg.floor.onDark then "dark" else "light"};\n" ++
-  s!"    --measure: {measureEm doc.page};\n" ++
+  s!"    --measure: {measureRem doc.page};\n" ++
   parskip ++
   lineageSkipVars doc ex ++
   String.join ((roleDefaultVars floorPal cfg.floor roles cfg.codeRoot).map (· ++ "\n")) ++
@@ -7049,6 +7127,7 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
     cfg.tableFit (cfg.measureValues.lineWidth - cfg.inset) cols padL padR rows spans
   let cls := "booktabs" ++ (if padL then "" else " nopadl")
     ++ (if padR then "" else " nopadr") ++ (if overhang then " bt-overhang" else "")
+    ++ (if target.isNone && cols.all (·.width matches .natural) then " bt-natural" else "")
   let kids := Id.run do
     let mut kids := #[Html.elem "colgroup" colEls]
     if 0 < headerRows then
@@ -9774,6 +9853,16 @@ private def unsetTitle? (doc : Doc) : Option String :=
   if doc.headline.isSome || levels.contains .title || levels.contains .h1 then none
   else doc.info.title.filter nonBlank
 
+/-- The outline navigation a flow's own page sets in its margin: its outline's entries, each linked,
+a scroll box reachable as a tab stop. -/
+private def outlineNode? (cfg : Config) (doc : Doc) : Option Node :=
+  let entries := outlineOf doc
+  if cfg.css != .own || entries.isEmpty then none
+  else some (Html.elem "nav" (entries.map fun e =>
+      Html.elem "div" ((e.number.map fun n => Html.text (n ++ "\u00A0")).toArray ++ inlines cfg e.inline)
+        #[("class", s!"level-{e.depth}")])
+    #[("class", outlineClass), ("aria-label", cfg.locale.contents), ("tabindex", "0")])
+
 /-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
 private def emitTreeCore (cfg : Config) (doc : Doc)
     (styles : (Ir.Color → String) → String × Array Diag) :
@@ -10168,7 +10257,8 @@ retitle them apart, or link to the numbered anchor")
           slot doc.logoRight)
         #[("class", "headline")]]
     | none => #[]
-  let mut body : Array Node := headerNode ++ (unsetTitle? doc).toArray.map pageTitleNode ++ #[main]
+  let mut body : Array Node := headerNode ++ (unsetTitle? doc).toArray.map pageTitleNode ++
+    #[main] ++ (outlineNode? cfg doc).toArray
   -- the progress hairline reads the base bar, never a section-only override
   if doc.docClass == .slides && (Design.ofDoc doc).progress.isSome then
     body := body.push (Html.elem "div" #[]
@@ -10451,7 +10541,7 @@ public def classTokens (attrs : Array (String × String)) : List String :=
 /-- Whether the engine's own stylesheet makes an element a scroll container. -/
 public def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × String)) :
     Bool :=
-  own && (tag == "pre" ||
+  own && (tag == "pre" || (tag == "nav" && (classTokens attrs).contains outlineClass) ||
     (deck && tag == "section" &&
       (classTokens attrs).any (fun c => c == "slide" || c == "section-page")))
 

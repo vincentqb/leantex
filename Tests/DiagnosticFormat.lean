@@ -84,10 +84,12 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
           (fun path => s!"✔ {path} (7 ms)")),
        ("summary error", (fun path => Render.humanSummary color path 2 7),
           (fun path => s!"✖ {path} — 2 errors (7 ms)")),
-       ("done", (fun path => Render.humanDone color path (path ++ ".pdf") 1 7),
+       ("done", (fun path => Render.humanDone color path (path ++ ".pdf") (some 1) 7),
           (fun path => s!"✔ {path} → {path}.pdf — 1 page (7 ms)")),
-       ("done with notes", (fun path => Render.humanDone color path (path ++ ".html") 2 7 1),
+       ("done with notes", (fun path => Render.humanDone color path (path ++ ".html") (some 2) 7 1),
           (fun path => s!"✔ {path} → {path}.html — 2 pages (7 ms) · 1 note (-v)")),
+       ("done unpaged", (fun path => Render.humanDone color path (path ++ ".html") none 7),
+          (fun path => s!"✔ {path} → {path}.html (7 ms)")),
        ("werror", (fun path => Render.humanWerror color path 2 7),
           (fun path => s!"✖ {path} — 2 warnings (--werror) (7 ms)"))]
     for (name, render, expected) in statuses do

@@ -351,11 +351,11 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
 def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "html measure derives from the default page"
-    (HtmlDoc.measureEm {} == "46.8em")
+    (HtmlDoc.measureRem {} == "46.8rem")
   let (narrowDoc, narrowDs) := elabStr ("\\documentclass{article}" ++
     "\\page{ hmargin = 0.75in }\\begin{document}x\\end{document}")
   t "html measure follows a declared page" (narrowDs.isEmpty &&
-    ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.4em;").length == 2)
+    ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.4rem;").length == 2)
   let hasClass (name : String) (attrs : Array (String × String)) : Bool :=
     attrs.any fun (key, value) =>
       key == "class" && (value.splitOn " ").contains name
@@ -748,27 +748,6 @@ def htmlSectionGapChecks (ref : IO.Ref (List String)) : IO Unit := do
     (sectionHeadsList #[] body.toList == #["h2", "h2"])
   t "html a section's heading owns the heading gap above its section"
     (hasStr page ":where(* + section[id] > h2:first-child) { margin-top: 1.450rem; }")
-
-/-- Every innermost declaration block of a stylesheet with its enclosing at-rule preludes, outermost
-first. -/
-def cssBlocksIn (css : String) : Array (List String × String × String) := Id.run do
-  let mut out : Array (List String × String × String) := #[]
-  let mut sels : Array String := #[]
-  let mut cur := ""
-  for c in css.toList do
-    if c == '{' then
-      sels := sels.push cur.trimAscii.toString
-      cur := ""
-    else if c == '}' then
-      let decls := cur.trimAscii.toString
-      if decls.contains ':' then
-        out := out.push (sels.pop.toList.filter (·.startsWith "@"),
-          (sels.back?.getD "").trimAscii.toString, decls)
-      sels := sels.pop
-      cur := ""
-    else
-      cur := cur.push c
-  return out
 
 /-- Every rule that scrolls a box on screen has a print rule at its selector setting that overflow
 `visible`. -/
@@ -1462,11 +1441,12 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "flow image fixture elaborates clean" artDs.isEmpty
   let artHtml := (HtmlDoc.emit { imgs := store } art).1
   let hasA (s : String) : Bool := (artHtml.splitOn s).length ≥ 2
+  let artBody := ((artHtml.splitOn "<body").drop 1).headD ""
   t "flow keeps the print reading: pt lengths, no viewport unit"
     (hasA "width: 50%; height: auto" &&
      hasA "pt; height: auto" &&
      hasA "width: 72pt; height: auto" &&
-     !hasA "dvh" && !hasA "vw")
+     !hasStr artBody "dvh" && !hasStr artBody "vw")
   t "a flow picture keeps its pt box"
     (hasA "pt\" height=\"" || hasA "pt\" role=\"img\"")
 

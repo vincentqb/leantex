@@ -158,7 +158,7 @@ def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) (written : Array Stri
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms written)
 
-def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
+def Ui.done (ui : Ui) (file output : String) (pages : Option Nat) (ms : Nat) (notes : Nat := 0) :
     IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainDone file output pages ms (← ui.peak))
@@ -978,14 +978,21 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         | none => s!"no patterns for '{doc.info.locale.tag}'") (← since t)
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
-      let fitted := Layout.runFitted geom fs pats doc imgs
-        (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
-        (pictureSpans := Layout.pictureSpansForPdf doc reqSpans.images)
-      let out := fitted.out
-      let squeezed := fitted.webSqueeze
+      -- Pages are set only where something reads them: the PDF, a deck's squeeze, a page assertion.
+      let readsPages := doc.asserts.any fun a => match a.kind with
+        | .pages _ _ | .textInArea | .minXHeight _ => true
+        | .fontsAllEmbedded | .accessibilityAA | .pdfProfile _ => false
+      -- premise: paperLossChecks — an unset flow loses only its paper's losses
+      let setsPages := emit.contains .pdf || readsPages || !Layout.paperLossesOnly doc
+      let (out, squeezed) : Layout.Out × Array Nat := if setsPages then
+          let fitted := Layout.runFitted geom fs pats doc imgs
+            (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
+            (pictureSpans := Layout.pictureSpansForPdf doc reqSpans.images)
+          (fitted.out, fitted.webSqueeze)
+        else ({ pages := #[], diags := #[] }, #[])
       let layoutDiags := out.diags.map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
-      ui.phase "layout" s!"{out.pages.size} pages" (← since t)
+      if setsPages then ui.phase "layout" s!"{out.pages.size} pages" (← since t)
       -- An unaccepted error before the writers means no output.
       if resolved.errors > 0 then
         ui.accepted resolved.accepted
@@ -1192,7 +1199,8 @@ in the HTML" (← since t)
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
         ((Diag.unfired doc.allow resolved.fired).map DriverDiag.allowUnfired))
       ui.accepted resolved.accepted
-      ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0)
+      ui.done file (String.intercalate ", " written.toList)
+        (if setsPages then some out.pages.size else none) (← since t0)
         resolved.notes
       if ui.cfg.werror && resolved.warnings > 0 then
         ui.werror file resolved.warnings (← since t0)

@@ -13,13 +13,17 @@ def runCostChecks (ref : IO.Ref (List String))
     (executable : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
   let t := check ref
   t "summary cost: the peak is appended after ms"
-    (Render.porcelainDone "a.tex" "a.pdf" 3 17 (some 2048) ==
+    (Render.porcelainDone "a.tex" "a.pdf" (some 3) 17 (some 2048) ==
       "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":true,\"output\":\"a.pdf\"," ++
       "\"pages\":3,\"errors\":0,\"ms\":17,\"rssKiB\":2048}")
   t "summary cost: an unmeasured peak is absent, never zero"
-    (Render.porcelainDone "a.tex" "a.pdf" 3 17 none ==
+    (Render.porcelainDone "a.tex" "a.pdf" (some 3) 17 none ==
       "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":true,\"output\":\"a.pdf\"," ++
       "\"pages\":3,\"errors\":0,\"ms\":17}")
+  t "summary cost: a build that sets no pages states none"
+    (Render.porcelainDone "a.md" "a.html" none 17 none ==
+      "{\"event\":\"summary\",\"file\":\"a.md\",\"ok\":true,\"output\":\"a.html\"," ++
+      "\"errors\":0,\"ms\":17}")
   t "summary cost: a partial publication states what it wrote and its peak"
     (Render.porcelainSummary "a.tex" false 1 17 #["a.html"] (some 5) ==
       "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"output\":\"a.html\",\"errors\":1,\"ms\":17,\"rssKiB\":5}")

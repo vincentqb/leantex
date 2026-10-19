@@ -4,6 +4,7 @@ import Tests.Icc
 import Tests.PrintColour
 import Tests.TexFontTrees
 import Tests.ItemLabels
+import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
 import Tests.DeclaredColors
@@ -2176,7 +2177,13 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: roman, Alph and gobble folios counting from 1 where pagenumbering stands, mid-paragraph and in the preamble alike; front matter i and main matter 1 in book, scrbook and memoir; Section 1.1 of chapter 1 on page 1, equation 1.1, (1-1) under a declared theequation and (1.1) once numberwithin follows it; KOMA-Script's chapter head 67.28pt below the text's top and the text 37.07pt below it, addchap and addsec unnumbered, addsec listed by its short title; memoir numbering down to the section, its subsection unnumbered and thesubsection printing 1.1.0; Figure 1 before the first chapter, Figure 1.1, 1.2, then 2.1 and Table 2.1 in report, A.1 in the appendix, algorithms 1 and 2 through the document; a listing's lines two and three; a fragment's # a numbered chapter in report; this tree sets each the same",
       "main's binary at 1e1685cb names pagenumbering and the counters unknown, numbers book's front matter in arabic, sets KOMA-Script's chapters as sections and numbers figures 1, 2, 3; the checks fail there",
       "the corpus built by main's binary at 70096387 and by this tree's: every artifact and diagnostic byte-identical"]
-    state := .guarded "1e1685cb" .before .author }
+    state := .guarded "1e1685cb" .before .author },
+  { id := "R245", date := "2026-10-19"
+    what := "a long, code-heavy markdown document's web page set every block in the paper's text width, centred between wide empty margins, its code squeezed into the prose column; and a web-only build set the document's pages it never shipped"
+    pins := [check% Tests.WebMeasure.checks, check% Tests.WebMeasure.paperLossChecks]
+    accept := ["an invented markdown guide of 950 code blocks and 1476 headings built by main's binary at 730c0b54 and by this tree's in Chromium at 1280, 1440 and 1920px and a 390px phone: the prose holds the same 73 characters a line; there every block stood in a 614px column, here 946 of its 950 code blocks reach their natural width up to 280px past the text, the margin holds its outline and the phone is unchanged; printed, every block keeps the measure; there an HTML-only build set 400 pages, here none",
+      "invented probes from the review: a verbatim in a column, a minipage or a titled box, and a table of declared widths, keep their box; a numbered equation extends as a display does; a page with its own contents or navigation, or a résumé, carries no outline"]
+    state := .guarded "730c0b54" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
