@@ -159,22 +159,112 @@ public def tried {α : Type} (faces : String → List α) (desc : α → Nat × 
       { family := g, weight := want.1, italic := want.2 } ::
         (if covers f c then [] else tried faces desc covers want c rest)
 
+/-- Each character a request asks, with the weight and style it may be set at and the family stack
+it is set from, a stack's `*` read as every family. -/
+public def asks {α : Type} (families : List String) (faces : String → List α)
+    (desc : α → Nat × Bool) (reqs : Requests) : List ((Nat × Bool) × Char × List String) :=
+  reqs.toList.flatMap fun (w, cs) => w.stacks.toList.flatMap fun stack =>
+    let stack := stack.flatMap fun g => if g == "*" then families else [g]
+    let weights := w.weights.getD
+      ((stack.flatMap fun g => (faces g).map (desc · |>.1)).eraseDups.toArray)
+    let italics := w.italics.getD #[false, true]
+    weights.toList.flatMap fun wt => italics.toList.flatMap fun it =>
+      cs.toList.map fun c => ((wt, it), c, stack)
+
 /-- Every family, weight and style the requests try. -/
 public def uses {α : Type} (families : List String) (faces : String → List α)
-    (desc : α → Nat × Bool) (covers : α → Char → Bool) (reqs : Requests) : Array Use := Id.run do
-  let mut out : Std.HashSet Use := {}
-  for (w, cs) in reqs.toList do
-    for stack in w.stacks do
-      let stack := stack.flatMap fun g => if g == "*" then families else [g]
-      let weights := w.weights.getD
-        ((stack.flatMap fun g => (faces g).map (desc · |>.1)).eraseDups.toArray)
-      let italics := w.italics.getD #[false, true]
-      for wt in weights do
-        for it in italics do
-          for c in cs.toList do
-            for u in tried faces desc covers (wt, it) c stack do
-              out := out.insert u
-  return out.toArray
+    (desc : α → Nat × Bool) (covers : α → Char → Bool) (reqs : Requests) : Array Use :=
+  ((asks families faces desc reqs).foldl (fun out (want, c, stack) =>
+    (tried faces desc covers want c stack).foldl (·.insert ·) out) ({} : Std.HashSet Use)).toArray
+
+/-- The face font fallback sets `c` in (CSS Fonts 4 §5.4): of the faces each family of the stack
+selects, the first covering it. -/
+public def fallback {α : Type} (faces : String → List α) (desc : α → Nat × Bool)
+    (covers : α → Char → Bool) (want : Nat × Bool) (c : Char) : List String → Option α
+  | [] => none
+  | g :: rest =>
+    match select? desc want (faces g) with
+    | some f => if covers f c then some f else fallback faces desc covers want c rest
+    | none => fallback faces desc covers want c rest
+
+public theorem tried_want {α : Type} (faces : String → List α) (desc : α → Nat × Bool)
+    (covers : α → Char → Bool) (want : Nat × Bool) (c : Char) :
+    ∀ (stack : List String), ∀ u ∈ tried faces desc covers want c stack,
+      (u.weight, u.italic) = want
+  | [], u, h => by simp [tried] at h
+  | g :: rest, u, h => by
+    simp only [tried] at h
+    split at h
+    · exact tried_want faces desc covers want c rest u h
+    · rcases List.mem_cons.mp h with rfl | h
+      · rfl
+      · split at h
+        · simp at h
+        · exact tried_want faces desc covers want c rest u h
+
+/-- Faces that select in each family it tries what `faces` selects, and nothing where `faces`
+selects nothing, set every character in the face `faces` sets it in. -/
+public theorem fallback_exact {α : Type} (faces faces' : String → List α) (desc : α → Nat × Bool)
+    (covers : α → Char → Bool) (want : Nat × Bool) (c : Char)
+    (hnone : ∀ g, select? desc want (faces g) = none → select? desc want (faces' g) = none) :
+    ∀ (stack : List String),
+      (∀ u ∈ tried faces desc covers want c stack,
+        select? desc want (faces' u.family) = select? desc want (faces u.family)) →
+      fallback faces' desc covers want c stack = fallback faces desc covers want c stack
+  | [], _ => rfl
+  | g :: rest, h => by
+    simp only [fallback]
+    cases hs : select? desc want (faces g) with
+    | none =>
+      rw [hnone g hs]
+      refine fallback_exact faces faces' desc covers want c hnone rest fun u hu => h u ?_
+      simp only [tried, hs]
+      exact hu
+    | some f =>
+      have hg := h { family := g, weight := want.1, italic := want.2 } (by simp [tried, hs])
+      simp only at hg
+      rw [hg, hs]
+      by_cases hc : covers f c = true
+      · simp [hc]
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+        refine fallback_exact faces faces' desc covers want c hnone rest fun u hu => h u ?_
+        simp [tried, hs, hc, hu]
+
+theorem mem_foldl_insert {β : Type} [BEq β] [Hashable β] [LawfulBEq β] (x : β) :
+    ∀ (l : List β) (s : Std.HashSet β), x ∈ s ∨ x ∈ l → x ∈ l.foldl (·.insert ·) s
+  | [], _, h => by simpa using h
+  | y :: rest, s, h => by
+    refine mem_foldl_insert x rest (s.insert y) ?_
+    rcases h with h | h
+    · exact Or.inl (Std.HashSet.mem_insert.mpr (Or.inr h))
+    · rcases List.mem_cons.mp h with rfl | h
+      · exact Or.inl (Std.HashSet.mem_insert.mpr (Or.inl (beq_self_eq_true _)))
+      · exact Or.inr h
+
+/-- Every family a request's character tries is one of the uses. -/
+public theorem uses_covers {α : Type} (families : List String) (faces : String → List α)
+    (desc : α → Nat × Bool) (covers : α → Char → Bool) (reqs : Requests) :
+    ∀ a ∈ asks families faces desc reqs, ∀ u ∈ tried faces desc covers a.1 a.2.1 a.2.2,
+      u ∈ uses families faces desc covers reqs := by
+  intro a ha u hu
+  simp only [uses]
+  rw [Std.HashSet.mem_toArray]
+  suffices h : ∀ (l : List ((Nat × Bool) × Char × List String)) (out : Std.HashSet Use),
+      (u ∈ out ∨ ∃ b ∈ l, u ∈ tried faces desc covers b.1 b.2.1 b.2.2) →
+        u ∈ l.foldl (fun out (want, c, stack) =>
+          (tried faces desc covers want c stack).foldl (·.insert ·) out) out from
+    h _ _ (Or.inr ⟨a, ha, hu⟩)
+  intro l
+  induction l with
+  | nil => intro out h; simpa using h
+  | cons b rest ih =>
+    intro out h
+    refine ih _ ?_
+    rcases h with h | ⟨b', hb', hu'⟩
+    · exact Or.inl (mem_foldl_insert u _ out (Or.inl h))
+    · rcases List.mem_cons.mp hb' with rfl | hb'
+      · exact Or.inl (mem_foldl_insert u _ out (Or.inr hu'))
+      · exact Or.inr ⟨b', hb', hu'⟩
 
 /-! ## Selectors -/
 
@@ -348,7 +438,8 @@ def Sel.test (dyn : Array String) (s : Sel) (e : Subject) (up : List Subject) : 
 
 private def fontProp (p : String) : Bool :=
   p == "font-family" || p == "font-weight" || p == "font-style" || p == "font" ||
-    p == "content" || p == "display" || p == "font-synthesis"
+    p == "content" || p == "display" || p == "font-synthesis" || p == "list-style-type" ||
+    p == "list-style"
 
 /-- A declaration block's declarations: property, value and importance. -/
 def declsOf (body : String) : Array (String × String × Bool) :=
@@ -379,6 +470,11 @@ private def unmodeledAt (name body : String) : Bool :=
 private def reverts (v : String) : Bool :=
   (v.toLower.splitOn "revert").length > 1
 
+/-- Whether a statement imports a sheet: an at-rule's name is ASCII case-insensitive, and the
+sheet's end ends it as `;` does (CSS Syntax 3 §5.4.2). -/
+private def importsSheet (prelude : String) : Bool :=
+  prelude.trimAscii.toString.toLower.startsWith "@import"
+
 structure Sheet where
   rules : Array FRule := #[]
   vars : Std.HashMap String (Array String) := {}
@@ -399,7 +495,7 @@ def Sheet.read (sh : Sheet) (text : String) (gated : Bool) : Sheet := Id.run do
       todo := more
       for a in Css.atoms t do
         if a.head? == some ';' then
-          if prelude.trimAscii.toString.startsWith "@import" then sh := { sh with elsewhere := true }
+          if importsSheet prelude then sh := { sh with elsewhere := true }
           prelude := ""
         else if a.head? != some '{' then prelude := a.foldl String.push prelude
         else
@@ -423,6 +519,8 @@ def Sheet.read (sh : Sheet) (text : String) (gated : Bool) : Sheet := Id.run do
               let sels := (Css.splitList ',' pre).map fun s => (parseSel s).getD anySel
               let rule : FRule := { sels, decls, gated := g, order := sh.rules.size + 1 }
               sh := { sh with rules := sh.rules.push rule }
+      if importsSheet prelude then sh := { sh with elsewhere := true }
+      prelude := ""
   return sh
 
 /-- A sheet's rules filed by the key their subject requires: an id, else a class, else a type,
@@ -458,6 +556,8 @@ structure FState where
   stacks : Array (List String)
   weights : Option (Array Nat)
   italics : Option (Array Bool)
+  /-- The list styles a marker may set, `none` for any. -/
+  lists : Option (Array String)
   deriving BEq, Hashable, Inhabited
 
 def FState.want (s : FState) : Want := { stacks := s.stacks, weights := s.weights, italics := s.italics }
@@ -519,6 +619,27 @@ def italicsOf (parent : Option (Array Bool)) (v : String) : Option (Array Bool) 
   else if v == "italic" || v.startsWith "oblique" then some #[true]
   else none
 
+/-- The list style a `list-style` shorthand sets (CSS Lists 3 §3.4): its one style word or string,
+`none` alone for both style and image, nothing but a position or an image for the initial `disc`. -/
+def shorthandType (v : String) : String :=
+  let word (w : String) := if w.startsWith "\"" || w.startsWith "'" then w else w.toLower
+  let words := ((Css.splitList ' ' v.trimAscii.toString).toList.map (word ·.trimAscii.toString)).filter
+    fun w => !w.isEmpty && w != "inside" && w != "outside" && !w.startsWith "url("
+  match words with
+  | [] => "initial"
+  | ["none", "none"] => "none"
+  | [w] => w
+  | _ => "?"
+
+def listsOf (parent : Option (Array String)) (v : String) : Option (Array String) :=
+  let v := v.trimAscii.toString
+  let v := if v.startsWith "\"" || v.startsWith "'" then v else v.toLower
+  if inherits v then parent
+  else if v.toLower == "initial" then some #["disc"]
+  else if v.startsWith "\"" || v.startsWith "'" || v.all fun c => c.isAlphanum || c == '-' then
+    some #[v]
+  else none
+
 def stacksOf (parent : Array (List String)) (v : String) : Array (List String) :=
   let l := v.toLower
   if inherits l then parent
@@ -539,14 +660,17 @@ private def unionOpt {β : Type} [BEq β] : Option (Array β) → Option (Array 
 /-- An element's state from its parent's and the declarations that may set it. -/
 def resolve (vars : Std.HashMap String (Array String)) (parent : FState)
     (cands : String → Array Cand) : FState :=
-  let read (prop : String) : Option (Array String) × Bool :=
-    let (vs, inh) := winners (cands prop)
+  let readAll (cs : Array Cand) : Option (Array String) × Bool :=
+    let (vs, inh) := winners cs
     (vs.foldl (fun acc v => match acc, expand vars v with
       | some a, some e => some (a ++ e)
       | _, _ => none) (some #[]), inh)
+  let read (prop : String) := readAll (cands prop)
   let (fam, famInh) := read "font-family"
   let (wt, wtInh) := read "font-weight"
   let (it, itInh) := read "font-style"
+  let (ls, lsInh) := readAll (cands "list-style-type" ++
+    (cands "list-style").map fun c => { c with value := shorthandType c.value })
   let stacks := match fam with
     | some vs => vs.foldl (fun acc v => union acc (stacksOf parent.stacks v))
         (if famInh then parent.stacks else #[])
@@ -555,9 +679,11 @@ def resolve (vars : Std.HashMap String (Array String)) (parent : FState)
     (if wtInh then parent.weights else some #[])
   let italics := it.bind fun vs => vs.foldl (fun acc v => unionOpt acc (italicsOf parent.italics v))
     (if itInh then parent.italics else some #[])
+  let lists := ls.bind fun vs => vs.foldl (fun acc v => unionOpt acc (listsOf parent.lists v))
+    (if lsInh then parent.lists else some #[])
   -- a `font` shorthand may set any of the three
-  if (cands "font").isEmpty then { stacks, weights, italics }
-  else { stacks := union stacks #[["*"]], weights := none, italics := none }
+  if (cands "font").isEmpty then { stacks, weights, italics, lists }
+  else { stacks := union stacks #[["*"]], weights := none, italics := none, lists }
 
 /-- The user agent's own font declarations for an element (HTML §15.3, MathML Core §A). -/
 def uaDecls (tag : String) : Array (String × String) :=
@@ -580,6 +706,17 @@ private def counterChars : String :=
 
 /-- Characters a list item's or a disclosure's own marker may print. -/
 private def markerChars : String := "•◦▪▸▾▶▼–-.()" ++ counterChars
+
+/-- The user agent's list styles for an element under its ancestors (HTML §15.3.8), each with
+whether it surely applies. -/
+private def uaListStyles (tag : String) (up : List Subject) : Array (String × Bool) :=
+  let lists := ["ul", "ol", "menu", "dir"]
+  let depth := (up.filter fun p => lists.contains p.tag).length
+  if ["ul", "menu", "dir"].contains tag then
+    #[(if depth == 0 then "disc" else if depth == 1 then "circle" else "square", true)]
+  else if tag == "ol" then #[("decimal", true)]
+  else if tag == "summary" then #[("disclosure-closed", true), ("disclosure-open", false)]
+  else #[]
 
 /-- A CSS string's characters with its escapes read (CSS Syntax 3 §4.3.7): hex digits naming a code
 point and one whitespace after them, an escaped line end dropped, any other character itself. -/
@@ -604,6 +741,17 @@ public def unescape (cs : List Char) : String := Id.run do
   if let some h := hex then
     unless h.isEmpty do out := out.push (Char.ofNat (value h))
   return out
+
+/-- Characters a marker of the list style `v` prints: its symbol, its counter's digits and suffix, or
+its string; any marker's for a style this reading does not know. -/
+private def styleChars (v : String) : String :=
+  if v == "disc" then "•" else if v == "circle" then "◦" else if v == "square" then "▪"
+  else if v == "disclosure-open" then "▾▼" else if v == "disclosure-closed" then "▸▶"
+  else if v == "none" then ""
+  else if v.startsWith "\"" || v.startsWith "'" then unescape ((v.drop 1).dropEnd 1).toString.toList
+  else if ["decimal", "decimal-leading-zero", "lower-alpha", "upper-alpha", "lower-latin",
+      "upper-latin", "lower-roman", "upper-roman"].contains v then counterChars
+  else markerChars
 
 /-- The characters a `content` value may print: its strings, a counter's digits and letters, the
 attributes it reads, and the quotation marks a quote keyword may set. -/
@@ -678,6 +826,8 @@ def candsFor (env : Env) (e : Subject) (up : List Subject) (attrs : Array (Strin
   let mut out : Array (Option String × String × Cand) := #[]
   for (p, v) in uaDecls e.tag do
     out := out.push (none, p, { value := v, key := keyOf false 0 0 0, sure := true })
+  for (v, sure) in uaListStyles e.tag up do
+    out := out.push (none, "list-style-type", { value := v, key := keyOf false 0 0 0, sure })
   for (p, v) in attrs do
     if presentational p then
       out := out.push (none, p, { value := v, key := keyOf false 1 0 0, sure := true })
@@ -712,9 +862,16 @@ underline (CSS Fonts 4 §5.4), asked as a request for the space. -/
 private def addBox (reqs : Requests) (w : Want) : Requests :=
   reqs.insert w ((reqs.getD w {}).insert ' ')
 
+/-- A space separator a shaper sets from the face's own U+0020 when the face lacks it. -/
+private def spaceFallback (c : Char) : Bool :=
+  let n := c.toNat
+  n == 0xA0 || (0x2000 ≤ n && n ≤ 0x200A) || n == 0x202F || n == 0x205F || n == 0x3000
+
 private def addChars (reqs : Requests) (w : Want) (s : String) : Requests :=
   let set := s.foldl (fun set c =>
-    if inkless c then set else (set.insert c).insert c.toUpper) (reqs.getD w {})
+    if inkless c then set
+    else if spaceFallback c then set.insert ' '
+    else (set.insert c).insert c.toUpper) (reqs.getD w {})
   reqs.insert w set
 
 /-- The requests a tree's text makes, its elements' and their pseudo-elements'. -/
@@ -742,10 +899,16 @@ def walk (env : Env) : Walk Ctx Requests where
           (c.value.splitOn "list-item").length > 1
       for pe in ["before", "after", "marker"] do
         let mine := ctx.cands.filter (·.1 == some pe)
-        let shown := (mine.filter (·.2.1 == "content")).map (·.2.2.value) |>.filter fun v =>
-          v.trimAscii.toString != "none" && v.trimAscii.toString != "normal"
+        let (contents, unset) := winners ((mine.filter (·.2.1 == "content")).map (·.2.2))
+        let normal (v : String) : Bool := v.trimAscii.toString == "normal"
+        let shown := contents.filter fun v => v.trimAscii.toString != "none" && !normal v
         let chars := shown.foldl (fun s v => s ++ contentChars attrs v) ""
-        let chars := if pe == "marker" && listItem then chars.append markerChars else chars
+        -- a marker sets its list style's own marker only where `content` may stay `normal`
+        let chars := if pe == "marker" && listItem && (unset || contents.any normal) then
+          chars.append (match ctx.state.lists with
+            | some vs => vs.foldl (fun s v => s ++ styleChars v) ""
+            | none => markerChars)
+          else chars
         unless chars.isEmpty && shown.isEmpty do
           let w := (stateFor env ctx.state (some pe) ctx.cands).want
           acc := addBox (addChars acc w chars) w
@@ -774,7 +937,8 @@ public def requests (head body : Array Node) (dyn : Array String) : Option Reque
   let env : Env := { sheet, index := Index.of sheet.rules, dyn }
   let root := subjectOf "html" #[]
   let rootState := stateFor env
-    { stacks := #[["serif"]], weights := some #[400], italics := some #[false] } none
+    { stacks := #[["serif"]], weights := some #[400], italics := some #[false]
+      lists := some #["disc"] } none
     (candsFor env root [] #[])
   let bodyE := subjectOf "body" #[]
   let bodyCands := candsFor env bodyE [root] #[]

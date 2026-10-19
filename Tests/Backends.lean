@@ -2011,11 +2011,38 @@ def faceUseChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((List.range fonts.size).all fun i =>
       (html.splitOn (HtmlDoc.fontResource (fs.get i)).uri).length ≥ 2)
   let reads (css : String) : Bool := (HtmlFaces.requests #[.style css] #[] #[]).isSome
+  let asks (text : String) (c : Char) : Bool :=
+    match HtmlFaces.requests #[] #[.text text] #[] with
+    | some reqs => reqs.toList.any (·.2.contains c)
+    | none => false
+  let asksIn (css : String) (body : Array Html.Node) (c : Char) : Bool :=
+    match HtmlFaces.requests #[.style css] body #[] with
+    | some reqs => reqs.toList.any (·.2.contains c)
+    | none => false
+  t "face use: a space a shaper sets from U+0020 asks the space, never a face of its own"
+    (!asks "a\u2003b" '\u2003' && !asks "a\u00a0b" '\u00a0' && asks "a\u2003b" ' ')
+  let item := Html.Node.elem "li" #[] #[.text "x"]
+  let list (tag : String) (kids : Array Html.Node) := Html.Node.elem tag #[] kids
+  t "face use: a list item asks its list style's marker, a nested one its own"
+    (asksIn "" #[list "ul" #[item]] '•' && !asksIn "" #[list "ul" #[item]] '▪' &&
+      asksIn "" #[list "ul" #[list "li" #[list "ul" #[list "li" #[list "ul" #[item]]]]]] '▪' &&
+      asksIn "" #[list "ol" #[item]] '7' && !asksIn "" #[list "ol" #[item]] '•')
+  t "face use: a marker's content, or a list style the sheet sets, decides its characters"
+    (!asksIn "li::marker { content: \"–\" }" #[list "ul" #[item]] '•' &&
+      asksIn "li::marker { content: \"–\" }" #[list "ul" #[item]] '–' &&
+      asksIn "ul { list-style: square inside }" #[list "ul" #[item]] '▪' &&
+      !asksIn "ul { list-style: none }" #[list "ul" #[item]] '•' &&
+      asksIn "ul { list-style-type: symbols(cyclic \"*\") }" #[list "ul" #[item]] '▪')
+  t "face use: a disclosure's summary asks both of its markers"
+    (asksIn "" #[list "details" #[list "summary" #[.text "x"]]] '▸' &&
+      asksIn "" #[list "details" #[list "summary" #[.text "x"]]] '▾')
   t "face use: a sheet's nested rule, registered property or rollback leaves every face"
     (reads "p { font-weight: bold }" && !reads "p { & em { font-weight: bold } }" &&
       !reads "@property --w { syntax: '*'; inherits: true; initial-value: bold }" &&
       !reads "em { font-style: revert }" &&
       !reads "@page { @top-center { content: \"x\" } }" && reads "@page { margin: 1cm }")
+  t "face use: an import the sheet's end ends, in any case, leaves every face"
+    (!reads "@import url(x.css);" && !reads "@import url(x.css)" && !reads "@IMPORT 'x.css'")
   t "face use: a quote keyword in content may set any quotation mark"
     ((HtmlFaces.contentChars #[] "open-quote").contains '“' &&
       (HtmlFaces.contentChars #[] "close-quote").contains '»' &&

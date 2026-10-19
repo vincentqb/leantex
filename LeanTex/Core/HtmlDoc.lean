@@ -21,6 +21,7 @@ import LeanTex.Core.ListMark
 import LeanTex.Core.Css
 import Std.Http.Data.URI.Encoding
 import Std.Data.HashSet
+import Std.Data.String.ToNat
 
 namespace LeanTex.Core.HtmlDoc
 
@@ -3332,10 +3333,20 @@ public theorem allFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.
 public def familyFaces (faces : Array FontFace) (family : String) : List FontFace :=
   faces.toList.filter (·.family == family)
 
+/-- The families the page declares, in order. -/
+public def pageFamilies (fs : Font.FontSet) : List String :=
+  ((allFaces fs).toList.map (·.family)).eraseDups
+
+/-- A face's weight and style, which CSS font matching reads. -/
+public def faceDesc (ff : FontFace) : Nat × Bool := (ff.weight, ff.italic)
+
+/-- Whether a face holds a glyph for a character. -/
+public def faceCovers (fs : Font.FontSet) (ff : FontFace) (c : Char) : Bool :=
+  ((fs.get ff.index).gid c).isSome
+
 /-- The face a use selects from `faces` (CSS Fonts 4 §5.2). -/
 public def selected (faces : Array FontFace) (u : HtmlFaces.Use) : Option FontFace :=
-  HtmlFaces.select? (fun ff => (ff.weight, ff.italic)) (u.weight, u.italic)
-    (familyFaces faces u.family)
+  HtmlFaces.select? faceDesc (u.weight, u.italic) (familyFaces faces u.family)
 
 /-- Whether `ff` is the first `@font-face` of its face, the one a face the document's runs ask
 ships under. -/
@@ -3392,7 +3403,7 @@ public theorem shipFaces_select_exact (fs : Font.FontSet) (required : Array Nat)
     simp only [familyFaces, shipFaces, Array.toList_filter, List.filter_filter, Bool.and_comm]
   unfold selected
   rw [hfam]
-  cases hsel : HtmlFaces.select? (fun ff => (ff.weight, ff.italic)) (u.weight, u.italic)
+  cases hsel : HtmlFaces.select? faceDesc (u.weight, u.italic)
       (familyFaces (allFaces fs) u.family) with
   | none =>
     rw [HtmlFaces.select?_none _ _ _ hsel]
@@ -3433,6 +3444,98 @@ public theorem shipFaces_sub (fs : Font.FontSet) (required : Array Nat)
   | none => exact hff
   | some us => exact (Array.mem_filter.mp hff).1
 
+private theorem repr_ne_word (n : Nat) (w : String) (c : Char) (hc : c ∈ w.toList)
+    (hd : c.isDigit = false) : Nat.repr n ≠ w := by
+  intro h
+  have hm : c ∈ (Nat.repr n).toList := h ▸ hc
+  rw [Nat.toList_repr] at hm
+  have := Nat.isDigit_of_mem_toDigits (by omega) (by omega) hm
+  rw [hd] at this
+  cases this
+
+private theorem slotName_inj {a b : Nat} (h : slotName a = slotName b) : a = b := by
+  have hb n := repr_ne_word n "body" 'b' (by decide) (by decide)
+  have hs n := repr_ne_word n "sans" 's' (by decide) (by decide)
+  have hm n := repr_ne_word n "mono" 'm' (by decide) (by decide)
+  match a, b with
+  | 0, 0 | 1, 1 | 2, 2 => rfl
+  | 0, 1 | 0, 2 | 1, 0 | 1, 2 | 2, 0 | 2, 1 => simp [slotName] at h
+  | 0, b + 3 => exact absurd h.symm (hb _)
+  | 1, b + 3 => exact absurd h.symm (hs _)
+  | 2, b + 3 => exact absurd h.symm (hm _)
+  | a + 3, 0 => exact absurd h (hb _)
+  | a + 3, 1 => exact absurd h (hs _)
+  | a + 3, 2 => exact absurd h (hm _)
+  | a + 3, b + 3 => exact Nat.repr_injective h
+
+private theorem slotName_ne_math (s : Nat) : slotName s ≠ "math" := by
+  match s with
+  | 0 | 1 | 2 => simp [slotName]
+  | s + 3 => exact repr_ne_word _ "math" 'm' (by decide) (by decide)
+
+private theorem slotFamily_inj {a b : Nat} (h : s!"ltx-{slotName a}" = s!"ltx-{slotName b}") :
+    a = b := by
+  simp only [toString] at h
+  exact slotName_inj ((String.append_right_inj _).mp h)
+
+private theorem namedIn_nodup (t : Families) (fs : Font.FontSet) (i : Nat) :
+    (namedIn t fs i).Nodup := by
+  unfold namedIn
+  rw [List.Nodup, List.pairwise_append]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [List.pairwise_filterMap]
+    refine List.Pairwise.imp ?_ List.nodup_range
+    intro a b hab x hx y hy hxy
+    split at hx <;> split at hy <;> simp only [Option.some.injEq, reduceCtorEq] at hx hy
+    subst hx hy
+    exact hab (slotFamily_inj hxy)
+  · split <;> simp
+  · intro x hx y hy hxy
+    split at hy
+    · simp only [List.mem_singleton] at hy
+      obtain ⟨s, _, hs⟩ := List.mem_filterMap.mp hx
+      split at hs
+      · simp only [Option.some.injEq] at hs
+        subst hs hy
+        simp only [toString] at hxy
+        exact slotName_ne_math s ((String.append_right_inj "ltx-").mp hxy)
+      · cases hs
+    · simp at hy
+
+private theorem familiesIn_nodup (t : Families) (fs : Font.FontSet) (i : Nat) :
+    (familiesIn t fs i).Nodup := by
+  unfold familiesIn
+  split
+  · simp
+  · exact namedIn_nodup t fs i
+
+/-- The page declares each `@font-face` once: no face under a family twice. -/
+public theorem allFaces_nodup (fs : Font.FontSet) : (allFaces fs).toList.Nodup := by
+  unfold allFaces
+  rw [List.Nodup, Array.toList_flatMap, List.pairwise_flatMap]
+  refine ⟨?_, ?_⟩
+  · intro i _
+    simp only [Array.toList_map, List.pairwise_map]
+    refine List.Pairwise.imp ?_ (familiesIn_nodup _ fs i)
+    intro a b hab heq
+    exact hab (FontFace.mk.inj heq).2.1
+  · simp only [Array.toList_range]
+    refine List.Pairwise.imp ?_ List.nodup_range
+    intro a b hab x hx y hy hxy
+    simp only [Array.toList_map, List.mem_map] at hx hy
+    obtain ⟨_, _, rfl⟩ := hx
+    obtain ⟨_, _, rfl⟩ := hy
+    exact hab (FontFace.mk.inj hxy).1
+
+/-- The page ships each `@font-face` once. -/
+public theorem shipFaces_nodup (fs : Font.FontSet) (required : Array Nat)
+    (uses : Option (Array HtmlFaces.Use)) : (shipFaces fs required uses).toList.Nodup := by
+  cases uses with
+  | none => exact allFaces_nodup fs
+  | some us =>
+    simp only [shipFaces, Array.toList_filter]
+    exact (allFaces_nodup fs).sublist List.filter_sublist
+
 /-- The classes the constant deck script sets, which a selector may find on any element. -/
 public def deckScriptClasses : Array String := #["wide"]
 
@@ -3440,12 +3543,38 @@ public def deckScriptClasses : Array String := #["wide"]
 reaches, `none` when the page loads a sheet or a script from elsewhere. -/
 public def faceUses (fs : Font.FontSet) (head body : Array Node) : Option (Array HtmlFaces.Use) :=
   (HtmlFaces.requests head body deckScriptClasses).map fun reqs =>
-    let faces := allFaces fs
-    let byFam : Std.HashMap String (List FontFace) := faces.foldl
-      (fun m ff => m.insert ff.family ((m.getD ff.family []) ++ [ff])) {}
-    let families := (faces.toList.map (·.family)).eraseDups
-    HtmlFaces.uses families (fun g => byFam.getD g []) (fun ff => (ff.weight, ff.italic))
-      (fun ff c => ((fs.get ff.index).gid c).isSome) reqs
+    HtmlFaces.uses (pageFamilies fs) (familyFaces (allFaces fs)) faceDesc (faceCovers fs) reqs
+
+/-- Each character the page's text asks is set in the face it would be with every face shipped:
+the shipped faces cover the page's text as all of them do. -/
+public theorem html_subset_covers (fs : Font.FontSet) (required : Array Nat) (head body : Array Node)
+    (reqs : HtmlFaces.Requests) (h : HtmlFaces.requests head body deckScriptClasses = some reqs) :
+    ∀ a ∈ HtmlFaces.asks (pageFamilies fs) (familyFaces (allFaces fs)) faceDesc reqs,
+      HtmlFaces.fallback (familyFaces (shipFaces fs required (faceUses fs head body))) faceDesc
+          (faceCovers fs) a.1 a.2.1 a.2.2 =
+        HtmlFaces.fallback (familyFaces (allFaces fs)) faceDesc (faceCovers fs) a.1 a.2.1 a.2.2 := by
+  intro a ha
+  have hu : faceUses fs head body = some (HtmlFaces.uses (pageFamilies fs)
+      (familyFaces (allFaces fs)) faceDesc (faceCovers fs) reqs) := by
+    simp [faceUses, h]
+  rw [hu]
+  apply HtmlFaces.fallback_exact
+  · intro g hnone
+    have hall := HtmlFaces.select?_none _ _ _ hnone
+    have hsub : familyFaces (shipFaces fs required (some (HtmlFaces.uses (pageFamilies fs)
+        (familyFaces (allFaces fs)) faceDesc (faceCovers fs) reqs))) g =
+        (familyFaces (allFaces fs) g).filter (shipsFace fs required (HtmlFaces.uses (pageFamilies fs)
+          (familyFaces (allFaces fs)) faceDesc (faceCovers fs) reqs)) := by
+      simp only [familyFaces, shipFaces, Array.toList_filter, List.filter_filter, Bool.and_comm]
+    rw [hsub, hall, List.filter_nil]
+    exact HtmlFaces.select?_nil _ _
+  · intro u hu'
+    have hmem := HtmlFaces.uses_covers _ _ _ _ reqs a ha u hu'
+    have hw := HtmlFaces.tried_want _ _ _ _ _ _ u hu'
+    have hsel := shipFaces_select_exact fs required _ u hmem
+    unfold selected at hsel
+    rw [← hw]
+    exact hsel
 
 /-- What this emitter realizes of the output contract. -/
 public def profile : Ir.Realization :=

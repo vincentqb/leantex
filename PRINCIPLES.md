@@ -108,7 +108,7 @@ bytes, recipe, tool identity, font environment, the engine's own implementation 
 Refusals are cached, an attempt that reached no verdict is not (`record?_some_exact`,
 `inconclusive_retried_exact`), and a warm slot answers as the fresh attempt did
 (`refusal_replays_exact`, `replay_record_exact`, `versionStep_changed_exact`); a warm replay starts
-no tool (owed (U25)), and a run ships each resource once (owed (U03): `shipFaces_nodup`).
+no tool (owed (U25)); a run ships each resource once (`shipFaces_nodup`; owed (U03): `fontsOnce`).
 
 ## Rules are checks
 
