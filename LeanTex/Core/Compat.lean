@@ -11726,6 +11726,66 @@ that graph")
       return #[]
     return blueprintSiteRaws c.name (urlText (c.arg 0)) c.pos
 
+/-- An invented call: its arguments' sources, whether it stands in the body, the source after it
+and the bibliography files declared before it. -/
+public structure LowerWitness where
+  args : List (Option String)
+  inDoc : Bool
+  after : String := ""
+  resources : Array String := #[]
+
+/-- A call on which a lowering emits raws: none exactly for the lowerings proved to emit nothing
+(`Lowering.emitsNothing`). -/
+public def Lowering.emitWitness : Lowering → Option LowerWitness
+  | .packages => some { args := [none, some "parskip"], inDoc := false }
+  | .defineColor => some { args := [some "zzshade", some "rgb", some "1,0,0"], inDoc := false }
+  | .colorLet => some { args := [some "zzshade", some "red"], inDoc := false }
+  | .pageColor => some { args := [none, some "red"], inDoc := false }
+  | .geometry => some { args := [some "margin=1in"], inDoc := false }
+  | .crop => some { args := [some "cam"], inDoc := false }
+  | .microtypeSetup => some { args := [some "protrusion=true"], inDoc := false }
+  | .documentMetadata => some { args := [some "lang=en"], inDoc := false }
+  | .addToHook =>
+    some { args := [some "shipout/background", none, some "\\put(1cm,1cm){\\rule{1cm}{1pt}}"],
+           inDoc := false }
+  | .newLength => some { args := [some "\\zzlength"], inDoc := false }
+  | .mathOperator => some { args := [none, some "\\zzop", some "zzop"], inDoc := false }
+  | .hyperSetup => some { args := [some "colorlinks=true"], inDoc := false }
+  | .pageStyle => some { args := [some "empty"], inDoc := false }
+  | .printBibliography => some { args := [none], inDoc := true, resources := #["refs.bib"] }
+  | .crefRange => some { args := [none, some "zza", some "zzb"], inDoc := true }
+  | .fontSeries => some { args := [some "b"], inDoc := true }
+  | .lineNumbers => some { args := [none, none], inDoc := false }
+  | .selectLanguage => some { args := [some "french"], inDoc := true }
+  | .vspace => some { args := [none, none, some "1em"], inDoc := true }
+  | .pageBreak => some { args := [none], inDoc := true }
+  | .komaFont => some { args := [some "section", some "\\bfseries"], inDoc := false }
+  | .sectionSkips => some { args := [some "beforeskip=1em", some "section"], inDoc := false }
+  | .setList => some { args := [none, none, some "itemsep=0pt"], inDoc := false }
+  | .sectionLines => some { args := [none, some "\\textcolor{red}{\\hrule}"], inDoc := false }
+  | .uniMathSetup => some { args := [some "mathrm=sym"], inDoc := false }
+  | .ensureMath => some { args := [some "x"], inDoc := true }
+  | .box => some { args := [none, none], inDoc := true, after := "{}" }
+  | .beamerFont => some { args := [none, some "title", some "size=\\large"], inDoc := false }
+  | .useTheme => some { args := [none, some "moloch"], inDoc := false }
+  | .molochSet => some { args := [some "sectionpage=none"], inDoc := false }
+  | .beamerCovered => some { args := [some "transparent"], inDoc := false }
+  | .blueprintSite => some { args := [some "https://example.org"], inDoc := false }
+  | .texOrPdf => some { args := [some "zza", some "zzb"], inDoc := true }
+  | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
+  | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
+  | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
+  | .beamerOption | .inputEncoding | .komaOptions | .graphColor => none
+
+/-- Whether lowering `l`, called as `name` on witness `w`, returns raws. -/
+public def Lowering.emitsOn (l : Lowering) (name : String) (w : LowerWitness) : Bool :=
+  let file := "witness.tex"
+  let call : CtrlCall := ⟨name, {}, (w.args.map (·.map (verbatimRaws file))).toArray,
+    verbatimRaws file w.after, 0, 0⟩
+  let st : St := { file := file, docFile := file, inDoc := w.inDoc, wholeDoc := true,
+                   bibResources := w.resources }
+  !((lowerCall call l).run st).1.isEmpty
+
 /-- Whether a lowered control is left, as written, to elaboration where it stands. -/
 private def CtrlLeave.holds (st : St) (args : Array (Option (Array Raw))) : CtrlLeave → Bool
   -- premise: ctrlLeaveChecks — each leave keeps its control as written where its condition holds
@@ -14210,6 +14270,11 @@ local macro "emits_nothing" : tactic => `(tactic| (
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
   | .beamerOption | .inputEncoding | .graphColor => true
   | _ => false
+
+/-- Every lowering not proved to emit nothing has a witness call, which `Tests` runs. -/
+public theorem Lowering.emitWitness_none_exact (l : Lowering) :
+    l.emitWitness.isNone = l.emitsNothing := by
+  cases l <;> rfl
 
 private theorem lowerCall_nothing (c : CtrlCall) (l : Lowering) (h : l.emitsNothing = true) :
     EmitsNothing (lowerCall c l) := by

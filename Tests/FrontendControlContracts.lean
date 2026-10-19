@@ -276,6 +276,24 @@ def ctrlGateChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"control gate: \\{row.name} holding written values does not wait"
         (!waits written)
 
+/-- Every lowering the table uses and `Lowering.emitsNothing` does not list emits raws on its
+witness call under some row naming it, so the list of lowerings proved silent is complete. -/
+def lowerEmitChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let rows := Compat.ctrlRows.filterMap fun row => match row.action with
+    | .lower l _ => some (row.name, l)
+    | _ => none
+  let mut seen : Array Compat.Lowering := #[]
+  for (_, l) in rows do
+    if seen.contains l then continue
+    seen := seen.push l
+    match l.emitWitness with
+    | some w =>
+      let names := rows.filterMap fun (n, l') => if l' == l then some n else none
+      t s!"lowering completeness: {repr l} emits raws on its witness under one of {names}"
+        (names.any fun n => l.emitsOn n w)
+    | none => pure ()
+
 /-- Each leave a lowered row names keeps its control as written exactly where its condition holds,
 checked by two builds differing by the condition. -/
 def ctrlLeaveChecks (ref : IO.Ref (List String)) : IO Unit := do

@@ -2309,6 +2309,13 @@ def reports : List Report := [
     accept := ["lualatex on an invented probe: the url package's lowtilde sets the tilde as a script-size similar sign raised 0.2ex, as this tree's PDF and web page do, byte-identical to main's",
       "main's binary at 730c0b54: the twin writes U+223C in the link's code span for the typewriter and hyperref spellings and TeX math for the roman one; this tree's twin with the option equals its twin without it in all three; the guard fails there",
       "the corpus built by main's binary at 700963877 and by this tree's: every PDF and web page byte-identical, one twin's link text now the address as written"]
+    state := .guarded "730c0b54" .before .author },
+  { id := "R245", date := "2026-10-19"
+    what := "a parbox's text skipped the compatibility rewrite, so a page colour or a date command inside it was an unknown command; a page colour set in a heading, a caption or a footnote grounded the page of the paragraph before it; a definition whose text was skipped in part was reported where nothing called it; and an ifmmode conditional in a command's text was skipped whole, so a bold redefinition reading it was refused and a command reading it set both branches as unknown commands"
+    pins := [check% Tests.GroupScope.groupScopeChecks, check% Tests.UnusedSettings.redefinitionChecks]
+    accept := ["lualatex 1.24 on invented articles: a colour in a section title after a page break grounds the pages from the heading's on, one in a figure's caption the figure's page on, one in a footnote the page its mark stands on; a command reading ifmmode sets its text branch in text and its math branch in a formula, the bold redefinition setting bold text and bold math; this tree sets the same",
+      "main's binary at 730c0b54 on the same probes: the parbox's colour and date draw W0301, the heading's colour grounds page 1, the unused definition draws W0104, the bold redefinition draws W0361 and the command reading ifmmode sets both branches with three W0301; the guards fail there",
+      "the corpus built by main's binary at 70096387 and by this tree's: every PDF and web page byte-identical, and the diagnostics the same"]
     state := .guarded "730c0b54" .before .author }
 ]
 

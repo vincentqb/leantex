@@ -1287,6 +1287,7 @@ def main (args : List String) : IO UInt32 := do
   frontendControlContractChecks ref
   ctrlGateChecks ref
   ctrlLeaveChecks ref
+  lowerEmitChecks ref
   elabUnknownDispatchChecks ref
   elabFrameSourceChecks ref
   porcelainCensusChecks ref
