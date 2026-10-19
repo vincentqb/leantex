@@ -93,7 +93,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a dashed underline under a paragraph is a setext heading"
     (has "Foo\n---\n" "<h2>")
   t "an equals underline is a level-one setext heading"
-    (has "Foo\n===\n" "<h1 class=body-heading>Foo</h1>")
+    (has "Foo\n===\n" "<h1 class=body-heading id=foo>Foo</h1>")
   t "an indented line under a paragraph is continuation text"
     (has "foo\n    # bar\n" "# bar")
   let refusedWith (src subject : String) : Bool :=

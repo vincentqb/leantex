@@ -7369,7 +7369,7 @@ an option it does not model is named. -/
 private def contentsSpecOf (ctx : Ctx) (opts : Option String) (pos : Pos) :
     EM Ir.ContentsSpec := do
   let st ← get
-  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth.toNat }
+  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth }
   -- beamerbasetoc.sty's `\pause[0]`: the entries and what follows count their slides from the first.
   modify fun st => { st with ctr := { st.ctr with pauses := st.ctr.pauses.map fun _ => 0 } }
   -- premise: contentsChecks — a run-in paragraph heading is no heading block the contents list
@@ -10479,7 +10479,8 @@ private def listedHeading (ctx : Ctx) (pos : Pos) (unit : String) (level : Ir.He
   if Ir.plainText text != words || listed.isSome then
     let short : Ir.ShortTitle := { number := none, words, nth, short := text, named := false, listed }
     modify fun st => { st with headingShorts := st.headingShorts.push short }
-  if blockHeading? unit != some level then
+  -- report.cls's `chapter` unit is the class's chapter head.
+  if (if unit == "chapter" then some .h1 else blockHeading? unit) != some level then
     warnOnce ctx "contents:addcontentsline:unit" .W0104 s!"'\\addcontentsline' names a '{unit}' \
 entry beside a heading of another level; the contents list it at the heading's own" pos
   return .section level false none title

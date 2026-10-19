@@ -2240,7 +2240,7 @@ def reports : List Report := [
       "main's binary at 70096387 on the same probes: E0111 and no artifact for the bodies and the body form, W0104 for the predefined template; the guards fail there",
       "the corpus built by main's binary at 70096387 and by this tree's: no corpus document's footline changes; another footline body is still refused as carrying content (E0111)"]
     state := .guarded "70096387" .before .author },
-  { id := "R248", date := "2026-10-19"
+  { id := "R250", date := "2026-10-19"
     what := "a class with chapters listed none in its contents, its sections at article's top level, every subsubsection listed and its contents and reference list headed as sections, the reference list named References; and a contents line's numberline was set as words before the entry's own, an empty one leaving the entry flush where its number's box stands"
     pins := [check% chapterContentsChecks, check% contentsGapChecks]
     accept := ["lualatex on invented probes: report lists its chapter bold at the margin with its bare number, its section 1.5em in and its subsection 3.8em in, no subsubsection, under a chapter head reading Contents, and heads its reference list Bibliography as a chapter on a page of its own, Literaturverzeichnis in German; article sets an empty numberline's words 1.5em in for a section and 3.8em in for a subsection, a written one's number in the box there; this tree sets the same",

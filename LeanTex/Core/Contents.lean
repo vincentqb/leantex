@@ -82,7 +82,7 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
         else if level == .h4 then some (2, subsubsectionShow spec s1 s2 s3) else none
       if let some (depth, look) := at? then
         let look := if listedSection spec s1 then look else .hidden
-        if !starred && !blankTitle title && depth < spec.depth then
+        if !starred && !blankTitle title && (depth : Int) < spec.depth then
           -- beamerbasetoc.sty pauses before an entry's hiding is decided.
           if (if depth == 0 then spec.pauses.1 else spec.pauses.2) then paused := paused + 1
           let shown := if depth == 2 then #[.styled (.size "footnotesize") (nameOf title)]
@@ -115,7 +115,7 @@ public def flowContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
   for h : i in [0:doc.body.size] do
     if let .section level starred num title := doc.body[i] then
       if let some rank := contentsLevel doc.chapters level then
-        if !starred && rank ≤ spec.depth then
+        if !starred && (rank : Int) ≤ spec.depth then
           let target := (anchors[i]?.join).map (·.id)
           let title := nameOf (listedTitleAt shorts i title)
           let number := ((entries[i]?.join).bind (·.listed)).orElse fun _ => num

@@ -757,6 +757,22 @@ none deeper ({rds.toList.map (·.code)})"
   let words := ((navEntries body)[0]?.map (·.map (·.2.1))).getD #[]
   t s!"the web page lists the same entries ({words})"
     (words == #["1 Kettles", "1.1 Spouts", "1.1.1 Lids"])
+  let (unlisted, _) := elabStr ((src "book" "\\setcounter{tocdepth}{-1}\n"))
+  t "a tocdepth below the chapter's lists no entry"
+    ((lineWith (fittedOf fonts unlisted).out 0 "Kettles").isNone)
+  let (pre, pds) := elabStr ("\\documentclass{report}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\chapter*{Preface}\n\\addcontentsline{toc}{chapter}{Preface}\nWords.\n\\chapter{Kettles}\nWords.\n" ++
+    "\\end{document}\n")
+  t s!"a starred chapter its contents line lists stands as a chapter's entry, unwarned \
+({pds.toList.map (·.code)})"
+    ((lineWith (fittedOf fonts pre).out 0 "Preface").isSome && !pds.any (·.code == "W0104"))
+  let (bare, _) := elabStr ("\\documentclass{report}\n\\begin{document}\n\\chapter{Kettles}\n" ++
+    "Words.\n\\section{Spouts}\nWords.\n\\chapter{Teapots}\nWords.\n\\end{document}\n")
+  let margin := ((((HtmlDoc.emit {} bare).1.splitOn "class=\"outline\"")[1]?).map
+    fun r => (r.splitOn "</nav>").headD "").getD ""
+  t s!"the web page's margin outline lists the chapters above their sections"
+    (hasStr margin "level-0" && hasStr margin "Kettles" && hasStr margin "Teapots" &&
+      hasStr margin "level-1")
   let (art, _) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
     "\\section{Kettles}\nWords.\n\\section*{Preface}\n\\addcontentsline{toc}{section}{\\numberline{}Preface}\n" ++
     "Words.\n\\subsection*{Spouts}\n\\addcontentsline{toc}{subsection}{\\numberline{}Spouts}\nWords.\n" ++

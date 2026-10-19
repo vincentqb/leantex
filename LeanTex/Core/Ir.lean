@@ -5189,7 +5189,7 @@ public structure ContentsSpec where
   subsections : ContentsShow × ContentsShow × ContentsShow := (.shown, .shown, .shown)
   subsubsections : ContentsShow × ContentsShow × ContentsShow × ContentsShow :=
     (.shown, .shown, .shown, .shown)
-  depth : Nat := 3
+  depth : Int := 3
   /-- beamer's `sections=`: the section numbers listed, every one where none is given. -/
   listed : Option (List (Nat × Option Nat)) := none
   /-- beamer's `pausesections` and `pausesubsections`: a `\pause` before each section, or each
@@ -5268,9 +5268,9 @@ article.cls's `\@pnumwidth`. -/
 article.cls's `\@tocrmarg`. -/
 @[expose] public def contentsRightMargin : Nat := 2550
 
-/-- article.cls's levels, report.cls's from its chapter at 0 the same: a section at 0 with 1.5em, a
-subsection at 1.5em with 2.3em, a subsubsection at 3.8em with 3.2em, a paragraph at 7em with 4.1em,
-a subparagraph at 10em with 5em. -/
+/-- article.cls's levels, which report.cls's from its chapter at 0 follow down to the paragraph: a
+section at 0 with 1.5em, a subsection at 1.5em with 2.3em, a subsubsection at 3.8em with 3.2em, a
+paragraph at 7em with 4.1em, a subparagraph at 10em with 5em. -/
 @[expose] public def contentsFlowLevel : Nat → ContentsLevel
   | 0 => ⟨0, 1500⟩
   | 1 => ⟨1500, 2300⟩
@@ -18641,21 +18641,28 @@ private def sectionClaims (body : Array Block) :
       taken := next
       out := out.push (some { base, id, clash := clash.filter (!held.contains ·) })
     else out := out.push none
+  -- A chapter claims after every section, so none of theirs moves.
+  for h : i in [0:body.size] do
+    if let .section .h1 _ _ title := body[i] then
+      let base := if (slug title).isEmpty then "section" else slug title
+      let (id, clash, next) := taken.claim base (firstPageText title)
+      taken := next
+      out := out.setIfInBounds i (some { base, id, clash := clash.filter (!held.contains ·) })
   return (out, taken)
 
-/-- Each top-level level-one section's anchor, at its body index, in flow order. -/
+/-- Each top-level chapter's and level-one section's anchor, at its body index, in flow order. -/
 public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) :=
   (sectionClaims body).1
 
-/-- Each top-level heading's anchor at its body index: a level-one section's its `sectionAnchors`
-one, a deeper heading's claimed after every label's and every section's, so none of theirs moves. -/
+/-- Each top-level heading's anchor at its body index: a chapter's and a level-one section's its
+`sectionAnchors` one, a deeper heading's claimed after every label's and every section's, so none of theirs moves. -/
 public def headingAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
   let (sections, ledger) := sectionClaims body
   let mut taken := ledger
   let mut out := sections
   for h : i in [0:body.size] do
     if let .section level _ _ title := body[i] then
-      if level != .title && level != .h2 then
+      if level != .title && level != .h1 && level != .h2 then
         let base := if (slug title).isEmpty then "section" else slug title
         let (id, clash, next) := taken.claim base (firstPageText title)
         taken := next
