@@ -3740,10 +3740,10 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     let j := starred (i + 1)
     unless named j do return none
     return cmdShape (skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2)
-  | some (.environment, .latex) | some (.environment, .native) =>
+  | some (.environment, fam@.latex) | some (.environment, fam@.native) =>
     let j := starred (i + 1)
     unless raws[j]? matches some (.group _ _) do return none
-    let some b1 := (if Definer.kind? d == some (.environment, .native) then groupFrom (j + 1) else
+    let some b1 := (if fam == .native then groupFrom (j + 1) else
         let b := skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2
         if raws[b]? matches some (.group _ _) then some b else none) | return none
     let b2 := skipSpaces raws (b1 + 1)
@@ -4079,7 +4079,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
           return some { raws := #[.ctrl (overlayNativeName m) p], long := false, prot := false, live := true }
         return none
     | _, _ => return none
-  if r.defines == .command && r.family == .latex && !r.robust then
+  if r.defines == .command && r.family == .latex && !r.wrapper then
     let j0 := skipSpaces raws (i + 1)
     let star := raws[j0]? matches some (.word "*" _)
     let j := if star then skipSpaces raws (j0 + 1) else j0
@@ -10404,15 +10404,15 @@ private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (st
 /-- Named arms after the dispatcher's state-dependent guards. -/
 private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
-  match Definer.kind? name with
-  | some (.command, .latex) | some (.command, .xparse) => return ← commandDefinerArm name pos raws start
-  | some (.command, .amsmath) => return ← operatorArm name pos raws start
-  | some (.command, .tex) => return ← texDefinerArm name pos raws start
-  | some (.environment, .latex) =>
-    if !Definer.is name .environment .latex .provide then return ← latexEnvArm name pos raws start
-  | some (.environment, .native) => return ← nativeEnvArm name pos raws start
-  | some (.environment, .environ) => return ← environArm name pos raws start
-  | _ => pure ()
+  if let some r := Definer.row? name then
+    match r.defines, r.family with
+    | .command, .latex | .command, .xparse => return ← commandDefinerArm name pos raws start
+    | .command, .amsmath => return ← operatorArm name pos raws start
+    | .command, .tex => return ← texDefinerArm name pos raws start
+    | .environment, .latex => if r.mode != .provide then return ← latexEnvArm name pos raws start
+    | .environment, .native => return ← nativeEnvArm name pos raws start
+    | .environment, .environ => return ← environArm name pos raws start
+    | _, _ => pure ()
   match name with
   | "documentclass" =>
     let (opt, j) := takeOpt raws start

@@ -24,7 +24,7 @@ public inductive Mode where
   deriving @[expose] BEq, DecidableEq, Repr
 
 /-- One definer, and whether it expands its body where it stands, assigns globally, and defines a
-robust command, whose meaning is a wrapper around its body. -/
+command whose meaning is a wrapper around its body, as LaTeX's robust commands are. -/
 public structure Row where
   name : String
   defines : Defines
@@ -32,7 +32,7 @@ public structure Row where
   mode : Mode
   expands : Bool
   global : Bool
-  robust : Bool
+  wrapper : Bool
   deriving Repr
 
 /-- A definer that keeps its body as written, assigns locally and defines the body itself. -/
@@ -47,7 +47,7 @@ public structure Row where
    row "let" .command .letting .declare,
    row "newcommand" .command .latex .new, row "renewcommand" .command .latex .renew,
    row "providecommand" .command .latex .provide,
-   { row "DeclareRobustCommand" .command .latex .declare with robust := true },
+   { row "DeclareRobustCommand" .command .latex .declare with wrapper := true },
    row "NewDocumentCommand" .command .xparse .new,
    row "RenewDocumentCommand" .command .xparse .renew,
    row "ProvideDocumentCommand" .command .xparse .provide,
