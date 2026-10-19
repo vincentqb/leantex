@@ -1539,13 +1539,18 @@ public theorem smallcap_height_between (x c : Nat) (hc : 0 < c) (hx : x ≤ c) :
   unfold smallCapScaleCore smallCapScale
   omega
 
-/-- A word's letters as synthesised small caps set them: each letter's capitals where the face
-draws them all and none is a combining mark, else the letter, with how many each became. -/
+/-- A letter as synthesised small caps set it: its capitals where a face draws them all and none is
+a combining mark, else the letter. -/
+public def smallCapForm (covers : Char → Bool) (c : Char) : Array Char :=
+  let up := CaseFold.upperChar c
+  if up.all fun u => covers u && !(0x300 ≤ u.toNat && u.toNat < 0x370) then up else #[c]
+
+/-- A word's letters as synthesised small caps set them (`smallCapForm`), with how many each
+became. -/
 public def smallCapLetters (covers : Char → Bool) (chars : Array Char) : Array Char × Array Nat :=
-  chars.foldl (init := (#[], #[])) fun (out, counts) c =>
-    let up := CaseFold.upperChar c
-    let up := if up.all fun u => covers u && !(0x300 ≤ u.toNat && u.toNat < 0x370) then up else #[c]
-    (out ++ up, counts.push up.size)
+  chars.foldl (init := (#[], #[])) fun acc c =>
+    let up := smallCapForm covers c
+    (acc.1 ++ up, acc.2.push up.size)
 
 /-- The synthesised uniform small-caps form of one word: every
 letter in its capital form (`smallCapLetters`), the whole word at the face's scale. -/
@@ -1560,6 +1565,59 @@ public def smallCapSynth (scale : Nat) (covers : Char → Bool) (sty : TextStyle
 /-- Each entry repeated as many times as its letter became characters. -/
 def spreadBy {α : Type} (counts : Array Nat) (xs : Array α) : Array α :=
   (counts.zip xs).foldl (init := #[]) fun out (k, x) => (List.replicate k x).foldl Array.push out
+
+/-- A word's letters keep one count each, and the counts sum to the characters they became. -/
+public theorem smallCapLetters_sizes (covers : Char → Bool) (chars : Array Char) :
+    (smallCapLetters covers chars).2.size = chars.size ∧
+      (smallCapLetters covers chars).1.size = (smallCapLetters covers chars).2.foldl (· + ·) 0 := by
+  unfold smallCapLetters
+  rw [← Array.foldl_toList]
+  suffices h : ∀ (l : List Char) (acc : Array Char × Array Nat),
+      acc.1.size = acc.2.foldl (· + ·) 0 →
+      (l.foldl (fun acc c => (acc.1 ++ smallCapForm covers c,
+          acc.2.push (smallCapForm covers c).size)) acc).2.size = acc.2.size + l.length ∧
+        (l.foldl (fun acc c => (acc.1 ++ smallCapForm covers c,
+          acc.2.push (smallCapForm covers c).size)) acc).1.size =
+        (l.foldl (fun acc c => (acc.1 ++ smallCapForm covers c,
+          acc.2.push (smallCapForm covers c).size)) acc).2.foldl (· + ·) 0 by
+    simpa using h chars.toList (#[], #[]) rfl
+  intro l
+  induction l with
+  | nil => intro acc h; simpa using h
+  | cons c rest ih =>
+    intro acc h
+    have := ih (acc.1 ++ smallCapForm covers c, acc.2.push (smallCapForm covers c).size)
+      (by simp [h])
+    simp only [List.foldl_cons, List.length_cons, Array.size_push] at this ⊢
+    exact ⟨by omega, this.2⟩
+
+private theorem foldl_push_size {α : Type} (l : List α) (out : Array α) :
+    (l.foldl Array.push out).size = out.size + l.length := by
+  induction l generalizing out with
+  | nil => simp
+  | cons x rest _ => simp
+
+/-- Entries spread by a word's counts number its characters, so each character keeps its owner. -/
+theorem spreadBy_size {α : Type} (counts : Array Nat) (xs : Array α) (h : xs.size = counts.size) :
+    (spreadBy counts xs).size = counts.foldl (· + ·) 0 := by
+  unfold spreadBy
+  rw [← Array.foldl_toList, ← Array.foldl_toList, Array.toList_zip]
+  have hl : xs.toList.length = counts.toList.length := by simpa using h
+  suffices g : ∀ (ks : List Nat) (ys : List α) (out : Array α) (n : Nat), ys.length = ks.length →
+      out.size = n →
+      ((ks.zip ys).foldl (fun out (p : Nat × α) =>
+        (List.replicate p.1 p.2).foldl Array.push out) out).size = ks.foldl (· + ·) n from
+    g _ _ _ 0 hl rfl
+  intro ks
+  induction ks with
+  | nil => intro ys out n _ h; simpa using h
+  | cons k rest ih =>
+    intro ys out n hlen h
+    cases ys with
+    | nil => simp at hlen
+    | cons y ys =>
+      simp only [List.zip_cons_cons, List.foldl_cons]
+      exact ih ys _ _ (by simpa using hlen) (by rw [foldl_push_size, List.length_replicate, h])
 
 private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
     (attr : Attribution) : FlattenSt :=
@@ -2878,13 +2936,14 @@ private structure ScalarAcc where
   /-- The locale whose furniture words the census counts as shipped text. -/
   locale : Locale := Locale.en
 
-/-- The plain text of a run and its formula and icon scalars. -/
+/-- The plain text of a run, in capitals too where small caps set some of it, and its formula and
+icon scalars. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
   let (icons, math) := leafScalars #[] out.math xs
-  { out with
-    texts := (out.texts.push (Ir.plainText xs)).push
-      (String.ofList icons.toList)
-    math }
+  let text := Ir.plainText xs
+  let texts := (out.texts.push text).push (String.ofList icons.toList)
+  let caps := Ir.foldInlines (fun acc x => acc || x matches .styled .smallcaps _) false xs
+  { out with texts := if caps then texts.push (CaseFold.upper text) else texts, math }
 
 mutual
 
@@ -4523,9 +4582,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
     let (sty, chars, owners, origins, anchors) :=
       if sty.smallcaps && !useGsub then
         let (sty, chars, counts) :=
-          smallCapSynth (smallCapScaleFor font) (fun c => (font.gid c).isSome) sty chars
+          smallCapSynth (smallCapScaleFor font)
+            (fun c => (font.gid c).isSome || (fs.fallbackFor c).isSome) sty chars
         (sty, chars, spreadBy counts owners, spreadBy counts origins,
-          anchors.map fun (name, k) => (name, (counts.extract 0 k).foldl (· + ·) 0))
+          anchors.map fun (name, k) => (name, counts.foldl (· + ·) 0 0 k))
       else (sty, chars, owners, origins, anchors)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs

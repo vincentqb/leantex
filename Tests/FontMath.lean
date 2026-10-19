@@ -413,6 +413,17 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
       Layout.smallCapLetters (fun _ => true) #['ß', 'ǰ', 'a'] ==
         (#['S', 'S', 'ǰ', 'A'], #[2, 1, 1]) &&
       Layout.smallCapLetters (· != 'É') #['é'] == (#['é'], #[1]))
+  let fira ← load "FiraSans-Regular.otf"
+  let withFallback : Font.FontSet := { set sans with fonts := #[sans, fira], fallback := #[('Ƒ', 1)] }
+  let runsOf (fs : Font.FontSet) (src : String) : Array (Nat × Array Nat) :=
+    (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
+      (·.segs.filterMap fun s =>
+        match s with
+        | .run idx _ _ _ glyphs _ _ _ _ _ _ => some (idx, glyphs.map (·.1))
+        | _ => none)
+  t "synthesised small caps set a capital the face lacks from the fallback face, else keep the letter"
+    ((runsOf withFallback "{\\scshape ƒ}").any (· == (1, (fira.gid 'Ƒ').toArray)) &&
+      (runsOf (set sans) "{\\scshape ƒ}") == #[(0, (sans.gid 'ƒ').toArray)])
   let (scDoc, scDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "{\\scshape NaCl}\\end{document}")
   t "small caps html source clean" scDs.isEmpty
