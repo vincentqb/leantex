@@ -92,7 +92,7 @@ def batchChecks (ref : IO.Ref (List String)) : IO Unit := do
     let _ ← IO.ofExcept owner.get
     let _ ← IO.ofExcept waiter.get
     if (← runs.get) != 2 then rejoined := rejoined + 1
-  check ref s!"batch: a waiter past an attempt with no verdict asks anew ({rejoined} of 300 rejoined)"
+  check ref s!"batch: a waiter past an attempt with no verdict asks anew ({rejoined}/300 rejoined)"
     (rejoined == 0)
 
 end Tests

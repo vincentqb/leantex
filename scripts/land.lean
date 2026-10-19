@@ -3015,7 +3015,8 @@ initialize waitOutlasted : IO.Ref Bool ← IO.mkRef false
 `release-<name>` appears there, `patienceMs` at most. -/
 def holdGate (s : Scratch) (name : String) : IO String := do
   writeExe s!"{s.root}/hold-{name}.sh" s!"#!/bin/sh\ntouch {s.root}/held-{name}\ni=0\n\
-while [ ! -e {s.root}/release-{name} ] && [ $i -lt {patienceMs / 100} ]; do sleep 0.1; i=$((i+1)); done\n"
+while [ ! -e {s.root}/release-{name} ] && [ $i -lt {patienceMs / 100} ]; do sleep 0.1; \
+i=$((i+1)); done\n"
   return s!"hold={s.root}/hold-{name}.sh"
 
 def release (s : Scratch) (name : String) : IO Unit :=
@@ -3034,7 +3035,8 @@ def awaitRun (t : Pending) : IO (Nat × String) := do
   | .error ex => pure (255, toString ex)
 
 /-- A retry loop as an agent runs one: `land <name>` again after `pauseMs` while it is
-refused for the lock, for `patienceMs` of pauses at most, past which the scenario is inconclusive. -/
+refused for the lock, for `patienceMs` of pauses at most, past which the scenario is
+inconclusive. -/
 def landRetrying (self repo name gates : String) (pauseMs : UInt32) : IO Pending :=
   IO.asTask (prio := .dedicated) do
     let mut last := (255, "")
@@ -3048,6 +3050,8 @@ def landRetrying (self repo name gates : String) (pauseMs : UInt32) : IO Pending
 /-- Poll for `p`, `patienceMs` at most, a wait that outlasts it marking the scenario inconclusive;
 whether it came to hold. -/
 def awaitTrue (p : IO Bool) : IO Bool := do
+  -- A scenario a wait already left inconclusive waits no more.
+  if ← waitOutlasted.get then return ← p
   for _ in [0:patienceMs / 50] do
     if ← p then return true
     IO.sleep 50
@@ -3057,9 +3061,7 @@ def awaitTrue (p : IO Bool) : IO Bool := do
 /-- Poll for `p` until it holds or every run of `runs` has ended, whose ends bound the wait;
 whether it came to hold. -/
 def awaitOrEnded (runs : List Pending) (p : IO Bool) : IO Bool := do
-  while !(← runs.allM fun t => (IO.hasFinished t : BaseIO Bool)) do
-    if ← p then return true
-    IO.sleep 50
+  let _ ← awaitTrue do return (← p) || (← runs.allM fun t => (IO.hasFinished t : BaseIO Bool))
   p
 
 def queueOf (s : Scratch) : IO (List Waiter) := readQueueAt s!"{s.repo}/.git"
@@ -3075,6 +3077,7 @@ def awaitHead (s : Scratch) (name : String) : IO Bool := awaitTrue do
 
 /-- Wait until the waiter `name` has asked `n` more times, by the beats its run writes. -/
 def awaitBeats (s : Scratch) (name : String) (n : Nat) : IO Bool := do
+  if ← waitOutlasted.get then return false
   let mut seen : Option Nat := none
   let mut count := 0
   for _ in [0:patienceMs / 50] do
@@ -3091,6 +3094,7 @@ def awaitBeats (s : Scratch) (name : String) (n : Nat) : IO Bool := do
 /-- Wait until a file written in the scratch root carries a later whole second than `path`, so
 what is written after reads as newer than it. -/
 def awaitLaterSecond (s : Scratch) (path : String) : IO Bool := do
+  if ← waitOutlasted.get then return false
   let t0 := (← System.FilePath.metadata path).modified.sec
   let probe := s!"{s.root}/clock-probe"
   for _ in [0:patienceMs / 50] do
@@ -3260,7 +3264,8 @@ took-ms-after-holder-exit={ms} gated={gated} waiter={cw}" }
 most, and passes as `body` did. -/
 def trainGate (s : Scratch) (label : String) (body : String := "true") : IO String := do
   writeExe s!"{s.root}/{label}.sh" s!"#!/bin/sh\necho run >> {s.root}/gate-runs\n({body}); st=$?\n\
-touch {s.root}/held-{label}\ni=0\nwhile [ ! -e {s.root}/release-{label} ] && [ $i -lt {patienceMs / 100} ]; do \
+touch {s.root}/held-{label}\ni=0\nwhile [ ! -e {s.root}/release-{label} ] && \
+[ $i -lt {patienceMs / 100} ]; do \
 sleep 0.1; i=$((i+1)); done\nrm -f {s.root}/held-{label} {s.root}/release-{label}\nexit $st\n"
   return s!"{label}={s.root}/{label}.sh"
 
@@ -4097,6 +4102,7 @@ def scenarioPreQueueFenced (self root : String) : IO Outcome := do
         lock.unlock
         return some turned
       IO.sleep 2
+    waitOutlasted.set true
     return none
   release s "holder"
   let gated ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-waiter")
@@ -4128,11 +4134,7 @@ def scenarioQueueStoppedHead (self root : String) : IO Outcome := do
       release s "holder"
       let _ ← awaitRun th
       -- Thirty seconds of missed beats pass before the second's gate starts.
-      let mut went := false
-      for _ in [0:patienceMs / 100] do
-        if ← System.FilePath.pathExists s!"{s.root}/held-second" then went := true; break
-        IO.sleep 100
-      pure went
+      awaitTrue (System.FilePath.pathExists s!"{s.root}/held-second")
     finally
       if let some pid := stopped then
         let _ ← hrun "kill" #["-CONT", toString pid] none
@@ -4232,6 +4234,7 @@ def scenarioHandOn (self root : String) : IO Outcome := do
         lock.unlock
         return some turned
       IO.sleep 2
+    waitOutlasted.set true
     return none
   release s "holder"
   let (ch, _) ← awaitRun th
@@ -4264,21 +4267,14 @@ def scenarioStoppedUnfenced (self root : String) : IO Outcome := do
       release s "holder"
       let _ ← awaitRun th
       let lock ← IO.FS.Handle.mk s!"{s.repo}/.git/land/landing.lock" .append
-      let mut won := false
-      for _ in [0:patienceMs / 100] do
+      let won ← awaitTrue do
         if ← lock.tryLock then
           lock.unlock
-          won := true
-          break
-        IO.sleep 100
+          return true
+        return false
       let ts ← landAsync self s.repo #["second"] "t=true"
       -- Thirty seconds of missed beats pass before the later run lands.
-      let mut passed := false
-      for _ in [0:patienceMs / 100] do
-        if (← mainSubjects s.repo).contains "Add second" then
-          passed := true
-          break
-        IO.sleep 100
+      let passed ← awaitTrue do return (← mainSubjects s.repo).contains "Add second"
       pure (won, ts, passed)
     finally
       if let some pid := stopped then
@@ -4326,12 +4322,7 @@ def scenarioStoppedBeforeOld (self root : String) : IO Outcome := do
       release s "holder"
       let _ ← awaitRun th
       -- Thirty seconds of missed beats pass before the later run lands.
-      let mut passed := false
-      for _ in [0:patienceMs / 100] do
-        if (← mainSubjects s.repo).contains "Add second" then
-          passed := true
-          break
-        IO.sleep 100
+      let passed ← awaitTrue do return (← mainSubjects s.repo).contains "Add second"
       pure (passed, ts)
     finally
       if let some pid := stopped then
@@ -4716,7 +4707,8 @@ def scratchSelftest : IO UInt32 := do
       catch ex => pure { label := key, ok := false, detail := toString ex }
     -- A wait that outlasted its patience leaves the scenario inconclusive, never passed.
     let o := if ← waitOutlasted.get then
-        { o with ok := false, detail := s!"inconclusive: a wait outlasted {patienceMs / 60000} minutes; {o.detail}" }
+        { o with ok := false
+                 detail := s!"inconclusive: a wait outlasted {patienceMs / 60000} minutes; {o.detail}" }
       else o
     outcomes := outcomes.push o
   let mut bad := 0
