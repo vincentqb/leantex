@@ -808,6 +808,73 @@ mutual
 
 end
 
+mutual
+
+/-- `rawSrc` onto an accumulator, in time linear in the source it spells. -/
+public def rawSrcOnto (raws : Array Raw) : String :=
+  (rawSrcOntoList "" raws.toList).trimAscii.toString
+
+public def rawSrcOntoList (acc : String) (rs : List Raw) : String :=
+  match rs with
+  | [] => acc
+  | r :: rest => rawSrcOntoList (acc ++ rawSrcOneOnto r) rest
+
+public def rawSrcOneOnto (r : Raw) : String :=
+  match r with
+  | .word s _ => s
+  | .space => " "
+  | .par _ => " "
+  | .sym c _ => String.ofList [c]
+  | .ctrl n _ =>
+    if n.length == 1 && !Lex.nameChar n.front && n != " " then "\\" ++ n else "\\" ++ n ++ " "
+  | .group body _ =>
+    "{" ++ rawSrcOnto body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
+  | .math d body _ =>
+    let inner := rawSrcOnto body
+    if d then s!"\\[{inner}\\]" else s!"${inner}$"
+  | .env n body _ =>
+    if n == scopeEnv then
+      "{" ++ rawSrcOnto body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
+    else s!"\\begin\{{n}}" ++ rawSrcOnto body ++ s!"\\end\{{n}}"
+  | .verb env v p => rawSrcOne (.verb env v p)
+
+end
+
+mutual
+
+private theorem rawSrcOnto_eq (raws : Array Raw) : rawSrc raws = rawSrcOnto raws := by
+  rw [rawSrc, rawSrcOnto, ← rawSrcOntoList_eq "" raws.toList, String.empty_append]
+
+private theorem rawSrcOntoList_eq (acc : String) (rs : List Raw) :
+    acc ++ rawSrcList rs = rawSrcOntoList acc rs := by
+  match rs with
+  | [] => simp [rawSrcList, rawSrcOntoList]
+  | r :: rest =>
+    rw [rawSrcList, rawSrcOntoList, ← rawSrcOntoList_eq _ rest, ← rawSrcOneOnto_eq r,
+      String.append_assoc]
+
+private theorem rawSrcOneOnto_eq (r : Raw) : rawSrcOne r = rawSrcOneOnto r := by
+  match r with
+  | .word s _ | .space | .par _ | .sym c _ | .ctrl n _ => rfl
+  | .group body _ => simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body]
+  | .math d body _ => simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body]
+  | .env n body _ => simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body]
+  | .verb env v _ => rfl
+
+end
+
+@[csimp] public theorem rawSrc_onto : @rawSrc = @rawSrcOnto := by
+  funext raws; exact rawSrcOnto_eq raws
+
+/-- `rawSrcList` as the compiled program runs it. -/
+public def rawSrcListOnto (rs : List Raw) : String := rawSrcOntoList "" rs
+
+@[csimp] public theorem rawSrcList_onto : @rawSrcList = @rawSrcListOnto := by
+  funext rs; rw [rawSrcListOnto, ← rawSrcOntoList_eq, String.empty_append]
+
+@[csimp] public theorem rawSrcOne_onto : @rawSrcOne = @rawSrcOneOnto := by
+  funext r; exact rawSrcOneOnto_eq r
+
 /-- A declaration's group as its reader reads it: one word as written, else its tokens' source. -/
 @[expose] public def declSrc (raws : Array Raw) : String :=
   match raws.toList with

@@ -242,16 +242,23 @@ def longNote (k : Nat) : String :=
   "Invented text.[^a]\n\n[^a]: first\n\n" ++ String.join ((List.range k).map fun i =>
     s!"    Paragraph {i} of the note, " ++ inventedWords i 6 ++ ".\n\n")
 
+/-- A picture of `k` invented lines, whose body the elaborator reads back as its source. -/
+def pictureLines (k : Nat) : String :=
+  "\\documentclass{article}\n\\begin{document}\n\\begin{tikzpicture}\n" ++
+    String.join ((List.range k).map fun i => s!"\\draw ({i % 50},0) -- (1,{i % 7});\n") ++
+    "\\end{tikzpicture}\n\\end{document}\n"
+
 /-- Elaboration over one long paragraph, one inside a macro's argument, macro uses across sections,
-overlay selections in a frame and one long note, and the macro uses' execution, whose phases may
-grow only linearly. -/
+overlay selections in a frame, one long note and one long picture, and the macro uses' execution,
+whose phases may grow only linearly. -/
 def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
   let rows : List (String × String × (Nat → String) × Nat) :=
     [("words in a paragraph", "para.tex", longParagraph, 8000),
      ("words in a macro's argument", "arg.tex", macroParagraph, 8000),
      ("sections of macro uses", "macros.tex", macroSections, 8),
      ("overlay selections in a frame", "frame.tex", overlayFrame, 1000),
-     ("paragraphs in a note", "note.md", longNote, 800)]
+     ("paragraphs in a note", "note.md", longNote, 800),
+     ("lines in a picture", "pic.tex", pictureLines, 4000)]
   for (label, file, doc, size) in rows do
     growthBound s!"elab, {4 * size} / {size} {label}"
       (← phaseRunMs "elab" n leantex s!"{size} {label}" file (doc size))
