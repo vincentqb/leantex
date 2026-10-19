@@ -1912,7 +1912,7 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .setTokens tk => out.push (.setTokens tk)
   | .pagebreak => out.push .pagebreak
   | .rule c nm th => out.push (.rule c nm th)
-  | .picture pic => out.push (.picture pic)
+  | .picture pic => out.push (.picture { pic with alt := resolveAlt p find pic.alt })
 termination_by structural b
 
 private def resolveBlocks (p : CitePunct) (find : Resolver)

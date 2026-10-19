@@ -1406,7 +1406,11 @@ hold no note. -/
 -- conserves: none — moves a nested note's text into the note holding it.
 private def unnest (content : Array Inline) : Array Inline :=
   Ir.mapInlines id content (finish := fun ys => ys.foldl (init := #[]) fun acc y => match y with
-    | .footnote _ inner => acc.push (.text " (") ++ inner |>.push (.text ")")
+    | .footnote _ inner =>
+      let spaced := match acc.back? with
+        | some (.text t) => t.endsWith " " || t.endsWith "\u00a0"
+        | _ => false
+      acc.push (.text (if spaced then "(" else " (")) ++ inner |>.push (.text ")")
     | y => acc.push y)
 
 /-- Footnotes numbered by the place of their first equal one among the body's, so a twin's label
@@ -1445,7 +1449,10 @@ private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
     unless written.contains label do
       written := written.insert label
       -- The reader sets a definition at its reference, so a note's citation keeps its place.
-      out := out ++ "\n" ++ paraText s!"[^{label}]: " "    " (inlineText content cites) ++ "\n"
+      -- An empty note's comment keeps the next definition from reading as its content.
+      let text := inlineText content cites
+      let text := if text.trimAscii.isEmpty then "<!-- -->" else text
+      out := out ++ "\n" ++ paraText s!"[^{label}]: " "    " text ++ "\n"
   return out
 
 /-- A YAML scalar the twin's metadata writes: plain where the reader reads it so, else quoted. -/

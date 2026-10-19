@@ -2124,7 +2124,8 @@ def reports : List Report := [
   { id := "R237", date := "2026-10-18"
     what := "a markdown footnote's definition inside a list item or a block quote stayed its text; Pandoc's inline note was text; a note in a citation's note was dropped, and a TeX footnote in a citation's note set its text inline in the note; a TeX figure whose caption cited filled its image's alternative with a mark for each citation"
     pins := [check% Tests.MdNoteEdges.noteChecks, check% Tests.MdNoteEdges.inlineNoteChecks,
-      check% Tests.MdNoteEdges.citeNoteChecks, check% Tests.MdNoteEdges.captionAltChecks,
+      check% Tests.MdNoteEdges.citeNoteChecks, check% Tests.MdNoteEdges.citeNoteEdgeChecks,
+      check% Tests.MdNoteEdges.captionAltChecks,
       thm% Ir.captionRuns_said]
     accept := ["the new checks fail built against the tree before this commit and pass on it",
       "pandoc 3.12.1 on invented probes: a definition in an item or a quote defines its note; an inline note's content, citations included, is a note, an abbreviation before it joined; a note in a citation's prefix or suffix stands inside the citation, which this tree sets after it, named",

@@ -517,7 +517,7 @@ a formula, or holds a control or a character the math model does not read" p])
   | .cite items p =>
     let cs := citeItemsRaws file dialect #[] #[] items.toList
     let g := citeGroupRaws file cs.1 p
-    let plain (xs : Array Inl) : Bool := xs.all fun x => x matches .text .. | .soft _
+    let plain (xs : Array Inl) : Bool := xs.all fun x => x matches .text .. | .soft _ | .note ..
     let styled := if items.all (fun it => plain it.pre && plain it.post) then #[] else
       #[routeDegraded file "cite-note"
         "a citation's prefix or suffix sets as plain text: its emphasis, code or links are dropped" p]

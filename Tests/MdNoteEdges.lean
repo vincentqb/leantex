@@ -273,6 +273,37 @@ Text \\citep[see\\footnote{An inner note.}][p.~3]{a} end.\n\\bibliographystyle{p
       ((pageText d).splitOn "An inner note.").length == 2 &&
       ds.any (·.subject == some "cite:note-footnote"))
 
+/-- A note anywhere in a citation's note, nested in emphasis or holding a citation or a note's
+reference, sets after the citation once, its text and the note's spaces as written. -/
+def citeNoteEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := worksMeta ++ "One [@a, *em^[in em]*] and [see^[x] @a, p. 3] two.\n\n\
+Three [see ^[cf. @b] @a] and [see ^[one] and ^[two] @b] end.\n"
+  let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
+  t s!"md cite note: notes in emphasis, holding a citation, or two, set after the citation \
+({repr (pageText d)}, {repr (ds.map (·.subject))})"
+    (hasStr (pageText d) "[see Ash, 2001]" && hasStr (pageText d) "[see and Birch, 2002]" &&
+      hasStr (pageText d) "cf. Birch [2002]" && (Ir.footnotesOf d.body).size == 5 &&
+      !hasStr (pageText d) "^[" && !hasStr (pageText d) "@" &&
+      ((ds.filter (·.subject == some "md:cite-note")).size == 1) && !ds.any (·.subject == some "md:cite-nested"))
+  let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A\\footnote{five} \\citep[\\emph{see\\footnote{x6}}][]{a} and \\citep[see \\footnote{x3} also][]{b} \
+B\\footnote{seven}.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n"
+  let (d, _) := bibBuild tex #[("works", worksBib)]
+  t s!"tex cite note: a footnote in emphasis in a note sets after the citation, the note's spaces \
+once ({repr (pageText d)})"
+    (hasStr (pageText d) "[see Ash, 2001]" && hasStr (pageText d) "[see also Birch, 2002]" &&
+      !hasStr (pageText d) "seex6" && (Ir.footnotesOf d.body).size == 4)
+  for src in [worksMeta ++ "Ref^[see [^r]] nine and ^[outer ^[inner] tail].\n\n[^r]: The ref.\n",
+      "Empty ^[] seven.\n\nSp ^[   ] eight and A[^d].\n\n[^d]: Top.\n\n    [^e]: Nested.\n\nThen B[^e].\n"] do
+    let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
+    let twin := MarkdownDoc.emit d
+    t s!"md inline note: a reference in one, one in another, an empty one and a definition in a note \
+read as Pandoc's, the twin a fixed point ({repr twin})"
+      (MarkdownDoc.emit (elabMd twin).1 == twin && !hasStr (pageText d) "[^" &&
+        !ds.any (·.subject == some "md:note-unused") &&
+        (hasStr (pageText d) "The ref." || hasStr (pageText d) "Nested."))
+
 /-- A TeX figure's caption citing fills its image's alternative with the caption's citations as the
 reference list sets them. -/
 def captionAltChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -288,5 +319,12 @@ Text.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n"
 \\includegraphics{chart.svg}\n\\caption{A plain chart.}\n\\end{figure}\n\\end{document}\n"
   t s!"tex alt: a caption citing nothing fills the alternative with its words ({imageNames d})"
     ((imageNames d).contains "A plain chart.")
+  let pic := "\\documentclass{article}\n\\usepackage{natbib}\n\\usepackage{tikz}\n\\begin{document}\n\
+\\begin{figure}\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n\
+\\caption{A drawing after \\citep{a}.}\n\\end{figure}\n\\bibliographystyle{plainnat}\n\
+\\bibliography{works}\n\\end{document}\n"
+  let (d, _) := bibBuild pic #[("works", worksBib)]
+  t s!"tex alt: a picture's caption alternative sets its citation as the list does ({imageNames d})"
+    ((imageNames d).contains "A drawing after [Ash, 2001].")
 
 end Tests.MdNoteEdges

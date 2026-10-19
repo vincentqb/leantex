@@ -2867,6 +2867,33 @@ private theorem skipBracketRun_ge (raws : Array Raw) (j : Nat) :
       omega
   next => omega
 
+mutual
+
+/-- The footnotes an inline node holds outside another footnote, onto `acc`, which the generic fold
+cannot tell apart from those inside one. -/
+-- conserves: none — it collects nodes.
+private def outerFootnotesOne (acc : Array Ir.Inline) (x : Ir.Inline) : Array Ir.Inline :=
+  match x with
+  | .footnote .. => acc.push x
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body =>
+    outerFootnotesList acc body.toList
+  | .altSteps _ firstPage otherPage =>
+    outerFootnotesList (outerFootnotesList acc firstPage.toList) otherPage.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
+  | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber
+  | .pageCount | .linebreak _ => acc
+
+private def outerFootnotesList (acc : Array Ir.Inline) : List Ir.Inline → Array Ir.Inline
+  | [] => acc
+  | x :: rest => outerFootnotesList (outerFootnotesOne acc x) rest
+
+end
+
+/-- Text with each run of spaces one space, as TeX reads a note its footnotes left. -/
+private def oneSpace (s : String) : String :=
+  (s.splitOn " ").filter (!·.isEmpty) |> " ".intercalate
+
 /-- One citation note, the `[...]` run at `j` elaborated by `el`, its footnotes apart, which the
 note's text cannot hold, with the index past it; `none` at `j` when no bracket opens there. -/
 private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤ w)
@@ -2881,10 +2908,10 @@ private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤
     let note ← el (raws.extract (j + 1) c)
       (Nat.lt_of_lt_of_le (extract_lt_slice c hjlt (Nat.lt_succ_self j)) hw)
     have hk := skipSpaces_ge raws (c + 1)
-    let notes := note.filter (· matches .footnote ..)
-    let text := Ir.plainText (note.filter (!· matches .footnote ..))
+    let notes := outerFootnotesList #[] note.toList
+    let text := Ir.plainText (Ir.mapInlines id note (finish := (·.filter (!· matches .footnote ..))))
     -- A footnote set apart takes the space beside it, which would stand twice.
-    return (some (if notes.isEmpty then text else text.trimAscii.toString), notes,
+    return (some (if notes.isEmpty then text else oneSpace text), notes,
       ⟨skipSpaces raws (c + 1), by omega⟩)
   | _ => return (none, #[], ⟨j, Nat.le_refl j⟩)
 
