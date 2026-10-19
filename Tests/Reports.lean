@@ -2233,7 +2233,7 @@ def reports : List Report := [
       "main's binary at 730c0b54 on the same probes: the title frame takes no number, the noframenumbering frame shows none, the plain frame shows its number and logo, and the section page's name stands at 99.9pt; the guards fail there",
       "the corpus built by main's binary at 730c0b54 and by this tree's: the seven decks whose maketitle runs under a theme other than moloch number every frame after the title one more, and the parity deck whose plain frame sets its title page counts it the same; every other artifact is visually identical, most byte-identical"]
     state := .guarded "730c0b54" .before .author },
-  { id := "R245", date := "2026-10-19"
+  { id := "R249", date := "2026-10-19"
     what := "a beamer footline template holding the frame counter alone, or after an hfill or a fill's hspace with spacing around it, stopped the build (E0111) with no artifact, beamer's frame number footline was not read, a footline set in the document body stopped the build the same way, and a deck declaring its footer left its title page bare"
     pins := [check% footlineTemplateChecks, check% frameCountChecks]
     accept := ["lualatex with beamer on invented probes: the counter alone stands at the footline's left, after an hfill or an hspace of fill at its right, the frame number template sets the counter over the total at the right, a counted title page under a declared footline shows 1, and every probe builds; this tree sets the counter in the native band's left or right slot, the frame number template's as the fraction, the title page's 1, and names a footline set in the body as a declaration the body ignores (W0340)",
