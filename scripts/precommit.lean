@@ -476,6 +476,11 @@ def backendFiles : List String := backendModules.map fun m => "/".intercalate (m
 def tempRootOutsideHost (l : String) : Bool :=
   ["withTempDir", "createTempDir", "withTempFile", "createTempFile"].any (bannedWord · l)
 
+/-- A temporary directory or file made without the scoped form that removes it on every path, as a
+code token. -/
+def tempByHand (l : String) : Bool :=
+  ["createTempDir", "createTempFile"].any (bannedWord · l)
+
 /-- `IO`, or a name that runs effects without it, as a code token. -/
 def ioInCore (l : String) : Bool :=
   ["IO", "BaseIO", "EIO", "unsafeBaseIO", "unsafeIO", "unsafeEIO"].any (bannedWord · l)
@@ -1217,6 +1222,11 @@ def gates : List Gate := [
     help := "  A test's child is held to a hang guard over its typical time, which `childRun`
   (Tests/Support.lean) takes, so a loaded host stalls it without failing the check.
   Fix: run it with `childRun <typical ms>`, the time a run takes here rounded up." },
+  { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
+    flag := tempByHand
+    what := fun f => s!"a temporary directory or file a test removes by hand in {f}"
+    help := "  A check that fails or throws before the removal leaves the directory behind.
+  Fix: make it with IO.FS.withTempDir (or withTempFile), which removes it on every path." },
   { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
     flag := clockBound
     what := fun f => s!"a check decided by a fixed wall-clock bound in {f}"
@@ -2577,6 +2587,12 @@ def selftest : IO UInt32 := do
     ("    Host.withScratch fun work => do", false),
     ("  -- IO.FS.withTempDir crashes here", false),
     ("  let note := \"withTempDir\"", false)]
+
+  expect "tempByHand" tempByHand [
+    ("  let dir ← IO.FS.createTempDir", true),
+    ("  let (h, path) ← IO.FS.createTempFile", true),
+    ("  IO.FS.withTempDir fun dir => do", false),
+    ("  -- createTempDir leaves it on a throw", false)]
 
   expect "clockBound" clockBound [
     ("    (sharedMs < 1500)", true),

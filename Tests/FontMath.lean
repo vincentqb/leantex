@@ -687,11 +687,11 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       (FontDb.pickCompanion shipped "Fira Sans").map (·.2.path))
   t "tableImage of a missing file is none"
     ((← FontDiscovery.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
-  let corrupt := System.FilePath.mk "/tmp" / "leantex-test-corrupt-fallback.otf"
-  IO.FS.writeBinFile corrupt ("OTTO".toUTF8 ++ ByteArray.mk (Array.replicate 40 0xff))
-  t "a corrupt candidate yields no cmap image"
-    ((← FontDiscovery.tableImage corrupt.toString (· == "cmap")).isNone)
-  IO.FS.removeFile corrupt
+  IO.FS.withTempDir fun dir => do
+    let corrupt := dir / "corrupt-fallback.otf"
+    IO.FS.writeBinFile corrupt ("OTTO".toUTF8 ++ ByteArray.mk (Array.replicate 40 0xff))
+    t "a corrupt candidate yields no cmap image"
+      ((← FontDiscovery.tableImage corrupt.toString (· == "cmap")).isNone)
 
   let prefPicks ← FontDiscovery.fallbackPicksPreferring
     (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['∀']
@@ -736,10 +736,10 @@ def defaultFontChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "extraDirs covers ~/Library/Fonts"
       ((← FontDiscovery.extraDirs).contains (home ++ "/Library/Fonts"))
   -- A .ttc fed to `probe` directly classifies as unusable, never aborts.
-  let ttc := System.FilePath.mk "/tmp" / "leantex-test-synthetic.ttc"
-  IO.FS.writeBinFile ttc ("ttcf".toUTF8 ++ ByteArray.mk (Array.replicate 64 0x7f))
-  t "probe rejects a ttc without aborting" ((← FontDiscovery.probe ttc.toString).isNone)
-  IO.FS.removeFile ttc
+  IO.FS.withTempDir fun dir => do
+    let ttc := dir / "synthetic.ttc"
+    IO.FS.writeBinFile ttc ("ttcf".toUTF8 ++ ByteArray.mk (Array.replicate 64 0x7f))
+    t "probe rejects a ttc without aborting" ((← FontDiscovery.probe ttc.toString).isNone)
 
 /-- The shipped fonts make the suite hermetic: sorted scan order, a file name denoting its face's
 family, `Path=` carried into `dir`, and the sans as the default family. -/
@@ -818,11 +818,10 @@ def probeCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     | failures ref "probe cache: the shipped Source Code Pro cannot be stat'd"; return
   let stale := key ++ "\tOld Classifier\tRegular\tfalse\tfalse\tfalse\t400\n"
   let scanWith (file : String) : IO (Option FontDb.Face) := do
-    let dir ← IO.FS.createTempDir
-    IO.FS.writeFile (dir / file) stale
-    let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
-    IO.FS.removeDirAll dir
-    return faces.find? (·.path == path)
+    IO.FS.withTempDir fun dir => do
+      IO.FS.writeFile (dir / file) stale
+      let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
+      return faces.find? (·.path == path)
   let legacy ← scanWith "fontdb.tsv"
   t "probe cache: a row an earlier classifier wrote is not read"
     ((legacy.map fun f => (f.family, f.fixedPitch)) == some ("Source Code Pro", true))
@@ -852,11 +851,10 @@ def listingCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let md ← (System.FilePath.mk testFonts).metadata
   let empty := s!"{testFonts}\t{md.modified.sec}.{md.modified.nsec}\n"
   let scanWith (file : String) : IO Nat := do
-    let dir ← IO.FS.createTempDir
-    IO.FS.writeFile (dir / file) empty
-    let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
-    IO.FS.removeDirAll dir
-    return faces.size
+    IO.FS.withTempDir fun dir => do
+      IO.FS.writeFile (dir / file) empty
+      let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
+      return faces.size
   let legacy ← scanWith "fontdb-dirs.tsv"
   t s!"listing cache: a listing an earlier walk wrote is not read ({legacy} faces)" (legacy ≥ 2)
   let live ← scanWith FontDiscovery.listingCacheName

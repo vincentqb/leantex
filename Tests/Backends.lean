@@ -2908,35 +2908,34 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
-    let dir ← IO.FS.createTempDir
-    IO.FS.createDirAll (dir / "fonts")
-    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
-      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    IO.FS.writeBinFile (dir / "probe.pdf") probe
-    let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
+    IO.FS.withTempDir fun dir => do
+      IO.FS.createDirAll (dir / "fonts")
+      IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+        (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+      IO.FS.writeBinFile (dir / "probe.pdf") probe
+      let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
 \\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
-    let body := "\\begin{document}\nA probe.\n\n\
+      let body := "\\begin{document}\nA probe.\n\n\
 \\includegraphics[width=50pt, alt={A copied page}]{probe.pdf}\n\\end{document}\n"
-    let run (name decl : String) : IO (UInt32 × String × Bool) := do
-      IO.FS.writeFile (dir / s!"{name}.tex") (pre ++ decl ++ body)
-      let outDir := dir / s!"out-{name}"
-      let r ← IO.Process.output {
-        cmd := ".lake/build/bin/leantex"
-        args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
-      return (r.exitCode, r.stdout ++ r.stderr, ← outDir.pathExists)
-    let (code, log, dirExists) ← run "control" ""
-    t s!"driver control builds the probe document: {log}" (code == 0 && dirExists)
-    t "driver control ships the copied unembedded face"
-      ((pdfCensusOf (← IO.FS.readBinFile (dir / "out-control" / "control.pdf"))).map
-        (·.fontsEmbedded) == .ok false)
-    let (code, log, dirExists) ← run "embed" "\\assert{ fonts.all_embedded }\n"
-    t s!"driver: fonts.all_embedded fails on the copied face (E0330): {log}"
-      (code != 0 && hasStr log "E0330" && hasStr log "fonts.all_embedded")
-    t "driver: the failing assertion wrote nothing, not even the -o directory" (!dirExists)
-    let (code, _, dirExists) ← run "both"
-      "\\output{ formats = pdf, html }\n\\assert{ pages == 99 }\n"
-    t "driver: pdf+html with a failing assertion writes nothing" (code != 0 && !dirExists)
-    IO.FS.removeDirAll dir
+      let run (name decl : String) : IO (UInt32 × String × Bool) := do
+        IO.FS.writeFile (dir / s!"{name}.tex") (pre ++ decl ++ body)
+        let outDir := dir / s!"out-{name}"
+        let r ← IO.Process.output {
+          cmd := ".lake/build/bin/leantex"
+          args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
+        return (r.exitCode, r.stdout ++ r.stderr, ← outDir.pathExists)
+      let (code, log, dirExists) ← run "control" ""
+      t s!"driver control builds the probe document: {log}" (code == 0 && dirExists)
+      t "driver control ships the copied unembedded face"
+        ((pdfCensusOf (← IO.FS.readBinFile (dir / "out-control" / "control.pdf"))).map
+          (·.fontsEmbedded) == .ok false)
+      let (code, log, dirExists) ← run "embed" "\\assert{ fonts.all_embedded }\n"
+      t s!"driver: fonts.all_embedded fails on the copied face (E0330): {log}"
+        (code != 0 && hasStr log "E0330" && hasStr log "fonts.all_embedded")
+      t "driver: the failing assertion wrote nothing, not even the -o directory" (!dirExists)
+      let (code, _, dirExists) ← run "both"
+        "\\output{ formats = pdf, html }\n\\assert{ pages == 99 }\n"
+      t "driver: pdf+html with a failing assertion writes nothing" (code != 0 && !dirExists)
 
 def contentOpsRed : Ir.Color := { r := 200, g := 30, b := 30 }
 def contentOpsGrey : Ir.Color := { r := 240, g := 240, b := 240 }
@@ -3185,65 +3184,64 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the contract checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
-    let dir ← IO.FS.createTempDir
-    IO.FS.createDirAll (dir / "fonts")
-    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
-      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    let pre (cls : String) := s!"\\documentclass\{{cls}}\n\
+    IO.FS.withTempDir fun dir => do
+      IO.FS.createDirAll (dir / "fonts")
+      IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+        (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+      let pre (cls : String) := s!"\\documentclass\{{cls}}\n\
 \\fonts\{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
-    let one := "\\begin{document}\nA probe.\n\\end{document}\n"
-    let three := "\\begin{document}\nA.\n\\pagebreak\nB.\n\\pagebreak\nC.\n\\end{document}\n"
-    let run (name cls decl body : String) : IO (UInt32 × String × System.FilePath) := do
-      IO.FS.writeFile (dir / s!"{name}.tex") (pre cls ++ decl ++ body)
-      let outDir := dir / s!"out-{name}"
-      let r ← IO.Process.output {
-        cmd := ".lake/build/bin/leantex"
-        args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
-      return (r.exitCode, r.stdout ++ r.stderr, outDir)
-    let count (log needle : String) : Nat := (log.splitOn needle).length - 1
-    let (code, log, _) ← run "alt-pdf" "article"
-      "\\output{ formats = pdf, alternatives = required }\n" one
-    t s!"driver: pdf + alternatives = required builds with one W0701: {log}"
-      (code == 0 && count log "[W0701]" == 1 && hasStr log "alternatives = required")
-    let (code, log, _) ← run "alt-html" "article"
-      "\\output{ formats = html, alternatives = required }\n" one
-    t "driver: html + alternatives = required builds with no W0701"
-      (code == 0 && count log "W0701" == 0)
-    let (code, log, _) ← run "alt-both" "article"
-      "\\output{ formats = pdf, html, alternatives = required }\n" one
-    t "driver: pdf+html + alternatives = required warns once, for the PDF"
-      (code == 0 && count log "[W0701]" == 1)
-    let (code, log, _) ← run "srgb-pdf" "article" "\\output{ formats = pdf, color = srgb }\n" one
-    t "driver: pdf + color = srgb builds with one W0701"
-      (code == 0 && count log "[W0701]" == 1 && hasStr log "color = srgb")
-    let (code, log, _) ← run "srgb-html" "article" "\\output{ formats = html, color = srgb }\n" one
-    t "driver: html + color = srgb builds with no W0701" (code == 0 && count log "W0701" == 0)
-    let (code, log, outDir) ← run "own" "article"
-      "\\output{ formats = html, css = own }\n\\assert{ fonts.all_embedded }\n" one
-    t s!"driver: css = own + fonts.all_embedded is E0330: {log}"
-      (code != 0 && hasStr log "E0330" && !(← outDir.pathExists))
-    let (code, log, outDir) ← run "optin" "article"
-      "\\output{ formats = html, css = own, fonts = embedded }\n\\assert{ fonts.all_embedded }\n" one
-    t s!"driver: css = own + fonts = embedded passes the assertion: {log}" (code == 0)
-    let optinHtml ← IO.FS.readFile (outDir / "optin.html")
-    t "driver: fonts = embedded publishes the font bytes inside the single page"
-      (hasStr optinHtml "src: url(\"data:font/" &&
-       (← outDir.readDir).map (·.fileName) == #["optin.html"])
-    let (code, _, outDir) ← run "optout" "article" "\\output{ formats = html, fonts = none }\n" one
-    t "driver: fonts = none with no css story ships no faces"
-      (code == 0 && !(← (outDir / "optout.fonts").pathExists))
-    let (code, log, _) ← run "three" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" three
-    t s!"driver: html-only pages == 3 holds on a three-page layout: {log}" (code == 0)
-    let (code, log, _) ← run "one" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" one
-    t "driver: html-only pages == 3 fails on one page with the layout's actual"
-      (code != 0 && hasStr log "E0330" && hasStr log "(actual: 1)")
-    let (code, log, _) ← run "resume" "resume" "\\output{ formats = html }\n" one
-    t s!"driver: an html-only résumé builds clean under its implied assertions: {log}" (code == 0)
-    let (code, log, outDir) ← run "md" "article" "\\output{ formats = md }\n\\assert{ fonts.all_embedded }\n" one
-    t s!"driver: md-only fonts.all_embedded fails loud (E0330): {log}"
-      (code != 0 && hasStr log "E0330" && hasStr log "no emitted artifact carries this measurement" &&
-       !(← outDir.pathExists))
-    IO.FS.removeDirAll dir
+      let one := "\\begin{document}\nA probe.\n\\end{document}\n"
+      let three := "\\begin{document}\nA.\n\\pagebreak\nB.\n\\pagebreak\nC.\n\\end{document}\n"
+      let run (name cls decl body : String) : IO (UInt32 × String × System.FilePath) := do
+        IO.FS.writeFile (dir / s!"{name}.tex") (pre cls ++ decl ++ body)
+        let outDir := dir / s!"out-{name}"
+        let r ← IO.Process.output {
+          cmd := ".lake/build/bin/leantex"
+          args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
+        return (r.exitCode, r.stdout ++ r.stderr, outDir)
+      let count (log needle : String) : Nat := (log.splitOn needle).length - 1
+      let (code, log, _) ← run "alt-pdf" "article"
+        "\\output{ formats = pdf, alternatives = required }\n" one
+      t s!"driver: pdf + alternatives = required builds with one W0701: {log}"
+        (code == 0 && count log "[W0701]" == 1 && hasStr log "alternatives = required")
+      let (code, log, _) ← run "alt-html" "article"
+        "\\output{ formats = html, alternatives = required }\n" one
+      t "driver: html + alternatives = required builds with no W0701"
+        (code == 0 && count log "W0701" == 0)
+      let (code, log, _) ← run "alt-both" "article"
+        "\\output{ formats = pdf, html, alternatives = required }\n" one
+      t "driver: pdf+html + alternatives = required warns once, for the PDF"
+        (code == 0 && count log "[W0701]" == 1)
+      let (code, log, _) ← run "srgb-pdf" "article" "\\output{ formats = pdf, color = srgb }\n" one
+      t "driver: pdf + color = srgb builds with one W0701"
+        (code == 0 && count log "[W0701]" == 1 && hasStr log "color = srgb")
+      let (code, log, _) ← run "srgb-html" "article" "\\output{ formats = html, color = srgb }\n" one
+      t "driver: html + color = srgb builds with no W0701" (code == 0 && count log "W0701" == 0)
+      let (code, log, outDir) ← run "own" "article"
+        "\\output{ formats = html, css = own }\n\\assert{ fonts.all_embedded }\n" one
+      t s!"driver: css = own + fonts.all_embedded is E0330: {log}"
+        (code != 0 && hasStr log "E0330" && !(← outDir.pathExists))
+      let (code, log, outDir) ← run "optin" "article"
+        "\\output{ formats = html, css = own, fonts = embedded }\n\\assert{ fonts.all_embedded }\n" one
+      t s!"driver: css = own + fonts = embedded passes the assertion: {log}" (code == 0)
+      let optinHtml ← IO.FS.readFile (outDir / "optin.html")
+      t "driver: fonts = embedded publishes the font bytes inside the single page"
+        (hasStr optinHtml "src: url(\"data:font/" &&
+         (← outDir.readDir).map (·.fileName) == #["optin.html"])
+      let (code, _, outDir) ← run "optout" "article" "\\output{ formats = html, fonts = none }\n" one
+      t "driver: fonts = none with no css story ships no faces"
+        (code == 0 && !(← (outDir / "optout.fonts").pathExists))
+      let (code, log, _) ← run "three" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" three
+      t s!"driver: html-only pages == 3 holds on a three-page layout: {log}" (code == 0)
+      let (code, log, _) ← run "one" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" one
+      t "driver: html-only pages == 3 fails on one page with the layout's actual"
+        (code != 0 && hasStr log "E0330" && hasStr log "(actual: 1)")
+      let (code, log, _) ← run "resume" "resume" "\\output{ formats = html }\n" one
+      t s!"driver: an html-only résumé builds clean under its implied assertions: {log}" (code == 0)
+      let (code, log, outDir) ← run "md" "article" "\\output{ formats = md }\n\\assert{ fonts.all_embedded }\n" one
+      t s!"driver: md-only fonts.all_embedded fails loud (E0330): {log}"
+        (code != 0 && hasStr log "E0330" && hasStr log "no emitted artifact carries this measurement" &&
+         !(← outDir.pathExists))
 
 theorem objTable_ids_set_eq (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
     (np nOut nElems nFigDict nFigForm : Nat) :
@@ -3772,45 +3770,44 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the profile checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
-    let dir ← IO.FS.createTempDir
-    IO.FS.createDirAll (dir / "fonts")
-    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
-      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    let pre := "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
-    let one := "\\begin{document}\nA probe.\n\\end{document}\n"
-    let run (name decl : String) : IO (UInt32 × String × System.FilePath) := do
-      IO.FS.writeFile (dir / s!"{name}.tex") (pre ++ decl ++ one)
-      let outDir := dir / s!"out-{name}"
-      let r ← IO.Process.output {
-        cmd := ".lake/build/bin/leantex"
-        args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
-      return (r.exitCode, r.stdout ++ r.stderr, outDir)
-    let (code, log, outDir) ← run "a4" "\\output{ formats = pdf, profiles = pdf/a-4 }\n"
-    t s!"driver: pdf/a-4 on a plain article is E0330 with the census facts as actual: {log}"
-      (code == 2 && hasStr log "E0330" && hasStr log "pdf.profile = pdf/a-4" &&
-       hasStr log "/Info dictionary present" && hasStr log "no output intent" &&
-       !(← outDir.pathExists))
-    let (code, log, outDir) ← run "z" "\\output{ formats = pdf, profiles = pdf/z }\n"
-    t s!"driver: pdf/z is E0321 naming the registered profiles: {log}"
-      (code != 0 && hasStr log "E0321" && hasStr log "pdf/a-4, pdf/ua-2, pdf/x-6" &&
-       !(← outDir.pathExists))
-    let (code, log, outDir) ← run "ua2" "\\output{ formats = pdf, profiles = pdf/ua-2 }\n"
-    t s!"driver: pdf/ua-2 fails honestly on language and title, the tree and the mark present: {log}"
-      (code == 2 && hasStr log "pdf.profile = pdf/ua-2" && !hasStr log "no structure tree" &&
-       !hasStr log "no MarkInfo" && hasStr log "no /Lang" && hasStr log "no title" &&
-       !(← outDir.pathExists))
-    let (code, log, outDir) ← run "html" "\\output{ formats = html, profiles = pdf/a-4 }\n"
-    t s!"driver: profiles with no PDF emitted fails loud: {log}"
-      (code == 2 && hasStr log "no emitted artifact carries this measurement" &&
-       !(← outDir.pathExists))
-    let (code, log, _) ← run "a4x6" "\\output{ formats = pdf, profiles = pdf/a-4, pdf/x-6 }\n"
-    t s!"driver: a-4 + x-6 fails both assertions on the intent conflict: {log}"
-      (code == 2 && hasStr log "pdf.profile = pdf/a-4" && hasStr log "pdf.profile = pdf/x-6" &&
-       hasStr log "different colour kinds")
-    let (code, log, outDir) ← run "none" "\\output{ formats = pdf }\n"
-    t s!"driver: no profile, no judgement, the file ships: {log}"
-      (code == 0 && (← (outDir / "none.pdf").pathExists))
-    IO.FS.removeDirAll dir
+    IO.FS.withTempDir fun dir => do
+      IO.FS.createDirAll (dir / "fonts")
+      IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+        (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+      let pre := "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
+      let one := "\\begin{document}\nA probe.\n\\end{document}\n"
+      let run (name decl : String) : IO (UInt32 × String × System.FilePath) := do
+        IO.FS.writeFile (dir / s!"{name}.tex") (pre ++ decl ++ one)
+        let outDir := dir / s!"out-{name}"
+        let r ← IO.Process.output {
+          cmd := ".lake/build/bin/leantex"
+          args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
+        return (r.exitCode, r.stdout ++ r.stderr, outDir)
+      let (code, log, outDir) ← run "a4" "\\output{ formats = pdf, profiles = pdf/a-4 }\n"
+      t s!"driver: pdf/a-4 on a plain article is E0330 with the census facts as actual: {log}"
+        (code == 2 && hasStr log "E0330" && hasStr log "pdf.profile = pdf/a-4" &&
+         hasStr log "/Info dictionary present" && hasStr log "no output intent" &&
+         !(← outDir.pathExists))
+      let (code, log, outDir) ← run "z" "\\output{ formats = pdf, profiles = pdf/z }\n"
+      t s!"driver: pdf/z is E0321 naming the registered profiles: {log}"
+        (code != 0 && hasStr log "E0321" && hasStr log "pdf/a-4, pdf/ua-2, pdf/x-6" &&
+         !(← outDir.pathExists))
+      let (code, log, outDir) ← run "ua2" "\\output{ formats = pdf, profiles = pdf/ua-2 }\n"
+      t s!"driver: pdf/ua-2 fails honestly on language and title, the tree and the mark present: {log}"
+        (code == 2 && hasStr log "pdf.profile = pdf/ua-2" && !hasStr log "no structure tree" &&
+         !hasStr log "no MarkInfo" && hasStr log "no /Lang" && hasStr log "no title" &&
+         !(← outDir.pathExists))
+      let (code, log, outDir) ← run "html" "\\output{ formats = html, profiles = pdf/a-4 }\n"
+      t s!"driver: profiles with no PDF emitted fails loud: {log}"
+        (code == 2 && hasStr log "no emitted artifact carries this measurement" &&
+         !(← outDir.pathExists))
+      let (code, log, _) ← run "a4x6" "\\output{ formats = pdf, profiles = pdf/a-4, pdf/x-6 }\n"
+      t s!"driver: a-4 + x-6 fails both assertions on the intent conflict: {log}"
+        (code == 2 && hasStr log "pdf.profile = pdf/a-4" && hasStr log "pdf.profile = pdf/x-6" &&
+         hasStr log "different colour kinds")
+      let (code, log, outDir) ← run "none" "\\output{ formats = pdf }\n"
+      t s!"driver: no profile, no judgement, the file ships: {log}"
+        (code == 0 && (← (outDir / "none.pdf").pathExists))
 
 /-- The `/MCID n` identifiers a decoded content stream opens, in stream order. -/
 def streamMcids (data : ByteArray) : List Nat :=
@@ -4061,60 +4058,59 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the asset checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
-    let dir ← IO.FS.createTempDir
-    IO.FS.createDirAll (dir / "fonts")
-    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
-      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    let rects ← IO.FS.readBinFile "testdata/corpus/rects.png"
-    IO.FS.writeBinFile (dir / "rects.png") rects
-    let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
+    IO.FS.withTempDir fun dir => do
+      IO.FS.createDirAll (dir / "fonts")
+      IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+        (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+      let rects ← IO.FS.readBinFile "testdata/corpus/rects.png"
+      IO.FS.writeBinFile (dir / "rects.png") rects
+      let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
 \\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\\output{ formats = html }\n"
-    let body := "\\begin{document}\nA box: \\includegraphics[alt={A box}]{rects.png}.\n\\end{document}\n"
-    IO.FS.writeFile (dir / "doc.tex") (pre ++ body)
-    IO.FS.createDirAll (dir / "out")
-    let buildPage := IO.Process.output {
-      cmd := ".lake/build/bin/leantex"
-      args := #[(dir / "doc.tex").toString, "-o", (dir / "out" / "x.html").toString] }
-    let readImage (phase : String) (expected : ByteArray) : IO (String × String) := do
-      let page ← IO.FS.readFile (dir / "out" / "x.html")
-      let imgs := page.splitOn "<img "
-      let tag := ((imgs.getD 1 "").splitOn ">").headD ""
-      let attr := ((" " ++ tag).splitOn " src=\"").getD 1 ""
-      let url := (attr.splitOn "\"").headD ""
-      let expectedUri ← htmlDataOracle "image/png" expected
-      t s!"driver: {phase}: the page embeds one raster byte for byte"
-        (imgs.length == 2 && url == expectedUri)
-      t s!"driver: {phase}: the output contains only the HTML file"
-        ((← (dir / "out").readDir).map (·.fileName) == #["x.html"])
-      return (page, url)
-    let r ← buildPage
-    t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
-    let (_, url) ← readImage "first build" rects
-    let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
-    t "driver: the replacement raster has different source bytes" (alpha != rects)
-    IO.FS.writeBinFile (dir / "rects.png") alpha
-    let changed ← buildPage
-    t s!"driver: the same document and output rebuild after replacing the raster: \
+      let body := "\\begin{document}\nA box: \\includegraphics[alt={A box}]{rects.png}.\n\\end{document}\n"
+      IO.FS.writeFile (dir / "doc.tex") (pre ++ body)
+      IO.FS.createDirAll (dir / "out")
+      let buildPage := IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[(dir / "doc.tex").toString, "-o", (dir / "out" / "x.html").toString] }
+      let readImage (phase : String) (expected : ByteArray) : IO (String × String) := do
+        let page ← IO.FS.readFile (dir / "out" / "x.html")
+        let imgs := page.splitOn "<img "
+        let tag := ((imgs.getD 1 "").splitOn ">").headD ""
+        let attr := ((" " ++ tag).splitOn " src=\"").getD 1 ""
+        let url := (attr.splitOn "\"").headD ""
+        let expectedUri ← htmlDataOracle "image/png" expected
+        t s!"driver: {phase}: the page embeds one raster byte for byte"
+          (imgs.length == 2 && url == expectedUri)
+        t s!"driver: {phase}: the output contains only the HTML file"
+          ((← (dir / "out").readDir).map (·.fileName) == #["x.html"])
+        return (page, url)
+      let r ← buildPage
+      t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
+      let (_, url) ← readImage "first build" rects
+      let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
+      t "driver: the replacement raster has different source bytes" (alpha != rects)
+      IO.FS.writeBinFile (dir / "rects.png") alpha
+      let changed ← buildPage
+      t s!"driver: the same document and output rebuild after replacing the raster: \
 {changed.stdout}{changed.stderr}" (changed.exitCode == 0)
-    let (changedPage, changedUrl) ← readImage "replaced raster" alpha
-    t "driver: replacing bytes at the same source path changes the page's image URL"
-      (url != changedUrl)
-    let unchanged ← buildPage
-    t s!"driver: the same document and output rebuild with unchanged raster bytes: \
+      let (changedPage, changedUrl) ← readImage "replaced raster" alpha
+      t "driver: replacing bytes at the same source path changes the page's image URL"
+        (url != changedUrl)
+      let unchanged ← buildPage
+      t s!"driver: the same document and output rebuild with unchanged raster bytes: \
 {unchanged.stdout}{unchanged.stderr}" (unchanged.exitCode == 0)
-    let (unchangedPage, unchangedUrl) ← readImage "unchanged raster" alpha
-    t "driver: unchanged raster bytes preserve the page and its image URL"
-      (unchangedPage == changedPage && unchangedUrl == changedUrl)
-    IO.FS.writeFile (dir / "fail.tex") (pre ++ "\\assert{ pages == 99 }\n" ++ body)
-    let r2 ← IO.Process.output {
-      cmd := ".lake/build/bin/leantex"
-      args := #[(dir / "fail.tex").toString, "-o", (dir / "out2").toString ++ "/"] }
-    let assetDirs := (← System.FilePath.walkDir dir).filter fun p =>
-      p.toString.endsWith ".assets"
-    t "driver: a failing assertion publishes no page, no -o directory, and no .assets/ anywhere"
-      (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
-       assetDirs.isEmpty)
-    IO.FS.removeDirAll dir
+      let (unchangedPage, unchangedUrl) ← readImage "unchanged raster" alpha
+      t "driver: unchanged raster bytes preserve the page and its image URL"
+        (unchangedPage == changedPage && unchangedUrl == changedUrl)
+      IO.FS.writeFile (dir / "fail.tex") (pre ++ "\\assert{ pages == 99 }\n" ++ body)
+      let r2 ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[(dir / "fail.tex").toString, "-o", (dir / "out2").toString ++ "/"] }
+      let assetDirs := (← System.FilePath.walkDir dir).filter fun p =>
+        p.toString.endsWith ".assets"
+      t "driver: a failing assertion publishes no page, no -o directory, and no .assets/ anywhere"
+        (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
+         assetDirs.isEmpty)
 
 /-- Assigned anchor ids are unique and numbered by the documented ladder. -/
 def anchorIdChecks (ref : IO.Ref (List String)) : IO Unit := do

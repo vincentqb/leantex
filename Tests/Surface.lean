@@ -7632,36 +7632,35 @@ def toolProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let answering (answer : PicCache.Tool) : IO PicCache.Tool := do
     spawns.modify (· + 1)
     return answer
-  let dir ← IO.FS.createTempDir
-  let memo := dir / "tool.ver"
-  let stampA := "/opt/invented/bin/tool\t7634408\t1777998731\t0"
-  let stampB := "/opt/invented/bin/tool\t9001234\t1788000000\t0"
-  let one := "This is InventedTeX, Version 1.0"
-  let two := "This is InventedTeX, Version 2.0"
-  let cold ← ToolProbe.identify memo stampA (answering (.present one))
-  t "the first build asks the tool who it is"
-    (cold == .present one && (← spawns.get) == 1)
-  let warm ← ToolProbe.identify memo stampA (answering (.present one))
-  t "a build whose tool has not moved asks nothing"
-    (warm == .present one && (← spawns.get) == 1)
-  let warm2 ← ToolProbe.identify memo stampA (answering (.present two))
-  t "and keeps answering from the memo, not from the tool"
-    (warm2 == .present one && (← spawns.get) == 1)
-  let upgraded ← ToolProbe.identify memo stampB (answering (.present two))
-  t "a tool whose witness moved is asked again"
-    (upgraded == .present two && (← spawns.get) == 2)
-  let after ← ToolProbe.identify memo stampB (answering (.present one))
-  t "the new version is what the next build remembers"
-    (after == .present two && (← spawns.get) == 2)
-  -- A tool that cannot name itself records nothing, so installing it takes effect at once.
-  let missing := dir / "absent.ver"
-  let gone ← ToolProbe.identify missing "" (answering (.absent "'--version' exited 127"))
-  t "a tool that is not there is not remembered as one that is"
-    (gone == .absent "'--version' exited 127" && !(← missing.pathExists))
-  let gone2 ← ToolProbe.identify missing "" (answering (.absent "'--version' exited 127"))
-  t "so the next build asks again, and installing it is enough"
-    (gone2 == .absent "'--version' exited 127" && (← spawns.get) == 4)
-  IO.FS.removeDirAll dir
+  IO.FS.withTempDir fun dir => do
+    let memo := dir / "tool.ver"
+    let stampA := "/opt/invented/bin/tool\t7634408\t1777998731\t0"
+    let stampB := "/opt/invented/bin/tool\t9001234\t1788000000\t0"
+    let one := "This is InventedTeX, Version 1.0"
+    let two := "This is InventedTeX, Version 2.0"
+    let cold ← ToolProbe.identify memo stampA (answering (.present one))
+    t "the first build asks the tool who it is"
+      (cold == .present one && (← spawns.get) == 1)
+    let warm ← ToolProbe.identify memo stampA (answering (.present one))
+    t "a build whose tool has not moved asks nothing"
+      (warm == .present one && (← spawns.get) == 1)
+    let warm2 ← ToolProbe.identify memo stampA (answering (.present two))
+    t "and keeps answering from the memo, not from the tool"
+      (warm2 == .present one && (← spawns.get) == 1)
+    let upgraded ← ToolProbe.identify memo stampB (answering (.present two))
+    t "a tool whose witness moved is asked again"
+      (upgraded == .present two && (← spawns.get) == 2)
+    let after ← ToolProbe.identify memo stampB (answering (.present one))
+    t "the new version is what the next build remembers"
+      (after == .present two && (← spawns.get) == 2)
+    -- A tool that cannot name itself records nothing, so installing it takes effect at once.
+    let missing := dir / "absent.ver"
+    let gone ← ToolProbe.identify missing "" (answering (.absent "'--version' exited 127"))
+    t "a tool that is not there is not remembered as one that is"
+      (gone == .absent "'--version' exited 127" && !(← missing.pathExists))
+    let gone2 ← ToolProbe.identify missing "" (answering (.absent "'--version' exited 127"))
+    t "so the next build asks again, and installing it is enough"
+      (gone2 == .absent "'--version' exited 127" && (← spawns.get) == 4)
 
 
 

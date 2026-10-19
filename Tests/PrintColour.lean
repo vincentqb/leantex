@@ -203,21 +203,20 @@ def driverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some press := Icc.Transform.of? Tests.Icc.press | t "the invented press reads" false
   let accent := css (press.toSrgb (at16 [0, 7 / 10, 1, 0]))
-  let dir ← IO.FS.createTempDir
-  IO.FS.writeBinFile (dir / "face.ttf") (← IO.FS.readBinFile (testFonts ++ "/OpenSans-Regular.ttf"))
-  IO.FS.writeBinFile (dir / "press.icc") Tests.Icc.press
-  IO.FS.writeFile (dir / "card.tex") ("\\DocumentMetadata{colorprofiles={X=press.icc}}\n" ++
-    "\\documentclass{article}\n\\usepackage{xcolor}\n" ++
-    "\\output{ formats = pdf, html }\n\\definecolor{accent}{cmyk}{0,.7,1,0}\n" ++
-    "\\begin{document}\n\\textcolor{accent}{Alpha}\n\\end{document}\n")
-  let run ← engineRun dir #["card.tex", "--best-effort"] (dir / "face.ttf") (dir / "cache")
-  let html ← if ← (dir / "card.html").pathExists then IO.FS.readFile (dir / "card.html") else pure ""
-  let pdf ← if ← (dir / "card.pdf").pathExists then
-      (pdfText <$> IO.FS.readBinFile (dir / "card.pdf")) else pure ByteArray.empty
-  t s!"the built page shows the accent through the profile beside the document ({run.exitCode}): {run.stderr}"
-    (hasStr html accent && !hasStr html "#ff4d00")
-  t "the built PDF embeds the profile as its intent and paints the declared ink"
-    (bytesContain pdf "/OutputIntents" && bytesContain pdf "0 0.7 1 0 k")
-  IO.FS.removeDirAll dir
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeBinFile (dir / "face.ttf") (← IO.FS.readBinFile (testFonts ++ "/OpenSans-Regular.ttf"))
+    IO.FS.writeBinFile (dir / "press.icc") Tests.Icc.press
+    IO.FS.writeFile (dir / "card.tex") ("\\DocumentMetadata{colorprofiles={X=press.icc}}\n" ++
+      "\\documentclass{article}\n\\usepackage{xcolor}\n" ++
+      "\\output{ formats = pdf, html }\n\\definecolor{accent}{cmyk}{0,.7,1,0}\n" ++
+      "\\begin{document}\n\\textcolor{accent}{Alpha}\n\\end{document}\n")
+    let run ← engineRun dir #["card.tex", "--best-effort"] (dir / "face.ttf") (dir / "cache")
+    let html ← if ← (dir / "card.html").pathExists then IO.FS.readFile (dir / "card.html") else pure ""
+    let pdf ← if ← (dir / "card.pdf").pathExists then
+        (pdfText <$> IO.FS.readBinFile (dir / "card.pdf")) else pure ByteArray.empty
+    t s!"the built page shows the accent through the profile beside the document ({run.exitCode}): {run.stderr}"
+      (hasStr html accent && !hasStr html "#ff4d00")
+    t "the built PDF embeds the profile as its intent and paints the declared ink"
+      (bytesContain pdf "/OutputIntents" && bytesContain pdf "0 0.7 1 0 k")
 
 end Tests.PrintColour

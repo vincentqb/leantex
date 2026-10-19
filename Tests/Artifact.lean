@@ -1957,44 +1957,43 @@ def artifactPitchChecks (ref : IO.Ref (List String)) : IO Unit := do
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"artifact pitch: leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode != 0 then return
-  let dir ← IO.FS.createTempDir
-  IO.FS.createDirAll (dir / "fonts")
-  IO.FS.createDirAll (dir / "home")
-  for e in ← (System.FilePath.mk testFonts).readDir do
-    if e.fileName.endsWith ".otf" || e.fileName.endsWith ".ttf" then
-      IO.FS.writeBinFile (dir / "fonts" / e.fileName) (← IO.FS.readBinFile e.path)
-  IO.FS.writeFile (dir / "fonts.tex") (← IO.FS.readFile "testdata/corpus/fonts.tex")
-  let page (body : String) : String :=
-    "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"" ++ body ++ "\" }\n" ++
-    "\\output{ formats = html }\n\\begin{document}\nPlain words.\n\\end{document}\n"
-  IO.FS.writeFile (dir / "codebody.tex") (page "Source Code Pro")
-  IO.FS.writeFile (dir / "serifbody.tex") (page "Source Serif Pro")
-  let run (name : String) : IO (UInt32 × String) := do
-    let p ← IO.Process.output
-      { cmd := ".lake/build/bin/leantex"
-        args := #[(dir / s!"{name}.tex").toString, "-o", (dir / "out").toString ++ "/"]
-        env := #[("XDG_CACHE_HOME", some (dir / "cache").toString),
-          ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
-          ("LEANTEX_FONT_PATH", none), ("LEANTEX_FONT", none)] }
-    return (p.exitCode, p.stdout ++ p.stderr)
-  let (code, log) ← run "fonts"
-  t s!"artifact pitch: fonts.tex builds: {log}" (code == 0)
-  match artDescriptorFlags (← IO.FS.readBinFile (dir / "out" / "fonts.pdf")) with
-  | .error e => t s!"artifact pitch: fonts.pdf reads back: {e}" false
-  | .ok fds =>
-    let flagsOf (n : String) : Option Int := (fds.find? (artBaseName ·.1 == n)).map (·.2)
-    t s!"artifact pitch: fonts.pdf declares Source Code Pro fixed-pitch: {fds}"
-      ((flagsOf "SourceCodePro-Regular").map (· % 2 == 1) == some true)
-    t s!"artifact pitch: fonts.pdf declares Source Serif Pro proportional: {fds}"
-      ((flagsOf "SourceSerifPro-Regular").map (· % 2 == 0) == some true)
-  for (name, want) in [("codebody", "monospace"), ("serifbody", "serif")] do
-    let (code, log) ← run name
-    t s!"artifact pitch: {name}.tex builds: {log}" (code == 0)
-    let html ← IO.FS.readFile (dir / "out" / s!"{name}.html")
-    let got := artStackGeneric html "body"
-    t s!"artifact pitch: {name}.html closes the body stack with {want}: {got}"
-      (got == some want)
-  IO.FS.removeDirAll dir
+  IO.FS.withTempDir fun dir => do
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.createDirAll (dir / "home")
+    for e in ← (System.FilePath.mk testFonts).readDir do
+      if e.fileName.endsWith ".otf" || e.fileName.endsWith ".ttf" then
+        IO.FS.writeBinFile (dir / "fonts" / e.fileName) (← IO.FS.readBinFile e.path)
+    IO.FS.writeFile (dir / "fonts.tex") (← IO.FS.readFile "testdata/corpus/fonts.tex")
+    let page (body : String) : String :=
+      "\\documentclass{article}\n\\fonts{ dir = \"fonts\", body = \"" ++ body ++ "\" }\n" ++
+      "\\output{ formats = html }\n\\begin{document}\nPlain words.\n\\end{document}\n"
+    IO.FS.writeFile (dir / "codebody.tex") (page "Source Code Pro")
+    IO.FS.writeFile (dir / "serifbody.tex") (page "Source Serif Pro")
+    let run (name : String) : IO (UInt32 × String) := do
+      let p ← IO.Process.output
+        { cmd := ".lake/build/bin/leantex"
+          args := #[(dir / s!"{name}.tex").toString, "-o", (dir / "out").toString ++ "/"]
+          env := #[("XDG_CACHE_HOME", some (dir / "cache").toString),
+            ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
+            ("LEANTEX_FONT_PATH", none), ("LEANTEX_FONT", none)] }
+      return (p.exitCode, p.stdout ++ p.stderr)
+    let (code, log) ← run "fonts"
+    t s!"artifact pitch: fonts.tex builds: {log}" (code == 0)
+    match artDescriptorFlags (← IO.FS.readBinFile (dir / "out" / "fonts.pdf")) with
+    | .error e => t s!"artifact pitch: fonts.pdf reads back: {e}" false
+    | .ok fds =>
+      let flagsOf (n : String) : Option Int := (fds.find? (artBaseName ·.1 == n)).map (·.2)
+      t s!"artifact pitch: fonts.pdf declares Source Code Pro fixed-pitch: {fds}"
+        ((flagsOf "SourceCodePro-Regular").map (· % 2 == 1) == some true)
+      t s!"artifact pitch: fonts.pdf declares Source Serif Pro proportional: {fds}"
+        ((flagsOf "SourceSerifPro-Regular").map (· % 2 == 0) == some true)
+    for (name, want) in [("codebody", "monospace"), ("serifbody", "serif")] do
+      let (code, log) ← run name
+      t s!"artifact pitch: {name}.tex builds: {log}" (code == 0)
+      let html ← IO.FS.readFile (dir / "out" / s!"{name}.html")
+      let got := artStackGeneric html "body"
+      t s!"artifact pitch: {name}.html closes the body stack with {want}: {got}"
+        (got == some want)
 
 /-- A kerning face and its italic in every slot: Source Serif Pro, whose "Ta" pair is −41/1000 em. -/
 def artKernSet : IO Font.FontSet := do
