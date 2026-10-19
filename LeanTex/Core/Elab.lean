@@ -10983,6 +10983,39 @@ starts on, as TeX ships that page after it, and leaves the paragraph whole. -/
 private def numberingRole (n : String) : Bool :=
   n.startsWith "pagenumbering " && (Ir.pageOpeningOfRole? n).isSome
 
+/-- A mid-paragraph mark that changes shipout state, not structure, ahead of the open paragraph: a
+page ground's palette, or a page numbering's opening. -/
+private def midParaMark (ctx : Ctx) (n : String) (pos : Pos) (blocks : Array Block) :
+    EM (Option Ir.Palette × Array Block) := do
+  if numberingRole n then return (none, blocks.push (.role n #[]))
+  match ← pageGround ctx n pos with
+  | some pal =>
+    modify fun st =>
+      { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
+                flowGen := st.flowGen + 1 }
+    return (some pal, blocks.push (.setPalette pal))
+  | none => return (none, blocks)
+
+/-- The index past a heading control's star or listed mark, whether starred, and whether unnumbered
+yet listed. -/
+private def headingMark (raws : Array Raw) (i : Nat) : { x : Nat // i + 1 ≤ x } × Bool × Bool :=
+  match raws[i + 1]? with
+  | some (.word w _) =>
+    if w == "*" then (⟨i + 2, by omega⟩, true, false)
+    else if w == Parse.listedUnnumbered then (⟨i + 2, by omega⟩, false, true)
+    else (⟨i + 1, by omega⟩, false, false)
+  | _ => (⟨i + 1, by omega⟩, false, false)
+
+/-- Runs a heading's step unnumbered where `listed`, past every depth, the depth after it as it
+stood. -/
+private def withListed {α : Type} (listed : Bool) (act : EM α) : EM α := do
+  if !listed then return ← act
+  let depth := (← get).ctr.secDepth
+  modify fun st => { st with ctr := { st.ctr with secDepth := -100 } }
+  let r ← act
+  modify fun st => { st with ctr := { st.ctr with secDepth := depth } }
+  return r
+
 /-- Flushes the open paragraph, carries its declarations past its end, and
 settles the owners that began inside it. -/
 private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
@@ -13601,15 +13634,7 @@ when it is empty — '{}'")
     return (blocks, ⟨i + 1, by omega⟩)
   else
     let level := (sectionLevel n).getD 1
-    let starred := raws[i + 1]? matches some (.word "*" _)
-    let listed := match raws[i + 1]? with
-      | some (.word w _) => w == Parse.listedUnnumbered
-      | _ => false
-    let i1p : { x : Nat // i + 1 ≤ x } :=
-      match raws[i + 1]? with
-      | some (.word "*" _) => ⟨i + 2, by omega⟩
-      | some (.word w _) => if w == Parse.listedUnnumbered then ⟨i + 2, by omega⟩ else ⟨i + 1, by omega⟩
-      | _ => ⟨i + 1, by omega⟩
+    let (i1p, starred, listed) := headingMark raws i
     let i1 := i1p.1
     let shown := headingShown n
     let short := shortTitleRaws raws i1 pos
@@ -13618,11 +13643,7 @@ when it is empty — '{}'")
       blocks := blocks.push p
     match raws[j]? with
     | some (.group title _) =>
-      -- An unnumbered listed heading numbers past every depth, the depth then as it stood.
-      let depth := (← get).ctr.secDepth
-      if listed then modify fun st => { st with ctr := { st.ctr with secDepth := -100 } }
-      blocks ← headingArm ctx n level starred short title pos blocks
-      if listed then modify fun st => { st with ctr := { st.ctr with secDepth := depth } }
+      blocks ← withListed listed (headingArm ctx n level starred short title pos blocks)
       return (blocks, ⟨j + 1, by omega⟩)
     | _ =>
       if recovered then
@@ -13740,22 +13761,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
-      if !cur.isEmpty && numberingRole n then
-        return ← elabBlocksGo ctx' raws (i + 1) (blocks.push (.role n #[])) cur gen'
-      -- A page-ground command mid-paragraph changes shipout state, not structure.
-      if !cur.isEmpty && isPageGround n then
-        let pal? ← pageGround ctx' n cpos
-        match pal? with
-        | some pal => modify fun st =>
-          { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
-                    flowGen := st.flowGen + 1 }
-        | none => pure ()
+      if !cur.isEmpty && (isPageGround n || numberingRole n) then
+        let (pal?, blocks) ← midParaMark ctx' n cpos blocks
         let ⟨palCtx, _⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
-        return ← elabBlocksGo palCtx raws (i + 1)
-          (match pal? with
-            | some pal => blocks.push (.setPalette pal)
-            | none => blocks) cur ((← get).flowGen)
+        return ← elabBlocksGo palCtx raws (i + 1) blocks cur ((← get).flowGen)
       let isB : Bool := isBlockStart ctx' n raws i cur
       if !isB then
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'

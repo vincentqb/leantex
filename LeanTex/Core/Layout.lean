@@ -11628,7 +11628,7 @@ private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Arr
 its number and an en space before its title on one line in the disposition's bold sans at `\huge`,
 its baseline `2.3\baselineskip` past the page's first, and `1.725\baselineskip` below it. -/
 private def collectKomaChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
-    (indent : Sp) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
+    (indent : Length) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
   let a := a.pageBreak
   let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
     (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
