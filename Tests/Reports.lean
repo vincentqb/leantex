@@ -2232,7 +2232,14 @@ def reports : List Report := [
     accept := ["lualatex with beamer on invented probes: the default theme's maketitle frame and a frame holding titlepage number 1, the next frame 2, a noframenumbering frame after it 2 again and the frame after that 3; moloch's maketitle frame shows no number and its next frame 1; a plain frame sets no footline and no logo; and a frame setting only sectionpage under the default theme puts its section name 80.3pt and its title 114.5pt below the paper's top; this tree sets the numbers the same, a title page showing none, and the name and title at 79.4pt and 114.5pt",
       "main's binary at 730c0b54 on the same probes: the title frame takes no number, the noframenumbering frame shows none, the plain frame shows its number and logo, and the section page's name stands at 99.9pt; the guards fail there",
       "the corpus built by main's binary at 730c0b54 and by this tree's: the seven decks whose maketitle runs under a theme other than moloch number every frame after the title one more, and the parity deck whose plain frame sets its title page counts it the same; every other artifact is visually identical, most byte-identical"]
-    state := .guarded "730c0b54" .before .author }
+    state := .guarded "730c0b54" .before .author },
+  { id := "R245", date := "2026-10-19"
+    what := "a beamer footline template holding the frame counter alone, or after an hfill with spacing around it, stopped the build (E0111) with no artifact, and beamer's frame number footline was not read; any other footline body, and any footline set in the body, stopped the build the same way"
+    pins := [check% footlineTemplateChecks]
+    accept := ["lualatex with beamer on invented probes: the counter alone stands at the footline's left, after an hfill at its right, the frame number template sets the counter over the total at the right, and every probe builds; this tree sets the counter in the native band's left or right slot, the frame number template's as the fraction, and ships a deck whose footline it cannot set, or whose body sets one, with its own footer, named once (W0110)",
+      "main's binary at 70096387 on the same probes: E0111 and no artifact for the bodies, W0104 for the predefined template; the guards fail there",
+      "the corpus built by main's binary at 70096387 and by this tree's: no corpus document's footline changes"]
+    state := .guarded "70096387" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

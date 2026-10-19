@@ -15839,7 +15839,7 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (body : Array Raw) (pos : Pos)
     Chrome × Array PEvent := Id.run do
   let mut chrome : Chrome := c0
   let mut evs : Array PEvent := #[]
-  let slotHelp := "slots are \\sectiontitle, \\framenumber, or \\framefraction"
+  let slotHelp := "slots are \\sectiontitle, \\framenumber, \\framefraction, or none"
   let say (evs : Array PEvent) (code : DiagCode) (msg : String)
       (help : Option String := none) : Array PEvent :=
     evs.push (.say (diagOf ctx code msg (some pos) help))
@@ -15871,6 +15871,7 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (body : Array Raw) (pos : Pos)
                 | "sectiontitle" => some .sectionTitle
                 | "framenumber" | "slidenumber" => some .frameNumber
                 | "framefraction" => some .frameFraction
+                | "none" => some .blank
                 | _ => none
               match datum with
               | none =>
@@ -15878,13 +15879,14 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (body : Array Raw) (pos : Pos)
                   s!"cannot read the '\\chrome' footer slot '{slotKey}': {slotVal.quote}"
                   (help := slotHelp)
               | some d =>
+                let shown := if d == .blank then "none" else s!"\\{d.label}"
                 match slotKey with
                 | "left" =>
-                  evs := evs.push (.scalar "chrome" "footer.left" s!"\\{d.label}" pos)
+                  evs := evs.push (.scalar "chrome" "footer.left" shown pos)
                   evs := evs.push (.declared "chrome" "footer.left")
                   chrome := { chrome with footerLeft := some d }
                 | "right" =>
-                  evs := evs.push (.scalar "chrome" "footer.right" s!"\\{d.label}" pos)
+                  evs := evs.push (.scalar "chrome" "footer.right" shown pos)
                   evs := evs.push (.declared "chrome" "footer.right")
                   chrome := { chrome with footerRight := some d }
                 | _ =>

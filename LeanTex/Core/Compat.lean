@@ -8749,30 +8749,56 @@ private def beamerMarkerElement : String → Option String
   | "itemize subsubitem" => some "itemize3"
   | _ => none
 
-/-- A colour-box footer with a left note and a right frame counter, as the
-native two-slot footer. -/
+/-- A footline counter's raws with its spacing dropped: `\hspace` and `\vspace` with their
+arguments, a `\vskip` or `\kern` with its amount, `\,` and an empty group; `skip` while a spacing
+command's argument is due. -/
+private def footlineInk : List Raw → Bool → Array Raw → Array Raw
+  | [], _, acc => acc
+  | .space :: rest, skip, acc => footlineInk rest skip acc
+  | .sym '*' _ :: rest, true, acc => footlineInk rest true acc
+  | .word "*" _ :: rest, true, acc => footlineInk rest true acc
+  | .group _ _ :: rest, true, acc => footlineInk rest false acc
+  | .word _ _ :: rest, true, acc => footlineInk rest false acc
+  | .ctrl n p :: rest, _, acc =>
+    if n == "hspace" || n == "vspace" || n == "vskip" || n == "kern" then footlineInk rest true acc
+    else if n == "," then footlineInk rest false acc
+    else footlineInk rest false (acc.push (.ctrl n p))
+  | .group #[] _ :: rest, false, acc => footlineInk rest false acc
+  | r :: rest, _, acc => footlineInk rest false (acc.push r)
+
+/-- The native counter a footline's counter spells: `\insertframenumber` alone, or over
+`\inserttotalframenumber`. -/
+private def footlineCounter? (raws : Array Raw) : Option String :=
+  let ink := String.ofList ((rawSrc (footlineInk raws.toList false #[])).toList.filter (!·.isWhitespace))
+  if ink == "\\insertframenumber" then some "framenumber"
+  else if ink == "\\insertframenumber/\\inserttotalframenumber" then some "framefraction"
+  else none
+
+/-- A footer the native two-slot band sets: a colour box's or a bare body, its note before an
+`\hfill` and its frame counter after it, or the counter alone at the left. -/
 private def numberedFootline? (body : Array Raw) :
-    Option (Array Raw × String × Option String × String) := do
-  let [Raw.env "beamercolorbox" box _] := body.toList.filter (· != .space)
-    | none
-  let (options, j) := takeOpt box 0
-  let (args, j) := takeGroups box j 1
-  if args.size != 1 || (rawSrc (args.getD 0 #[])).trimAscii.toString != "footline" then none
-  let j := skipSpaces box j
-  let (font, j) := match box[j]? with
-    | some (.ctrl "usebeamerfont" _) =>
-      let (args, k) := takeGroups box (j + 1) 1
-      (args[0]?.map (fun rs => (rawSrc rs).trimAscii.toString), k)
-    | _ => (none, j)
-  let content := box.extract j box.size
-  let split ← content.findIdx? (fun r => r matches .ctrl "hfill" _)
-  let right := String.ofList
-    (((rawSrc (content.extract (split + 1) content.size)).replace "\\," "").toList.filter
-      (!·.isWhitespace))
-  let counter ← if right == "\\insertframenumber" then some "framenumber"
-    else if right == "\\insertframenumber/\\inserttotalframenumber" then some "framefraction"
-    else none
-  some (content.extract 0 split, counter, font, options.getD "")
+    Option (Array Raw × String × Bool × Option String × String) := do
+  let (options, font, content) ← match body.toList.filter (· != .space) with
+    | [Raw.env "beamercolorbox" box _] =>
+      let (options, j) := takeOpt box 0
+      let (args, j) := takeGroups box j 1
+      if args.size != 1 || (rawSrc (args.getD 0 #[])).trimAscii.toString != "footline" then none
+      else
+        let j := skipSpaces box j
+        let (font, j) := match box[j]? with
+          | some (.ctrl "usebeamerfont" _) =>
+            let (args, k) := takeGroups box (j + 1) 1
+            (args[0]?.map (fun rs => (rawSrc rs).trimAscii.toString), k)
+          | _ => (none, j)
+        some (options, font, box.extract j box.size)
+    | _ => some (none, none, body)
+  match content.findIdx? (fun r => r matches .ctrl "hfill" _) with
+  | some split =>
+    let counter ← footlineCounter? (content.extract (split + 1) content.size)
+    some (content.extract 0 split, counter, true, font, options.getD "")
+  | none =>
+    let counter ← footlineCounter? content
+    some (#[], counter, false, font, options.getD "")
 
 /-- A template body with `#1` replaced by the declared default. -/
 private def substArg (default : Array Raw) : List Raw → Array Raw → Array Raw
@@ -8891,7 +8917,7 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
   if body.isEmpty then
     return (wrap #[.ctrl "runningfoot" pos, .group #[.ctrl "hfill" pos] pos],
       wrap #[Raw.ctrl "framefoot" pos, Raw.group #[] pos])
-  let some (left, counter, fontName, options) := numberedFootline? body
+  let some (left, counter, right, fontName, options) := numberedFootline? body
     | return (#[], #[])
   write fun st => { st with file := file }
   let mut fontPrefix : Array Raw := #[]
@@ -8916,8 +8942,9 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
       s!"the footer note and frame counter use the native footer band; not applied: \
 {String.intercalate ", " unread.toList}" pos
       (help := "use \\framefoot{...} for its note and \\chrome{footer={right=\\framefraction}} for numbering")
-  let pre ← carry (.chrome #[("footer", "{right=\\" ++ counter ++ "}")]) pos
-  let note := #[Raw.ctrl "framefoot" pos, Raw.group (fontPrefix ++ left) pos]
+  let slots := if right then "{right=\\" ++ counter ++ "}" else "{left=\\" ++ counter ++ ", right=none}"
+  let pre ← carry (.chrome #[("footer", slots)]) pos
+  let note := if right then #[Raw.ctrl "framefoot" pos, Raw.group (fontPrefix ++ left) pos] else #[]
   write fun st => { st with file := savedFile }
   return (wrap pre, wrap note)
 
@@ -9696,6 +9723,15 @@ defines; those blocks keep beamer's default template" pos
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
             InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws k)
+        -- beamerouterthemedefault.sty's `frame number`: the counter over the total, at the right.
+        if name.trimAscii.toString == "frame number" then
+          let file := (← get).file
+          let body := #[.ctrl "hfill" pos, .ctrl "insertframenumber" pos, .word "/" pos,
+            .ctrl "inserttotalframenumber" pos]
+          write fun st => { st with beamerFootline := some (file, pos, body),
+                                    beamerCaptures := st.beamerCaptures + 1 }
+          became "\\setbeamertemplate{footline}[frame number]" "a frame counter over the total" pos
+          return some (#[], predefinedEnd raws k)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
         return some (#[], predefinedEnd raws k)
@@ -9713,8 +9749,9 @@ defines; those blocks keep beamer's default template" pos
                                   beamerCaptures := st.beamerCaptures + 1 }
         became "\\setbeamertemplate{footline}" "an empty footer band" pos
       else
-        say .E0111
-          "'\\setbeamertemplate{footline}' is dropped with its template body, which carries content" pos
+        sayOnce "beamer:setbeamertemplate:footline" .W0110
+          "'\\setbeamertemplate{footline}' sets content the native footer band does not hold; \
+the deck keeps its own footer" pos
           (help := beamerNative.lookup "setbeamertemplate")
         mention (rawSrc body)
       return some (#[], k)
@@ -9828,6 +9865,12 @@ skipped" pos
         sayOnce ("param:\\setbeamertemplate:" ++ element) .W0104
           s!"'\\setbeamertemplate\{{element}}' prints only the {element}, without beamer's \
 template around it; the engine's own {element} stands" pos
+          (help := beamerNative.lookup "setbeamertemplate")
+        mention (rawSrc (bodyArgs.getD 0 #[]))
+      else if element == "footline" then
+        sayOnce "beamer:setbeamertemplate:footline" .W0110
+          "'\\setbeamertemplate{footline}' after the preamble is not set; the deck keeps \
+its own footer" pos
           (help := beamerNative.lookup "setbeamertemplate")
         mention (rawSrc (bodyArgs.getD 0 #[]))
       else

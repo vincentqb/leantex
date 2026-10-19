@@ -669,3 +669,37 @@ plain frame none ({bout.pages.map footText})"
   t "a plain web slide carries no logo"
     (((bweb.splitOn "<section ")[4]?.map fun s => hasStr s "Logomark") == some false &&
       ((bweb.splitOn "<section ")[3]?.map fun s => hasStr s "Logomark") == some true)
+
+open ContentsChecks in
+/-- A footline template reading the frame counter sets it in the native band, at the left alone or
+after an `\hfill` at the right, beamer's `frame number` the counter over the total; any other body
+ships the deck's own footer, named once. -/
+def footlineTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("footline template / " ++ claim)
+  let deck (footline : String) : String :=
+    "\\documentclass{beamer}\n\\setbeamertemplate{footline}" ++ footline ++ "\n\\begin{document}\n" ++
+      "\\begin{frame}{First}Alpha.\\end{frame}\n\\begin{frame}{Second}Beta.\\end{frame}\n\\end{document}\n"
+  let feet (doc : Ir.Doc) : Array (String × String) :=
+    (fittedOf fonts doc).out.pages.map fun p =>
+      let slots := p.foot.getD #[]
+      (Ir.plainText ((slots.filter (·.side == .left)).flatMap (·.content)),
+       Ir.plainText ((slots.filter (·.side == .right)).flatMap (·.content)))
+  let (alone, ads) := elabStr (deck "{\\insertframenumber}")
+  t s!"the counter alone stands at the left ({feet alone}, {ads.toList.map (·.code)})"
+    (feet alone == #[("1", ""), ("2", "")] && !ads.any (·.severity == .error))
+  let (right, _) := elabStr (deck "{\\hfill\\insertframenumber\\hspace*{2mm}}")
+  t s!"after an hfill the counter stands at the right ({feet right})"
+    (feet right == #[("", "1"), ("", "2")])
+  let (named, _) := elabStr (deck "[frame number]")
+  t s!"beamer's frame number template sets the counter over the total ({feet named})"
+    (feet named == #[("", "1 / 2"), ("", "2 / 2")])
+  let (other, ods) := elabStr (deck "{\\insertshorttitle\\hfill\\insertpagenumber}")
+  t s!"another footline ships the deck's own footer, named once ({ods.toList.map (·.code)})"
+    ((fittedOf fonts other).out.pages.size == 2 && !ods.any (·.severity == .error) &&
+      (ods.filter (·.code == "W0110")).size == 1)
+  let (inBody, bds) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\setbeamertemplate{footline}{\\insertframenumber}\n\\begin{frame}{First}Alpha.\\end{frame}\n" ++
+    "\\end{document}\n")
+  t s!"a footline set in the body ships the deck's own footer, named ({bds.toList.map (·.code)})"
+    ((fittedOf fonts inBody).out.pages.size == 1 && !bds.any (·.severity == .error) &&
+      bds.any (·.code == "W0110"))

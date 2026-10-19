@@ -7711,18 +7711,22 @@ public inductive ChromeSlot where
   | frameNumber
   /-- The `n / N` form, beamer's `[totalframenumber]` template. -/
   | frameFraction
+  /-- A slot declared empty, as a footline template leaves a side. -/
+  | blank
   deriving Repr, BEq, Inhabited
 
 public def ChromeSlot.label : ChromeSlot → String
   | .sectionTitle => "sectiontitle"
   | .frameNumber => "framenumber"
   | .frameFraction => "framefraction"
+  | .blank => "none"
 
 /-- The declared priority of a slot datum: which slot yields when two boxes collide. -/
 public def ChromeSlot.priority : ChromeSlot → Nat
   | .frameNumber => 0
   | .frameFraction => 1
   | .sectionTitle => 2
+  | .blank => 4
 
 public theorem ChromeSlot.priority_injective : ∀ a b : ChromeSlot,
     a.priority = b.priority → a = b := by
@@ -7766,6 +7770,7 @@ public def ChromeSlot.render (s : ChromeSlot) (sectionTitle : Array Inline)
   | .sectionTitle => sectionTitle
   | .frameNumber => #[.text (toString n)]
   | .frameFraction => #[.text s!"{n} / {total}"]
+  | .blank => #[]
 
 /-- Page furniture a theme or the document (`\chrome`) declares: the slide footer's two slots. -/
 public structure Chrome where
@@ -13957,7 +13962,7 @@ public theorem headings_no_skip_judged (doc : Doc)
 public def ChromeSlot.isFrameSequence : ChromeSlot → Bool
   | .frameNumber => true
   | .frameFraction => true
-  | .sectionTitle => false
+  | .sectionTitle | .blank => false
 
 /-- W0332 when a `\framefoot` note carries `\pagenumber`/`\pagecount` beside a
 frame-sequence chrome slot the document did not declare itself. -/
@@ -13983,7 +13988,7 @@ public theorem frame_sequence_carries_no_physical (s : ChromeSlot)
     (sec : Array Inline) (n total : Nat) (hs : s.isFrameSequence = true) :
     hasPhysicalPage (s.render sec n total) = false := by
   cases s with
-  | sectionTitle => simp [ChromeSlot.isFrameSequence] at hs
+  | sectionTitle | blank => simp [ChromeSlot.isFrameSequence] at hs
   | frameNumber =>
     simp [ChromeSlot.render, hasPhysicalPage, anyInline, foldInlines,
       foldInlineList, foldInline, isPhysicalPage]

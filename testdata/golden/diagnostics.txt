@@ -24,9 +24,9 @@
 ✖ [E0102] - \begin
   unclosed {verbatim}: expected '\end{verbatim}'
 ── E0111 (dropped) beamer template body carrying content dropped
-✖ [E0111] - \setbeamertemplate
-  '\setbeamertemplate{footline}' is dropped with its template body, which carries content
-  suggestion: 'frame footer' translates to \framefoot{...}; \style{element}{...} styles elements; \runningfoot sets a document footer; \allow{E0111} accepts the loss
+✖ [E0111] - \addtobeamertemplate
+  '\addtobeamertemplate{block begin}' is dropped with its unsupported template bodies
+  suggestion: put \smallskip, \medskip or \bigskip at a block's body start; \framefoot sets a frame footer
 ── E0112 (dropped) \titlegraphic content dropped
 ✖ [E0112] - \titlegraphic
   '\titlegraphic' declares title-page content the engine does not place; the content is dropped

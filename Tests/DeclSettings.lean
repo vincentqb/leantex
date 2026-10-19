@@ -395,7 +395,7 @@ def emptyTemplateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       t s!"templates: '{element}\{}' is a note, not a warning {theme}"
         (!ds.any (·.severity == .warning) &&
           ds.any (·.subject == some s!"param:\\setbeamertemplate:{element}"))
-  for (tpl, next) in [("footline[frame number]", "\\author{Probe author}"),
+  for (tpl, next) in [("footline[page number]", "\\author{Probe author}"),
       ("itemize items[circle]", "% a comment\n\\author{Probe author}"),
       ("enumerate items[default]", "\\author{Probe author}"), ("blocks[rounded]", "\\date{}"),
       ("section in toc[sections numbered]", "\\author{Probe author}"),

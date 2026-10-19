@@ -232,7 +232,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0006 => #[DriverDiag.outputFormatUnknown "notes.tex"]
   | .E0101 => dvE (w := w) "a\\"
   | .E0102 => dvE (w := w) "\\begin{verbatim}\nx"
-  | .E0111 => dvE (w := w) (dvDeck "" ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
+  | .E0111 => dvE (w := w) (dvDeck "" ("\\addtobeamertemplate{block begin}{\\textbf{x}}{}\n" ++
       "\\begin{frame}{T}\nx\n\\end{frame}"))
   | .E0112 => dvE (w := w) (dvDoc "\\titlegraphic{\\includegraphics{logo.png}}\n" "x")
   | .E0113 => dvE (w := w) (dvDoc

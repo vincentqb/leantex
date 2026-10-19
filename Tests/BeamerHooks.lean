@@ -149,8 +149,8 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let (dropped, droppedDs) := elabStr (hookDeck
     "\\setbeamertemplate{footline}{FooterPayload\\setbeamertemplate{frame footer}{NestedPayload}}"
     (hookBlocks))
-  t "beamer footer: an unsupported outer template owns the whole refusal"
-    ((droppedDs.filter (·.code == "E0111")).size == 1 &&
+  t "beamer footer: an unsupported outer template owns the whole degradation"
+    ((droppedDs.filter (·.code == "W0110")).size == 1 && !droppedDs.any (·.severity == .error) &&
       reprStr (layoutOf fonts dropped).pages == plainPages && hookHtmlFacts dropped == plainHtml)
   let (logged, logDs) := elabStr (hookDeck
     "\\AtBeginDocument{\\PackageError{probe}{LogPayload}{HelpPayload}}" (hookBlocks))
