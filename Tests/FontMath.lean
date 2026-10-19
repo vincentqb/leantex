@@ -215,7 +215,7 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       some (some "'Alpha Sans Light' has no bold face; 'Alpha Sans Light' substitutes"))
   t "a satisfied variant carries no message"
     ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (subMsg ·.2) == some none)
-  t "a missing family is still the caller's E0403"
+  t "a missing family is still the caller's W0403"
     ((FontDb.resolveVariant faces "Nope Sans" (some "Also Nope") { bold := true }).isNone)
   let beta700 : FontDb.Face := { synthFace "Beta Sans" "/x/bs-b.otf" with
     subfamily := "Bold", bold := true, weight := 700 }

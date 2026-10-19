@@ -123,44 +123,46 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
         return (none, fonts, paths, some (DriverDiag.fontFileUnusable path e))
       | .ok f =>
         return (some (fonts.size, f), fonts.push f, paths.push path, none)
+  -- A declared family no installed face answers is named, and the math face is chosen as undeclared.
+  let found := declared.bind fun family => (FontDb.resolveVariant faces family none {}).map (·.1)
   if let some family := declared then
-    match FontDb.resolveVariant faces family none {} with
-    | none =>
-      unless missing.contains family do
-        missing := missing.push family
-        let all := FontDb.families faces
-        diags := diags.push (DriverDiag.familyMissing family
-          (FontDb.nearest all family).toList all.size declaredAt)
-    | some (face, _) =>
-      let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
-      fonts := fonts'
-      paths := paths'
-      if let some d := diag? then
-        diags := diags.push d
-      if let some (i, f) := loaded then
-        if f.math.isSome then
-          mathIdx := some i
-        else
-          diags := diags.push (DriverDiag.mathFaceNoTable f.family face.path)
-  else if wantsMath then
-    let bodyFam := body.getD ""
-    let choice : Option (FontDb.Face × Option String) ←
-      (← FontDiscovery.pickMathFace faces bodyFam).mapM fun (face, row?) =>
-        pure (face, row?.map fun _ => bodyFam)
-    if let some (face, companionOf) := choice then
-      let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
-      fonts := fonts'
-      paths := paths'
-      if let some d := diag? then
-        diags := diags.push d
-      if let some (i, f) := loaded then
-        if f.math.isSome then
-          mathIdx := some i
-          let note := match companionOf with
-            | some named => DriverDiag.mathFaceCompanion f.family named
-            | none => DriverDiag.mathFaceFirst f.family
-          let written := (source.bind (·.pos.command)).bind Diag.Spelling.ofWritten?
-          diags := diags.push { note with span := source, trigger := written }
+    if found.isNone && !missing.contains family then
+      missing := missing.push family
+      let all := FontDb.families faces
+      diags := diags.push (DriverDiag.familyMissing family
+        (FontDb.nearest all family).toList all.size declaredAt)
+  match found with
+  | some face =>
+    let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
+    fonts := fonts'
+    paths := paths'
+    if let some d := diag? then
+      diags := diags.push d
+    if let some (i, f) := loaded then
+      if f.math.isSome then
+        mathIdx := some i
+      else
+        diags := diags.push (DriverDiag.mathFaceNoTable f.family face.path)
+  | none =>
+    if wantsMath then
+      let bodyFam := body.getD ""
+      let choice : Option (FontDb.Face × Option String) ←
+        (← FontDiscovery.pickMathFace faces bodyFam).mapM fun (face, row?) =>
+          pure (face, row?.map fun _ => bodyFam)
+      if let some (face, companionOf) := choice then
+        let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
+        fonts := fonts'
+        paths := paths'
+        if let some d := diag? then
+          diags := diags.push d
+        if let some (i, f) := loaded then
+          if f.math.isSome then
+            mathIdx := some i
+            let note := match companionOf with
+              | some named => DriverDiag.mathFaceCompanion f.family named
+              | none => DriverDiag.mathFaceFirst f.family
+            let written := (source.bind (·.pos.command)).bind Diag.Spelling.ofWritten?
+            diags := diags.push { note with span := source, trigger := written }
   return { fonts, paths, index := mathIdx, missing, diags }
 
 end LeanTex.Cli.FontEnv

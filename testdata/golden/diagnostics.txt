@@ -178,13 +178,6 @@
   LEANTEX_FONT 'face.ttf' does not exist
 ✖ [E0402]
   cannot use LEANTEX_FONT 'README.md': unsupported font format (need TrueType or CFF OpenType)
-── E0403 (dropped) no installed font family by that name
-✖ [E0403]
-  no installed font family named 'Sourse Serif Pro'
-  suggestion: did you mean: Source Serif Pro? — `leantex fonts` lists every family
-✖ [E0403]
-  no installed font family named 'Kaputt Grotesk'
-  suggestion: 12 families are installed — `leantex fonts` lists every family
 ── E0404 (dropped) a font file could not be used
 ✖ [E0404]
   cannot use 'fonts/Broken-Regular.otf': not a TrueType or OpenType file
@@ -892,6 +885,13 @@
   a frame stands past its text area, in the gap below it
   frame 1: 1.216pt past
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept a break
+── W0403 (degraded) no installed font family by that name; the slot's default family stands in
+⚠ [W0403]
+  no installed font family named 'Sourse Serif Pro'; the default family stands in
+  suggestion: did you mean: Source Serif Pro? — `leantex fonts` lists every family
+⚠ [W0403]
+  no installed font family named 'Kaputt Grotesk'; the default family stands in
+  suggestion: 12 families are installed — `leantex fonts` lists every family
 ── W0411 (standard) a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent
 ⚠ [W0411] - \begin
   '\begin{minted}' within a line of text or an argument does not compile under LaTeX; it is set as inline code

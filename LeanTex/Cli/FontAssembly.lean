@@ -97,14 +97,28 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
+  -- A declared text family no installed face answers is named at its declaration, and its slot
+  -- reads as undeclared.
+  let absent (family : String) : Bool := (FontDb.resolveVariant faces family none {}).isNone
+  let mut missing : Array String := #[]
+  for family in [spec.body, spec.sans, spec.mono].filterMap id do
+    if absent family && !missing.contains family then
+      missing := missing.push family
+      let all := FontDb.families faces
+      diags := diags.push (DriverDiag.familyMissing family
+        (FontDb.nearest all family).toList all.size (FaceUse.familySite sites doc.fonts family))
+  let installed (family : Option String) : Option String := family.filter (!absent ·)
+  let spec := { spec with body := installed spec.body, sans := installed spec.sans
+                          mono := installed spec.mono }
+  let resolving := { doc with fonts := spec }
   let spec := if spec.body.isNone && spec.sans.isNone then
       { spec with body := FontDb.defaultFamily faces }
     else spec
   let slides := doc.docClass == Ir.DocClass.slides
-  let textFamily := textFamilyIn doc faces
+  let textFamily := textFamilyIn resolving faces
   let tex := doc.surface == .tex
   let own := ownFaces faces docDirs
-  let (pick, monoOwn) := monoDefaultOf doc faces docDirs
+  let (pick, monoOwn) := monoDefaultOf resolving faces docDirs
   let spec := match pick with
     | some p =>
       { spec with mono := some p.family
@@ -115,7 +129,6 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let mut fonts : Array Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
-  let mut missing : Array String := #[]
   -- A provisional assembly resolves only the text slot, the face a node label sets in.
   let slots : List (Nat × Option String) :=
     match purpose with

@@ -646,9 +646,9 @@ def faceChecks (ref : IO.Ref (List String)) : IO Unit := do
   match ← FontAssembly.buildFontSet missingDoc scan cache .settled (sites := missingSpans.faces) with
   | .ok (fs, doc, ds, _) =>
     t s!"unused faces: a family no installed face answers is named by its refusal alone ({(FaceUse.diags missingSpans.faces fs doc).map (·.subject)})"
-      (ds.any (·.kind == .E0403) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
-    t s!"unused faces: a family no installed face answers is refused at the entry naming it ({(ds.filter (·.kind == .E0403)).map (·.span.map (·.pos.line))})"
-      ((ds.filter (·.kind == .E0403)).map (·.span.map (·.pos.line)) == #[some 2])
+      (ds.any (·.kind == .W0403) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
+    t s!"unused faces: a family no installed face answers is named at the entry naming it ({(ds.filter (·.kind == .W0403)).map (·.span.map (·.pos.line))})"
+      ((ds.filter (·.kind == .W0403)).map (·.span.map (·.pos.line)) == #[some 2])
   | .error _ => t "unused faces: a document missing one family still settles its face set" false
   let deckFaces := serif ++ ", sans = \"Open Sans\", mono = \"Source Code Pro\""
   let deckBody := "\\begin{frame}{Title}Words.\\end{frame}"

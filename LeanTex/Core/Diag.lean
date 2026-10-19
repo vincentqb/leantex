@@ -153,7 +153,7 @@ public inductive DiagCode where
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
   | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336 | E0340
-  | E0401 | E0402 | E0403 | E0404 | E0405
+  | E0401 | E0402 | W0403 | E0404 | E0405
   | E0501 | E0502
   | N0100 | N0102 | N0103 | N0104 | N0105 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
@@ -311,7 +311,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0332 => ("0332", .dropped, "covered fraction outside 0–99 percent")
   | .E0401 => ("0401", .dropped, "no usable font found on the host")
   | .E0402 => ("0402", .dropped, "LEANTEX_FONT is unusable")
-  | .E0403 => ("0403", .dropped, "no installed font family by that name")
+  | .W0403 => ("0403", .degraded, "no installed font family by that name; the slot's default family stands in")
   | .E0404 => ("0404", .dropped, "a font file could not be used")
   | .E0501 => ("0501", .dropped, "\\input nesting too deep")
   | .N0100 => ("0100", .info, "LaTeX idiom translated to its native declaration")
@@ -566,7 +566,8 @@ old spelling accepts the successor. -/
 public def DiagCode.renumbered : List (String × String) :=
   [("E0382", "W0382"),
    ("E0002", "W0002"),
-   ("E0503", "W0503")]
+   ("E0503", "W0503"),
+   ("E0403", "W0403")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where

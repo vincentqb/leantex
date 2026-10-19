@@ -69,7 +69,7 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
               t s!"{repr purpose} starts with the text regular face"
                 (fs.body.psName == expected[0]!.psName)
               t s!"{repr purpose} resolves every installed declaration"
-                (!diags.any (·.kind == .E0403))
+                (!diags.any (·.kind == .W0403))
               t s!"{repr purpose} supplies math when declared or needed"
                 (fs.mathFont?.isSome ==
                   (math.isSome || purpose != .provisional false))
@@ -111,7 +111,11 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
                 (htmlSlotSource css "math" ==
                   fs.mathFont?.map (fun (_, f, _) => (HtmlDoc.fontResource f).uri) &&
                  !htmlDiags.any (·.kind == .W0003))
-  -- A default fills an absent request, never repairs a declared bad family.
+  -- A declared family no face answers is named once, and its slot sets as the undeclared document's.
+  let (plainDoc, _) := elabStr (fontDefaultSource false {})
+  let .ok (plain, _, _, _) ← buildFontSet plainDoc scan cache .settled |
+    check ref "font defaults: the undeclared document assembles" false
+  let faceAt (fs : Font.FontSet) (slot : Nat) : String := (fs.get (fs.lookup slot 400 false)).psName
   for slot in [0:4] do
     let missing := "MissingFixtureFamily"
     let spec : Ir.FontSpec :=
@@ -121,16 +125,20 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
       | 2 => { mono := some missing }
       | _ => { math := some missing }
     let doc := (elabStr (fontDefaultSource false spec)).1
-    let .ok (_, _, diags, _) ← buildFontSet doc scan cache .settled |
-      check ref s!"font defaults: missing slot {slot} retains its diagnostic" false
+    let .ok (fs, _, diags, _) ← buildFontSet doc scan cache .settled |
+      check ref s!"font defaults: missing slot {slot} still ships its document" false
       continue
-    check ref s!"font defaults: missing slot {slot} remains exactly one named E0403"
-      ((diags.filter (·.kind == .E0403)).size == 1 &&
-       diags.any fun d => d.kind == .E0403 && hasStr d.message missing)
+    check ref s!"font defaults: missing slot {slot} is named once, as a degraded loss"
+      ((diags.filter (·.kind == .W0403)).size == 1 &&
+       diags.any (fun d => d.kind == .W0403 && hasStr d.message missing) &&
+       diags.all (·.severity != .error))
+    check ref s!"font defaults: missing slot {slot} sets as the undeclared document does"
+      ((List.range 3).all (fun k => faceAt fs k == faceAt plain k) &&
+       (fs.mathFont?.map (·.2.1.psName)) == (plain.mathFont?.map (·.2.1.psName)))
     let empty ← buildFontSet doc { scan with faces := #[] } cache .settled
-    check ref s!"font defaults: empty scan preserves the explicit missing slot {slot}"
+    check ref s!"font defaults: an empty scan stops on no usable font, missing slot {slot}"
       (match empty with
-       | .error d => d.kind == .E0403 && hasStr d.message missing
+       | .error d => d.kind == .E0401
        | .ok _ => false)
 
 /-- Two weights a family lacks, served by one nearest face, are two records in one wording that the
