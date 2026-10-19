@@ -2,17 +2,18 @@ module
 
 import Std.Data.HashMap
 import LeanTex.Core.CaseFoldData
+import LeanTex.Core.CaseUpperData
 import LeanTex.Core.Hex
 
 /-! Unicode full case folding, CaseFolding.txt's common and full mappings, from the generated
-`CaseFoldData`. -/
+`CaseFoldData`, and the full uppercase mapping from the generated `CaseUpperData`. -/
 
 namespace LeanTex.Core.CaseFold
 
 open Std
 
-private def load (_ : Unit) : HashMap UInt32 (Array Char) := Id.run do
-  let bs := CaseFoldData.fold.toUTF8
+private def load (table : String) : HashMap UInt32 (Array Char) := Id.run do
+  let bs := table.toUTF8
   let mut out : HashMap UInt32 (Array Char) := {}
   let mut p := 0
   for _ in [0:bs.size + 1] do
@@ -25,8 +26,13 @@ private def load (_ : Unit) : HashMap UInt32 (Array Char) := Id.run do
     p := p + 7 + k * 6
   return out
 
-/-- The table, built once per process on first use; `load` takes `Unit` to defer the cost. -/
-private def table : Thunk (HashMap UInt32 (Array Char)) := Thunk.mk load
+/-- The folding table, built once per process on first use. -/
+private def table : Thunk (HashMap UInt32 (Array Char)) :=
+  Thunk.mk fun _ => load CaseFoldData.fold
+
+/-- The uppercase table, built once per process on first use. -/
+private def upperTable : Thunk (HashMap UInt32 (Array Char)) :=
+  Thunk.mk fun _ => load CaseUpperData.upper
 
 /-- The characters `c` folds to. -/
 public def foldChar (c : Char) : Array Char :=
@@ -35,5 +41,13 @@ public def foldChar (c : Char) : Array Char :=
 /-- A text folded character by character. -/
 public def fold (s : String) : String :=
   s.foldl (fun acc c => (foldChar c).foldl String.push acc) ""
+
+/-- The characters `c` maps to in upper case, untailored to a language. -/
+public def upperChar (c : Char) : Array Char :=
+  if c.toNat < 0x80 then #[c.toUpper] else (upperTable.get.get? c.val).getD #[c]
+
+/-- A text in upper case, character by character. -/
+public def upper (s : String) : String :=
+  s.foldl (fun acc c => (upperChar c).foldl String.push acc) ""
 
 end LeanTex.Core.CaseFold

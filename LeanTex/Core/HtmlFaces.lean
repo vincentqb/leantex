@@ -4,6 +4,7 @@ public import LeanTex.Core.Html
 public import Std.Data.HashMap
 public import Std.Data.HashSet
 import LeanTex.Core.Css
+import LeanTex.Core.CaseFold
 import LeanTex.Core.Hex
 
 /-! The font requests a web page's text makes, read from its typed tree and style sheets as a
@@ -439,7 +440,7 @@ def Sel.test (dyn : Array String) (s : Sel) (e : Subject) (up : List Subject) : 
 private def fontProp (p : String) : Bool :=
   p == "font-family" || p == "font-weight" || p == "font-style" || p == "font" ||
     p == "content" || p == "display" || p == "font-synthesis" || p == "list-style-type" ||
-    p == "list-style"
+    p == "list-style" || p == "font-variant" || p == "font-variant-caps" || p == "text-transform"
 
 /-- A declaration block's declarations: property, value and importance. -/
 def declsOf (body : String) : Array (String × String × Bool) :=
@@ -558,6 +559,10 @@ structure FState where
   italics : Option (Array Bool)
   /-- The list styles a marker may set, `none` for any. -/
   lists : Option (Array String)
+  /-- Whether the text may be set in small caps. -/
+  smallCaps : Bool
+  /-- Whether the text may be transformed to capitals. -/
+  upper : Bool
   deriving BEq, Hashable, Inhabited
 
 def FState.want (s : FState) : Want := { stacks := s.stacks, weights := s.weights, italics := s.italics }
@@ -681,9 +686,20 @@ def resolve (vars : Std.HashMap String (Array String)) (parent : FState)
     (if itInh then parent.italics else some #[])
   let lists := ls.bind fun vs => vs.foldl (fun acc v => unionOpt acc (listsOf parent.lists v))
     (if lsInh then parent.lists else some #[])
-  -- a `font` shorthand may set any of the three
-  if (cands "font").isEmpty then { stacks, weights, italics, lists }
-  else { stacks := union stacks #[["*"]], weights := none, italics := none, lists }
+  -- an inherited switch: the parent's where it may inherit, else whether some winner sets it
+  let switch (cs : Array Cand) (was : Bool) (sets : String → Bool) : Bool :=
+    let (vs, inh) := winners cs
+    (inh && was) || vs.any fun v =>
+      let v := v.trimAscii.toString.toLower
+      if inherits v then was else (v.splitOn "var(").length > 1 || sets v
+  let smallCaps := switch (cands "font-variant-caps" ++ cands "font-variant") parent.smallCaps
+    fun v => (v.splitOn "caps").length > 1 || (v.splitOn "unicase").length > 1
+  let upper := switch (cands "text-transform") parent.upper
+    fun v => (v.splitOn "uppercase").length > 1 || (v.splitOn "capitalize").length > 1
+  -- a `font` shorthand may set any of the three, and small caps
+  if (cands "font").isEmpty then { stacks, weights, italics, lists, smallCaps, upper }
+  else { stacks := union stacks #[["*"]], weights := none, italics := none, lists
+         smallCaps := true, upper }
 
 /-- The user agent's own font declarations for an element (HTML §15.3, MathML Core §A). -/
 def uaDecls (tag : String) : Array (String × String) :=
@@ -698,7 +714,7 @@ def uaDecls (tag : String) : Array (String × String) :=
 
 /-- SVG's presentation attributes that set a font. -/
 private def presentational (p : String) : Bool :=
-  p == "font-family" || p == "font-weight" || p == "font-style"
+  p == "font-family" || p == "font-weight" || p == "font-style" || p == "font-variant"
 
 /-- Characters a counter may print: ASCII letters and digits, a point and a hyphen. -/
 private def counterChars : String :=
@@ -867,21 +883,24 @@ private def spaceFallback (c : Char) : Bool :=
   let n := c.toNat
   n == 0xA0 || (0x2000 ≤ n && n ≤ 0x200A) || n == 0x202F || n == 0x205F || n == 0x3000
 
-private def addChars (reqs : Requests) (w : Want) (s : String) : Requests :=
+/-- A state's requests for a text's characters, and their capitals where it may set them. -/
+private def addChars (reqs : Requests) (st : FState) (s : String) : Requests :=
+  let w := st.want
   let set := s.foldl (fun set c =>
     if inkless c then set
     else if spaceFallback c then set.insert ' '
-    else (set.insert c).insert c.toUpper) (reqs.getD w {})
+    else if st.smallCaps || st.upper then (CaseFold.upperChar c).foldl (·.insert ·) (set.insert c)
+    else set.insert c) (reqs.getD w {})
   reqs.insert w set
 
 /-- The requests a tree's text makes, its elements' and their pseudo-elements'. -/
 def walk (env : Env) : Walk Ctx Requests where
   text := fun ctx acc s =>
-    let acc := addChars acc ctx.state.want s
+    let acc := addChars acc ctx.state s
     let t := s.trimAscii.toString
     match ctx.autoItalic, t.toList with
     | true, [c] => match mathItalic c with
-      | some m => addChars acc ctx.state.want (String.singleton m)
+      | some m => addChars acc ctx.state (String.singleton m)
       | none => acc
     | _, _ => acc
   inner := fun ctx tag attrs =>
@@ -910,8 +929,8 @@ def walk (env : Env) : Walk Ctx Requests where
             | none => markerChars)
           else chars
         unless chars.isEmpty && shown.isEmpty do
-          let w := (stateFor env ctx.state (some pe) ctx.cands).want
-          acc := addBox (addChars acc w chars) w
+          let st := stateFor env ctx.state (some pe) ctx.cands
+          acc := addBox (addChars acc st chars) st.want
       return acc
 
 /-- What a page loads its fonts' rules from: its style sheets, the custom properties its style
@@ -938,7 +957,7 @@ public def requests (head body : Array Node) (dyn : Array String) : Option Reque
   let root := subjectOf "html" #[]
   let rootState := stateFor env
     { stacks := #[["serif"]], weights := some #[400], italics := some #[false]
-      lists := some #["disc"] } none
+      lists := some #["disc"], smallCaps := false, upper := false } none
     (candsFor env root [] #[])
   let bodyE := subjectOf "body" #[]
   let bodyCands := candsFor env bodyE [root] #[]

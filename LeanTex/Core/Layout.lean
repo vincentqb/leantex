@@ -10,6 +10,7 @@ public import LeanTex.Core.Hyphen
 public import LeanTex.Core.Ir
 public import LeanTex.Core.GfxPicture
 import LeanTex.Core.Oklab
+import LeanTex.Core.CaseFold
 import LeanTex.Core.Listing
 import LeanTex.Core.ListMark
 public import LeanTex.Core.Diag
@@ -1538,14 +1539,27 @@ public theorem smallcap_height_between (x c : Nat) (hc : 0 < c) (hx : x ≤ c) :
   unfold smallCapScaleCore smallCapScale
   omega
 
+/-- A word's letters as synthesised small caps set them: each letter's capitals where the face
+draws them all and none is a combining mark, else the letter, with how many each became. -/
+public def smallCapLetters (covers : Char → Bool) (chars : Array Char) : Array Char × Array Nat :=
+  chars.foldl (init := (#[], #[])) fun (out, counts) c =>
+    let up := CaseFold.upperChar c
+    let up := if up.all fun u => covers u && !(0x300 ≤ u.toNat && u.toNat < 0x370) then up else #[c]
+    (out ++ up, counts.push up.size)
+
 /-- The synthesised uniform small-caps form of one word: every
-letter in its capital form, the whole word at the face's scale. -/
-public def smallCapSynth (scale : Nat) (sty : TextStyle) (chars : Array Char) :
-    TextStyle × Array Char :=
+letter in its capital form (`smallCapLetters`), the whole word at the face's scale. -/
+public def smallCapSynth (scale : Nat) (covers : Char → Bool) (sty : TextStyle) (chars : Array Char) :
+    TextStyle × Array Char × Array Nat :=
   let sty := match sty.fontSize with
     | some size => { sty with fontSize := some (Affine.scaleQ scale 1000 size) }
     | none => { sty with scale := sty.scale * scale / 1000 }
-  (sty, chars.map (·.toUpper))
+  let (chars, counts) := smallCapLetters covers chars
+  (sty, chars, counts)
+
+/-- Each entry repeated as many times as its letter became characters. -/
+def spreadBy {α : Type} (counts : Array Nat) (xs : Array α) : Array α :=
+  (counts.zip xs).foldl (init := #[]) fun out (k, x) => (List.replicate k x).foldl Array.push out
 
 private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
     (attr : Attribution) : FlattenSt :=
@@ -4506,10 +4520,13 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
     let font := fs.get idx
     -- Small caps: the face's own `smcp`+`c2sc` where it has them, uniform synthesis otherwise.
     let useGsub := sty.smallcaps && !font.smallCaps.isEmpty
-    let (sty, chars) :=
+    let (sty, chars, owners, origins, anchors) :=
       if sty.smallcaps && !useGsub then
-        smallCapSynth (smallCapScaleFor font) sty chars
-      else (sty, chars)
+        let (sty, chars, counts) :=
+          smallCapSynth (smallCapScaleFor font) (fun c => (font.gid c).isSome) sty chars
+        (sty, chars, spreadBy counts owners, spreadBy counts origins,
+          anchors.map fun (name, k) => (name, (counts.extract 0 k).foldl (· + ·) 0))
+      else (sty, chars, owners, origins, anchors)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
     -- A typewriter run never hyphenates: LaTeX's typewriter `\hyphenchar` is −1 (t1cmtt.fd).

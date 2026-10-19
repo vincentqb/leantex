@@ -6,6 +6,7 @@ public import Tests.SlotLossWording
 public import Tests.Support
 public import Tests.Artifact
 public import LeanTex.Core.FontSubset
+public import LeanTex.Core.CaseFold
 
 public section
 
@@ -402,6 +403,16 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "synthesised small caps set every letter at one reduced size"
     (!scSans.isEmpty &&
      scSans.all (·.2 == geom.fontSize * Layout.smallCapScaleFor sans / 1000))
+  t "synthesised small caps draw accented and special-cased letters in their capitals"
+    (ink (drawn (set sans) "{\\scshape café straße}") ==
+      ink (drawn (set sans) "{\\scshape CAFÉ STRASSE}"))
+  t "the uppercase mapping is Unicode's full one"
+    (CaseFold.upper "éàœß ﬁ ǆ σς" == "ÉÀŒSS FI Ǆ ΣΣ")
+  t "synthesised small caps keep a letter whose capitals hold a combining mark or a glyph the face lacks"
+    (((ink (drawn (set sans) "{\\scshape ǰ}")).map (·.1)).toList == (sans.gid 'ǰ').toList &&
+      Layout.smallCapLetters (fun _ => true) #['ß', 'ǰ', 'a'] ==
+        (#['S', 'S', 'ǰ', 'A'], #[2, 1, 1]) &&
+      Layout.smallCapLetters (· != 'É') #['é'] == (#['é'], #[1]))
   let (scDoc, scDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "{\\scshape NaCl}\\end{document}")
   t "small caps html source clean" scDs.isEmpty

@@ -2019,6 +2019,15 @@ def faceUseChecks (ref : IO.Ref (List String)) : IO Unit := do
     match HtmlFaces.requests #[.style css] body #[] with
     | some reqs => reqs.toList.any (·.2.contains c)
     | none => false
+  let sc (text : String) := #[Html.Node.elem "span" #[("class", "sc")] #[.text text]]
+  t "face use: text set in capitals asks its letters' Unicode capitals, other text none"
+    (asksIn ".sc { font-variant-caps: all-small-caps }" (sc "éß") 'É' &&
+      asksIn ".sc { text-transform: uppercase }" (sc "ǆ") 'Ǆ' &&
+      asksIn ".sc { font-variant: small-caps }" (sc "ß") 'S' &&
+      !asks "éɐ" 'É' && !asks "ɐ" '\u2C6F' &&
+      !asksIn ".sc { font-variant-caps: all-small-caps } .sc span { font-variant: normal }"
+        #[Html.Node.elem "span" #[("class", "sc")] #[Html.Node.elem "span" #[] #[.text "é"]]] 'É' &&
+      !asksIn ".sc { text-transform: lowercase }" (sc "é") 'É')
   t "face use: a space a shaper sets from U+0020 asks the space, never a face of its own"
     (!asks "a\u2003b" '\u2003' && !asks "a\u00a0b" '\u00a0' && asks "a\u2003b" ' ')
   let item := Html.Node.elem "li" #[] #[.text "x"]
