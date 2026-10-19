@@ -1025,14 +1025,15 @@ def leanCiteBuild (file src : String) (sources : Array (String × String)) : Ir.
   let (doc, bibDiags) := Bib.resolve file prepared sources doc
   (Ir.eraseLocations doc, diags ++ bibDiags)
 
-/-- A code fixture elaborated as the driver builds it, a Lean page declaring its bibliography read
-through the front door beside it and its citations resolved against the files it names. -/
-def elabCodeFixture (n : String) (lang : Ir.CodeLang) (src : String) : IO (Ir.Doc × Array Diag) := do
+/-- A code fixture elaborated as the driver builds it, a page declaring its bibliography read through
+the front door beside it and its citations resolved against the files it names. -/
+def elabCodeFixture (n : String) (lang : Ir.CodeLang) (src : String) (dir : String := "testdata/corpus")
+    (driver : Bool := false) : IO (Ir.Doc × Array Diag) := do
   let file := s!"{n}.{lang.extension}"
   let showing := Code.showingOf lang src.toList.toArray
-  if lang != .lean || (showing.bibliography.isEmpty && !showing.asks) then
+  if !driver && showing.bibliography.isEmpty && !(lang == .lean && showing.asks) then
     return elabCode file src
-  let path := s!"testdata/corpus/{file}"
+  let path := s!"{dir}/{file}"
   let read ← Input.readDocument path src.toUTF8
   let prepared := Elab.prepareExecuted path read.executed
   let (doc, diags) := Elab.runPreparedFinal path prepared read.diags (fun _ _ => {})

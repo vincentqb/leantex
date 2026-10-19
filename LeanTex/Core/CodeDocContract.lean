@@ -261,7 +261,7 @@ private theorem desugar_adm (file text : String) (k : Option (Std.HashSet String
 private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) :
     Adm (lang == .lean) (proseRaws lang file starts known seg opens).1 := by
-  let k := if lang == .lean then known else none
+  let k := known
   let dl : Md.Dialect := if lang == .lean then .lean else .docstring
   have hdl : dl ≠ .document := by
     show (if lang == .lean then Md.Dialect.lean else .docstring) ≠ .document
@@ -276,7 +276,8 @@ private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
     apply adm_mapPos
     rw [← hf]
     exact desugar_adm file pr.text k dl hdl
-  let pr := proseIn lang seg.text (lineCol starts seg.start).1 ((lineCol starts seg.start).2 - 1)
+  let pr := (lowered lang file seg.text known
+    (proseIn lang seg.text (lineCol starts seg.start).1 ((lineCol starts seg.start).2 - 1))).1
   have h := hraws pr
   cases opens with
   | true =>

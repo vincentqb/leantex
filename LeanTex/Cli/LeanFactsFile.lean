@@ -77,11 +77,12 @@ public structure BibFile where
   path : String
   bytes : ByteArray
 
-/-- The bibliography a Lean file's documentation cites into: the files declared beside `base` (else
-the file's folder), else its project's `docs/references.bib`, each named from `base` with its bytes,
-and W0503 at `span` for a declared one that is not there. -/
+/-- The bibliography a code file's documentation cites into: the files declared beside `base` (else
+the file's folder), else `docs/references.bib` in its project, the nearest folder holding one of
+`markers`, each named from `base` with its bytes, and W0503 at `span` for a declared one not there. -/
 public def bibFor (file : String) (declared : List String) (span : Span)
-    (base : Option String := none) (entry : Option String := none) :
+    (base : Option String := none) (entry : Option String := none)
+    (markers : List String := ["lakefile.lean", "lakefile.toml"]) :
     Prog (Array BibFile × Array Diag) := do
   let cwd := (← ask .cwd).toOption
   let placed (p : String) : String :=
@@ -99,7 +100,7 @@ public def bibFor (file : String) (declared : List String) (span : Span)
     | .ok st => st.real
     | .error _ => joined
   let wanted : List (String × String × Bool) ← if declared.isEmpty then do
-      match ← findUp ["lakefile.lean", "lakefile.toml"] (ancestors real) with
+      match ← findUp markers (ancestors real) with
       | some root =>
         let path := ToolPath.join root "docs/references.bib"
         pure [((ToolPath.relative here path).getD path, path, false)]

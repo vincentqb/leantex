@@ -259,4 +259,141 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code files: a markdown diagnostic in a doc comment names the source line it stands on"
     (ruleDs.any fun d => d.kind == .W0307 && d.span.map (·.pos.line) == some 5)
 
+/-- Each dialect's reader, on invented comments: its tags and commands as markdown, its code blocks in
+the language they name or the file's, and each construct it does not read named once. -/
+def docMarkupChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let kinds (ds : Array Diag) : Array String := ds.map (·.kind.code)
+  -- Javadoc.
+  let (jdoc, jds) := elabCode "t.java" ("/**\n * Adds an <b>amount</b> to the {@code List<T>}; a * stays.\n" ++
+    " * <p>Then {@link java.util.List#add(Object) add} it.\n * <ul><li>one</li><li>two</li></ul>\n" ++
+    " * <pre>{@code\n *   int x = 1 < 2;\n * }</pre>\n * @param amount the amount\n *   to add\n" ++
+    " * @return whether it was added\n * @throws IllegalStateException when full\n */\n" ++
+    "boolean add(int amount) { return true; }\n")
+  t s!"javadoc: inline code and HTML read as markdown, a star literal ({elemTexts "p" jdoc})"
+    ((elemTexts "code" jdoc).contains "List<T>" && (elemTexts "strong" jdoc).contains "amount" &&
+      (elemTexts "p" jdoc).any (·.contains "; a * stays."))
+  t s!"javadoc: a list and a pre block read as a list and a Java listing ({listings jdoc})"
+    ((elemTexts "li" jdoc).size ≥ 4 &&
+      (listings jdoc).any fun (l, c) => l == some "java" && c.contains "int x = 1 < 2;")
+  t s!"javadoc: block tags set as the standard doclet's sections ({elemTexts "p" jdoc})"
+    ((elemTexts "strong" jdoc).contains "Parameters:" && (elemTexts "strong" jdoc).contains "Returns:" &&
+      (elemTexts "strong" jdoc).contains "Throws:" &&
+      (elemTexts "li" jdoc).any (·.contains "the amount to add"))
+  t s!"javadoc: a link to a program element sets its text and is named ({kinds jds})"
+    ((elemTexts "code" jdoc).contains "add" && (jds.filter (·.kind == .W0454)).size == 1 &&
+      !jds.any (·.kind == .W0453) && !jds.any (·.kind == .E0390))
+  let (_, inherit) := elabCode "t.java" "class A {\n    /** {@inheritDoc} */\n    void f() {}\n}\n"
+  t "javadoc: an inline tag the reader does not read is named where it stands"
+    (inherit.any fun d => d.kind == .W0453 && d.span.map (·.pos.line) == some 2)
+  let (md, mdDs) := elabCode "t.java" "/// Adds *one* to {@code x}.\n///\n/// @param x a number\nint inc(int x) { return x + 1; }\n"
+  t s!"javadoc: a markdown comment reads its markdown and its tags ({elemTexts "em" md})"
+    ((elemTexts "em" md).contains "one" && (elemTexts "code" md).contains "x" &&
+      (elemTexts "strong" md).contains "Parameters:" && mdDs.isEmpty)
+  -- Doxygen.
+  let (cdoc, cds) := elabCode "t.c" ("/**\n * \\file\n * \\brief Invented gauges.\n */\n#include <stddef.h>\n" ++
+    "/**\n * Folds \\p xs, see \\ref other.\n * \\param[in] xs the levels\n * \\return their sum\n" ++
+    " * \\note Takes \\c O(n).\n * \\code{.py}\n * print(1)\n * \\endcode\n */\nint fold(int *xs);\n")
+  t s!"doxygen: a comment holding \\file describes the file ({cdoc.info.title})"
+    ((elabCode "t.c" "/** \\file\n * # Gauges\n */\nint x;\n").1.info.title == some "Gauges")
+  t s!"doxygen: commands read as markdown, sections as Doxygen labels them ({elemTexts "strong" cdoc})"
+    ((elemTexts "code" cdoc).contains "xs" && (elemTexts "code" cdoc).contains "O(n)" &&
+      (elemTexts "strong" cdoc).contains "Parameters:" && (elemTexts "strong" cdoc).contains "Returns:" &&
+      (elemTexts "strong" cdoc).contains "Note:" && (elemTexts "li" cdoc).any (·.contains "the levels"))
+  t s!"doxygen: a code block reads in the language its extension names ({listings cdoc})"
+    ((listings cdoc).any fun (l, c) => l == some "python" && c.contains "print(1)")
+  t s!"doxygen: a reference sets its name unlinked, named once ({kinds cds})"
+    ((cds.filter (·.kind == .W0454)).size == 1 && !cds.any (·.kind == .W0453))
+  let (_, unknown) := elabCode "t.cpp" "/// Uses \\frobnicate here.\nint f();\n"
+  t "doxygen: a command the reader does not read is named"
+    (unknown.any fun d => d.kind == .W0453)
+  -- rustdoc.
+  let (rdoc, rds) := elabCode "t.rs" ("/// Uses [`Vec`] and [a page](https://example.org).\n///\n" ++
+    "/// ```\n/// # fn main() {\n/// let x = 1;\n/// # }\n/// ```\n///\n/// ```text\n/// # kept\n/// ```\nfn f() {}\n")
+  t s!"rustdoc: a code block naming no language is Rust, its # lines hidden ({listings rdoc})"
+    ((listings rdoc).any (fun (l, c) => l == some "rust" && c.contains "let x = 1;" && !c.contains "fn main") &&
+      (listings rdoc).any fun (l, c) => l == some "text" && c.contains "# kept")
+  t s!"rustdoc: an intra-doc link sets its text, a URL stays a link ({hrefs rdoc}, {kinds rds})"
+    ((elemTexts "code" rdoc).contains "Vec" && (hrefs rdoc).contains "https://example.org" &&
+      (rds.filter (·.kind == .W0454)).size == 1)
+  let (lit, litDs) := elabCode "t.java" "/** a_b_c, 2 * 3, [x] and #y; one<br>two. */\nint z;\n"
+  t s!"javadoc: a comment's text is literal, markdown's punctuation in it too, and a break breaks ({elemTexts "p" lit})"
+    ((elemTexts "p" lit).any (·.contains "a_b_c, 2 * 3, [x] and #y; one") && !litDs.any (·.kind == .E0390))
+  let (esc, escDs) := elabCode "t.c" "/// a \\@b and \\\\ c\nint z;\n"
+  t s!"doxygen: an escaped scalar is its text ({elemTexts "p" esc})"
+    ((elemTexts "p" esc).any (·.contains "a @b and \\ c") && escDs.isEmpty)
+  let (defs, defsDs) := elabCode "t.rs" "/// See [Foo].\n///\n/// [Foo]: crate::Foo\nfn f() {}\n"
+  t s!"rustdoc: a reference definition naming an item sets its uses' text unlinked ({elemTexts "p" defs})"
+    ((elemTexts "p" defs).any (·.contains "See Foo.") && !(elemTexts "p" defs).any (·.contains "crate::") &&
+      defsDs.any (·.kind == .W0454))
+  let (disc, discDs) := elabCode "t.rs" "/// <details>\n/// <summary>More</summary>\n///\n/// Hidden.\n///\n/// </details>\nfn f() {}\n"
+  t s!"rustdoc: a disclosure's tags drop, named, and its text sets ({elemTexts "p" disc})"
+    ((elemTexts "p" disc).any (·.contains "Hidden.") && (elemTexts "p" disc).any (·.contains "More") &&
+      discDs.any (·.kind == .W0453) && !discDs.any (·.kind == .E0390))
+  let (secs, secsDs) := elabCode "t.c" ("/**\n * \\param a first\n * \\param b second\n *\n * More text.\n */\n" ++
+    "int f(int a, int b);\n/// \\param a x\n/// \\return y\n///\n/// Next.\nint g(int a);\n")
+  t s!"doxygen: a blank line ends a section, the text after it a paragraph of its own ({elemTexts "p" secs})"
+    ((elemTexts "p" secs).contains "More text." && (elemTexts "p" secs).contains "Next." &&
+      (elemTexts "li" secs).size == 3 && secsDs.isEmpty)
+  let (html, htmlDs) := elabCode "t.cpp" "/// <b>Bold</b> start.\nint x;\n"
+  t s!"doxygen: a comment opening on HTML keeps its first scalar ({elemTexts "strong" html})"
+    ((elemTexts "strong" html).contains "Bold" && htmlDs.isEmpty)
+  let (fence, fenceDs) := elabCode "t.java" ("/// Example:\n///\n/// ```\n/// @Override\n/// void f() {}\n" ++
+    "/// ```\nvoid g() {}\n")
+  t s!"javadoc: a markdown comment's code block holds no block tag ({listings fence})"
+    ((listings fence).any (fun (l, c) => l == some "java" && c.contains "@Override") &&
+      !fenceDs.any (·.kind == .W0453))
+  let (ind, indDs) := elabCode "t.rs" ("/// Index a[i] here, and [x] is no link.\n///\n" ++
+    "///     let v: Vec<u8> = a[i];\n///     # let hidden = 1;\nfn f() {}\n")
+  t s!"rustdoc: an indented code block is Rust, its hidden lines dropped, and plain brackets stay text ({listings ind})"
+    ((listings ind).any (fun (l, c) => l == some "rust" && c.contains "let v: Vec<u8> = a[i];" &&
+        !c.contains "hidden") &&
+      (elemTexts "p" ind).any (·.contains "a[i] here, and [x] is no link.") && indDs.isEmpty)
+  let (br, _) := elabCode "t.java" "/** one<br>two */\nint z;\n"
+  t s!"javadoc: a break breaks its line ({elemTexts "p" br})"
+    ((elemTexts "p" br).any fun p => p.contains "one" && p.contains "two" && !p.contains "<br>")
+  let (links, linksDs) := elabCode "t.java" "/// See [java.util.List] and [List#add(Object)].\nvoid f() {}\n"
+  t s!"javadoc: a markdown comment's links to program elements set their text, named ({kinds linksDs})"
+    ((elemTexts "p" links).any (·.contains "See java.util.List and List#add(Object).") &&
+      (linksDs.filter (·.kind == .W0454)).size == 2)
+  let (num, _) := elabCode "t.java" "/** 1. First step, as 2020. was. */\nint z;\n"
+  t s!"javadoc: digits and a period opening the comment are text, no list ({elemTexts "p" num})"
+    ((elemTexts "li" num).isEmpty && (elemTexts "p" num).any (·.contains "1. First step"))
+  let (nest, _) := elabCode "t.java" "/** <ol><li>a<ul><li>b</li></ul></li><li>c</li></ol> */\nint z;\n"
+  t s!"javadoc: a list inside an item nests under it, and an ordered list counts ({elemTexts "li" nest})"
+    ((elemTexts "li" nest).size == 3 && (elemTexts "ol" nest).size == 1 && (elemTexts "ul" nest).size == 1)
+  let (tick, _) := elabCode "t.c" "/// Don`t use it.\n///\n/// \\param a x\nint f(int a);\n"
+  t s!"doxygen: an unpaired backtick ends at its paragraph ({elemTexts "strong" tick})"
+    ((elemTexts "strong" tick).contains "Parameters:")
+  let (indTag, indTagDs) := elabCode "t.java" "/// Example:\n///\n///     @Override\n///     void f() {}\nvoid g() {}\n"
+  t "javadoc: a markdown comment's indented code holds no block tag"
+    (!indTagDs.any (·.kind == .W0453) && (preTexts indTag).any (·.contains "@Override"))
+  let (_, imgDs) := elabCode "t.rs" "/// A ![logo](Logo) here.\nfn f() {}\n"
+  t "rustdoc: an image is no intra-doc link" (!imgDs.any (·.kind == .W0454))
+  -- Citations.
+  for (n, lang) in [("java-cite", Ir.CodeLang.java), ("c-cite", .c)] do
+    let src ← fixtureText s!"testdata/codedoc/langs/{n}.{lang.extension}"
+    let (d, ds) ← elabCodeFixture n lang src (dir := "testdata/codedoc/langs")
+    let shown := String.intercalate " " ((elemTexts "p" d) ++ (elemTexts "li" d)).toList
+    t s!"citations: {n}'s documentation cites into its declared bibliography ({kinds ds})"
+      (shown.contains "An Invented Almanac of Tides" && !shown.contains "[Almanac12]")
+  IO.FS.withTempDir fun dir => do
+    IO.FS.createDirAll (dir / "pkg" / "docs")
+    IO.FS.writeFile (dir / "pkg" / "pyproject.toml") "[project]\nname = \"tides\"\n"
+    IO.FS.writeFile (dir / "pkg" / "docs" / "references.bib") (← fixtureText "testdata/codedoc/langs/cite.bib")
+    let src := "\"\"\"Tides follow [Almanac12].\"\"\"\n"
+    let (d, _) ← elabCodeFixture "m" .python src (dir := (dir / "pkg").toString) (driver := true)
+    t "citations: a Python file's docstring cites into its project's docs/references.bib"
+      (String.intercalate " " (elemTexts "li" d).toList |>.contains "An Invented Almanac of Tides")
+    IO.FS.removeFile (dir / "pkg" / "pyproject.toml")
+    let (d, _) ← elabCodeFixture "m" .python src (dir := (dir / "pkg").toString) (driver := true)
+    t "citations: a folder holding no project marker gives its docs/references.bib to no file"
+      ((elemTexts "li" d).isEmpty && (elemTexts "p" d).any (·.contains "[Almanac12]"))
+  let citeSrc ← fixtureText "testdata/codedoc/langs/rust-cite.rs"
+  let (cited, citedDs) ← elabCodeFixture "rust-cite" .rust citeSrc (dir := "testdata/codedoc/langs")
+  let shown := String.intercalate " " ((elemTexts "p" cited) ++ (elemTexts "li" cited)).toList
+  t s!"citations: a Rust page's documentation cites into its declared bibliography ({kinds citedDs})"
+    (shown.contains "An Invented Almanac of Tides" && !shown.contains "[Almanac12]" &&
+      !citedDs.any (·.kind == .W0351) && !citedDs.any (·.kind == .W0110))
+
 end Tests.CodeDoc

@@ -522,10 +522,10 @@ public def readDocument (file : String) (bytes : ByteArray)
         | some l => if lang == .lean && showing.statements then
             Host.runIO (LeanLinks.placeOf file (Code.linkTemplate l)) else pure {}
         | none => pure {}
-      -- A Lean page's documentation cites into its declared bibliography, else its project's.
-      let (found, bibDiags) ← if lang == .lean then
-          Host.runIO (LeanFactsFile.bibFor file showing.bibliography ⟨file, {}⟩)
-        else pure (#[], #[])
+      -- A page's documentation cites into its declared bibliography, else its project's.
+      let (found, bibDiags) ←
+        Host.runIO (LeanFactsFile.bibFor file showing.bibliography ⟨file, {}⟩
+          (markers := lang.row.project))
       let (found, commaDiags) := listable found ⟨file, {}⟩
       -- The keys a page cites by are the ones its reference list decodes; the list names the bytes.
       let refs := codeRefs found (found.foldl (init := {}) fun ks f =>

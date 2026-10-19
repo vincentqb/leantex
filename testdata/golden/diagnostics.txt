@@ -1085,6 +1085,16 @@
 ⚠ [W0452] - \fbox
   '\fbox' holding a minipage or a table stands on a line of its own here, where LaTeX sets the text beside it on the same line
   suggestion: write the box in a paragraph of its own, or move the text into its '{...}'
+── W0453 (degraded) a documentation comment's tag, command or HTML element its dialect's reader does not read; its text, if any, sets in its place
+⚠ [W0453]
+  a documentation comment holds a tag or command its reader does not read; its text, if any, sets in its place
+  `{@inheritDoc}`
+  suggestion: delete it, or write its text as code, `{@code text}`
+── W0454 (degraded) a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
+⚠ [W0454]
+  a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
+  `Other`
+  suggestion: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
 ── W0503 (degraded) a bibliography file is not there; its entries are absent and what cites them is unresolved
 ⚠ [W0503]
   '\bibliography' file 'references' is not there; the reference list is empty and every citation shows '?'

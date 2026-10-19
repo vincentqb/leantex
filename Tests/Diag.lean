@@ -511,6 +511,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       "k" none
   | .W0451 => dvE (w := w) (dvDoc "" "A\\footnote{\\begin{center}Kqzv\\end{center}} b.")
   | .W0452 => dvE (w := w) (dvDoc "" "A \\fbox{\\begin{minipage}{2cm}Kqzv\\end{minipage}} b.")
+  -- A Javadoc inline tag with nothing to stand for, and a link to a program element.
+  | .W0453 => (Surface.read (.code .java) "t.java" (w.rep "/** {@inheritDoc} */\nvoid f() {}\n")).2
+  | .W0454 => (Surface.read (.code .java) "t.java" (w.rep "/** See {@link Other}. */\nvoid f() {}\n")).2
   | .W0353 => dvBib (w := w) "@misc{k, year = 2024}" "k" (some "mystery")
   | .N0029 => dvBib (w := w) "@misc{k, title = {T}, url = {https://example.org/k}, year = 2024}" "k"
       (some "plain")

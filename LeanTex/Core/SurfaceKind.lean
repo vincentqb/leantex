@@ -18,12 +18,17 @@ public inductive CodeLang where
 
 /-- How a documentation comment's text is marked up. -/
 public inductive DocMarkup where
-  /-- CommonMark, as doc-gen4 and rustdoc read it. -/
+  /-- CommonMark, as doc-gen4 reads it. -/
   | markdown
+  /-- rustdoc's: CommonMark, a code block Rust unless it names a language, its `#` lines hidden, an
+  item's path a link. -/
+  | rustdoc
   /-- A Python docstring: markdown, its doctests set as code. -/
   | docstring
   /-- Javadoc: HTML with inline `{@…}` tags and `@…` block tags. -/
   | javadoc
+  /-- Javadoc's markdown comments: CommonMark with its inline and block tags. -/
+  | javadocMarkdown
   /-- Doxygen: markdown with its `\…` and `@…` special commands. -/
   | doxygen
   deriving Repr, BEq, DecidableEq, Inhabited
@@ -49,6 +54,11 @@ public def DocForm.opener : DocForm → String
   | .lines m _ _ => m
   | .block o _ _ _ => o
 
+/-- How a form's text is marked up. -/
+public def DocForm.markup : DocForm → DocMarkup
+  | .lines _ _ m => m
+  | .block _ _ _ m => m
+
 /-- Where a language's documentation comments are found. -/
 public inductive DocSource where
   /-- Lean's `/-- -/` and `/-! -/`, by Lean's own comment grammar. -/
@@ -63,34 +73,40 @@ public inductive DocSource where
   deriving Repr, BEq, Inhabited
 
 /-- What a language's source files read by: the extensions selecting it, the listing language its
-code sets in, the line comment its directive is written in, and where its documentation stands. -/
+code sets in, the line comment its directive is written in, where its documentation stands, and the
+files marking its project's root, whose `docs/references.bib` its documentation cites into. -/
 public structure LangRow where
   extensions : List String
   listing : String
   lineComment : String
   docs : DocSource
+  project : List String
   deriving Repr, Inhabited
 
 /-- Rustdoc's outer and inner comments, line and block. -/
 private def rustDocs : List DocForm :=
-  [.lines "///" .next .markdown, .lines "//!" .holder .markdown,
-   .block "/**" "*/" .next .markdown, .block "/*!" "*/" .holder .markdown]
+  [.lines "///" .next .rustdoc, .lines "//!" .holder .rustdoc,
+   .block "/**" "*/" .next .rustdoc, .block "/*!" "*/" .holder .rustdoc]
 
 /-- Doxygen's JavaDoc, Qt and C++ comment styles. -/
 private def doxygenDocs : List DocForm :=
   [.lines "///" .next .doxygen, .lines "//!" .next .doxygen,
    .block "/**" "*/" .next .doxygen, .block "/*!" "*/" .next .doxygen]
 
+/-- The files marking a C or C++ project's root, by its build system. -/
+private def cProject : List String := ["CMakeLists.txt", "meson.build", "configure.ac", "Makefile"]
+
 /-- Each language's row. -/
 public def CodeLang.row : CodeLang → LangRow
-  | .lean => ⟨["lean"], "lean4", "--", .lean⟩
-  | .python => ⟨["py"], "python", "#", .python⟩
-  | .bash => ⟨["sh"], "bash", "#", .leading "#"⟩
-  | .c => ⟨["c", "h"], "c", "//", .comments doxygenDocs⟩
+  | .lean => ⟨["lean"], "lean4", "--", .lean, ["lakefile.lean", "lakefile.toml"]⟩
+  | .python => ⟨["py"], "python", "#", .python, ["pyproject.toml", "setup.py", "setup.cfg"]⟩
+  | .bash => ⟨["sh"], "bash", "#", .leading "#", []⟩
+  | .c => ⟨["c", "h"], "c", "//", .comments doxygenDocs, cProject⟩
   | .cpp => ⟨["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++"], "cpp", "//",
-      .comments doxygenDocs⟩
-  | .rust => ⟨["rs"], "rust", "//", .comments rustDocs⟩
-  | .java => ⟨["java"], "java", "//", .comments [.block "/**" "*/" .next .javadoc]⟩
+      .comments doxygenDocs, cProject⟩
+  | .rust => ⟨["rs"], "rust", "//", .comments rustDocs, ["Cargo.toml"]⟩
+  | .java => ⟨["java"], "java", "//", .comments [.block "/**" "*/" .next .javadoc,
+      .lines "///" .next .javadocMarkdown], ["pom.xml", "build.gradle", "build.gradle.kts"]⟩
 
 public def CodeLang.all : List CodeLang := [.lean, .python, .bash, .c, .cpp, .rust, .java]
 

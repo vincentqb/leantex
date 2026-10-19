@@ -11,6 +11,7 @@ import LeanTex.Core.Entries
 import LeanTex.Core.Hex
 public import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Highlight
+public import LeanTex.Core.DocMarkup
 
 /-! # Code files as documents
 
@@ -601,7 +602,8 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
     Diag.of .W0110 s!"`{key}` {what}; {sets}" (some request) (help := help)
       (subject := some s!"code:{key}")
   let foreign := if lang == .lean then [] else
-    ((showKeys.filter (· != "show")).filter s.written.contains).map fun k =>
+    ((showKeys.filter (!["show", "bibliography", "biblio-style"].contains ·)).filter
+      s.written.contains).map fun k =>
       note k "is read only on a Lean file's page" "delete it, or write it in a Lean file's directive"
   let uncited := if lang == .lean && !page && !s.docs && s.written.contains "bibliography" then
       [note "bibliography" "names the bibliography an inclusion's documentation cites into, and \
@@ -1131,7 +1133,7 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
       | some e =>
         let holder := match f with
           | .lines _ .holder _ | .block _ _ .holder _ => true
-          | _ => false
+          | _ => f.markup == .doxygen && DocMarkup.describesFile (src.extract r.start e).toList
         let module := holder && head
         out := out.push ⟨.prose module (if module then .aboveAll else .inPlace), r.start, e⟩
         if module then head := false
@@ -1355,6 +1357,17 @@ private def doctests (pr : Prose) : Prose := Id.run do
       places := places.push place
   return { text := "\n".intercalate text.toList, lines := places }
 
+/-- The form a comment opens with, among a language's. -/
+public def formOf? (forms : List Ir.DocForm) (text : List Char) : Option Ir.DocForm :=
+  forms.find? fun f => text.take f.opener.length == f.opener.toList
+
+/-- How a documentation comment of a language is marked up. -/
+public def markupOf (lang : Ir.CodeLang) (text : List Char) : Ir.DocMarkup :=
+  match lang.row.docs with
+  | .lean | .leading _ => .markdown
+  | .python => .docstring
+  | .comments forms => ((formOf? forms text).map (·.markup)).getD .markdown
+
 /-- The prose of lines that carry their place, rustdoc's way: a line's carriage return dropped, the
 indentation every line holding text shares removed, a tab to the next column of four, and blank lines
 at either end dropped. -/
@@ -1408,7 +1421,7 @@ public def proseIn (lang : Ir.CodeLang) (text : List Char) (line col : Nat) : Pr
       (ln, c + lead + marker.length + sp, rest.drop sp)
     proseOf lines (dedent := false)
   | .comments forms =>
-    match forms.find? fun f => text.take f.opener.length == f.opener.toList with
+    match formOf? forms text with
     | some (.lines m _ _) =>
       unindented ((placed text line col).map fun (ln, c, t) =>
         let lead := (t.takeWhile fun ch => ch == ' ' || ch == '\t').length
@@ -1519,17 +1532,70 @@ public def baseName (file : String) : String :=
   | .prose _ _ | .code | .directive | .blank | .statement _ => false
 
 
+/-- A loss a documentation comment's reader names, where its construct stands, its help spelled in
+the dialect's own markup. -/
+public def lossDiag (file : String) (d : DocMarkup.Dialect) (l : DocMarkup.Loss) : Diag :=
+  let span : Option Span := some ⟨file, { line := l.line, col := l.col + 1 }⟩
+  let code := match d with
+    | .javadoc => "`{@code text}`"
+    | .doxygen => "`\\c text`"
+    | .rustdoc | .javadocMarkdown => "`` `text` ``"
+  let url := match d with
+    | .javadoc => "`<a href=\"https://example.org\">text</a>`"
+    | .doxygen | .rustdoc | .javadocMarkdown => "`[text](https://example.org)`"
+  match l.lost with
+  | .unlinked ref =>
+    Diag.of .W0454 "a documentation comment's cross-reference names a program element no target on \
+the page stands for; its text sets unlinked" span
+      (help := s!"name the element as code, {code}, or link a URL, {url}")
+      (subject := some s!"doc:link:{ref}") (detail := some s!"`{ref}`")
+  | .unread what =>
+    Diag.of .W0453 "a documentation comment holds a tag or command its reader does not read; its \
+text, if any, sets in its place" span (help := s!"delete it, or write its text as code, {code}")
+      (subject := some s!"doc:unread:{what}") (detail := some s!"`{what}`")
+
+/-- A documentation comment's prose lowered into markdown by its markup's reader, a code block naming
+no language set in the file's, citing by `known`, and the losses the reader names. -/
+@[expose] public def lowered (lang : Ir.CodeLang) (file : String) (text : List Char)
+    (known : Option (Std.HashSet String)) (prose : Prose) : Prose × Array Diag :=
+  match DocMarkup.dialectOf (markupOf lang text) with
+  | none => (prose, #[])
+  | some d =>
+    -- Doxygen's `///<`, `//!<`, `/**<` and `/*!<` document the member before them.
+    let after := d == .doxygen && match lang.row.docs with
+      | .comments forms => ((formOf? forms text).map fun f => (text.drop f.opener.length).head? == some '<')
+          |>.getD false
+      | .lean | .python | .leading _ => false
+    let prose := if after && prose.text.startsWith "<" then
+        { prose with text := (prose.text.drop 1).toString,
+                     lines := prose.lines.modify 0 fun (ln, col) => (ln, col + 1) }
+      else prose
+    let ls := (prose.text.splitOn "\n").toArray
+    let placed : DocMarkup.PText := ls.zipIdx.foldl (init := #[]) fun acc (l, k) =>
+      let (ln, col) := prose.lines.getD k (0, 0)
+      let acc := if k > 0 then acc.push ⟨'\n', ln, col⟩ else acc
+      l.toList.zipIdx.foldl (fun acc (c, j) => acc.push ⟨c, ln, col + j⟩) acc
+    let out := DocMarkup.lower d lang.listing (known.getD {}) placed
+    let (lines, places, cur, curAt) := out.text.foldl
+      (init := ((#[] : Array String), (#[] : Array (Nat × Nat)), "", (none : Option (Nat × Nat))))
+      fun (lines, places, cur, curAt) p =>
+        if p.c == '\n' then
+          (lines.push cur, places.push (curAt.getD (p.line, p.col)), "", none)
+        else (lines, places, cur.push p.c, curAt <|> some (p.line, p.col))
+    let lines := lines.push cur
+    let places := places.push (curAt.getD ((out.text.back?.map fun p => (p.line, p.col)).getD (0, 0)))
+    ({ text := "\n".intercalate lines.toList, lines := places }, out.losses.map (lossDiag file d))
+
 /-- A documentation comment through the markdown reader, at the place it stands; `opens` raises
 the heading it opens on to the document's title. -/
 @[expose] public def proseRaws (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) : Array Raw × Array Diag :=
   let place := lineCol starts seg.start
-  let prose := proseIn lang seg.text place.1 (place.2 - 1)
-  let read := Md.desugar file prose.text (if lang == .lean then .lean else .docstring)
-    (known := if lang == .lean then known else none)
+  let (prose, lost) := lowered lang file seg.text known (proseIn lang seg.text place.1 (place.2 - 1))
+  let read := Md.desugar file prose.text (if lang == .lean then .lean else .docstring) (known := known)
   let raws := mapPosList prose.place #[] read.1.toList
   (if opens then (retitle raws.toList).toArray else raws,
-    read.2.map fun d => { d with span := d.span.map fun sp => { sp with pos := prose.place sp.pos } })
+    lost ++ read.2.map fun d => { d with span := d.span.map fun sp => { sp with pos := prose.place sp.pos } })
 
 /-! ## Statements -/
 
@@ -2682,7 +2748,7 @@ the preamble's declarations, the file's name the title where no description open
       (subject := some s!"code:{k}:{v}")
   let idle := showing.idle lang ⟨file, directivePos lang src⟩
   -- premise: Tests.UnusedSettings.metadataChecks — a page citing nothing reads none of these
-  let uncited := if lang != .lean || acc.cited then #[] else
+  let uncited := if acc.cited then #[] else
     (#["bibliography", "biblio-style"].filter fun k => showing.written.contains k &&
         (refs.isSome || (k == "biblio-style" && !showing.written.contains "bibliography"))).map
       fun k => UnusedSetting.directiveDiag file k (directivePos lang src)

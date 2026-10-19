@@ -181,9 +181,9 @@ See the [example documents](../testdata/corpus) and
 A Lean (`.lean`), Python (`.py`), shell (`.sh`), C (`.c`, `.h`), C++ (`.cpp`,
 `.cc`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.h++`), Rust (`.rs`) or Java
 (`.java`) file reads as a document: its documentation comments are prose, read
-as Markdown, and the code between them sets as listings in the file's
-language, comments included, every code line exactly as written; the blank
-lines around a listing ship nowhere.
+as Markdown by their dialect's own rules, and the code between them sets as
+listings in the file's language, comments included, every code line exactly as
+written; the blank lines around a listing ship nowhere.
 
 - **Lean:** a `/-! … -/` module doc and a `/-- … -/` docstring that open a
   line are prose. A module doc with only lines that declare nothing before it
@@ -202,11 +202,27 @@ lines around a listing ship nowhere.
   above the script.
 - **Rust:** rustdoc's `///` and `/** … */` outer docs and `//!` and
   `/*! … */` inner docs that open a line, indented or not, are prose where
-  they stand. Inner docs before any code describe the file.
+  they stand. Inner docs before any code describe the file. As rustdoc reads
+  them, a code block naming no language is Rust, its lines opening on `# `
+  hidden, and a link to an item, such as `` [`Vec`] `` or
+  `[text](std::vec::Vec)`, sets its text unlinked (`W0454`).
 - **C and C++:** Doxygen's `/** … */`, `/*! … */`, `///` and `//!` comments
-  that open a line are prose where they stand.
-- **Java:** a `/** … */` Javadoc comment that opens a line is prose where it
-  stands.
+  that open a line are prose where they stand, read as Doxygen reads them:
+  `\param`, `\tparam`, `\retval`, `\return`, `\throws`, `\see`, `\note`,
+  `\warning` and its other paragraph commands set under Doxygen's labels;
+  `\c`, `\p`, `\b` and `\e` mark a word; `\code{.py} … \endcode` is a listing
+  in the language its extension names, the file's where it names none; `\ref`
+  and `\link` set their text unlinked (`W0454`); and a comment holding `\file`
+  describes the file. A command it does not read, such as a grouping, an
+  output format's block or a formula, set as code, is named (`W0453`).
+- **Java:** a `/** … */` Javadoc comment and a `///` Markdown doc comment that
+  open a line are prose where they stand, read as the standard doclet reads
+  them: `{@code}`, `{@literal}` and `{@link}`, its text unlinked (`W0454`);
+  `<p>`, lists, emphasis, `<code>` and `<pre>`, a Java listing, as Markdown,
+  a Javadoc comment's other text literally; and its block tags (`@param`,
+  `@return`, `@throws`, `@see`, `@since`, `@author` and the rest) under the
+  doclet's labels in its order, a deprecation first. An HTML element or a tag
+  it does not read keeps its text and is named (`W0453`).
 
 In these languages a run of line docs is one comment, `////` and `/***` are
 plain comments, and a doc form inside a plain comment, a string or a
@@ -214,10 +230,14 @@ preprocessor line is no doc. A block doc's prose drops its leading `*`
 decoration, and a line doc's its markers; then the margin its lines share
 goes.
 
-A Lean page's documentation cites into its project's bibliography:
+A code page's documentation cites into its project's bibliography:
 `docs/references.bib` beneath the nearest directory above the file that holds
-a lakefile, or the files the directive names beside it,
-`-- leantex: bibliography = refs.bib`. A bracket cites as doc-gen4 resolves
+its project's marker (a lakefile for Lean, `Cargo.toml` for Rust, `pom.xml` or
+a Gradle build for Java, `pyproject.toml`, `setup.py` or `setup.cfg` for
+Python, `CMakeLists.txt`, `meson.build`, `configure.ac` or a `Makefile` for C
+and C++), or the files the directive names beside it,
+`-- leantex: bibliography = refs.bib`; a Doxygen `\cite key` cites as `[key]`
+does. A bracket cites as doc-gen4 resolves
 one. doc-gen4 registers each key the bibliography holds that its scan finds
 between a `[` and the next `]`, resuming after that `]`, so `[[Key]]` alone
 registers nothing; then `[Key]`, `[Key][]` and `[Key](Theorem 2)` cite a
@@ -229,7 +249,7 @@ key the bibliography holds, any key it lacks set as `?` and named, so
 the alpha style, as doc-gen4 labels its references (`[Doe12]`), unless the
 directive names another (`biblio-style = plain`), and their list closes the
 documentation's own References section, else stands at the page's end under
-its own heading. Another language's file's documentation cites nothing.
+its own heading.
 
 A file's description that opens on a heading gives the document its title;
 otherwise the file's name is the title, shown as the page's first heading.

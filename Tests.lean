@@ -382,6 +382,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownCode.markdownCodeChecks ref
   Tests.MarkdownCode.htmlCodeAtomChecks ref
   Tests.CodeDoc.codeDocChecks ref
+  Tests.CodeDoc.docMarkupChecks ref
   Tests.LeanStatements.leanStatementChecks ref
   Tests.LeanViews.leanViewChecks ref
   Tests.LeanProse.leanProseChecks ref

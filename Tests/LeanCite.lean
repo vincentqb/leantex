@@ -178,10 +178,11 @@ def leanCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (raws, _) := Surface.readCode .python "m.py" "\"\"\"Cites [ash2001] and [@roe2020].\"\"\"\n"
     none {} (some refs)
   let (d, _) := Elab.runRaws "m.py" raws #[]
-  t "lean cite: a Python docstring reads no citation" (citesOf d).isEmpty
-  let (_, ds) := elabCode "m.py" "# leantex: bibliography = refs.bib\nprint(1)\n"
-  t "lean cite: a Python directive's bibliography is named"
-    (ds.any (·.subject == some "code:bibliography"))
+  t "lean cite: a Python docstring cites as a Lean page's documentation does" !(citesOf d).isEmpty
+  let (_, ds) := Surface.readCode .python "m.py" "# leantex: bibliography = refs.bib\nprint(1)\n"
+    none {} (some refs)
+  t "lean cite: a Python directive's bibliography no docstring cites into is named"
+    (ds.any (·.subject == some "unused:directive:bibliography"))
   let (_, ds) := elabCode "F.lean" "-- leantex: show = docs\n/-! Notes. -/\ndef x := 1\n"
   t "lean cite: a page has no docs view, which it names"
     (ds.any (·.subject == some "code:show:docs"))
