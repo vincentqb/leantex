@@ -554,7 +554,7 @@ private def lengthOfUnit (mantissa : Int) (scale : Nat) (unit : String) :
     some { ex := mantissa * 1000 / scale }
   else
     (unitScale unit).map fun (len, den) =>
-      SymLength.ofLength (len.ofRatio mantissa (scale * den))
+      SymLength.ofLength (len.ofRatioRound mantissa (scale * den))
 
 /-- A single length term: a number with an absolute or font-relative unit. -/
 public def parseLength (s : String) : Option SymLength :=
@@ -1190,7 +1190,7 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
     let unit := String.ofList (s.toList.drop digits.length) |>.trimAscii.toString
     match parseDecimal (String.ofList digits), unitScale unit with
     | some (mantissa, scale), some (len, den) =>
-      some (.dim (len.ofRatio mantissa (scale * den)))
+      some (.dim (len.ofRatioRound mantissa (scale * den)))
     | some (mantissa, 1), none =>
       if unit.isEmpty then some (.int mantissa)
       else if isRatioName s then some (.ident s)

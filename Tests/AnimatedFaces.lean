@@ -61,7 +61,7 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (images.any fun (_, attrs) =>
       attrs.contains ("width", "160") && attrs.contains ("height", "107") &&
       attrs.any (fun (key, value) => key == "style" &&
-        hasStr value s!"aspect-ratio: {(Dim.pt 120).units} / {(Dim.pt 80).units}" &&
+        hasStr value "aspect-ratio: 120 / 80" &&
         hasStr value "object-fit: fill"))
   let sources := elemAttrsList (· == "source") #[] tree.toList
   t "HTML selects a static poster for print and reduced motion"

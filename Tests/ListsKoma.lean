@@ -531,7 +531,7 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
       String.join (exLengths.map fun (n, m) => "\\setlength{\\" ++ n ++ "}{" ++ sp m ++ "}\n")
     let exDoc := (elabStr (doc cls (pre spell) (body (spell 2500)))).1
     let at_ := xhAt exDoc.page.fontSize
-    let inSp (m : Nat) : String := s!"{(m : Int) * at_ / 1000}sp"
+    let inSp (m : Nat) : String := s!"{((m : Int) * at_ / (1000 : Int)).toSp}sp"
     (exDoc, (elabStr (doc cls (pre inSp) (body (inSp 2500)))).1)
   let places (d : Ir.Doc) : List (Nat × Dim.Length × Dim.Length) :=
     (layoutOf oneFace d).pages.toList.zipIdx.flatMap fun (p, i) =>
@@ -549,7 +549,12 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
       ("a deck", "{beamer}", exDeck)] do
     let (exDoc, spDoc) := pair cls body
     t s!"ex lengths: {name} declaring its spaces in ex sets the PDF of the same spaces in sp"
-      (!(places exDoc).isEmpty && places exDoc == places spDoc)
+      (let a := places exDoc
+       let b := places spDoc
+       -- Each length in sp is TeX's to the scaled point, so a line stands within one per length.
+       let near (x y : Dim.Length) : Bool := (x - y).abs ≤ Dim.Length.ofSp (exLengths.length + 1)
+       !a.isEmpty && a.length == b.length &&
+         (a.zip b).all fun ((i, x, y), (j, u, v)) => i == j && near x u && near y v)
     t s!"ex lengths: {name} declaring its spaces in ex sets the web page of the same spaces in sp"
       (page exDoc == page spDoc)
 

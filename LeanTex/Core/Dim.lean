@@ -6,7 +6,7 @@ import all Init.Data.Repr
 namespace LeanTex.Core.Dim
 
 /-- Base units per inch: the one place the engine's base unit is defined. -/
-@[expose] public def unitsPerInch : Int := 4718592
+@[expose] public def unitsPerInch : Int := 29370528
 
 /-- The engine's one length: an exact count of base units, `unitsPerInch` to the inch. -/
 public structure Length where
@@ -251,6 +251,10 @@ public theorem unitsPerInch_exact : unitsPerInch % 72 = 0 ∧ unitsPerInch % 96 
 @[expose] public def Length.ofRatio (unit : Length) (num : Int) (den : Nat) : Length :=
   ⟨unit.units * num / (den : Int)⟩
 
+/-- A length `num / den` units of `unit`, rounded to the nearest: how a reader takes a decimal. -/
+@[expose] public def Length.ofRatioRound (unit : Length) (num : Int) (den : Nat) : Length :=
+  ⟨(unit.units * num * 2 + (den : Int)) / (2 * (den : Int))⟩
+
 public theorem pt_exact (n : Int) : pt n / pt 1 = n := by
   simp only [pt, bp, unitsPerInch, Length.div_length]
   omega
@@ -267,6 +271,10 @@ public theorem bp_one_pos : 0 < (bp 1).units := by decide
 
 /-- A count of TeX's scaled points as a length, rounded to the nearest. -/
 @[expose] public def Length.ofSp (n : Int) : Length := ⟨((pt 1).units * n + 32768) / 65536⟩
+
+public theorem Length.ofRatioRound_sp (n : Int) : (pt 1).ofRatioRound n 65536 = Length.ofSp n := by
+  simp only [Length.ofRatioRound, Length.ofSp, Length.ofUnits.injEq]
+  omega
 
 public theorem Length.toSp_ofSp (n : Int) : (Length.ofSp n).toSp = n := by
   simp only [Length.ofSp, Length.toSp, pt, bp, unitsPerInch]

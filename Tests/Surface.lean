@@ -184,7 +184,7 @@ d = a - a / 2 }")).1
   -- calc's `/` on a length is TeX's `\divide`, truncating toward zero (TeXbook ch. 24).
   let (d3, ds3) := elabStr (pre
     "\\tokens{ bleed = 9pt, safe = 9pt, w = 240pt, q = (bleed + safe) / 2, \
-r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
+r = w / 2.5, neg = 0pt - 5sp, negh = neg / 2 }")
   t "division by a numeric factor evaluates without errors"
     (ds3.all (·.severity != .error))
   t "a length divides by an integer"
@@ -192,7 +192,9 @@ r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
   t "a length divides by a decimal"
     (d3.tokens.find? "r" == some { width := .ofLength (Dim.pt 96) })
   t "a negative length truncates toward zero, as TeX's \\divide does"
-    (d3.tokens.find? "negh" == some { width := .ofLength (-Dim.Length.quantum) })
+    (match (d3.tokens.find? "neg").map (·.width.sp), (d3.tokens.find? "negh").map (·.width.sp) with
+      | some n, some h => n < 0 && h == n.tdiv 2 && h != n / 2
+      | _, _ => false)
   t "a parenthesized numeric divisor evaluates as a scalar"
     (let (d4, ds4) := elabStr (pre
       "\\newlength{\\cw}\\setlength{\\cw}{100pt}\\newlength{\\cb}\
@@ -434,7 +436,7 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (d.page.width == Dim.mm 594 && d.page.height == Dim.mm 841)
   -- a1 fontscale 1/√2 × 1.4 rounds to 0.99, and 24.88pt × 0.99 = 24.6312pt.
   t "fontsize is 24.88 × scale × fontscale, rounded as the sty rounds"
-    (d.page.fontSize == Dim.pt 246312 / 10000)
+    (d.page.fontSize == (Dim.pt 1).ofRatioRound 246312 10000)
   t "the carried options fire no beamerposter drop" (!ds.any (·.code == "W0367"))
   let (d0, _) := elabStr (deck "size=a0")
   t "the default a0 board is the poster record's own"
@@ -442,8 +444,8 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
       d0.page.fontSize == Dim.pt 2488 / 100)
   let (dc, _) := elabStr (deck "size=custom,width=84,height=59.4,scale=1.2")
   t "a custom board reads width/height as cm at fontscale 1"
-    (dc.page.width == Dim.inch (84 * 100) / 254 &&
-      dc.page.fontSize == Dim.pt (2488 * 120) / 10000)
+    (dc.page.width == (Dim.inch 1).ofRatioRound (84 * 100) 254 &&
+      dc.page.fontSize == (Dim.pt 1).ofRatioRound (2488 * 120) 10000)
   let (_, dd) := elabStr (deck "debug,size=a2")
   t "an option outside the model is dropped by name (W0367)"
     (dd.any (·.code == "W0367"))
@@ -591,14 +593,15 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let src := dvDoc "\\usepackage[top=1in, bottom=0.7in]{geometry}\n" "x"
      let page := (elabStr src).1.page
      !(warnCodes src).contains "W0104" && page.vmargin == Dim.inch 1 &&
-       page.bottomMargin == Dim.inch 7 / 10)
+       page.bottomMargin == (Dim.inch 1).ofRatioRound 7 10)
   t "a lone geometry side stays named"
     ((warnCodes (dvDoc "\\usepackage[top=1in]{geometry}\n" "x")).contains "W0104")
   let pre (decls : String) : String :=
     "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
   let (geoDoc, geoDs) := elabStr (pre "\\usepackage[a4paper,vmargin=0.6in,hmargin=0.9in,headsep=1in]{geometry}")
   t "compat geometry becomes page" (geoDs.all (·.severity != .error) &&
-    geoDoc.page.vmargin == Dim.inch 3 / 5 && geoDoc.page.hmargin == Dim.inch 9 / 10)
+    geoDoc.page.vmargin == (Dim.inch 1).ofRatioRound 3 5 &&
+      geoDoc.page.hmargin == (Dim.inch 1).ofRatioRound 9 10)
   t "compat geometry carries headsep to the page keys"
     (geoDoc.page.headsep == some (Dim.inch 1) &&
       geoDs.all (·.code != "W0101"))
@@ -1215,10 +1218,11 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       some Ir.texParskipDefault)
   for (opt, w, st) in ([("half", 445644, 445644), ("full", 891289, 89128), ("", 891289, 89128)] :
       List (String × Int × Int)) do
-    t s!"compat koma parskip={opt} is its share of the class's line"
+    let near (a : Dim.Length) (sp : Int) : Bool := (a - Dim.Length.ofSp sp).abs ≤ Dim.Length.ofSp 1
+    t s!"compat koma parskip={opt} is its share of the class's line, within TeX's sp"
       (((elabStr (s!"\\documentclass[parskip{if opt.isEmpty then "" else "=" ++ opt}]" ++
           "{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip.map
-        fun g => (g.width.sp, g.stretch.sp)) == some (Dim.Length.ofSp w, Dim.Length.ofSp st))
+        fun g => near g.width.sp w && near g.stretch.sp st) == some true)
   t "compat parskip package"
     (((elabStr ("\\documentclass{article}\\usepackage{parskip}\\begin{document}x\\end{document}")).1.page.parskip.map
       (·.width.em)) == some 600)
@@ -1462,7 +1466,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `\hrule` has zero depth, so it is a baseline rule, its `height` the thickness, 0.4 pt by default (TeXbook p. 221).
   t "compat koma section rule is a baseline rule at TeX's default height"
     ((koma.1.styles.find? "section").map (fun st => (st.rulePosition, st.ruleThickness.map (·.width.sp)))
-      == some (some .baseline, some (Dim.pt 4 / 10)))
+      == some (some .baseline, some ((Dim.pt 1).ofRatioRound 4 10)))
   let ruleH (h : String) := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter" ++
     s!"\\renewcommand\\sectionlinesformat[4]\{#3#4 \\textcolor\{ink}\{\\leaders\\hrule{h}\\hfill\\kern\\z@}}\\makeatother"))
   let thickOf (d : Ir.Doc × Array Diag) : Option Dim.Length :=
@@ -2048,24 +2052,30 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "dim negative is exact" (Decl.parseValue "-0.5in" == some (.dim (-(Dim.inch 1) / 2)))
   t "dim negative em is exact"
     (Decl.parseLength "-0.25em" == some { em := -250 })
+  t "a count of TeX's scaled points reads as Dim's own conversion of it"
+    ((List.range 70).all fun n => Decl.parseLength s!"{n}sp" == some (.ofLength (Dim.Length.ofSp n)))
 
   -- The digit-list printers spell as the legacy printers do, over every thousandth from -3 to 3 pt and a sweep of ratios.
   let ptBad := (List.range 6001).filterMap fun (i : Nat) =>
     let milli : Int := Int.ofNat i - 3000
     let x : Dim.Length := Dim.bp milli / 1000
     let q := Dim.Length.quantum
-    [x - q, x, x + q, x + 32 * q].find? fun y => Dim.Length.toBpString y != legacyPtString y
+    [x - q, x, x + q, x + (Dim.Length.ofBpMilli 1 / 2 - q)].find? fun y =>
+      Dim.Length.toBpString y != legacyPtString y
   t s!"sp pt string spells as the legacy printer does ({ptBad.take 3})" ptBad.isEmpty
   let ratBad := (List.range 4001).filterMap fun (i : Nat) =>
     let p : Int := Int.ofNat i * 7919 - 16000000
     [1, 7, 65536, 1000000000, 3 * 65536].find? fun q => Dim.ratString p q != legacyRatString p q
   t s!"rat string spells as the legacy printer does ({ratBad.take 3})" ratBad.isEmpty
-  -- toBpString rounds exact thirds to the nearest thousandth, collapses tiny values to "0" unsigned, and rounds halves away from zero.
+  -- toBpString rounds exact thirds to the nearest thousandth and collapses tiny values to "0" unsigned.
   t "sp pt string thirds" ((Dim.pt 1 / 3).toBpString == "0.333")
   t "sp pt string negative thirds" ((-(Dim.pt 1) / 3).toBpString == "-0.333")
   t "sp pt string eighth" ((Dim.bp 1 / 8).toBpString == "0.125")
-  t "sp pt string tiny is unsigned zero" ((-26 * Dim.Length.quantum).toBpString == "0")
-  t "sp pt string half milli rounds up" ((Dim.bp 1 / 16).toBpString == "0.063")
+  t "sp pt string tiny is unsigned zero"
+    ((-(Dim.Length.ofBpMilli 1 / 2 - Dim.Length.quantum)).toBpString == "0")
+  t "sp pt string rounds to the nearest thousandth about a half"
+    ((Dim.bp 1 / 16 + Dim.Length.quantum).toBpString == "0.063" &&
+      (Dim.bp 1 / 16 - Dim.Length.quantum).toBpString == "0.062")
 
   let mut s : UInt64 := 0xA0761D6478BD642F
   let mut worst : Dim.Length := 0

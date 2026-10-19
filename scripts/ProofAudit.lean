@@ -77,31 +77,34 @@ meta def numericConstant (e : Expr) : Bool :=
 length built from a closed count, a large multiple of the quantum, or a base-unit count or a large
 scale of its rational image against a numeral other than 0 and ±1. -/
 meta def baseLiteral (e : Expr) : Option String :=
+  let carries (x : Expr) := (x.find? fun s => (numeral? s).any (·.natAbs ≥ 32768)).isSome
   let large (x : Expr) := match numeral? x with
     | some n => n.natAbs ≥ 32768
-    | none => false
+    | none => numericConstant x && carries x
   let hit (sub : Expr) : Option String :=
     if sub.isConstOf `LeanTex.Core.Dim.unitsPerInch then some "the base unit itself"
     else if (#[`LeanTex.Core.Dim.Length.ofUnits, `LeanTex.Core.Dim.Length.ofRatFloor,
         `LeanTex.Core.Dim.Length.ofRatCeil, `LeanTex.Core.Dim.Length.ofRatRound].any
-          (sub.isAppOfArity · 1)) && numericConstant (sub.getArg! 0) then
+          (sub.isAppOfArity · 1)) &&
+        (numericConstant (sub.getArg! 0) || carries (sub.getArg! 0)) then
       some "a length built from a count of base units"
     else if sub.isAppOfArity `LeanTex.Core.Dim.Length.ofRatio 3 &&
         (sub.getArg! 0).consumeMData.isConstOf `LeanTex.Core.Dim.Length.quantum then
       some "a length built from a count of quanta"
     else
       let args := sub.getAppArgs
-      let scaling := #[``HMul.hMul, ``HDiv.hDiv, ``HMod.hMod]
-      let compare := #[``HAdd.hAdd, ``HSub.hSub, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``Eq, ``Ne,
-        ``BEq.beq, ``bne, ``Max.max, ``Min.min]
-      if !(scaling.any sub.isAppOf || compare.any sub.isAppOf) || args.size < 2 then none else
+      let scaling := #[(``HMul.hMul, 6), (``HDiv.hDiv, 6), (``HMod.hMod, 6)]
+      let compare := #[(``HAdd.hAdd, 6), (``HSub.hSub, 6), (``LE.le, 4), (``LT.lt, 4), (``GE.ge, 4),
+        (``GT.gt, 4), (``Eq, 3), (``Ne, 3), (``BEq.beq, 4), (``bne, 4), (``Max.max, 4), (``Min.min, 4)]
+      let full (ops : Array (Name × Nat)) := ops.any fun (n, k) => sub.isAppOfArity n k
+      if !(full scaling || full compare) then none else
       let a := args[args.size - 2]!
       let b := args[args.size - 1]!
       let quantum (x : Expr) := x.consumeMData.isConstOf `LeanTex.Core.Dim.Length.quantum
       let big (x : Expr) := match numeral? x with
         | some n => n.natAbs ≥ 2
-        | none => false
-      let scaled := scaling.any sub.isAppOf
+        | none => numericConstant x
+      let scaled := full scaling
       if sub.isAppOf ``HMul.hMul && ((quantum a && large b) || (quantum b && large a)) then
         some "a large multiple of the quantum"
       else if (readsUnits false a && big b) || (readsUnits false b && big a) then
@@ -383,7 +386,10 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
       let numbered (s pre : String) : Bool :=
         s.startsWith pre && !(s.drop pre.length).toString.isEmpty &&
           (s.drop pre.length).toString.all Char.isDigit
-      let generated := (privateToUserName decl).isInternalDetail || match decl with
+      let fieldDefault := match privateToUserName decl with
+        | .str _ s => s == "_default"
+        | _ => false
+      let generated := ((privateToUserName decl).isInternalDetail && !fieldDefault) || match decl with
         | .str _ s => numbered s "eq_" || s == "eq_def" || s == "splitter" || numbered s "match_"
         | _ => false
       if !baseUnitModules.contains name && !generated then

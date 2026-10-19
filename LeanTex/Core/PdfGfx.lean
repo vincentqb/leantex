@@ -1512,8 +1512,10 @@ private def bboxClip (dict : Obj) (doc : Doc) (body : Array (Node Run)) (store :
       let x1 := max v[0] v[2]
       let y0 := min v[1] v[3]
       let y1 := max v[1] v[3]
+      -- a stroke width spelled to the thousandth of a point, through PDF's default miter limit
+      let slack := Length.ofBpMilli 10
       let inside := match nodesInk body store.outlines store.symbols with
-        | some ((a, b), (c, d)) => x0 ≤ a && y0 ≤ b && c ≤ x1 && d ≤ y1
+        | some ((a, b), (c, d)) => x0 ≤ a + slack && y0 ≤ b + slack && c ≤ x1 + slack && d ≤ y1 + slack
         | none => true
       if inside then #[] else #[{ geom := .rect x0 y0 (x1 - x0) (y1 - y0), rule := .nonzero }]
     else #[]

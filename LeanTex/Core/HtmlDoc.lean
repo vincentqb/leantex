@@ -6652,8 +6652,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         -- `keepaspectratio` scales by the smaller ratio, as graphicx does
         match size.keepAspect, pixels? with
         | true, some (pw, ph) =>
-          let (rw, rh) := (canvas?.map fun (w, h) => (w.units, h.units)).getD
-            (Int.ofNat pw, Int.ofNat ph)
+          let (rw, rh) := (canvas?.map fun (w, h) => (w.toBpString, h.toBpString)).getD
+            (toString pw, toString ph)
           let floor := if wRow.isSome then s!"width: {w}; " else ""
           some (s!"{floor}width: min({wRow.getD w}, calc({h} * {rw} / {rh})); " ++
             "height: auto")
@@ -6674,7 +6674,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- animate §6.1 fixes the canvas to frame one
     let style := match canvas? with
       | some (w, h) =>
-        let ar := s!"aspect-ratio: {w.units} / {h.units}; object-fit: fill"
+        let ar := s!"aspect-ratio: {w.toBpString} / {h.toBpString}; object-fit: fill"
         some (match style with | some s => s ++ "; " ++ ar | none => ar)
       | none => style
     let requestAttrs := match index? with

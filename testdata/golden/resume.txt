@@ -22,7 +22,7 @@ meta author "Alex Doe"
 assert fonts.all_embedded
 assert pages == 1
 assert text.in_area
-assert text.xheight >= 3.968pt
+assert text.xheight >= 3.969pt
 para
   styled sans
     styled bold

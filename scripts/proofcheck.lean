@@ -268,7 +268,10 @@ public def shifted (x : Length) : Rat := x.toRat + 65536
     ("BaseQuanta", "public def onePoint : Length := 65536 * Length.quantum"),
     ("BaseScaled", "public def inPoints (x : Length) : Rat := x.toRat / 65536"),
     ("BaseNatural", "public def inPoints (x : Length) : Nat := x.units.toNat / 65536"),
-    ("BaseNamedEq", "public def eq_sneaky : Length := Length.ofUnits 65536")]
+    ("BaseNamedEq", "public def eq_sneaky : Length := Length.ofUnits 65536"),
+    ("BaseScaledCount", "public def inPoints (x : Length) : Int := x.units / (2 * 32768)"),
+    ("BaseFactor", "public def points (n : Int) : Length := Length.ofUnits (n * 65536)"),
+    ("BaseDefault", "public structure Box where\n  w : Length := Length.ofUnits 65536")]
   for (name, body) in shapes do
     let out ← probe name s!"module\npublic import LeanTex.Core.Dim\nopen LeanTex.Core.Dim\n{body}\n"
     (_, failures) ← (expect s!"{name} fixture did not compile" (out.exitCode == 0)).run failures
@@ -281,7 +284,8 @@ public def perPoint : Int := unitsPerInch / 72
   let allFixtures := #["Valid", "Hyphenated-Module", "Visible", "Hidden", "Foreign", "Foundation",
     "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Hoisted", "Structured", "Threaded",
     "Threading", "Unimported", "BaseNamed", "BaseBuilt", "BaseCounted", "BaseShifted", "BaseRead", "BaseProduct", "BaseAbove",
-    "BaseFloor", "BaseQuanta", "BaseScaled", "BaseNatural", "BaseNamedEq"]
+    "BaseFloor", "BaseQuanta", "BaseScaled", "BaseNatural", "BaseNamedEq", "BaseScaledCount",
+    "BaseFactor", "BaseDefault"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
       ("hyphenated compiled module", #["Valid", "Hyphenated-Module"],
@@ -306,6 +310,9 @@ public def perPoint : Int := unitsPerInch / 72
       ("a rational base-unit count scaled by the base", #["BaseScaled"], #["BaseScaled"], false),
       ("a natural base-unit count against a numeral", #["BaseNatural"], #["BaseNatural"], false),
       ("a declaration named like an equation lemma", #["BaseNamedEq"], #["BaseNamedEq"], false),
+      ("a base-unit count against a closed count", #["BaseScaledCount"], #["BaseScaledCount"], false),
+      ("a length built with a base-sized factor", #["BaseFactor"], #["BaseFactor"], false),
+      ("a field default built from a count", #["BaseDefault"], #["BaseDefault"], false),
       ("empty manifest", #["Valid"], #[], false),
       ("duplicate manifest", #["Valid"], #["Valid", "Valid"], false),
       ("missing module", #["Valid"], #["Unimported"], false)] do

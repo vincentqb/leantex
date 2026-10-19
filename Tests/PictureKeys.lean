@@ -169,7 +169,7 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       { labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) oneFace } doc).1
   t "the SVG's box grows by the same depth"
     (match svgHeight "vowel", svgHeight "vowelp" with
-     | some a, some b => decide (b - a - deeper ≤ 70 * Dim.Length.quantum ∧ deeper - (b - a) ≤ 70 * Dim.Length.quantum)
+     | some a, some b => decide ((b - a - deeper).abs ≤ Dim.Length.ofSp 70)
      | _, _ => false)
 
 

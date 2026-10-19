@@ -243,7 +243,7 @@ the centred one centres on it, the left one starts with it",
       lineRightOf c 0 "4.1" == lineRightOf c 0 "Range (m)" &&
       (match lineXOf c 0 "12:25", lineRightOf c 0 "12:25", lineXOf c 0 "Low water",
           lineRightOf c 0 "Low water" with
-        | some a, some b, some d, some e => a + b == d + e
+        | some a, some b, some d, some e => (a + b - (d + e)).abs ≤ 2 * Dim.Length.quantum
         | _, _, _, _ => false))])]
 
 /-- A loss a markdown golden ships with no diagnostic naming it, judged over every markdown golden

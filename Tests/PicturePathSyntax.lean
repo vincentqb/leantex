@@ -40,7 +40,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     a.size == b.size && (a.zip b).all fun ((ka, xs), (kb, ys)) =>
       ka == kb && xs.size == ys.size && (xs.zip ys).all fun (x, y) =>
         -- Two rounded offsets differ from one rounded sum by at most two sp.
-        decide (x - y ≤ 2 * Dim.Length.quantum ∧ y - x ≤ 2 * Dim.Length.quantum)
+        decide ((x - y).abs ≤ Dim.Length.ofSp 2)
   let svg (body : String) (opts : String := "") : Array String :=
     (elabStr (src body opts)).1.body.foldl (fun acc b =>
       acc ++ attrValuesOf (· == "path") "d" (HtmlDoc.blockNode {} b)) #[]

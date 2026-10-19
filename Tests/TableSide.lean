@@ -204,6 +204,10 @@ private def spOfPt (printed : String) : Dim.Length :=
   | some (m, sc) => Dim.Length.ofSp ((m * 65536 * 2 + (sc : Int)) / (2 * (sc : Int)))
   | none => 0
 
+/-- Whether a fixed length is `want` on TeX's grid of scaled points. -/
+private def onSpGrid (got : Option Dim.SymLength) (want : Dim.Length) : Bool :=
+  got.any fun w => w.em == 0 && w.ex == 0 && w.sp.toSp == want.toSp
+
 /-- A small formal table under every kind of rule. -/
 private def ruledTable : String :=
   "\\begin{tabular}{lr}\n\\toprule\nHeadWord & Count \\\\\n\\midrule\n" ++
@@ -246,8 +250,8 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     for (name, printed) in lengths do
       let got := Layout.tableLength none doc.preambleFace name
       let want := spOfPt printed
-      t s!"table length {kind} {name}: the page's default is lualatex's ({got} against {want} sp)"
-        ((got - want).abs ≤ 4 * Dim.Length.quantum)
+      t s!"table length {kind} {name}: the page's default is lualatex's ({got.toSp} against {want.toSp} sp)"
+        ((got - want).abs ≤ Dim.Length.ofSp 4)
     let declared := String.join (lengths.map fun (name, printed) =>
       s!"\\setlength\{\\{name}}\{{printed}pt}\n")
     let (declDoc, _) := elabStr (ruledSource kind cls declared)
@@ -255,12 +259,12 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let d := censusOf #[] (layoutOf oneFace declDoc)
     -- Each length is within TeX's rounding and a position sums a dozen, so 32 sp bounds it.
     let near (a b : Option Dim.Length) : Bool := match a, b with
-      | some x, some y => (x - y).abs ≤ 32 * Dim.Length.quantum
+      | some x, some y => (x - y).abs ≤ Dim.Length.ofSp 32
       | _, _ => false
     t s!"table length {kind}: a table declaring lualatex's lengths ships the undeclared page"
       ((pageRuleSegs c 0).size == 4 && (pageRuleSegs c 0).size == (pageRuleSegs d 0).size &&
         ((pageRuleSegs c 0).zip (pageRuleSegs d 0)).all (fun (a, b) =>
-          (a.1 - b.1).abs ≤ 32 * Dim.Length.quantum && (a.2 - b.2).abs ≤ 8 * Dim.Length.quantum) &&
+          (a.1 - b.1).abs ≤ Dim.Length.ofSp 32 && (a.2 - b.2).abs ≤ Dim.Length.ofSp 8) &&
         ["HeadWord", "FirstRow", "SecondRow"].all fun w =>
           near (lineYOf c 0 w) (lineYOf d 0 w) && near (lineXOf c 0 w) (lineXOf d 0 w))
     let (page, _) := HtmlDoc.emit {} doc
@@ -277,8 +281,8 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let (abs, _) := elabStr (ruledSource "article" article
     "\\setlength{\\belowrulesep}{4.31pt}\n\\setlength{\\aboverulesep}{5pt}\n" small)
   t "table length: a preamble's 1ex and .5em are fixed as lualatex fixes them"
-    ((rel.tokens.find? "belowrulesep").map (·.width) == some (Dim.SymLength.ofLength (spOfPt "4.31")) &&
-      (rel.tokens.find? "aboverulesep").map (·.width) == some (Dim.SymLength.ofLength (spOfPt "5.0")))
+    (onSpGrid ((rel.tokens.find? "belowrulesep").map (·.width)) (spOfPt "4.31") &&
+      onSpGrid ((rel.tokens.find? "aboverulesep").map (·.width)) (spOfPt "5.0"))
   let cr := censusOf #[] (layoutOf oneFace rel)
   let ca := censusOf #[] (layoutOf oneFace abs)
   t "table length: a small table under a preamble's 1ex ships the page of its 4.31pt"
@@ -311,7 +315,7 @@ def tableStrutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let c := censusOf #[] (layoutOf oneFace doc)
     let rules := pageRuleSegs c 0
     let rows := ["HeadWord", "FirstRow", "SecondRow"].filterMap (lineYOf c 0 ·)
-    let near (got want : Dim.Length) : Bool := (got - want).abs ≤ 8 * Dim.Length.quantum
+    let near (got want : Dim.Length) : Bool := (got - want).abs ≤ Dim.Length.ofSp 8
     t s!"table strut {kind}: the page ships four rules and three rows"
       (rules.size == 4 && rows.length == 3)
     -- rule k stands above row k, and row k above rule k + 1; a rule's segment is its band's bottom and thickness

@@ -309,19 +309,14 @@ public theorem slides_lines_survive_bands (a d f : Length)
     0 < g.bodyBottom - g.bodyTop ∧
     (10 : Int) ≤ (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ∧
     (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ≤ (20 : Int) := by
-  have hvm : Ir.slidesVMargin.units = 1730150 := by decide
-  have hfs : Ir.slidesFontSize.units = 720896 := by decide
-  have hld : (leadingFor Ir.slidesFontSize).units = 865075 := by decide
-  have hls : inkClearance.units = 65536 := by decide
-  have hrange : ∀ r ∈ Ir.slidesStages,
-      16719420 ≤ r.2.2.units ∧ r.2.2.units ≤ 19505990 := by decide
+  have hrange : ∀ r ∈ Ir.slidesStages, Dim.mm 90 ≤ r.2.2 ∧ r.2.2 ≤ Dim.mm 105 := by decide -- the stages
   obtain ⟨r, hr, heq⟩ := Array.mem_map.mp hg
-  have hH : 16719420 ≤ g.pageH.units ∧ g.pageH.units ≤ 19505990 := heq ▸ hrange r hr
+  have hH : Dim.mm 90 ≤ g.pageH ∧ g.pageH ≤ Dim.mm 105 := heq ▸ hrange r hr -- the stages
   simp only [furnitureBand, furnEdge, Option.getD, hv] at hhb hfb
   simp only [Geom.bodyBottom, Geom.bodyTop, Geom.bottomMargin, hm, Option.getD_none, hv]
-  length_units
-  simp only [hvm, hfs, hld, hls] at *
-  omega
+  simp only [Ir.slidesVMargin, Ir.slidesFontSize, leadingFor, Ir.leadingFor, Ir.leadingMilli,
+    inkClearance, Ir.inkClearance, Dim.mm, Dim.pt, Dim.bp, unitsPerInch] at *
+  length_omega
 
 /-- How a page distributes its leftover vertical space: thousandths of a fil
 above and below the content, and whether a body `\vfill` joins them (`joins`). -/

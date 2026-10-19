@@ -1756,8 +1756,9 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\begin{document}\\begin{itemize}\\item b\\end{itemize}\\section{S}c\\end{document}"
   let sec := ysOf geom secSrc
   t "a heading after a list takes the larger space, not the sum"
-    (sec.size == 3 && sec[1]! - sec[0]! ==
-      (leadedAt body).2 + (leadedAt (Layout.sectionSize geom 1)).1 + Dim.pt 15)
+    (sec.size == 3 && ((sec[1]! - sec[0]!) -
+      ((leadedAt body).2 + (leadedAt (Layout.sectionSize geom 1)).1 + Dim.pt 15)).abs ≤
+        Dim.Length.ofSp 1)
   let g0 := ysOf { geom with parskip := { width := Dim.SymLength.ofLength 0 } } "a\n\nb"
   t "parskip zero sets peers one leading apart" (g0.size == 2 && g0[1]! - g0[0]! == leading)
   let (pDoc, pDs) := elabStr ("\\documentclass{article}\\page{ parskip = 3pt plus 1pt minus 1pt }" ++
@@ -2426,11 +2427,11 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       ("[fontsize=12pt]{scrartcl}", 665187), ("{article}", 550500), ("{scrartcl}", 623900)] do
     let ht := Dim.Length.ofSp htSp
     t s!"strut: {cls}'s geometry footskip reads the class's strut height"
-      (drop (src cls geo) == some (quarter + ht) && !lost (src cls geo))
+      ((drop (src cls geo)).map (·.toSp) == some (quarter + ht).toSp && !lost (src cls geo))
     t s!"strut: {cls}'s preamble \\setlength reads it too"
       (let s := src cls ("\\geometry{letterpaper, textheight=9in}\\setlength{\\footskip}" ++
         "{\\dimexpr 0.25in + \\ht\\strutbox\\relax}")
-       drop s == some (quarter + ht) && !lost s)
+       (drop s).map (·.toSp) == some (quarter + ht).toSp && !lost s)
   let depth := src "[10pt]{article}"
     "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 2\\dp\\strutbox\\relax}"
   t "strut: the depth reads as the class sets it" (drop depth == some (2 * Dim.Length.ofSp 235932) && !lost depth)
@@ -3324,7 +3325,7 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "marks = none declares the way back" ((pageOf "marks = cut, marks = none").marks == false)
   t "mark-gap and mark-thickness are declared dimensions"
     (let p := pageOf "marks = cut, mark-gap = 0.1in, mark-thickness = 1pt"
-     p.markGap == Dim.inch 1 / 10 && p.markThickness == Dim.pt 1)
+     p.markGap == (Dim.inch 1).ofRatioRound 1 10 && p.markThickness == Dim.pt 1)
   t "an unknown marks value is refused by name"
     (errCodes (src "marks = frame") == ["E0323"])
   t "the defaults are the sourced tokens"
@@ -3403,7 +3404,9 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the drawn marks ship on every page where they were drawn, in their ink"
     (out.pages.size ≥ 1 && out.pages.all fun p =>
       want.all fun f => p.fills.any fun g =>
-        g.x == f.x + bl && g.y == f.y + bl && g.w == f.w && g.h == f.h &&
+        -- The source's \dimexpr reads each mark to TeX's scaled point.
+        let near (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.Length.ofSp 1
+        near g.x (f.x + bl) && near g.y (f.y + bl) && near g.w f.w && near g.h f.h &&
           g.color == f.color)
   t "the text keeps the margin the geometry measured from the medium"
     (lineXOf (censusOf #[] out) 0 "Placeholder" == some (Dim.mm 8))

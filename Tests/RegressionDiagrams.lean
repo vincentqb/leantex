@@ -191,7 +191,8 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
                   Dim.Length.ofUnits (oy + sh - (py - y0) * sh / height))).map List.toArray
             let .ok tip := CancelAlignment.arrowTip painted | none
             -- Em spellings, viewport scaling and integer division add at most six unit roundings.
-            let eps := Dim.Length.ofUnits (6 * ((em + 1999999) / 2000000 + 1))
+            let k : Int := (em + 1999999) / 2000000 + 1
+            let eps := 6 * k * Dim.Length.quantum
             return chars value == "0𝑔" &&
               ["width", "height", "depth"].all (fun k => nodeAttr k value == "0") &&
               nodeAttr "preserveAspectRatio" svg == "none" &&

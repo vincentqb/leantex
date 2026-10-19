@@ -343,13 +343,13 @@
   frame 2: 122.457pt too wide
 ⚠ [W0005]
   a frame's footnote runs past its measure; no feasible break
-  frame 1: 313.422pt too wide
+  frame 1: 313.423pt too wide
 ⚠ [W0005]
   a frame's line runs past its measure; no feasible break
-  frame 1: 468.315pt too wide
+  frame 1: 468.314pt too wide
 ⚠ [W0005]
   a section page's line runs past its measure; no feasible break
-  the section page: 835.262pt too wide
+  the section page: 835.263pt too wide
 ── W0006 (degraded) declared face variant missing; another face substitutes
 ⚠ [W0006]
   'Demo Serif' has no bold face; 'Demo Serif Regular' substitutes
@@ -832,7 +832,7 @@
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ⚠ [W0384]
   a frame is taller than its page; it continues on the next page
-  frame standout: 330.514pt taller
+  frame standout: 330.515pt taller
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 ⚠ [W0385] - $

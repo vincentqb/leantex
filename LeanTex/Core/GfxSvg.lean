@@ -147,7 +147,7 @@ element only where it encloses area and is not dashed, else the path the model d
   | .path _ => fr.place g
 
 /-- Flips a raster's unit square: the model's (0,0) is its bottom-left, an SVG image's its top-left. -/
-@[expose] public def unitFlip : Affine := ⟨1, 0, 0, -1, 0, 65536⟩
+@[expose] public def unitFlip : Affine := ⟨1, 0, 0, -1, 0, (Dim.bp 1).toRat⟩
 
 mutual
 

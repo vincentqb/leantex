@@ -397,7 +397,8 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
         let ((x0, y0), (x1, y1)) := i.fig.box
         let ((u0, v0), (u1, v1)) := j.fig.box
         check ref s!"SVG readback {name}: the box reads back within the spelling's half-thousandth of a point"
-          ([x0 - u0, y0 - v0, x1 - u1, y1 - v1].all fun d => d.abs ≤ 33 * Dim.Length.quantum)
+          ([x0 - u0, y0 - v0, x1 - u1, y1 - v1].all fun d =>
+            d.abs ≤ Dim.Length.ofBpMilli 1 / 2 + Dim.Length.quantum)
         check ref s!"SVG readback {name}: {i.fig.marks.size} marks read back as {j.fig.marks.size}, each agreeing"
           (j.fig.marks.size == i.fig.marks.size &&
             (i.fig.marks.zip j.fig.marks).all fun (a, b) => marksAgree a b)
@@ -485,7 +486,7 @@ def markAndClipBoxes (m : Mark) : Option (Box × Box) :=
 is a named loss and still drawn. -/
 def svgObjectClipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let half := "<clipPath id=\"half\" clipPathUnits=\"objectBoundingBox\"><rect width=\"0.5\" height=\"1\"/></clipPath>"
-  let near (a b : Dim.Length) : Bool := (a - b).abs ≤ 2 * Dim.Length.quantum
+  let near (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.Length.ofBpMilli 1
   let (ms, ls) := svgMarks (s!"<defs>{half}<rect id=\"r\" width=\"80\" height=\"80\" fill=\"navy\"/></defs>" ++
     "<use href=\"#r\" x=\"10\" y=\"10\" clip-path=\"url(#half)\"/>" ++
     "<g clip-path=\"url(#half)\"><rect x=\"110\" y=\"10\" width=\"80\" height=\"80\" fill=\"darkred\"/></g>") 200 100

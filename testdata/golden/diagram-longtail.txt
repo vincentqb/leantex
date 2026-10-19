@@ -30,7 +30,7 @@ picture 12 shapes
   draw ellipse 0 0 4.714 4.714 stroke #000000 0.4
   label 0 0 #000000 1000
     text "oval"
-  draw path (91.622,0)--(85.039,6.583)--(78.456,0)--(85.039,-6.583) z stroke #000000 0.4
+  draw path (91.623,0)--(85.039,6.583)--(78.456,0)--(85.039,-6.583) z stroke #000000 0.4
   label 85.039 0 #000000 1000
     text "kite"
   group

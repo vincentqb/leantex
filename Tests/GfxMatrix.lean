@@ -68,7 +68,8 @@ def cases : Array (String × Gfx.Figure Empty) := #[
     figure #[.stamp 0 turn (some (fillOf blue)) none] (outlines := #[#[tri]])),
   ("a raster mapped",
     figure #[.image 0 ⟨20, 0, 0, 10, (Dim.pt 5).toRat, (Dim.pt 5).toRat⟩]),
-  ("ink-free words", figure #[.words "recovered text", .draw square none (some (Ir.Pic.strokeOf {}))])]
+  ("ink-free words", figure #[.words "recovered text",
+    .draw square none (some { Ir.Pic.strokeOf {} with width := Dim.Length.ofBpMilli 400 })])]
 
 def pdfPlace : Gfx.Iso := { flipY := false, dx := Dim.pt 3, dy := Dim.pt 4 }
 def svgPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.pt 100 }

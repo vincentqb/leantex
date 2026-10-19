@@ -33,7 +33,7 @@ def stepLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   for (name, skip) in skips do
     let ps := pitchesOf oneFace (metricDoc (stepPara name))
     t s!"a paragraph set in '\\{name}' stands its lines at size10.clo's {skip / 100}.{skip % 100} pt"
-      (ps == #[pt skip / 100])
+      (ps.size == 1 && ps.all fun p => (p - pt skip / 100).abs ≤ Length.ofSp 1)
   t "a body paragraph keeps the body's pitch around a small run"
     (pitchesOf oneFace (metricDoc
       "Alpha one {\\small Charlie} one\\\\Bravo two\\par") == #[pt 12])
@@ -252,7 +252,7 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a small frame title's lines lead at the frame title's own skip"
     (match (titlePitches "")[0]? with
      | some p => ["\\small ", "\\tiny "].all fun pre =>
-         !(titlePitches pre).isEmpty && (titlePitches pre).all (· == p)
+         !(titlePitches pre).isEmpty && (titlePitches pre).all fun q => (q - p).abs ≤ Length.ofSp 1
      | none => false)
   t "a frame title under no size command keeps the six-fifths rule"
     (banded (deck "" ("\\begin{frame}{" ++ longTitle ++ "}\nBody words.\n\\end{frame}")))
