@@ -150,8 +150,8 @@ public def map [DecidableEq κ] (limit : Nat) (key : α → κ)
     if let some error := failure then throw error
   return result
 
-/-- The attempt for `k`, joined in flight or finished, or `run k` started as it, which leaves the
-table before it completes unless `keep` holds of its result; whether it is this caller's. -/
+/-- The attempt for `k`, joined in flight or finished, or `run k` started as it, which forgets itself
+before it answers unless `keep` holds of its answer; whether it is this caller's. -/
 private def joinOrRun [BEq κ] [Hashable κ]
     (attempts : Std.Mutex (Std.HashMap κ (Task (Except IO.Error β)))) (keep : Except IO.Error β → Bool)
     (run : κ → IO β) (k : κ) : IO (Except IO.Error β × Bool) := do
@@ -159,11 +159,11 @@ private def joinOrRun [BEq κ] [Hashable κ]
     match (← get).get? k with
     | some t => pure (t, false)
     | none =>
-      let t ← IO.asTask (do
-          let r ← (run k).toBaseIO
-          unless keep r do attempts.atomically (modify (·.erase k))
-          IO.ofExcept r)
-        Task.Priority.dedicated
+      let attempt : IO β := do
+        let got ← (run k).toBaseIO
+        unless keep got do attempts.atomically (modify (·.erase k))
+        IO.ofExcept got
+      let t ← IO.asTask attempt Task.Priority.dedicated
       modify (·.insert k t)
       pure (t, true)
   return (← IO.wait task, mine)
