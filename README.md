@@ -1,8 +1,8 @@
 # leantex
 
 A document engine written in Lean 4. Compile TeX, Markdown, or a Lean,
-Python or shell source file to PDF 2.0 or self-contained HTML on Linux and
-macOS.
+Python, shell, C, C++, Rust or Java source file to PDF 2.0 or self-contained
+HTML on Linux and macOS.
 
 ## Install
 
@@ -26,7 +26,7 @@ elan downloads the Lean version pinned by the repository.
 leantex document.tex                     # PDF beside the source
 leantex document.tex -o document.html    # HTML with embedded assets
 leantex document.md -o document.pdf      # Markdown input
-leantex Module.lean -o Module.html       # A Lean, Python or shell file
+leantex Module.lean -o Module.html       # A Lean, Python, shell, C, C++, Rust or Java file
 leantex document.tex --watch             # Rebuild on changes
 ```
 

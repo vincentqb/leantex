@@ -1,6 +1,7 @@
 module
 
-/-! The surfaces a document can be written in, and the input names that select them. -/
+/-! The surfaces a document can be written in, the code languages whose sources read as documents,
+and the input names that select them. -/
 
 namespace LeanTex.Core.Ir
 
@@ -9,7 +10,99 @@ public inductive CodeLang where
   | lean
   | python
   | bash
+  | c
+  | cpp
+  | rust
+  | java
   deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq, Inhabited
+
+/-- How a documentation comment's text is marked up. -/
+public inductive DocMarkup where
+  /-- CommonMark, as doc-gen4 and rustdoc read it. -/
+  | markdown
+  /-- A Python docstring: markdown, its doctests set as code. -/
+  | docstring
+  /-- Javadoc: HTML with inline `{@…}` tags and `@…` block tags. -/
+  | javadoc
+  /-- Doxygen: markdown with its `\…` and `@…` special commands. -/
+  | doxygen
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- What a documentation comment documents. -/
+public inductive DocScope where
+  /-- The declaration after it. -/
+  | next
+  /-- What holds it, the file where it stands at the file's head. -/
+  | holder
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A documentation comment's spelling. -/
+public inductive DocForm where
+  /-- Lines each opening with `marker`, a run of them one comment. -/
+  | lines (marker : String) (scope : DocScope) (markup : DocMarkup)
+  /-- A block from `opener` to the first `closer` after it. -/
+  | block (opener closer : String) (scope : DocScope) (markup : DocMarkup)
+  deriving Repr, BEq, Inhabited
+
+/-- What opens a form's comment. -/
+public def DocForm.opener : DocForm → String
+  | .lines m _ _ => m
+  | .block o _ _ _ => o
+
+/-- Where a language's documentation comments are found. -/
+public inductive DocSource where
+  /-- Lean's `/-- -/` and `/-! -/`, by Lean's own comment grammar. -/
+  | lean
+  /-- Python's docstrings, by Python's grammar. -/
+  | python
+  /-- The file's leading block of comments opening with `marker`, after its `#!` line. -/
+  | leading (marker : String)
+  /-- The comments the language's lexer reads that open with one of `forms`, each the first thing
+  on its line. -/
+  | comments (forms : List DocForm)
+  deriving Repr, BEq, Inhabited
+
+/-- What a language's source files read by: the extensions selecting it, the listing language its
+code sets in, the line comment its directive is written in, and where its documentation stands. -/
+public structure LangRow where
+  extensions : List String
+  listing : String
+  lineComment : String
+  docs : DocSource
+  deriving Repr, Inhabited
+
+/-- Rustdoc's outer and inner comments, line and block. -/
+private def rustDocs : List DocForm :=
+  [.lines "///" .next .markdown, .lines "//!" .holder .markdown,
+   .block "/**" "*/" .next .markdown, .block "/*!" "*/" .holder .markdown]
+
+/-- Doxygen's JavaDoc, Qt and C++ comment styles. -/
+private def doxygenDocs : List DocForm :=
+  [.lines "///" .next .doxygen, .lines "//!" .next .doxygen,
+   .block "/**" "*/" .next .doxygen, .block "/*!" "*/" .next .doxygen]
+
+/-- Each language's row. -/
+public def CodeLang.row : CodeLang → LangRow
+  | .lean => ⟨["lean"], "lean4", "--", .lean⟩
+  | .python => ⟨["py"], "python", "#", .python⟩
+  | .bash => ⟨["sh"], "bash", "#", .leading "#"⟩
+  | .c => ⟨["c", "h"], "c", "//", .comments doxygenDocs⟩
+  | .cpp => ⟨["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++"], "cpp", "//",
+      .comments doxygenDocs⟩
+  | .rust => ⟨["rs"], "rust", "//", .comments rustDocs⟩
+  | .java => ⟨["java"], "java", "//", .comments [.block "/**" "*/" .next .javadoc]⟩
+
+public def CodeLang.all : List CodeLang := [.lean, .python, .bash, .c, .cpp, .rust, .java]
+
+/-- Every language is listed, so its extensions select it. -/
+public theorem CodeLang.all_complete (l : CodeLang) : l ∈ CodeLang.all := by
+  cases l <;> simp [CodeLang.all]
+
+/-- The file extension a language's sources carry first. -/
+public def CodeLang.extension (l : CodeLang) : String := l.row.extensions.headD ""
+
+/-- The listing language a code file's code sets in. -/
+public def CodeLang.listing (l : CodeLang) : String := l.row.listing
 
 /-- The surface a document or an included file is written in. -/
 public inductive Surface where
@@ -18,29 +111,15 @@ public inductive Surface where
   | code (lang : CodeLang)
   deriving Repr, BEq, DecidableEq, Inhabited
 
-public def CodeLang.all : List CodeLang := [.lean, .python, .bash]
-
-/-- The file extension a language's sources carry. -/
-public def CodeLang.extension : CodeLang → String
-  | .lean => "lean"
-  | .python => "py"
-  | .bash => "sh"
-
-/-- The listing language a code file's code sets in. -/
-public def CodeLang.listing : CodeLang → String
-  | .lean => "lean4"
-  | .python => "python"
-  | .bash => "bash"
-
 /-- The surface an input name's extension selects, `none` where no surface reads it. -/
 public def Surface.ofInput? (file : String) : Option Surface :=
   if file.endsWith ".tex" then some .tex
   else if file.endsWith ".md" then some .markdown
-  else (CodeLang.all.find? fun l => file.endsWith ("." ++ l.extension)).map .code
+  else (CodeLang.all.find? fun l => l.row.extensions.any fun e => file.endsWith ("." ++ e)).map .code
 
 /-- The extensions an input name may end in, as a refusal lists them. -/
 public def Surface.inputExtensions : List String :=
-  ["tex", "md"] ++ CodeLang.all.map (·.extension)
+  ["tex", "md"] ++ CodeLang.all.flatMap (·.row.extensions)
 
 /-- `.md` reads as markdown, a code language's extension as that code, everything else as tex. -/
 public def Surface.ofPath (file : String) : Surface :=

@@ -93,9 +93,9 @@ def langOf (name : String) : Option Ir.CodeLang :=
 /-- The text a reader's or a parser's comment is compared by: a docstring's value for Python and
 the shell, the body between the delimiters for Lean. -/
 def readerText (lang : Ir.CodeLang) (seg : Code.Seg) : String :=
-  match lang with
+  match lang.row.docs with
   | .lean => String.ofList ((seg.text.drop 3).reverse.drop 2).reverse
-  | .python | .bash => (Code.proseIn lang seg.text 1 0).text
+  | .python | .leading _ | .comments _ => (Code.proseIn lang seg.text 1 0).text
 
 /-- The documentation comments the reader takes from a case. -/
 def readerDocs (lang : Ir.CodeLang) (src : String) : Array Doc :=
@@ -263,13 +263,20 @@ def classify (cases : Array (String × String)) (oracle : Array (String × Array
     let (v, note) := verdictOf n (readerDocs l src) docs
     return (n, v, note)
 
+/-- The languages a parser of their own answers for. -/
+def oracleLangs : List Ir.CodeLang := [.lean, .python, .bash]
+
 def langItem : Ir.CodeLang → String
   | .lean => "lean"
   | .python => "python"
   | .bash => "shell"
+  | .c => "c"
+  | .cpp => "cpp"
+  | .rust => "rust"
+  | .java => "java"
 
 def tierRows (rows : Array (String × String × String)) : Array Row :=
-  Ir.CodeLang.all.toArray.flatMap fun l =>
+  oracleLangs.toArray.flatMap fun l =>
     let mine := rows.filter fun (n, _, _) => langOf n == some l
     #[{ item := s!"{langItem l}.cases", value := (mine.size : Int) },
       { item := s!"{langItem l}.match", value := ((mine.filter (·.2.1 == "match")).size : Int) }]

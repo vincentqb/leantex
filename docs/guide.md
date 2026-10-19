@@ -178,10 +178,12 @@ See the [example documents](../testdata/corpus) and
 
 ## Code files
 
-A `.lean`, `.py` or `.sh` file reads as a document: its documentation
-comments are prose, read as Markdown, and the code between them sets as
-listings in the file's language, comments included, every code line exactly
-as written; the blank lines around a listing ship nowhere.
+A Lean (`.lean`), Python (`.py`), shell (`.sh`), C (`.c`, `.h`), C++ (`.cpp`,
+`.cc`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.h++`), Rust (`.rs`) or Java
+(`.java`) file reads as a document: its documentation comments are prose, read
+as Markdown, and the code between them sets as listings in the file's
+language, comments included, every code line exactly as written; the blank
+lines around a listing ship nowhere.
 
 - **Lean:** a `/-! … -/` module doc and a `/-- … -/` docstring that open a
   line are prose. A module doc with only lines that declare nothing before it
@@ -198,6 +200,17 @@ as written; the blank lines around a listing ship nowhere.
   decorators and header, whose body follows in the same listing.
 - **Shell:** the leading `#` comment block, after the `#!` line, is prose
   above the script.
+- **Rust:** rustdoc's `///` and `/** … */` outer docs and `//!` and
+  `/*! … */` inner docs that open a line, indented or not, are prose where
+  they stand; a run of line docs is one comment, and `////` and `/***` are
+  plain comments. Inner docs before any code describe the file.
+- **C and C++:** Doxygen's `/** … */`, `/*! … */`, `///` and `//!` comments
+  that open a line are prose where they stand.
+- **Java:** a `/** … */` Javadoc comment that opens a line is prose where it
+  stands.
+
+A block doc's prose drops its leading `*` decoration, and a line doc's its
+markers; then the margin its lines share goes.
 
 A Lean page's documentation cites into its project's bibliography:
 `docs/references.bib` beneath the nearest directory above the file that holds
@@ -214,7 +227,7 @@ key the bibliography holds, any key it lacks set as `?` and named, so
 the alpha style, as doc-gen4 labels its references (`[Doe12]`), unless the
 directive names another (`biblio-style = plain`), and their list closes the
 documentation's own References section, else stands at the page's end under
-its own heading. A Python or shell file's documentation cites nothing.
+its own heading. Another language's file's documentation cites nothing.
 
 A file's description that opens on a heading gives the document its title;
 otherwise the file's name is the title, shown as the page's first heading.
@@ -699,7 +712,7 @@ Optional tools must be on the shell's `PATH`:
 |---|---|
 | SVG features leantex does not draw | `rsvg-convert` |
 | PDF images in HTML | Poppler's `pdftocairo` |
-| Syntax highlighting beyond Lean, Python, shell scripts and sessions, and plain text | Pygments (`python3 -m pip install Pygments`) |
+| Syntax highlighting beyond Lean, Python, shell scripts and sessions, C, C++, Rust, Java and plain text | Pygments (`python3 -m pip install Pygments`) |
 
 Highlighted code sets each token in one of six roles: the ink (identifiers,
 a function's, a class's or a module's own name among them, so a definition

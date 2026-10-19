@@ -70,10 +70,40 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"code {n}: every listing's HTML is its code's lines"
       (preTexts doc == (codePieces lang src).map fun c =>
         String.intercalate "\n" (Ir.verbatimLines ("\n" ++ c)).toList)
-  for e in ← System.FilePath.readDir "testdata/codedoc/cases" do
-    match Ir.Surface.ofPath e.fileName with
-    | .code lang => exactnessChecks t e.fileName lang (← fixtureText e.path.toString)
-    | .tex | .markdown => pure ()
+  for dir in ["testdata/codedoc/cases", "testdata/codedoc/langs"] do
+    for e in ← System.FilePath.readDir dir do
+      match Ir.Surface.ofPath e.fileName with
+      | .code lang => exactnessChecks t e.fileName lang (← fixtureText e.path.toString)
+      | .tex | .markdown => pure ()
+  -- The rows.
+  t "code files: every language's every extension selects it, and its listing is its own"
+    (Ir.CodeLang.all.all fun l => l.row.extensions.all fun e =>
+      Ir.Surface.ofInput? s!"dir/f.{e}" == some (.code l) && Ir.Surface.inputExtensions.contains e)
+  t "code files: a language's directive is written in its line comment"
+    ((elabCode "t.c" "// leantex: formats = html\nint x;\n").1.output.formats == #["html"] &&
+      (elabCode "t.rs" "#![no_std]\n// leantex: formats = html\nfn f() {}\n").1.output.formats.isEmpty)
+  let rust ← fixtureText "testdata/codedoc/langs/rust-docs.rs"
+  t "code files: rustdoc's inner docs describe the file, its outer docs stand in place, its plain comments stay code"
+    (prosePieces .rust rust == #["//! # Tide tables\n//!\n//! Invented tides, read as a page: inner docs describe the file.",
+        "/// A reading in metres.\n///\n/// Its height is invented too.", "/// Writes the height.",
+        "/** A block doc /* with a nested comment */ still the doc. */"] &&
+      (elabCode "rust-docs.rs" rust).1.info.title == some "Tide tables" &&
+      (codePieces .rust rust).any (·.startsWith "pub struct Reading {"))
+  t "code files: a line doc's prose keeps its indented code, its markers and shared margin gone"
+    (proseOf .rust "/// One\n///\n///     code" == "One\n\n    code" &&
+      proseOf .rust "//!  Two\n//!  lines" == "Two\nlines")
+  t "code files: a block doc's prose drops its stars and margin, and its closing spaces"
+    (proseOf .java "/**\n * Adds.\n *\n *   kept\n */" == "Adds.\n\n  kept" &&
+      proseOf .c "/** One line. */" == "One line.")
+  let java ← fixtureText "testdata/codedoc/langs/java-docs.java"
+  t "code files: Javadoc stands where it is written, indented too, and strings and plain comments hide nothing"
+    ((prosePieces .java java).size == 3 &&
+      (codePieces .java java).any (·.contains "/* A plain comment. */") &&
+      (codePieces .java java).any (·.contains "\"/** not a doc */\""))
+  let cSrc ← fixtureText "testdata/codedoc/langs/c-docs.c"
+  t "code files: a C doc comment after a macro on its line stays in the macro"
+    ((prosePieces .c cSrc).size == 3 &&
+      (codePieces .c cSrc).any (·.contains "#define WIDTH 4 /** a comment after a macro stays in it */"))
   -- The title.
   let lean ← fixtureText (goldenFile "code-lean")
   let (leanDoc, _) := elabCode "code-lean.lean" lean

@@ -1,10 +1,11 @@
 /-
-Regenerate LeanTex/Core/PygmentsLexData.lean and testdata/highlight's rules and licence from Pygments
-`GenData.pygmentsRelease` under `GenData.pygmentsPython` and the departures testdata/highlight/pygments-departures.json declares.
-Usage: lake build scripts.GenData && lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>] | --selftest
+Regenerate LeanTex/Core/PygmentsLexData.lean (with each code row's unmirrored lexer's rule table) and testdata/highlight's rules and licence
+from Pygments `GenData.pygmentsRelease` under `GenData.pygmentsPython` and the departures testdata/highlight/pygments-departures.json declares.
+Usage: lake build scripts.GenData LeanTex.Core.SurfaceKind && lake env lean --run scripts/gen-pygments-lex-data.lean [--python <interpreter>] | --selftest
 -/
 import scripts.GenData
 import Lean.Data.Json
+import LeanTex.Core.SurfaceKind
 
 open GenData
 open Lean (Json)
@@ -12,6 +13,7 @@ open Lean (Json)
 /-- The constant bridge program, run isolated (`-I`) so no working directory, user site or
 PYTHONPATH reaches the import. -/
 def bridge : String := r#"import hashlib
+import importlib
 import json
 import keyword
 import pathlib
@@ -20,14 +22,16 @@ import shutil
 import sys
 import unicodedata
 
-"# ++ GenData.pinnedLoader (some GenData.pygmentsPython) ++ r#"from pygments.lexer import bygroups, combined, default, include, words
+"# ++ GenData.pinnedLoader (some GenData.pygmentsPython) ++ r#"from pygments.lexer import RegexLexer, _TokenType, bygroups, combined, default, include, words
 from pygments.lexers._mapping import LEXERS
+from pygments.lexers.c_cpp import CFamilyLexer
 from pygments.lexers.lean import Lean4Lexer
 from pygments.lexers.python import PythonLexer
 from pygments.lexers.shell import BashLexer, BashSessionLexer
 from pygments.token import STANDARD_TYPES, _TokenType, string_to_tokentype
 
 departures = json.loads(sys.argv[1])
+table_aliases = json.loads(sys.argv[2])
 
 
 def ranges(pred):
@@ -275,6 +279,195 @@ for alias in registry:
     if not alias or alias != alias.lower() or any(c.isspace() for c in alias):
         raise SystemExit(f'the registry alias {alias!r} is not one lowercase word')
 
+
+# A table lexer: its rules exported whole, each pattern as Python's `re` parser reads it, in postfix.
+import re._parser as sre_parse
+import re._constants as sre_c
+
+CATEGORIES = {'CATEGORY_WORD': 'w', 'CATEGORY_NOT_WORD': 'W', 'CATEGORY_DIGIT': 'd',
+              'CATEGORY_NOT_DIGIT': 'D', 'CATEGORY_SPACE': 's', 'CATEGORY_NOT_SPACE': 'S'}
+
+
+def hexed(c):
+    return format(c, 'x')
+
+
+def postfix(p, flags, out):
+    """A sequence's items, each run of literals one string, joined by `+`; `e` for none."""
+    items, n, i = list(p), 0, 0
+    while i < len(items):
+        j = i
+        while j < len(items) and str(items[j][0]) == 'LITERAL':
+            j += 1
+        if j - i >= 2:
+            out.append('l' + '.'.join(hexed(a) for _, a in items[i:j]))
+            i = j
+        else:
+            postfix_item(items[i][0], items[i][1], flags, out)
+            i += 1
+        n += 1
+        if n > 1:
+            out.append('+')
+    if n == 0:
+        out.append('e')
+
+
+def postfix_item(op, av, flags, out):
+    name, multiline = str(op), flags & re.MULTILINE
+    if name == 'LITERAL':
+        out.append('c' + hexed(av))
+    elif name == 'NOT_LITERAL':
+        out.append('n' + hexed(av))
+    elif name == 'ANY':
+        out.append(',' if flags & re.DOTALL else '.')
+    elif name == 'IN':
+        neg, parts = '', []
+        for o, a in av:
+            o = str(o)
+            if o == 'NEGATE':
+                neg = '^'
+            elif o == 'LITERAL':
+                parts.append(hexed(a))
+            elif o == 'RANGE':
+                parts.append(hexed(a[0]) + '-' + hexed(a[1]))
+            elif o == 'CATEGORY' and str(a) in CATEGORIES:
+                parts.append(CATEGORIES[str(a)])
+            else:
+                raise SystemExit(f'a set member the table lexer does not read: {o}')
+        out.append('[' + neg + ','.join(parts))
+    elif name == 'AT':
+        code = {'AT_BEGINNING': '^' if multiline else 'A', 'AT_BEGINNING_STRING': 'A',
+                'AT_END': '$' if multiline else 'z', 'AT_END_STRING': 'Z',
+                'AT_BOUNDARY': 'b', 'AT_NON_BOUNDARY': 'B'}.get(str(av))
+        if code is None:
+            raise SystemExit(f'an anchor the table lexer does not read: {av}')
+        out.append(code)
+    elif name == 'SUBPATTERN':
+        group, add, drop, body = av
+        if (add | drop) & ~(re.DOTALL | re.MULTILINE):
+            raise SystemExit('a scoped flag the table lexer does not read')
+        postfix(body, (flags | add) & ~drop, out)
+        if group is not None:
+            out.append('g' + str(group))
+    elif name == 'BRANCH':
+        for b in av[1]:
+            postfix(b, flags, out)
+        out.extend(['|'] * (len(av[1]) - 1))
+    elif name in ('MAX_REPEAT', 'MIN_REPEAT'):
+        lo, hi, body = av
+        postfix(body, flags, out)
+        out.append(('*' if name == 'MAX_REPEAT' else '?') + str(lo) + ':' +
+                   ('-' if hi == sre_c.MAXREPEAT else str(hi)))
+    elif name in ('ASSERT', 'ASSERT_NOT'):
+        direction, body = av
+        postfix(body, flags, out)
+        if direction == 1:
+            out.append('>' if name == 'ASSERT' else '!')
+        else:
+            lo, hi = body.getwidth()
+            if lo != hi:
+                raise SystemExit('a lookbehind of no fixed width')
+            out.append(('<' if name == 'ASSERT' else '~') + str(lo))
+    elif name == 'GROUPREF':
+        out.append('r' + str(av))
+    else:
+        raise SystemExit(f'a pattern operation the table lexer does not read: {name}')
+
+
+def pattern_code(pattern, flags):
+    p = sre_parse.parse(pattern, flags)
+    if p.state.flags & (re.IGNORECASE | re.LOCALE | re.ASCII):
+        raise SystemExit(f'a flag the table lexer does not read in {pattern!r}')
+    out = []
+    postfix(p, p.state.flags, out)
+    return ' '.join(out), p.state.groups - 1
+
+
+def token_name(t):
+    s = str(t)
+    if not s.startswith('Token.'):
+        raise SystemExit(f'not a token type below Token: {s}')
+    return s[len('Token.'):]
+
+
+def rule_table(cls):
+    cls(stripnl=False, stripall=False, ensurenl=False, tabsize=0)
+    tokens = cls._tokens
+    names = list(tokens)
+    index = {n: i for i, n in enumerate(names)}
+
+    def relex(a):
+        cells = dict(zip(a.__code__.co_freevars, (c.cell_contents for c in a.__closure__)))
+        if a.__code__.co_freevars != ('gt_kwargs', 'kwargs') or cells['kwargs'] or \
+                set(cells['gt_kwargs']) - {'stack'}:
+            raise SystemExit(f'{cls.__name__}: a callback the table lexer does not read: {a!r}')
+        return 'u' + '/'.join(str(index[st]) for st in cells['gt_kwargs'].get('stack', ('root',)))
+
+    def group_action(a):
+        if a is None:
+            return '-'
+        if type(a) is _TokenType:
+            return 't' + token_name(a)
+        return relex(a)
+
+    def action(a):
+        if a is None:
+            return '-'
+        if type(a) is _TokenType:
+            return 't' + token_name(a)
+        if a.__code__.co_freevars == ('args',):
+            return 'g' + ';'.join(group_action(x) for x in a.__closure__[0].cell_contents)
+        return relex(a)
+
+    def transition(ns):
+        if ns is None:
+            return '-'
+        if isinstance(ns, int):
+            return 'p' + str(-ns)
+        if ns == '#push':
+            return 'd'
+        if isinstance(ns, tuple):
+            return ','.join('p1' if st == '#pop' else 'd' if st == '#push' else 's' + str(index[st])
+                            for st in ns)
+        raise SystemExit(f'{cls.__name__}: a transition the table lexer does not read: {ns!r}')
+
+    patterns, rules = {}, []
+    for n in names:
+        rules.append('state ' + n)
+        for rexmatch, act, ns in tokens[n]:
+            compiled = rexmatch.__self__
+            k = patterns.setdefault(pattern_code(compiled.pattern, compiled.flags), len(patterns))
+            rules.append(f'r {k} {action(act)} {transition(ns)}')
+    head = [f'lexer {len(names)} {index["root"]} {len(patterns)}']
+    return '\n'.join(head + [f'p {g} {c}' for (c, g) in patterns] + rules)
+
+
+def retyped(cls):
+    """The names a lexer's own lexing retypes from Name to Keyword.Type after its rules."""
+    owner = next(k for k in cls.__mro__ if 'get_tokens_unprocessed' in k.__dict__)
+    if owner is RegexLexer:
+        return []
+    if owner is CFamilyLexer:
+        return sorted(set(cls.stdlib_types) | set(cls.c99_types) | set(cls.c11_atomic_types) |
+                      set(cls.linux_types))
+    raise SystemExit(f'{cls.__name__} lexes past its rules, in {owner.__name__}')
+
+
+mirrored = {'Lean4Lexer', 'PythonLexer', 'BashLexer', 'BashSessionLexer', 'TextLexer'}
+tables = []
+for alias in table_aliases:
+    found = next(((n, e) for n, e in LEXERS.items() if alias in e[2]), None)
+    if found is None:
+        raise SystemExit(f'no Pygments lexer is named {alias!r}')
+    name, entry = found
+    if name in mirrored or any(t['class'] == name for t in tables):
+        continue
+    cls = getattr(importlib.import_module(entry[0]), name)
+    if not issubclass(cls, RegexLexer) or getattr(cls, 'flags', re.MULTILINE) & re.IGNORECASE:
+        raise SystemExit(f'{name} is no RegexLexer the table lexer reads')
+    tables.append({'class': name, 'aliases': list(entry[2]), 'rules': rule_table(cls),
+                   'retype': retyped(cls)})
+
 import importlib.metadata
 dist = importlib.metadata.distribution('Pygments')
 licence = dist.read_text('licenses/LICENSE') or dist.read_text('LICENSE')
@@ -292,6 +485,7 @@ json.dump({
     'lists': lists,
     'aliases': aliases,
     'registry': registry,
+    'tables': tables,
 }, sys.stdout)
 "#
 
@@ -395,8 +589,9 @@ def main (args : List String) : IO UInt32 := do
   let departures ← match Json.parse (← IO.FS.readFile departuresPath) with
     | .ok j => pure j.compress
     | .error e => die s!"{departuresPath} is not JSON: {e}"
+  let tableAliases := (Json.arr (LeanTex.Core.Ir.CodeLang.all.toArray.map (Json.str ·.listing))).compress
   let out ← try
-    IO.Process.output { cmd := python, args := #["-I", "-B", "-c", bridge, departures] }
+    IO.Process.output { cmd := python, args := #["-I", "-B", "-c", bridge, departures, tableAliases] }
   catch e => die s!"{python} did not start: {e}"
   if out.exitCode != 0 then
     die s!"{python} could not read Pygments' lexers:\n{out.stderr}"
@@ -413,12 +608,14 @@ def main (args : List String) : IO UInt32 := do
   let lists ← field json "lists"
   let aliases ← field json "aliases"
   let registry ← strings (← field json "registry")
+  let some tables := (← field json "tables").getArr?.toOption | die "the Pygments answer's tables are not a list"
   let mut data := "module\n\n/-\nGenerated by scripts/gen-pygments-lex-data.lean; do not edit by hand. \
 Regenerate with:\n  lake env lean --run scripts/gen-pygments-lex-data.lean --python <Python " ++
     pygmentsPython ++ " importing Pygments " ++ pygmentsRelease ++ ">\n\n\
 Source: Pygments " ++ version ++ " under Python " ++ pyVersion ++ " (Unicode " ++ uniVersion ++ "):\n\
 the word lists its Lean 4, Python and Bash lexers match, the character\n\
-classes their patterns name, and the registry aliases that select them.\n\
+classes their patterns name, the registry aliases that select them, and\n\
+the rule tables of the lexers the table lexer drives.\n\
 This module carries only data: the native lexers in LeanTex/Core/Highlight/\n\
 read it, and the suite holds them to Pygments' token streams, under the\n\
 departures testdata/highlight/pygments-departures.json declares, in\n\
@@ -445,6 +642,24 @@ namespace LeanTex.Core.PygmentsLexData\n\n"
   data := data ++ "\n/-- Every alias Pygments' registry selects a lexer by, ascending, one space\n" ++
     "between each: the lexer names a listing's language may spell. -/\n" ++
     s!"public def registryAliases : String :=\n  {strLit (" ".intercalate registry.toList)}\n"
+  let tableField (key : String) : IO (Array Json) := tables.mapM fun t => field t key
+  let classNames ← (← tableField "class").mapM fun j => match j with
+    | .str s => pure s
+    | _ => die "a table's class is not a string"
+  data := data ++ "\n/-- The Pygments lexers the table lexer drives, by class. -/\n" ++
+    s!"public def tableClasses : Array String := {arrayLit classNames}\n"
+  data := data ++ "\n/-- Each table lexer's registry aliases. -/\npublic def tableAliases : Array (Array String) :=\n  #[" ++
+    ", ".intercalate ((← (← tableField "aliases").mapM strings).toList.map arrayLit) ++ "]\n"
+  data := data ++ "\n/-- Each table lexer's names its own lexing retypes from `Name` to `Keyword.Type`. -/\n" ++
+    "public def tableRetypes : Array (Array String) :=\n  #[" ++
+    ", ".intercalate ((← (← tableField "retype").mapM strings).toList.map arrayLit) ++ "]\n"
+  let ruleTexts ← (← tableField "rules").mapM fun j => match j with
+    | .str s => pure s
+    | _ => die "a table's rules are not a string"
+  data := data ++ "\n/-- Each table lexer's rules: its patterns in postfix as Python's `re` parser reads them, its\n" ++
+    "states and each rule's pattern, action and transition (`Highlight.Table.Decode`). -/\n" ++
+    "public def tableRules : Array String :=\n  #[" ++
+    ",\n    ".intercalate (ruleTexts.toList.map strLit) ++ "]\n"
   data := data ++ "\nend LeanTex.Core.PygmentsLexData\n"
   IO.FS.writeFile "LeanTex/Core/PygmentsLexData.lean" data
   IO.FS.writeFile pygmentsLicence licence

@@ -4,6 +4,7 @@ public import Tests.Support
 public import LeanTex.Core.Highlight
 import LeanTex.Core.Highlight.Bash
 public import LeanTex.Core.Highlight.Console
+public import LeanTex.Core.Highlight.Table
 import LeanTex.Core.PygmentsLexData
 import LeanTex.Core.ListingReply
 public import Lean.Data.Json
@@ -114,6 +115,17 @@ def randomRe (depth : Nat) (seed : UInt64) : Console.Re × UInt64 :=
     let (b, s) := randomRe d s
     (.alt a b, s)
   | 0, _ => (.empty, s)
+
+/-- A body reading exactly one scalar, of the shapes a table lexer's repeats take. -/
+def randomUnit (seed : UInt64) : Regex.Node × UInt64 :=
+  let (k, s) := rand seed 6
+  match k with
+  | 0 => (.str #['a'], s)
+  | 1 => (.notChar '\n', s)
+  | 2 => (.set false #[.char 'a', .range 'b' 'c'], s)
+  | 3 => (.set true #[.char 'b', .word], s)
+  | 4 => (.cat (.str #['a']) (.look true true 0 (.str #['b'])), s)
+  | _ => (.alt (.str #['b']) (.any true), s)
 
 /-- The first occurrence of `w`'s first `k` scalars at or after `fromPos`. -/
 def findPrefix (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Nat := Id.run do
@@ -245,8 +257,15 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pygments lexers: `lean` names Lean 4"
     (Lexer.ofName? "lean" == some .lean4 && Lexer.ofName? " Lean4 " == some .lean4)
   t "pygments lexers: a language with no native lexer selects none"
-    ((["ruby", "c", "lean3", "pycon", "", "py thon"] : List String).all
+    ((["ruby", "lean3", "pycon", "", "py thon", "c#"] : List String).all
       fun n => (Lexer.ofName? n).isNone)
+  t "pygments lexers: every exported table names its class, aliases and retyping, and decodes whole"
+    (PygmentsLexData.tableAliases.size == PygmentsLexData.tableClasses.size &&
+      PygmentsLexData.tableRetypes.size == PygmentsLexData.tableClasses.size &&
+      PygmentsLexData.tableRules.size == PygmentsLexData.tableClasses.size &&
+      (List.range PygmentsLexData.tableClasses.size).all fun i => (Table.lexer? i).isSome)
+  t "pygments lexers: every code language's listing has a native lexer"
+    (Ir.CodeLang.all.all fun l => (Lexer.ofName? l.listing).isSome)
 
 /-- Every module derived from Pygments names its licence, and the generated ones come from the release
 and the Python the generators read. -/
@@ -308,6 +327,25 @@ def pygmentsLinearChecks (ref : IO.Ref (List String)) : IO Unit := do
           if reMiss.isNone then reMiss := some n
   t s!"pygments lexers: a compiled pattern matches as backtracking does (first miss: pattern {reMiss})"
     reMiss.isNone
+  let mut runMiss : Option String := none
+  for _ in [0:300] do
+    let (body, s1) := PygmentsLexers.randomUnit seed
+    let (g, s2) := rand s1 2
+    seed := s2
+    for _ in [0:20] do
+      let (text, s3) := PygmentsLexers.randomString #['a', 'b', 'c', '\n'] 8 seed
+      seed := s3
+      let s := Src.ofString text
+      for start in [0:s.size + 1] do
+        for (name, k) in [("any end", fun (j : Nat) (c : Regex.Caps) => some (j, c)),
+            ("an even end", fun j c => if j % 2 == 0 then some (j, c) else none),
+            ("an end before c", fun j c => if s.is j 'c' then some (j + 1, c) else none)] do
+          let a := Regex.go s (.run body (g == 0)) start #[] k
+          let b := Regex.go s (.star body (g == 0)) start #[] k
+          if a.map (·.1) != b.map (·.1) && runMiss.isNone then
+            runMiss := some s!"{repr body} on {repr text} from {start} to {name}"
+  t s!"pygments lexers: a repeat of one scalar matches as the recursive repeat does (first miss: {runMiss})"
+    runMiss.isNone
   let heads := #["<<", "<<-", "<< ", "<<'", "<<\\", "<<- '\\"]
   let words := PygmentsLexers.strings #['a', 'b'] 3
   let bodies := PygmentsLexers.strings #['a', 'b', 'x', '\n'] 6

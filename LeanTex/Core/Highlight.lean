@@ -5,18 +5,22 @@ import LeanTex.Core.Highlight.Lean4
 import LeanTex.Core.Highlight.Python
 import LeanTex.Core.Highlight.Bash
 import LeanTex.Core.Highlight.Console
-import LeanTex.Core.PygmentsLexData
+import LeanTex.Core.Highlight.Table
+public import LeanTex.Core.PygmentsLexData
 
-/-! The native listing lexers: Pygments' own for the languages documents write, mirrored rule for
-rule from one release (`PygmentsLexData.pygmentsVersion`) under the departures
-testdata/highlight/pygments-departures.json declares, with no Python on the render path. -/
+/-! The native listing lexers: Pygments' own from one release (`PygmentsLexData.pygmentsVersion`),
+mirrored rule for rule under testdata/highlight/pygments-departures.json or driven from its exported
+rule table, with no Python on the render path. -/
 namespace LeanTex.Core.Highlight
 
 public inductive Lexer where
   | lean4 | python | bash | console | text
+  /-- The table lexer driving `PygmentsLexData.tableClasses[i]`'s rules. -/
+  | table (i : Fin PygmentsLexData.tableClasses.size)
   deriving Repr, BEq, DecidableEq, Inhabited, Hashable
 
-public def Lexer.all : List Lexer := [.lean4, .python, .bash, .console, .text]
+public def Lexer.all : List Lexer :=
+  [.lean4, .python, .bash, .console, .text] ++ (List.finRange _).map .table
 
 /-- `lean` names Lean 4 here, where Pygments registers it for its retired Lean 3 lexer. -/
 public def leanIsLean4 : String := "lean"
@@ -28,6 +32,7 @@ public def Lexer.aliases : Lexer → Array String
   | .bash => PygmentsLexData.bashAliases
   | .console => PygmentsLexData.consoleAliases
   | .text => PygmentsLexData.textAliases
+  | .table i => PygmentsLexData.tableAliases.getD i #[]
 
 /-- The lexer a listing's language selects, case-insensitively, as the
 provider's registry lookup is. -/
@@ -42,6 +47,7 @@ public def Lexer.pygmentsAlias : Lexer → String
   | .bash => "bash"
   | .console => "console"
   | .text => "text"
+  | .table i => (PygmentsLexData.tableAliases.getD i #[]).getD 0 ""
 
 /-- The SHA-256 of the rule structure these lexers implement (`PygmentsLexData.rulesDigest`). -/
 public def mirrorsRules : String :=
@@ -55,6 +61,9 @@ public def lex : Lexer → Src → Array Raw
   | .python, s => Python.lex s
   | .bash, s => Bash.lex s
   | .console, s => Console.lex s
+  | .table i, s => match Table.lexer? i with
+    | some lx => Table.lex lx s
+    | none => if s.size == 0 then #[] else #[⟨0, s.size, Ty.text⟩]
 
 /-- Every scalar's token type: the raw token covering it, `Text` where none does. -/
 public def kindsOf (n : Nat) (raws : Array Raw) : Array String := Id.run do

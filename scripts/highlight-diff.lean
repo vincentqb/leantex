@@ -269,6 +269,7 @@ def fragments : Lexer → Array String
       "&& make", "# comment", "[1] done", "user@host ~ % ", "$", "#", "%", "❯ ", "❯", "~ ❯ ",
       "(venv) ❯ "]
   | .text => #["plain", " ", "\n", "\t", "é", "{}", "\\"]
+  | .table _ => #[]
 
 /-- The scalars a language's patterns divide on, for texts drawn scalar by scalar. -/
 def alphabet : Lexer → String
@@ -277,6 +278,7 @@ def alphabet : Lexer → String
   | .bash => "$\"'`(){}[]<>|&;=#:-+*/\\\nabefinortuxEOF019_ \t!?@"
   | .console => "$#%> ()[]@:~/\\\nabuserhost019 \t-|❯"
   | .text => "ab \n\t"
+  | .table _ => ""
 
 /-- A seeded draw: the state threads through every choice. -/
 structure Draw where
@@ -451,12 +453,44 @@ def grammarCase (lexer : Lexer) (d : Draw) : Draw :=
   | .console => d.times 6 consoleLine
   | .lean4 => d.times 10 fun d => (leanPart d).oneOf #["", " ", "\n"]
   | .text => d.oneOf #["a", "\n"]
+  | .table _ => d
+
+/-- A table lexer's draws, from its snippets: their lines, words and scalars. -/
+structure Pool where
+  lines : Array String := #[]
+  words : Array String := #[]
+  chars : Array Char := #[]
+
+def Pool.of (sources : Array String) : Pool := Id.run do
+  let mut p : Pool := {}
+  for src in sources do
+    for line in src.splitOn "\n" do
+      unless p.lines.contains line do p := { p with lines := p.lines.push line }
+      for w in line.splitOn " " do
+        unless w.isEmpty || p.words.contains w do p := { p with words := p.words.push w }
+    for c in src.toList do
+      unless p.chars.contains c do p := { p with chars := p.chars.push c }
+  return p
+
+/-- A table lexer's near misses: its snippets' lines whole or cut, and their words, joined. -/
+def poolCase (p : Pool) (d : Draw) : Draw :=
+  d.times 8 fun d =>
+    let (k, d) := d.nat 3
+    match k with
+    | 0 => (d.oneOf p.lines).add "\n"
+    | 1 =>
+      let (i, d) := d.nat p.lines.size
+      let line := p.lines.getD i ""
+      let (a, d) := d.nat (line.length + 1)
+      let (b, d) := d.nat (line.length + 1)
+      d.add (String.ofList ((line.toList.drop (min a b)).take (max a b - min a b)))
+    | _ => (d.oneOf p.words).oneOf #["", " ", "\n", "(", ";"]
 
 /-- A third of the texts concatenate fragments, a third draw scalars, a
 third follow each language's grammar of near misses. -/
-def fuzzCases (lexer : Lexer) (count : Nat) (seed : UInt64) : Array Case := Id.run do
-  let frags := fragments lexer
-  let chars := (Src.ofString (alphabet lexer)).chars
+def fuzzCases (lexer : Lexer) (count : Nat) (seed : UInt64) (pool : Pool := {}) : Array Case := Id.run do
+  let frags := if pool.words.isEmpty then fragments lexer else pool.words ++ pool.lines
+  let chars := if pool.chars.isEmpty then (Src.ofString (alphabet lexer)).chars else pool.chars
   let seps := #["", "", " ", "\n"]
   let mut s := seed ^^^ UInt64.ofNat (lexer.pygmentsAlias.length * 7919 + 1)
   let mut out := #[]
@@ -478,7 +512,7 @@ def fuzzCases (lexer : Lexer) (count : Nat) (seed : UInt64) : Array Case := Id.r
         s := s2
         text := text.push (chars[c]?.getD ' ')
     else
-      let d := grammarCase lexer { seed := s }
+      let d := if pool.lines.isEmpty then grammarCase lexer { seed := s } else poolCase pool { seed := s }
       s := d.seed
       text := d.out
     out := out.push { corpus := "fuzz", label := s!"{lexer.pygmentsAlias}#{k}",
@@ -752,7 +786,10 @@ def main (args : List String) : IO UInt32 := do
     | .error e => die e
   let mut cases := (← snippetCases).filter fun c => o.lexers.contains c.lexer
   for l in o.lexers do
-    cases := cases ++ fuzzCases l o.fuzz o.seed
+    let pool := match l with
+      | .table _ => Pool.of ((cases.filter (·.lexer == l)).map (·.source))
+      | _ => {}
+    cases := cases ++ fuzzCases l o.fuzz o.seed pool
   cases := cases ++ (← docCases o.docs).filter fun c => o.lexers.contains c.lexer
   let (declared, departing) ← if o.departed then departures
     else pure (Json.mkObj [], #["the declared departures are left out"])

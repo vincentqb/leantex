@@ -261,7 +261,8 @@ examples:
   leantex doc.tex -o out.html     the output name picks the backend
   leantex doc.tex -o build/       write build/doc.pdf
   leantex doc.tex --watch         rebuild on every change
-  leantex Foo.lean -o Foo.html    a .md, .lean, .py or .sh file reads as a document too
+  leantex Foo.lean -o Foo.html    a .md, or a Lean, Python, shell, C, C++, Rust or
+                                  Java file, reads as a document too
 
 a document declares what to build — \\output{ formats = pdf, html } — so
 the command line stays bare: flags say where output lands and how the run

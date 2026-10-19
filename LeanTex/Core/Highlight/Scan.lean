@@ -466,11 +466,12 @@ private def advance (root : σ) (step : Src → Machine σ → Machine σ) (s : 
 
 end Machine
 
-/-- Run a lexer from its root state to the end of the text; a step that neither reads nor pops
-takes the fallback. -/
-public def drive {σ : Type} (root : σ) (step : Src → Machine σ → Machine σ) (s : Src) :
-    Array Raw :=
-  go { out := #[], pos := 0, stack := [root], depth := 1 } #[]
+/-- Run a lexer from `stack`, top first, to the end of the text; a step that neither reads nor
+pops takes the fallback, which resets to the root. -/
+public def driveFrom {σ : Type} (root : σ) (stack : List σ) (step : Src → Machine σ → Machine σ)
+    (s : Src) : Array Raw :=
+  let stack := if stack.isEmpty then [root] else stack
+  go { out := #[], pos := 0, stack, depth := stack.length } #[]
 where
   go (m : Machine σ) (out : Array Raw) : Array Raw :=
     if _hlt : m.pos < s.size then
@@ -482,5 +483,10 @@ where
     simp only [Machine.advanced] at *
     rw [Prod.lex_def]
     omega
+
+/-- Run a lexer from its root state to the end of the text. -/
+public def drive {σ : Type} (root : σ) (step : Src → Machine σ → Machine σ) (s : Src) :
+    Array Raw :=
+  driveFrom root [root] step s
 
 end LeanTex.Core.Highlight
