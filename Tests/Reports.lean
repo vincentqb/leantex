@@ -2122,7 +2122,7 @@ def reports : List Report := [
       "md4c's label rule (doc-gen4's reader): leading whitespace skipped, each later run of space, tab, line ending, vertical tab or a Zs space one space, a trailing one kept; a defined label shows as written; this tree's docstrings match so",
       "the corpus built by main's binary at 6095f103 and by this tree's: every artifact and diagnostic byte-identical"]
     state := .guarded "6095f103" .before .author },
-  { id := "R237", date := "2026-10-18"
+  { id := "R238", date := "2026-10-18"
     what := "a markdown footnote's definition inside a list item or a block quote stayed its text; Pandoc's inline note was text; a note in a citation's note was dropped, and a TeX footnote in a citation's note set its text inline in the note; a TeX figure whose caption cited filled its image's alternative with a mark for each citation"
     pins := [check% Tests.MdNoteEdges.noteChecks, check% Tests.MdNoteEdges.inlineNoteChecks,
       check% Tests.MdNoteEdges.citeNoteChecks, check% Tests.MdNoteEdges.citeNoteEdgeChecks,
