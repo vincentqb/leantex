@@ -1680,7 +1680,8 @@ public def rebase (mapPos : Pos → Pos) (groups : Bool) : Raw → Raw
   | .sym c p => .sym c (mapPos p)
   | .group body p =>
     .group (rebaseList mapPos groups body.toList).toArray (if groups then mapPos p else p)
-  | .math d body p => .math d (rebaseList mapPos groups body.toList).toArray (mapPos p)
+  | .math d body p =>
+    .math d (rebaseList mapPos groups body.toList).toArray { mapPos p with command := p.command }
   | .env n body p => .env n
       (if (Parse.inputEnvFile? n).isSome then body else (rebaseList mapPos groups body.toList).toArray)
       (mapPos p)
@@ -1725,7 +1726,7 @@ private theorem rebase_source (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
   cases r with
   | env n body p =>
     simp only [rebase]
-    split <;> simp only [rawSrcOne, rebaseArray_source, endsCtrlSpace_rebase]
+    split <;> simp only [rawSrcOne, rebaseArray_source, endsCtrlSpace_rebase, rebaseList_source]
   | _ => simp only [rebase, rawSrcOne, rebaseArray_source, endsCtrlSpace_rebase]
 
 end
@@ -12949,6 +12950,30 @@ termination_by structural r => r
 
 end
 
+mutual
+
+/-- Does the text spell a call of `n`: the control anywhere but as the name a definer defines,
+`naming` holding where that name is next? -/
+private def callsList (n : String) (naming : Bool) : List Raw → Bool
+  | [] => false
+  | .space :: rest => callsList n naming rest
+  | .word "*" _ :: rest => callsList n naming rest
+  | .ctrl d _ :: rest =>
+    if naming then callsList n false rest
+    else d == n || callsList n (Definer.nameDefiners.contains d) rest
+  | .group g p :: rest =>
+    if naming && (g.toList.filter (· != .space)) matches [.ctrl _ _] then callsList n false rest
+    else callsRaw n (.group g p) || callsList n false rest
+  | r :: rest => callsRaw n r || callsList n false rest
+termination_by structural l => l
+
+private def callsRaw (n : String) : Raw → Bool
+  | .group g _ | .env _ g _ | .math _ g _ => callsList n false g.toList
+  | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => false
+termination_by structural r => r
+
+end
+
 /-- Which of `\only` and `\alt` the document defines itself. -/
 private structure ReadCx where
   userOnly : Bool
@@ -13816,6 +13841,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
       return .space
     return .group (body' ++ restores) p
   | .env n body p => do
+    -- An `\ifmmode`'s text branch is text, its math branch a formula.
+    if n == Parse.modeEnv then return .env n (← rewriteList inBody body #[] body.toList 0 0) p
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
@@ -14714,7 +14741,7 @@ private theorem rewriteRaw_document_exact (inBody arg : Bool) (body : Array Raw)
       closeScope st
         (rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) pos st) := by
   rw [rewriteRaw]
-  simp only [Parse.inputEnvFile?, String.startsWith_string_iff]
+  simp only [Parse.inputEnvFile?, Parse.modeEnv, String.startsWith_string_iff]
   simp [withScope, closeScope, mathEnvs, pictureEnvs, hp,
     bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure]
 
@@ -14902,9 +14929,9 @@ public def Executed.edefReads (executed : Executed) : Std.HashSet String :=
 public def Executed.mentions (executed : Executed) : Array String :=
   executed.state.mentions
 
-/-- Each definition execution skipped part of, by the name it defines, with that loss. -/
+/-- Each called definition execution skipped part of, by the name it defines, with that loss. -/
 public def Executed.stripped (executed : Executed) : Array Stripped :=
-  executed.state.stripped
+  executed.state.stripped.filter fun s => callsList s.name false executed.raws.toList
 
 public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
     (executed.withRaws raws).raws = raws ∧

@@ -321,25 +321,35 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let skipped (ds : Array Diag) : Bool :=
     ds.any fun d => d.kind == .W0104 && d.subject.any (·.startsWith "cond:body:")
   for (what, decl) in [("a redefined bold command",
-        "\\renewcommand{\\textbf}[1]{\\ifmmode #1\\else{\\bfseries #1}\\fi}"),
+        "\\renewcommand{\\textbf}[1]{\\ifx\\relax#1\\relax\\else{\\bfseries #1}\\fi}"),
       ("an xparse redefinition of italics",
         "\\NewDocumentCommand{\\textit}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}")] do
     let (_, ds) := elabStr (article decl "Some \\textbf{bold} and \\textit{slanted} words.")
     t s!"unused settings: {what} the gate refuses is its one accounting ({ds.map (·.kind.code)})"
       (ds.any (·.kind == .W0361) && !skipped ds)
-  let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\ifmmode #1\\else{\\bfseries #1}\\fi}\n" ++
-    "\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifmmode x\\fi}") "Some \\textbf{bold} words.")
+  let (_, moded) := elabStr (article
+    "\\renewcommand{\\textbf}[1]{\\ifmmode\\mathbf{#1}\\else{\\bfseries #1}\\fi}"
+    "Some \\textbf{bold} words.")
+  t s!"unused settings: a bold redefinition reading \\ifmmode wins, skipping nothing ({moded.map (·.kind.code)})"
+    (!moded.any (·.kind == .W0361) && !skipped moded)
+  let cond := "\\NewDocumentCommand{\\zzcond}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}"
+  let (_, unused) := elabStr (article cond "Some words.")
+  let (_, used) := elabStr (article cond "Some \\zzcond{called} words.")
+  t s!"unused settings: a definition no call runs reports no skipped text, one a call runs does ({unused.map (·.kind.code)})"
+    (!skipped unused && skipped used)
+  let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\ifx\\relax#1\\relax\\else{\\bfseries #1}\\fi}\n" ++
+    "\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifx\\relax#1 x\\fi}") "Some \\textbf{bold} words.")
   let skippedAt (line : Nat) := ds.any fun d => d.kind == .W0104 && d.severity == .warning &&
     d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == line)
   t s!"unused settings: a redefinition that wins keeps its skipped text's loss beside a refused one's refusal ({ds.map (·.kind.code)})"
     (ds.any (·.kind == .W0361) && !skippedAt 2 && skippedAt 3)
-  let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifmmode x\\fi}\n" ++
-    "\\renewcommand{\\textbf}[1]{\\ifmmode #1\\else{\\bfseries #1}\\fi}") "Some \\textbf{bold} words.")
+  let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifx\\relax#1 x\\fi}\n" ++
+    "\\renewcommand{\\textbf}[1]{\\ifx\\relax#1\\relax\\else{\\bfseries #1}\\fi}") "Some \\textbf{bold} words.")
   t s!"unused settings: a refusal after an earlier definition names that definition as the one standing, which keeps its loss ({ds.map (·.message)})"
     (ds.any (fun d => d.kind == .W0361 && hasStr d.message ":2 stands") && ds.any fun d =>
       d.kind == .W0104 && d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == 2))
   let (_, ds) := elabStr (article
-    "\\def\\probesetup{\\renewcommand{\\textbf}[1]{\\ifmmode ##1\\else{\\bfseries ##1}\\fi}}\n\\probesetup"
+    "\\def\\probesetup{\\renewcommand{\\textbf}[1]{\\ifx\\relax##1\\relax\\else{\\bfseries ##1}\\fi}}\n\\probesetup"
     "Some \\textbf{bold} words.")
   t s!"unused settings: a redefinition a macro makes, refused where it is called, is the refusal's alone ({ds.map (·.kind.code)})"
     (ds.any (·.kind == .W0361) && !skipped ds)

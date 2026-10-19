@@ -468,6 +468,114 @@ private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
     ("", i + 1, #[err file .E0205 "expected an environment name" pos])
   | _, _, _ => ("", i, #[err file .E0205 "expected '{name}' here" pos])
 
+/-- `\ifmmode`'s reading: its math branch as a formula first, then its text branch, each read in
+its mode, unforgeable because its name holds a space. -/
+@[expose] public def modeEnv : String := "ifmmode "
+
+/-- The command a `modeEnv`'s math branch records, so its source reads back as written. -/
+@[expose] public def modeBranch : String := "\\ifmmode"
+
+/-- TeX's conditional primitives, whose `\fi` an enclosing `\ifmmode` does not take. -/
+private def condPrimitives : List String :=
+  ["if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner", "ifvoid",
+   "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase", "ifdefined", "ifcsname",
+   "iffontchar", "ifincsname"]
+
+mutual
+
+/-- The conditionals `\newif` declares in a text, by name, and whether it spells `\ifmmode`. -/
+private def newifsIn (acc : Array String × Bool) : List Raw → Array String × Bool
+  | [] => acc
+  | .ctrl "newif" _ :: .ctrl n _ :: rest => newifsIn (acc.1.push n, acc.2) rest
+  | r :: rest => newifsIn (newifsOf acc r) rest
+
+private def newifsOf (acc : Array String × Bool) : Raw → Array String × Bool
+  | .group body _ | .env _ body _ | .math _ body _ => newifsIn acc body.toList
+  | .ctrl n _ => (acc.1, acc.2 || n == "ifmmode")
+  | .word .. | .space | .par _ | .sym .. | .verb .. => acc
+
+end
+
+/-- An open `\ifmmode` while one list level is read: the output before it, its math branch once
+`\else` is met, and how many other conditionals stand open inside it. -/
+private structure ModeFrame where
+  outer : Array Raw
+  math : Option (Array Raw × Pos)
+  depth : Nat
+  pos : Pos
+
+/-- One list level with each `\ifmmode … \else … \fi` it closes read as a `modeEnv`; one left
+open stays as written. -/
+private def modeLevel (conds : Array String) (xs : Array Raw) : Array Raw := Id.run do
+  let isCond (n : String) : Bool := condPrimitives.contains n || n.startsWith "if@" || conds.contains n
+  let mut frames : Array ModeFrame := #[]
+  let mut acc : Array Raw := #[]
+  for r in xs do
+    match r, frames.back? with
+    | .ctrl "ifmmode" p, _ =>
+      if acc.back? matches some (.ctrl "unless" _) then
+        frames := frames.modify (frames.size - 1) fun f => { f with depth := f.depth + 1 }
+        acc := acc.push r
+      else
+        frames := frames.push { outer := acc, math := none, depth := 0, pos := p }
+        acc := #[]
+    | .ctrl "else" p, some f =>
+      if f.depth == 0 && f.math.isNone then
+        frames := frames.pop.push { f with math := some (acc, p) }
+        acc := #[]
+      else acc := acc.push r
+    | .ctrl "fi" _, some f =>
+      if f.depth == 0 then
+        let (math, text) := match f.math with
+          | some (m, _) => (m, acc)
+          | none => (acc, #[])
+        frames := frames.pop
+        acc := f.outer.push
+          (.env modeEnv (#[Raw.math false math { f.pos with command := some modeBranch }] ++ text) f.pos)
+      else
+        frames := frames.pop.push { f with depth := f.depth - 1 }
+        acc := acc.push r
+    | .ctrl n _, some f =>
+      if isCond n then frames := frames.pop.push { f with depth := f.depth + 1 }
+      acc := acc.push r
+    | _, _ => acc := acc.push r
+  for f in frames.reverse do
+    let opened := match f.math with
+      | some (m, ep) => (#[Raw.ctrl "ifmmode" f.pos] ++ m).push (.ctrl "else" ep)
+      | none => #[Raw.ctrl "ifmmode" f.pos]
+    acc := f.outer ++ opened ++ acc
+  return acc
+
+/-- The picture environments, whose reader decides `\ifmmode` as pgf's horizontal box does. -/
+private def pictureBodies : List String := ["tikzpicture", "picture", "tikzcd", "external"]
+
+mutual
+
+-- conserves: none — reads each closed `\ifmmode` as the mode reading it
+private def modeList (conds : Array String) (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => modeList conds (acc.push (modeRaw conds r)) rest
+
+private def modeRaw (conds : Array String) : Raw → Raw
+  | .group body p => .group (modeLevel conds (modeList conds #[] body.toList)) p
+  | .env n body p =>
+    if pictureBodies.contains n then .env n body p
+    else .env n (modeLevel conds (modeList conds #[] body.toList)) p
+  | .math d body p => .math d (modeLevel conds (modeList conds #[] body.toList)) p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb e v p => .verb e v p
+
+end
+
+/-- A parsed text with each `\ifmmode` it closes at one list level read as a `modeEnv`. -/
+public def modeChoices (raws : Array Raw) : Array Raw :=
+  let (conds, spelled) := newifsIn (#[], false) raws.toList
+  if spelled then modeLevel conds (modeList conds #[] raws.toList) else raws
+
 /-- Parses tokens into a `Raw` forest in one pass with an explicit frame stack;
 strays are reported and skipped, unclosed delimiters close at end of input. -/
 public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.run do
@@ -626,7 +734,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           (err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
         acc := f.close acc
     | none => pure ()
-  return (acc, diags)
+  return (modeChoices acc, diags)
 
 /-- The code of a captured `\mintinline` or `\mint` call
 from just past its `{language}`. -/
@@ -861,11 +969,13 @@ mutual
   | .ctrl n _ =>
     if n.length == 1 && !Lex.nameChar n.front && n != " " then "\\" ++ n else "\\" ++ n ++ " "
   | .group body _ => "{" ++ rawSrc body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
-  | .math d body _ =>
+  | .math d body p =>
     let inner := rawSrc body
-    if d then s!"\\[{inner}\\]" else s!"${inner}$"
+    if p.command == some modeBranch then inner ++ "\\else "
+    else if d then s!"\\[{inner}\\]" else s!"${inner}$"
   | .env n body _ =>
     if n == scopeEnv then "{" ++ rawSrc body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
+    else if n == modeEnv then "\\ifmmode " ++ rawSrcList body.toList ++ "\\fi "
     else s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
   | .verb env v _ =>
     let s := v.spelling
@@ -987,7 +1097,8 @@ public theorem markMacroList_source_exact (origin : MacroOrigin) (rs : List Raw)
 
 public theorem markMacro_source_exact (origin : MacroOrigin) (r : Raw) :
     rawSrcOne (markMacro origin r) = rawSrcOne r := by
-  cases r <;> simp only [markMacro, rawSrcOne, markMacroArray_source_exact, endsCtrlSpace_markMacro]
+  cases r <;> simp only [markMacro, rawSrcOne, markMacroArray_source_exact, markMacroList_toList,
+    List.nil_append, markMacroList_source_exact, endsCtrlSpace_map]
 
 end
 

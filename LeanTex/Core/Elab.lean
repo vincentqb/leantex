@@ -1634,13 +1634,47 @@ private def bindMathArgs (params : Array Param) (rest : Array Raw) :
 file lowered. -/
 private def mathLimit (ctx : Ctx) : Nat := if ctx.kept then 0 else ctx.limit
 
+mutual
+
+-- conserves: none — keeps each `\ifmmode`'s math branch alone
+private def mathBranchList (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => mathBranchList (mathBranchRaw acc r) rest
+termination_by structural l => l
+
+private def mathBranchRaw (acc : Array Raw) : Raw → Array Raw
+  | .env n body p =>
+    if n == Parse.modeEnv then mathBranchFirst acc body.toList
+    else acc.push (.env n (mathBranchList #[] body.toList) p)
+  | .group body p => acc.push (.group (mathBranchList #[] body.toList) p)
+  | .math d body p => acc.push (.math d body p)
+  | .word w p => acc.push (.word w p)
+  | .space => acc.push .space
+  | .par p => acc.push (.par p)
+  | .ctrl n p => acc.push (.ctrl n p)
+  | .sym c p => acc.push (.sym c p)
+  | .verb e v p => acc.push (.verb e v p)
+termination_by structural r => r
+
+private def mathBranchFirst (acc : Array Raw) : List Raw → Array Raw
+  | first :: _ => mathBranchOf acc first
+  | [] => acc
+termination_by structural l => l
+
+private def mathBranchOf (acc : Array Raw) : Raw → Array Raw
+  | .math _ m _ => mathBranchList acc m.toList
+  | .group .. | .env .. | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => acc
+termination_by structural r => r
+
+end
+
 /-- Expands `\define`d commands inside a formula's raws, right to left, each
 body under only the definitions before it. -/
-private def expandMathList (user : Array UserCmd) (limit : Nat)
+private def expandMathGo (user : Array UserCmd) (limit : Nat)
     (args : Array (String × Array Raw)) : List Raw → Array Raw
   | [] => #[]
   | .ctrl n pos :: rest =>
-    let tail := expandMathList user limit args rest
+    let tail := expandMathGo user limit args rest
     if let some (_, sub) := args.find? (·.1 == n) then
       sub ++ tail
     else if let some source := Marker.value? .ink n then
@@ -1651,20 +1685,38 @@ private def expandMathList (user : Array UserCmd) (limit : Nat)
       | some (k, cmd) =>
         if _h : k < limit then
           let (bindings, rest') := bindMathArgs cmd.params tail
-          let body := expandMathList user k bindings cmd.body.toList
+          let body := expandMathGo user k bindings cmd.body.toList
           body ++ rest'
         else
           #[Raw.ctrl n pos] ++ tail
       | none => #[Raw.ctrl n pos] ++ tail
   | .group body p :: rest =>
-    let tail := expandMathList user limit args rest
-    let inner := expandMathList user limit args body.toList
+    let tail := expandMathGo user limit args rest
+    let inner := expandMathGo user limit args body.toList
     #[Raw.group inner p] ++ tail
+  | .math d body p :: rest =>
+    let tail := expandMathGo user limit args rest
+    #[Raw.math d (expandMathGo user limit args body.toList) p] ++ tail
+  | .env n body p :: rest =>
+    let tail := expandMathGo user limit args rest
+    if n == Parse.modeEnv then #[Raw.env n (expandMathGo user limit args body.toList) p] ++ tail
+    else #[Raw.env n body p] ++ tail
+  | .sym '#' p :: .word w q :: rest =>
+    let tail := expandMathGo user limit args rest
+    -- A parameter TeX's `#k` spells where the rewrite did not reach, inside a formula.
+    match args.find? (·.1 == "a" ++ w) with
+    | some (_, sub) => sub ++ tail
+    | none => #[Raw.sym '#' p, Raw.word w q] ++ tail
   | r :: rest =>
-    let tail := expandMathList user limit args rest
+    let tail := expandMathGo user limit args rest
     #[r] ++ tail
 termination_by raws => (limit, sizeOf raws)
 decreasing_by raws_dec
+
+/-- A formula's raws with the document's commands expanded and each `\ifmmode` read as math. -/
+private def expandMathList (user : Array UserCmd) (limit : Nat)
+    (args : Array (String × Array Raw)) (raws : List Raw) : Array Raw :=
+  mathBranchList #[] (expandMathGo user limit args raws).toList
 
 /-- The recovery a degraded formula's warning names: its text content, or a
 placeholder when it has none. -/
@@ -5421,6 +5473,11 @@ private def pageGround (ctx : Ctx) (n : String) (pos : Pos) : EM (Option Ir.Pale
   | some source => pageGroundDecl ctx source pos
   | none => some <$> pageGroundReset ctx
 
+/-- Names an `\ifmmode` read in text, where TeX takes its text branch. -/
+private def modeNote (ctx : Ctx) (pos : Pos) : EM Unit :=
+  warnOnce ctx "cond:ifmmode" .N0114
+    "'\\ifmmode' is false outside a formula, so the text after its '\\else' sets" pos
+
 /-- A page-ground marker inside text: the page ground it sets globally, placed before its paragraph. -/
 private def inlinePageGround (ctx : Ctx) (n : String) (pos : Pos) : EM Unit := do
   if let some pal ← pageGround ctx n pos then
@@ -5620,6 +5677,12 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let acc := flushText acc sb
         let inner ← elabInlinesCore ctx body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
+      else if name == Parse.modeEnv then
+        -- Text reads an `\ifmmode`'s text branch in place, as TeX expands it.
+        modeNote ctx pos
+        have _ := sliceWeight_splice h hr 1
+        elabInlinesFrom ctx (raws.extract 0 i ++ body.extract 1 body.size
+          ++ raws.extract (i + 1) raws.size) i acc sb
       else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
         let inner ← elabInlinesCore (ctx.enterInput name f) body
@@ -13736,6 +13799,11 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   let mut blocks := blocks
   if n == Parse.scopeEnv then
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
+  else if n == Parse.modeEnv then
+    modeNote ctx pos
+    have _ := tail_measures body 1
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size)
+      (elabBlockScope ctx (body.extract 1 body.size)))
   else if n == Parse.linesEnv then
     blocks := blocks.push (.lines (← linesLaid ctx 0 body.toList #[] #[]))
   else if let some f := Parse.inputEnvFile? n then

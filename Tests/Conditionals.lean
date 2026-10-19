@@ -21,7 +21,7 @@ def condProbeArgs : List (String × String × Option Bool) :=
   [("if", "aa ", none), ("ifcase", "1 Zero\\or ", some true), ("ifcat", "aa ", none),
    ("ifdim", "1pt<2pt ", none), ("ifeof", "1 ", none), ("iffalse", " ", some false),
    ("ifhbox", "0 ", none), ("ifhmode", " ", none), ("ifinner", " ", none),
-   ("ifmmode", " ", none), ("ifnum", "1=1 ", some true), ("ifodd", "3 ", some true),
+   ("ifmmode", " ", some false), ("ifnum", "1=1 ", some true), ("ifodd", "3 ", some true),
    ("iftrue", " ", some true), ("ifvbox", "0 ", none), ("ifvmode", " ", none),
    ("ifvoid", "0 ", none), ("ifx", "\\relax\\relax ", some true),
    ("ifdefined", "\\probeundefined ", some false), ("ifcsname", "relax\\endcsname ", none),
