@@ -1819,7 +1819,7 @@ def pdfFoots (out : Layout.Out) : Array (String × String) := Id.run do
     if let some band := out.pages[i].foot then
       let text (side : Ir.BandSide) : String :=
         (band.filter (·.side == side)).foldl (fun acc s =>
-          acc ++ (Ir.plainText (Layout.substPage (i + 1) total s.content))) ""
+          acc ++ (Ir.plainText (Layout.substPage (toString (i + 1)) total s.content))) ""
       res := res.push ((text .left).trimAscii.toString,
         (text .right).trimAscii.toString)
   return res

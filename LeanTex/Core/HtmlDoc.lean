@@ -59,6 +59,8 @@ public structure Config where
   locale : Locale := Locale.en
   /-- Whether a body h1 is a chapter, its label a line of its own (`Ir.Doc.chapters`). -/
   chapters : Bool := false
+  /-- A chapter's number stands before its title on its line, as KOMA-Script's classes set it. -/
+  chapterInline : Bool := false
   /-- The script of the client-side math renderer the run declares, shipped inline. -/
   mathRenderer : Option String := none
   /-- Whether the page ships every face, as where a math renderer may set text in any of them. -/
@@ -8912,9 +8914,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let chapter := level == .h1 && cfg.chapters
     let kids := match num with
       | some n =>
-        if chapter then #[Html.elem "span" #[Html.text n] #[("class", "chapter-label")], Html.text " "] ++ kids
+        if chapter && !cfg.chapterInline then
+          #[Html.elem "span" #[Html.text n] #[("class", "chapter-label")], Html.text " "] ++ kids
+        -- KOMA-Script's chapter number stands an `\enskip` before its title, as on the page.
         else #[Html.elem "span" #[Html.text n]
-          #[("class", "section-number")], Html.text "\u2003"] ++ kids
+          #[("class", "section-number")], Html.text (if chapter then "\u2002" else "\u2003")] ++ kids
       | none => kids
     let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
     -- a deck's section heading outside a frame takes the section title's ink where declared
@@ -9776,7 +9780,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     Array Node × Array Node × Array Diag := Id.run do
   -- backend conditionals resolve here, so every walk below sees only this page's content
   let doc := { doc with body := Ir.keepFor "html" doc.body }
-  let cfg := { cfg with locale := doc.info.locale, chapters := doc.chapters }
+  let cfg := { cfg with locale := doc.info.locale, chapters := doc.chapters
+                        chapterInline := doc.docClass == Ir.DocClass.koma }
   let judge := if cfg.css == .own then Contrast.schemeJudge doc else {}
   let cfg := { cfg with pal := doc.palette, docPal := doc.palette, frames := judge.frames
                         views := (judge.views.head?.map (·.2)).getD []

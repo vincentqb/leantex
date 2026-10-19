@@ -168,6 +168,10 @@ public def headingControl : Ir.HeadingLevel → String
 /-- The native control a class's `\chapter` rewrites to; no source control word spells it. -/
 @[expose] public def chapterControl : String := "heading chapter"
 
+/-- The mark after a heading control that sets it unnumbered yet listed in the contents, as
+KOMA-Script's `\addchap` and `\addsec`; no source word holds a space. -/
+@[expose] public def listedUnnumbered : String := "* listed"
+
 /-- Decode only the finite native heading vocabulary, a class's chapter its body h1. -/
 public def headingControl? : String → Option Ir.HeadingLevel
   | "heading title" => some .title

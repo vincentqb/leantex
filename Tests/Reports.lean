@@ -2169,7 +2169,14 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: each opener sets the item's label on its first line, beside a centred line's start and at the item's place beside a quote or a list's first item; an empty item and a display opening an item set the label on a line of its own; an itemize in a description takes the bullet; an item's own label ends a labelsep before the text and steps no counter; a trivlist's labels hang a labelsep into the margin; a table's center closes 10pt above the caption after it; and a minipage's list spaces its items 20pt apart as an outermost list; this tree sets the same",
       "main's binary at 03c2ff1d on the same probes: the labels are gone, the trivlist stops the build (E0312) and the minipage's list stands 16pt apart; the guards fail there",
       "the corpus built by main's binary at 03c2ff1d and by this tree's: every PDF byte-identical, and the two web pages differ only in the stylesheet's four rules for an item's own label, visually identical"]
-    state := .guarded "03c2ff1d" .before .author }
+    state := .guarded "03c2ff1d" .before .author },
+  { id := "R244", date := "2026-10-19"
+    what := "pagenumbering was unknown, front matter numbered its pages on in arabic, the counters' printed values were unknown commands, a declared theequation numbered nothing, KOMA-Script's and memoir's chapters and addchap were unknown or sectioned as an article's, a class with chapters numbered its floats through the document, listings ignored firstline and lastline, and a markdown fragment's headings in a report were unnumbered sections"
+    pins := [check% Tests.Chapters.numberingStateChecks, check% Tests.Chapters.chapterDeclarationChecks]
+    accept := ["lualatex 1.24 on invented probes: roman, Alph and gobble folios counting from 1 where pagenumbering stands, mid-paragraph and in the preamble alike; front matter i and main matter 1 in book, scrbook and memoir; Section 1.1 of chapter 1 on page 1, equation 1.1, (1-1) under a declared theequation and (1.1) once numberwithin follows it; KOMA-Script's chapter head 67.28pt below the text's top and the text 37.07pt below it, addchap and addsec unnumbered, addsec listed by its short title; memoir numbering down to the section, its subsection unnumbered and thesubsection printing 1.1.0; Figure 1 before the first chapter, Figure 1.1, 1.2, then 2.1 and Table 2.1 in report, A.1 in the appendix, algorithms 1 and 2 through the document; a listing's lines two and three; a fragment's # a numbered chapter in report; this tree sets each the same",
+      "main's binary at 1e1685cb names pagenumbering and the counters unknown, numbers book's front matter in arabic, sets KOMA-Script's chapters as sections and numbers figures 1, 2, 3; the checks fail there",
+      "the corpus built by the binary of this change's base, the parameter-state change over main 1e1685cb, and by this tree's: every artifact and diagnostic byte-identical"]
+    state := .guarded "1e1685cb" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

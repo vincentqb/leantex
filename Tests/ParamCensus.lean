@@ -482,12 +482,12 @@ def classSkippedBeyond : List (List String) :=
     "chapters"],
    ["10pt", "letterpaper", "twoside", "titlepage", "notitlepage", "openright", "onecolumn", "final",
     "chapters"],
-   ["10pt", "letterpaper", "twoside", "openright", "onecolumn", "final"],
+   ["10pt", "letterpaper", "twoside", "openright", "onecolumn", "final", "chapters"],
    ["11pt", "a4paper", "oneside", "notitlepage", "titlepage=false", "onecolumn", "final"],
    ["11pt", "a4paper", "oneside", "titlepage", "titlepage=true", "notitlepage", "openany",
-    "onecolumn", "final"],
+    "onecolumn", "final", "chapters"],
    ["11pt", "a4paper", "twoside", "titlepage", "titlepage=true", "notitlepage", "twoside=true",
-    "openright", "onecolumn", "final"]]
+    "openright", "onecolumn", "final", "chapters"]]
 
 /-- The article-like classes whose options the census tries in an article's body. -/
 def classDocsBeyond : List String := ["report", "book", "memoir", "scrartcl", "scrreprt", "scrbook"]

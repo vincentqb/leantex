@@ -213,14 +213,14 @@ public def pageTargets (doc : Doc) : Array String :=
       else out) #[] doc.body
 
 /-- A page reference showing the folio `folio` lands its label on, `??` where none. -/
-private def pagedRef (folio : String → Option Nat) (x : Inline) : Inline :=
+private def pagedRef (folio : String → Option String) (x : Inline) : Inline :=
   if let .ref key form _ (some t) := x then
-    if form.paged then .ref key form (((folio t).map toString).getD "??") (some t) else x
+    if form.paged then .ref key form ((folio t).getD "??") (some t) else x
   else x
 
 /-- The document with each page reference and flow contents entry carrying the folio `folio` lands
 its anchor on. -/
-public def fillPages (folio : String → Option Nat) (doc : Doc) : Doc :=
+public def fillPages (folio : String → Option String) (doc : Doc) : Doc :=
   let doc := mapDoc (mapInlines (pagedRef folio)) (mapBlocks (pagedRef folio)) doc
   if doc.docClass.record.model == .frame then doc else
   { doc with body := rewriteContents (fun spec entries =>

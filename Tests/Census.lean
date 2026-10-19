@@ -1708,7 +1708,7 @@ def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => out
     Ir.foldBlocks (fun out _ => out) fi (Ir.foldInlines fi #[] caption) body
   let floatsIn (body : Array Ir.Block) :
-      Array (Ir.FloatKind × Option Nat × Array Ir.Block × Array Ir.Inline) :=
+      Array (Ir.FloatKind × Option Ir.FloatNum × Array Ir.Block × Array Ir.Inline) :=
     Ir.foldBlocks (fun out b => match b with
       | .float kind num _ fbody fcaption => out.push (kind, num, fbody, fcaption)
       | _ => out) (fun out _ => out) #[] body

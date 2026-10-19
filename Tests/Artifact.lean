@@ -496,6 +496,17 @@ def driverPdf (fs : Font.FontSet) (geom : Layout.Geom) (doc : Ir.Doc)
   let ops := Pdf.pageOps geom fs out.pages store tree
   Pdf.write geom fs out.pages doc.info store out.outline #[] tree ops
 
+/-- Each page's folio as its bytes show it: its last run of arabic or lower-case roman numerals
+alone, none where the page inks no number. -/
+def artFolios (pdf : ByteArray) : Array (Option String) :=
+  let folio (r : ArtRun) : Option String :=
+    let tx := r.text.trimAscii.toString
+    if !tx.isEmpty && (tx.all Char.isDigit || tx.all fun c => "ivxlcdm".toList.contains c) then some tx
+    else none
+  match readArtifact pdf with
+  | .ok pages => pages.map fun (p : ArtPage) => (p.runs.filterMap folio).back?
+  | .error _ => #[]
+
 /-- A rectangle in PDF user space, as the region vocabulary the claims
 read: `x0 ≤ x1` and `y0 ≤ y1`. -/
 structure ArtRect where

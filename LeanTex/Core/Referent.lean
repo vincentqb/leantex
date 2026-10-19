@@ -242,7 +242,7 @@ private theorem bodyLabels_text (keys : ReferentKeys) (body : Array Block) (acc 
   unfold bodyLabels
   exact ⟨h.1, by simpa [blockTextList] using h.2⟩
 
-private theorem floatLabelsTop_text (keys : ReferentKeys) (k : FloatKind) (n : Option Nat)
+private theorem floatLabelsTop_text (keys : ReferentKeys) (k : FloatKind) (n : Option FloatNum)
     (ca : Bool) (body : Array Block) (caption : Array Inline) (acc : String) :
     blockTextOne acc (.float k n ca (floatLabelsTop keys ca body caption).1
       (floatLabelsTop keys ca body caption).2) = blockTextOne acc (.float k n ca body caption) := by

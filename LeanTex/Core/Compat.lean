@@ -207,7 +207,7 @@ private def asksTitlePage (koma dflt : Bool) (opts : List String) : Bool :=
 private def titlepageClasses : List String := ["report", "book"]
 
 /-- The article-like classes whose `\chapter` heads a chapter, numbering what it holds within it. -/
-private def chapterClasses : List String := ["report", "book"]
+private def chapterClasses : List String := ["report", "book", "memoir", "scrreprt", "scrbook"]
 
 /-- The classes whose title a `titlepage` option gives a page of its own, memoir's declaring none. -/
 private def titlepageAskers : List String := ["article", "report", "book", "scrartcl", "scrreprt", "scrbook"]
@@ -747,6 +747,8 @@ private structure St where
   /-- The declared class produces a presentation, which a beamer mode
   specification is read against. -/
   deck : Bool := false
+  /-- The page openings the preamble declares, opening the body's first page. -/
+  preOpenings : Array String := #[]
   /-- The class options the class leaves to the packages that take them, as LaTeX offers global
   options. -/
   globalOffered : Array String := #[]
@@ -1180,7 +1182,7 @@ private def openDocumentBody : M Unit :=
               bodySkip := st.classPt.map classNormalSkip }
 
 private def closeDocumentBody (pos : Pos) (result : Array Raw × St) : Raw × St :=
-  (.env "document" result.1 pos,
+  (.env "document" (result.2.preOpenings.map (Raw.ctrl · pos) ++ result.1) pos,
     (write fun st => { st with inDoc := false }) result.2 |>.2)
 
 /-- The document environment's body call and return. -/
@@ -9261,17 +9263,44 @@ fall on a left; the pages here are one-sided, so each opens the next page" pos
     became "\\chapter" "the class's chapter heading" pos
     if (← get).inDoc then write fun st => { st with argSkip := some none }
     return some (#[.ctrl Parse.chapterControl pos], start)
+  | "addchap" | "addsec" =>
+    -- KOMA-Script's unnumbered chapter and section heads.
+    unless (← get).loads.cls.any (fun c => c.1.startsWith "scr") do return none
+    if name == "addchap" && !(← get).chapters then return none
+    became s!"\\{name}" s!"the class's unnumbered {if name == "addchap" then "chapter" else "section"} heading" pos
+    let head := if name == "addchap" then Parse.chapterControl else "section"
+    -- The starred form leaves the contents too, the plain one lists its title there.
+    let k := skipStar raws start
+    return some (#[.ctrl head pos, .word (if k == start then Parse.listedUnnumbered else "*") pos], k)
   | "frontmatter" | "mainmatter" | "backmatter" =>
-    -- book.cls's divisions; a class without them has none.
-    unless (← get).loads.cls.any (·.1 == "book") do return none
-    -- premise: chapterDeclarationChecks — the pages number on through the divisions, named once
-    if name != "backmatter" then
-      sayOnce "matter:pages" .W0110
-        "the front matter's pages are numbered in roman numerals and the main matter's from 1 \
-again; here the pages number on in arabic numerals through the book" pos
-        (help := "a page number here counts the book's pages from its first")
-    became s!"\\{name}" "a page break and the chapters' numbering" pos
-    return some (#[.ctrl "pagebreak" pos, .ctrl (matterMark (name == "mainmatter")) pos], start)
+    -- book.cls's divisions, scrbook's and memoir's; a class without them has none.
+    -- premise: chapterDeclarationChecks — another class's divisions stay unknown commands
+    unless (← get).loads.cls.any (fun c => ["book", "scrbook", "memoir"].contains c.1) do
+      return none
+    -- The front matter numbers its pages in roman numerals, the main matter from 1 again.
+    let numbering := if name == "frontmatter" then #[.ctrl (Ir.pageNumberingRole .roman) pos]
+      else if name == "mainmatter" then #[.ctrl (Ir.pageNumberingRole .arabic) pos] else #[]
+    became s!"\\{name}" "a page break, the chapters' numbering and the pages' numbering" pos
+    return some (#[.ctrl "pagebreak" pos, .ctrl (matterMark (name == "mainmatter")) pos] ++ numbering,
+      start)
+  | "pagenumbering" =>
+    -- latex.ltx's `\pagenumbering`: the page counter from 1, in the numeral style named.
+    let (args, k) := takeGroups raws start 1
+    let some g := args[0]? | return none
+    let spelled := (rawSrc g).trimAscii.toString
+    let some style := Ir.NumStyle.ofPageName? spelled | return none
+    -- premise: numberingStateChecks — a deck's frames number as beamer numbers them
+    if (← get).deck then
+      sayOnce "ctrl:pagenumbering" .W0104
+        "'\\pagenumbering' is not honoured: a deck numbers its frames, not its pages" pos
+        (help := "drop it: beamer's \\insertframenumber is the deck's number")
+      return some (#[], k)
+    became s!"\\pagenumbering\{{spelled}}" "the pages numbered from 1 in that style" pos
+    -- The preamble's numbering opens the body's first page.
+    if ← docPreamble then
+      write fun st => { st with preOpenings := st.preOpenings.push (Ir.pageNumberingRole style) }
+      return some (#[], k)
+    return some (#[.ctrl (Ir.pageNumberingRole style) pos], k)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
     let expanding := name == "edef" || name == "xdef"
@@ -10297,8 +10326,11 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let twoside := given.contains "twoside" || given.contains "twoside=true" ||
       (twosideClasses.contains cls && !given.contains "oneside" && !given.contains "twoside=false")
     if chapterClasses.contains cls || keptItems.contains "chapters" then
-      -- book.cls and report.cls declare `openright` before `openany`, which so wins given both.
-      let right := (cls == "book" || keptItems.contains "openright") && !keptItems.contains "openany"
+      -- book.cls and report.cls declare `openright` before `openany`, which so wins given both;
+      -- memoir and scrbook open right by default, KOMA-Script spelling it `open=`.
+      let right := (["book", "memoir", "scrbook"].contains cls || keptItems.contains "openright" ||
+          keptItems.contains "open=right") &&
+        !keptItems.contains "openany" && !keptItems.contains "open=any"
       write fun st => { st with chapters := true, chaptersRight := twoside && right }
     if presentationClasses.contains cls then
       write fun st => { st with deck := true }
@@ -10350,6 +10382,12 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let cls0 := Native.Head.documentclass kept.toArray native0
       let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt")]
       became s!"\\documentclass\{{cls}}" (cls0.render ++ (page.note?.getD "")) pos
+      -- memoir.cls numbers and lists headings down to the section (`\setsecnumdepth{section}`).
+      let depths : Array Raw := if cls != "memoir" then #[] else
+        #["secnumdepth", "tocdepth"].flatMap fun c =>
+          #[.ctrl "setcounter" pos, .group #[.word c pos] pos, .group #[.word "1" pos] pos]
+      -- The preamble's counter settings stand where the body opens, as a document's own do.
+      write fun st => { st with preCounters := depths ++ st.preCounters }
       return some (cls0.raws pos ++ (← carry page pos), k)
     else if cls == "beamer" then
       -- beamer's `hyperref={...}` option is `\hypersetup`'s keys.
@@ -10387,8 +10425,12 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         unreadParam "documentclass" "twoside" s!"class option '{kv}', whose mirrored margins the \
 engine does not set," pos
       let consumed (kv : String) : Bool := oneSidedOf cls kv || twoSided kv || (koma && kv == "titlepage=true")
-      if offered.isEmpty && passed.isEmpty && !keptItems.any consumed then return none
-      let kept := (passed ++ keptItems).filter (!consumed ·)
+      -- KOMA-Script's report and book classes head chapters.
+      let chapterOpt := if chapterClasses.contains cls && !keptItems.contains "chapters" then
+        ["chapters"] else []
+      if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty then
+        return none
+      let kept := (passed ++ keptItems).filter (!consumed ·) ++ chapterOpt
       let native := Native.Head.documentclass kept.toArray cls
       became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native.render pos
       return some (native.raws pos, k)
@@ -13341,6 +13383,37 @@ public def lengthRestoreKeys? (name : String) : Option (Array String) :=
 private def restoreLengths (keys : Array String) (p : Pos) : Array Raw :=
   if keys.isEmpty then #[]
   else #[.ctrl ("length restore " ++ String.intercalate "," keys.toList) p]
+
+/-- A Markdown fragment's headings as the markdown package's renderers set them in a class with
+chapters: `#` the chapter, each deeper one a level down, numbered as the class numbers them, through
+the files it inputs. -/
+public def latexHeadings (raws : Array Raw) : Array Raw :=
+  let names := [Parse.chapterControl, "section", "subsection", "subsubsection", "paragraph",
+    "subparagraph"]
+  let rec go : List Raw → Array Raw → Array Raw
+    | [], out => out
+    | .ctrl c p :: .word "*" q :: rest, out =>
+      match Parse.headingControl? c with
+      | some .title => go rest ((out.push (.ctrl c p)).push (.word "*" q))
+      | some lvl =>
+        let depth := match lvl with
+          | .h1 => 0 | .h2 => 1 | .h3 => 2 | .h4 => 3 | .h5 => 4 | _ => 5
+        go rest (out.push (.ctrl (names[depth]?.getD "subparagraph") p))
+      | none => go (.word "*" q :: rest) (out.push (.ctrl c p))
+    | .env n body p :: rest, out =>
+      if (Parse.inputEnvFile? n).isSome then go rest (out.push (.env n (go body.toList #[]) p))
+      else go rest (out.push (.env n body p))
+    | r :: rest, out => go rest (out.push r)
+  termination_by l => sizeOf l
+  decreasing_by all_goals raws_dec
+  go raws.toList #[]
+
+/-- The markdown package's headings for a fragment read where `context` stands: in a class with
+chapters, its chapters; elsewhere the fragment reads as the file alone. -/
+public def InputContext.markdownHeadings (context : InputContext) (raws : Array Raw) : Array Raw :=
+  if context.state.chapters || context.state.loads.cls.any fun c => chapterClasses.contains c.1 then
+    latexHeadings raws
+  else raws
 
 /-- Names an abstract an article's titlepage would set on a page of its own. -/
 private def abstractUnderTitlePage (pos : Pos) : M Unit := do

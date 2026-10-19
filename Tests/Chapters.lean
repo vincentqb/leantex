@@ -143,27 +143,140 @@ equations ({lines roman}, {said})"
   t s!"chapter declarations: a book numbers its main matter's chapters alone ({heads})"
     (heads == #[(none, "Preface"), (some "Chapter 1", "Alpha"), (none, "Afterword")] &&
       (lines book).contains "1.1Bravo")
-  t "chapter declarations: the divisions' page numbering is named once"
-    ((bds.filter fun d => d.subject == some "matter:pages" && d.severity != .note).size == 1 &&
-      !bds.any (·.code == "W0301"))
+  t "chapter declarations: the divisions' page numbering is set, never named"
+    (!bds.any fun d => d.subject == some "matter:pages" || d.code == "W0301")
   let bgeom := Layout.Geom.ofPage bdoc.page
-  let digits (r : ArtRun) : Option String :=
-    let tx := r.text.trimAscii.toString
-    if !tx.isEmpty && tx.all Char.isDigit then some tx else none
-  -- A page's number is its last run of digits alone, below its text.
-  let numbers : Array (Option String) :=
-    match readArtifact (driverPdf fonts bgeom bdoc (layoutOf fonts bdoc bgeom)) with
-    | .ok pages => pages.map fun (p : ArtPage) => (p.runs.filterMap digits).back?
-    | .error _ => #[]
-  t s!"chapter declarations: the pages number on in arabic numerals through the divisions ({numbers})"
-    (numbers == #[some "1", some "2", some "3"])
+  let numbers := artFolios (driverPdf fonts bgeom bdoc (layoutOf fonts bdoc bgeom))
+  -- lualatex: book's front matter numbers its pages i, ii, …, the main matter from 1 again.
+  t s!"chapter declarations: the front matter's pages number in roman numerals, the main matter's from 1 ({numbers})"
+    (numbers == #[some "i", some "1", some "2"])
   let listing := report "\\usepackage{listings}\n"
     "\\chapter{Alpha}\n\\begin{lstlisting}[caption={A probe}]\nx = 1\n\\end{lstlisting}"
   t "chapter declarations: a listing numbered through the document is named"
     ((elabStr listing).2.any fun d => d.subject == some "chapters:floats")
   let figure := report "" "\\chapter{Alpha}\nWords.\n\\begin{figure}\n\\caption{A probe}\n\\end{figure}"
-  t s!"chapter declarations: the float numbered through the document is named at its caption"
-    ((elabStr figure).2.any fun d => d.subject == some "chapters:floats" &&
-      d.span.any (·.pos.line == 6))
+  t "chapter declarations: a figure numbered within its chapter is not named"
+    (!(elabStr figure).2.any fun d => d.subject == some "chapters:floats")
 
+/-- The page's and the counters' numbering as lualatex sets it on invented probes: `\pagenumbering`,
+`\the<counter>` in running text, a declared `\theequation`, KOMA-Script's and memoir's chapters,
+listings' line range and a Markdown fragment's headings. -/
+def numberingStateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let foliosOf (src : String) : Array (Option String) :=
+    let (doc, _) := elabStr src
+    let geom := Layout.Geom.ofPage doc.page
+    artFolios (driverPdf fonts geom doc (layoutOf fonts doc geom))
+  let numbered := "\\documentclass{article}\n\\begin{document}\n\\pagenumbering{roman}\nFront.\n" ++
+    "\\newpage\nMore front.\n\\newpage\n\\pagenumbering{arabic}\nBody.\n\\newpage\nMore.\n" ++
+    "\\pagenumbering{gobble}\n\\newpage\nLast.\n\\end{document}"
+  -- lualatex: i, ii, then 1, then 2, and gobble's page 1 prints no number.
+  t s!"page numbering: each style counts from 1 on the page it stands on ({foliosOf numbered})"
+    (foliosOf numbered == #[some "i", some "ii", some "1", none, none])
+  let lines (src : String) := (pagesOf fonts src).toList.flatMap fun p => p.toList.map (·.2.2)
+  let counters := "\\documentclass{report}\n\\begin{document}\n\\chapter{Alpha}\n\\section{Bravo}\n" ++
+    "Section \\thesection{} of chapter \\thechapter{} on page \\thepage.\n" ++
+    "\\begin{equation}x = 1\\end{equation}\nAfter equation \\theequation.\n" ++
+    "\\newpage\nNow page \\thepage.\n\\end{document}"
+  let shown := String.join ((fittedOf fonts (elabStr counters).1).out.pages.toList.flatMap fun p =>
+    p.lines.toList.map fun l => letters (lineText l))
+  t s!"counters: \\the<counter> in running text prints its value, \\thepage its page ({shown})"
+    (hasStr shown "Section1.1ofchapter1onpage1." && hasStr shown "Afterequation1.1." &&
+      hasStr shown "Nowpage2.")
+  let eq := "\\documentclass{report}\n\\renewcommand\\theequation{\\arabic{chapter}-\\arabic{equation}}\n" ++
+    "\\begin{document}\n\\chapter{Alpha}\n\\begin{equation}x = 1\\end{equation}\n\\end{document}"
+  t s!"counters: a declared \\theequation numbers the equations ({lines eq})"
+    ((lines eq).any (hasStr · "(1-1)"))
+  let koma := "\\documentclass{scrreprt}\n\\begin{document}\n\\chapter{Introduction}\n" ++
+    "Some text in the first chapter.\n\\addchap{Unnumbered}\nText.\n\\end{document}"
+  let kpages := pagesOf fonts koma
+  let line (p : Nat) (text : String) := ((kpages[p]?.getD #[]).find? (hasStr ·.2.2 text)).map (·.1)
+  let ktop := (Layout.Geom.ofPage (elabStr koma).1.page).bodyTop
+  match line 0 "Introduction", line 0 "Some text in the first chapter.", line 1 "Unnumbered" with
+  | some head, some body, some bare =>
+    let skip := Ir.leadingFor (Dim.pt 11) 1000
+    -- lualatex at 11pt: the head's baseline 67.28pt below the text's top, the text 37.07pt, one
+    -- \baselineskip past 1.725 of them, below it; the page's own leading stands in here.
+    t s!"KOMA-Script chapters: the number and title on one line, the text 1.725\\baselineskip and one \
+line below ({head - ktop}, {body - head}, {bare - ktop})"
+      (head - ktop == bare - ktop && body - head == skip * 1725 / 1000 + skip &&
+        head - ktop < Dim.pt 70 && head - ktop > Dim.pt 64)
+  | _, _, _ => t s!"KOMA-Script chapters: the head sets its number before its title ({kpages.map (·.map (·.2.2))})" false
+  let listing := "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n" ++
+    "\\begin{lstlisting}[firstline=2,lastline=3]\nline one\nline two\nline three\nline four\n" ++
+    "\\end{lstlisting}\n\\end{document}"
+  t s!"listings: firstline and lastline set the source's lines between them ({lines listing})"
+    ((lines listing).contains "linetwo" && (lines listing).contains "linethree" &&
+      !(lines listing).contains "lineone" && !(lines listing).contains "linefour")
+  let memoir := "\\documentclass{memoir}\n\\begin{document}\n\\chapter{Alpha}\nWords.\n\\end{document}"
+  t s!"memoir chapters: the head reads as report's ({lines memoir})"
+    ((lines memoir).contains "Chapter 1" && (lines memoir).contains "Alpha")
+  let doc (cls body : String) (pre : String := "") : String :=
+    s!"\\documentclass{cls}\n" ++ pre ++ "\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  -- lualatex: memoir numbers chapters and sections, a subsection unnumbered and unlisted.
+  let memoirDeep := doc "{memoir}" "\\tableofcontents\n\\chapter{Alpha}\n\\section{Bravo}\n\\subsection{Charlie}\nWords."
+  t s!"memoir numbers down to the section ({lines memoirDeep})"
+    ((lines memoirDeep).contains "1.1Bravo" && (lines memoirDeep).contains "Charlie" &&
+      !(lines memoirDeep).any (hasStr · "1.1.1"))
+  -- lualatex: \addchap and \addsec set their titles unnumbered, \addsec listed by its short title.
+  let added := doc "{scrreprt}" ("\\tableofcontents\n\\chapter{Alpha}\nWords.\n\\addchap{Extra}\nText.\n" ++
+    "\\addsec[Short]{Long title}\nMore.\n\\addchap*{Starred}\nLast.")
+  let addedDs := (elabStr added).2
+  t s!"KOMA-Script: \\addchap and \\addsec head unnumbered, \\addsec listed, the starred form read ({lines added})"
+    (!addedDs.any (·.severity == .error) && (lines added).contains "Starred" &&
+      !(lines added).any (hasStr · "Chapter") && (lines added).contains "Extra" &&
+      (lines added).any (hasStr · "Short") && !(lines added).any (hasStr · "1Extra"))
+  let heading := doc "{article}" "\\tableofcontents\n\\section{Head on \\thepage}\nText."
+  let fitted (src : String) : List String := (fittedOf fonts (elabStr src).1).out.pages.toList.flatMap
+    fun p => p.lines.toList.map fun l => letters (lineText l)
+  t s!"\\thepage in a heading: its contents entry keeps its page ({fitted heading})"
+    ((fitted heading).contains "1Headon11" && (fitted heading).contains "1Headon1")
+  t "a title's anchor reads no page reference's folio, before the layout or after"
+    (Ir.slug #[.text "Head on ", .ref "k" .page "??" none] == Ir.slug #[.text "Head on ", .ref "k" .page "1" none])
+  let midPar := doc "{article}" "Words before and \\pagenumbering{roman} words after."
+  t s!"\\pagenumbering mid-paragraph leaves the paragraph whole and numbers its page ({lines midPar}, {foliosOf midPar})"
+    ((lines midPar).contains "Words before and words after." && foliosOf midPar == #[some "i"])
+  let pre := doc "{article}" "Words." "\\pagenumbering{gobble}\n"
+  t s!"\\pagenumbering in the preamble numbers the first page ({foliosOf pre})" (foliosOf pre == #[none])
+  let within := doc "{article}" "\\section{A}\n\\begin{equation}x\\end{equation}"
+    "\\usepackage{amsmath}\n\\renewcommand\\theequation{\\arabic{equation}}\n\\numberwithin{equation}{section}\n"
+  t s!"\\numberwithin after a declared \\theequation defines it again ({lines within})"
+    ((lines within).any (hasStr · "(1.1)"))
+  for cls in ["{scrbook}", "{memoir}"] do
+    let fm := doc cls "\\frontmatter\n\\chapter{Preface}\nWords.\n\\mainmatter\n\\chapter{Alpha}\nWords."
+    t s!"{cls}'s front matter numbers its pages in roman numerals ({foliosOf fm})"
+      ((foliosOf fm)[0]? == some (some "i") && (foliosOf fm).contains (some "1"))
+  let deck := "\\documentclass{beamer}\n\\begin{document}\n\\pagenumbering{roman}\n\\begin{frame}A\\end{frame}\n\\end{document}"
+  t "a deck's \\pagenumbering is named, its frames numbered as beamer numbers them"
+    ((elabStr deck).2.any fun d => d.code == "W0104" && hasStr d.message "pagenumbering")
+  -- lualatex: report numbers figures and tables within each chapter, Figure 1.1 and Table 2.1.
+  let floats := doc "{report}" ("\\chapter{Alpha}\n\\begin{figure}x\\caption{One}\\label{f}\\end{figure}\n" ++
+    "\\begin{figure}y\\caption{Two}\\end{figure}\n\\chapter{Bravo}\n" ++
+    "\\begin{figure}z\\caption{Three}\\label{g}\\end{figure}\n" ++
+    "\\begin{table}w\\caption{Four}\\end{table}\nSee \\ref{f} and \\ref{g}.")
+  t s!"floats in a class with chapters number within each chapter ({fitted floats})"
+    ((fitted floats).any (hasStr · "Figure1.1:One") && (fitted floats).any (hasStr · "Figure1.2:Two") &&
+      (fitted floats).any (hasStr · "Figure2.1:Three") && (fitted floats).any (hasStr · "Table2.1:Four") &&
+      (fitted floats).any (hasStr · "See1.1and2.1.") &&
+      !(elabStr floats).2.any (·.subject == some "chapters:floats"))
+  -- lualatex: a figure before the first chapter is Figure 1, algorithm.sty's algorithms run on.
+  let early := doc "{report}" ("\\begin{figure}x\\caption{Early}\\end{figure}\n\\chapter{Alpha}\n" ++
+    "\\begin{figure}y\\caption{Late}\\end{figure}\n\\begin{algorithm}\\caption{Algo}\\end{algorithm}\n" ++
+    "\\chapter{Bravo}\n\\begin{algorithm}\\caption{Algb}\\end{algorithm}") "\\usepackage{algorithm}\n"
+  t s!"a float before the first chapter has no chapter, and algorithms number through ({fitted early})"
+    ((fitted early).any (hasStr · "Figure1:Early") && (fitted early).any (hasStr · "Figure1.1:Late") &&
+      (fitted early).any (hasStr · "Algorithm1:Algo") && (fitted early).any (hasStr · "Algorithm2:Algb"))
+  let declared := doc "{report}" "\\chapter{Alpha}\n\\begin{figure}x\\caption{One}\\end{figure}"
+    "\\renewcommand{\\thefigure}{\\arabic{figure}}\n"
+  t "a declared \\thefigure under chapters is named, not read"
+    ((elabStr declared).2.any (·.subject == some "chapters:thefigure"))
+  let grouped := doc "{article}" "Text {\\pagenumbering{roman}} more."
+  t "\\pagenumbering in a group is named under its own spelling"
+    ((elabStr grouped).2.any fun d => d.code == "W0104" && hasStr d.message "'\\pagenumbering' in a group" &&
+      !hasStr d.message "pagenumbering roman")
+  let minted := doc "{article}" ("\\begin{minted}[firstline=2,lastline=3]{text}\nline one\nline two\n" ++
+    "line three\nline four\n\\end{minted}") "\\usepackage{minted}\n"
+  t s!"minted: firstline and lastline set the source's lines between them ({lines minted})"
+    ((lines minted).contains "linetwo" && (lines minted).contains "linethree" &&
+      !(lines minted).contains "lineone" && !(lines minted).contains "linefour")
 end Tests.Chapters

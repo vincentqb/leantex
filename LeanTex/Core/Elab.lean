@@ -358,15 +358,8 @@ public def Ctx.quotedNest (ctx : Ctx) (own : Ir.ListSet) : ListNest :=
 public def Ctx.quoteSet (ctx : Ctx) : Ir.ListSet :=
   ctx.listNest.quoteSet ctx.lists ctx.listExtra ctx.page.fontSize (Ir.texParskipOf ctx.page)
 
-/-- A counter's numeral style: `\arabic`, `\alph`, `\Alph`, `\roman` or
-`\Roman`. -/
-public inductive SecNumStyle where
-  | arabic
-  | alph
-  | uAlph
-  | roman
-  | uRoman
-  deriving Repr, BEq
+/-- A counter's numeral style: `\arabic`, `\alph`, `\Alph`, `\roman` or `\Roman`. -/
+public abbrev SecNumStyle := Ir.NumStyle
 
 /-- One piece of a `\the<counter>` format: literal text, a section counter's
 numeral, or another level's format. -/
@@ -494,6 +487,9 @@ public theorem runShape_fold_exact (bs : List Bool) :
 /-- The counters the flow keeps, and the heading-number state they render
 through. -/
 public structure Counters where
+  /-- The document body is elaborating, past its preamble's running content, where a folio is
+  the page its text lands on. -/
+  inBody : Bool := false
   /-- The section counters, levels 1–3. -/
   secNums : Nat × Nat × Nat := (0, 0, 0)
   /-- LaTeX's `secnumdepth`: the deepest level a heading numbers at; 3 is
@@ -510,6 +506,8 @@ public structure Counters where
   inAppendix : Bool := false
   /-- The class heads chapters, numbering sections, equations and footnotes within each. -/
   chapters : Bool := false
+  /-- A chapter's head sets its number before its title on one line, as KOMA-Script's does. -/
+  chapterInline : Bool := false
   /-- The chapter counter. -/
   chapNum : Nat := 0
   /-- Chapters number here: book.cls's main matter, or a class without its divisions. -/
@@ -3493,21 +3491,9 @@ seal blockHeading?
 private def theCounterLevel? (n : String) : Option Nat :=
   if n.startsWith "the" then sectionLevel (n.drop 3).toString else none
 
-private def secStyleOf? : String → Option SecNumStyle
-  | "arabic" => some .arabic
-  | "alph" => some .alph
-  | "Alph" => some .uAlph
-  | "roman" => some .roman
-  | "Roman" => some .uRoman
-  | _ => none
+private def secStyleOf? : String → Option SecNumStyle := Ir.NumStyle.ofName?
 
-private def secStyleRender (style : SecNumStyle) (n : Nat) : String :=
-  match style with
-  | .arabic => ListMark.arabicN n
-  | .alph => ListMark.alphN n
-  | .uAlph => ListMark.AlphN n
-  | .roman => ListMark.romanN n
-  | .uRoman => (ListMark.romanN n).toUpper
+private def secStyleRender (style : SecNumStyle) (n : Nat) : String := ListMark.numText style n
 
 private def counterAt (nums : Nat × Nat × Nat) (level : Nat) : Nat :=
   match level with
@@ -3583,13 +3569,44 @@ private def chapterLabel (c : Counters) : String :=
   | some (_, parts) => String.join (parts.toList.map (chapterPart c.chapNum))
   | none => if c.inAppendix then ListMark.AlphN c.chapNum else ListMark.arabicN c.chapNum
 
+/-- The chapter a float stands in where the class numbers floats by chapter, for the numbering
+walk (`Ir.numberFloats`). -/
+private def floatChapter (c : Counters) : Option Ir.FloatNum :=
+  -- report.cls's `\thefigure` sets the chapter only once one has been numbered.
+  if c.chapters && c.chapNum > 0 then some { within := chapterLabel c, n := 0 } else none
+
 /-- The first heading level's reading the counters stand in. -/
 private def secBase (c : Counters) : SecBase :=
   if c.chapters then .chapter (chapterLabel c) else if c.inAppendix then .appendix else .arabic
 
+/-- `\the<counter>` for value `v`: `\arabic`, after `\the<within>.` when
+numbered within a heading counter. -/
+private def withinNumber (c : Counters) (within : Option Nat) (v : Nat) : String :=
+  match within with
+  -- report.cls's `\theequation`: `\thechapter.` only once a chapter is numbered.
+  | some 0 => if c.chapNum > 0 then s!"{chapterLabel c}.{v}" else toString v
+  | some lvl => s!"{renderSecLevel c.secFmts c.secNums (secBase c) secFmtFuel lvl}.{v}"
+  | none => toString v
+
+/-- The format level a declared `\theequation` stands at, beside the heading levels. -/
+private def eqFmtLevel : Nat := 4
+
+/-- `\theequation` at value `v`: its declared format over the chapter, heading and equation
+counters, else the class's or `\numberwithin`'s. -/
+private def eqText (c : Counters) (v : Nat) : String :=
+  match c.secFmts.findRev? (·.1 == eqFmtLevel) with
+  | some (_, parts) => String.join (parts.toList.map fun
+      | .lit s => s
+      | .num style lvl => secStyleRender style
+          (if lvl == eqFmtLevel then v else if lvl == 0 then c.chapNum else counterAt c.secNums lvl)
+      | .the 0 => chapterLabel c
+      | .the lvl => renderSecLevel c.secFmts c.secNums (secBase c) secFmtFuel lvl)
+  | none => withinNumber c c.eqWithin v
+
 /-- A definition body as a heading-number format (words, spaces, numerals
-over the counters `counter` levels, `\the<level>` references), or `none`. -/
-private def secFmtOfBody (counter : String → Option Nat) (body : Array Raw) :
+over the counters `counter` levels, `\the<level>` references `the` reads), or `none`. -/
+private def secFmtOfBody (counter : String → Option Nat) (body : Array Raw)
+    (the : String → Option Nat := theCounterLevel?) :
     Option (Array SecPart) := Id.run do
   let mut parts : Array SecPart := #[]
   let mut i : Nat := 0
@@ -3603,7 +3620,7 @@ private def secFmtOfBody (counter : String → Option Nat) (body : Array Raw) :
       parts := parts.push (.lit " ")
       i := i + 1
     | some (.ctrl n _) =>
-      if let some lvl := theCounterLevel? n then
+      if let some lvl := the n then
         parts := parts.push (.the lvl)
         i := i + 1
       else if let some style := secStyleOf? n then
@@ -3628,6 +3645,11 @@ private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
   if !cmd.params.isEmpty then none
   else if cmd.name == "thechapter" then
     (secFmtOfBody (fun n => if n == "chapter" then some 0 else none) cmd.body).map ((0, ·))
+  else if cmd.name == "theequation" then
+    let level (n : String) : Option Nat :=
+      if n == "chapter" then some 0 else if n == "equation" then some eqFmtLevel else sectionLevel n
+    let the (n : String) : Option Nat := if n == "thechapter" then some 0 else theCounterLevel? n
+    (secFmtOfBody level cmd.body (the := the)).map ((eqFmtLevel, ·))
   else (theCounterLevel? cmd.name).bind fun lvl =>
     (secFmtOfBody sectionLevel cmd.body).map ((lvl, ·))
 
@@ -3906,7 +3928,11 @@ printer's cut marks, derived from the trim and bleed"
 /-- The code, message and help a refused command earns for a site shape. -/
 public def unknownCmdDiag (name : String) (shape : RunShape) :
     DiagCode × String × String :=
-  if name == "footnotemark" || name == "footnotetext" then
+  -- A page numbering's role inside a group or an argument opens no page.
+  if name.startsWith "pagenumbering " then
+    (.W0104, "'\\pagenumbering' in a group or an argument is not honoured: the pages number on \
+as before", "write \\pagenumbering between paragraphs, outside any group")
+  else if name == "footnotemark" || name == "footnotetext" then
     let kept := shape.clause "its text is kept in place"
     let route := "\\footnote{...} where the mark should stand sets the note \
 at the page foot"
@@ -4542,6 +4568,34 @@ private def inlineTokens (ctx : Ctx) (raws : Array Raw) (start : Nat) (pos : Pos
     diag ctx .E0304 "'\\tokens' needs a {...} block" pos
     return (ctx.tokens, ⟨start, Nat.le_refl _⟩)
 
+/-- The counter a `\the<counter>` in running text prints: a heading's, the chapter's, the
+equation's or the footnote's. -/
+private def theCounterName? (n : String) : Option String :=
+  if n.startsWith "the" then
+    let c := (n.drop 3).toString
+    if ["section", "subsection", "subsubsection", "chapter", "equation", "footnote"].contains c
+    then some c else none
+  else none
+
+/-- What `\the<counter>` prints where it stands: the counter's value as its format sets it, and
+`\thepage` the folio of the page it lands on, a page reference to its own place. -/
+private def theCounterInlines (ctx : Ctx) (c : String) (pos : Pos) : EM (Array Inline) := do
+  let st ← get
+  let ctr := st.ctr
+  if c == "page" then
+    -- No document can spell the key's NUL.
+    let key := s!"\u0000thepage {st.labelKeys.size}"
+    recordLabel ctx key none pos
+    modify fun st => { st with refSites := st.refSites.push (key, .page, pos) }
+    return #[.label key, .ref key .page "??" none]
+  let text := match sectionLevel c with
+    | some lvl => renderSecLevel ctr.secFmts ctr.secNums (secBase ctr) secFmtFuel lvl
+    | none =>
+      if c == "chapter" then chapterLabel ctr
+      else if c == "equation" then eqText ctr ctr.eqNum
+      else toString ctr.fnNum
+  return #[sourceInline ctx pos (.text text)]
+
 -- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
@@ -4552,6 +4606,7 @@ seal imageArm
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
 seal inlineTokens
+seal theCounterName? theCounterInlines
 
 /-- Takes latex-lab-tikz's `alt` and `artifact` keys out of a picture's
 option run, leaving the body as written without them. -/
@@ -5587,6 +5642,9 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           elabInlinesFrom ctx raws (i + 1)
             ((flushText acc sb).push (sourceInline ctx pos
               (.text ((Lex.textSymbols.lookup name).getD "")))) ""
+        else if let some c := theCounterName? name then
+          let shown ← theCounterInlines ctx c pos
+          elabInlinesFrom ctx raws (i + 1) ((flushText acc sb) ++ shown) ""
         else if let some style := modifierStyle? name then
           let head := selectorHead raws (i + 1)
           let j := head.2
@@ -5956,7 +6014,11 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
       elabInlinesFrom ctx raws j acc sb
     else elabUnknownCtrl ctx raws i acc sb name pos h
   else if name == "pagenumber" then
-    elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageNumber) ""
+    -- In a flow's body a folio names the page it lands on, as `\thepage` expands where TeX ships
+    -- it; a deck's frames number their pages in their furniture.
+    let folio ← if (← get).ctr.inBody && !ctx.slides then theCounterInlines ctx "page" pos
+      else pure #[.pageNumber]
+    elabInlinesFrom ctx raws (i + 1) ((flushText acc sb) ++ folio) ""
   else if name == "pagecount" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageCount) ""
   else if let some content := (← get).titleInsert? name then
@@ -6407,6 +6469,7 @@ unseal imageArm
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal inlineTokens
+unseal theCounterName? theCounterInlines
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 unseal splitPictureAlt subsetPicture routePicture inlinePicture
 unseal inlineVerbatim
@@ -6425,7 +6488,8 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     !Ir.boxCommands.contains name &&
   (Compat.boxParamOf? name).isNone &&
   (accentMarkOf name).isNone && (escapeOf name).isNone &&
-  (Lex.textSymbols.lookup name).isNone && (modifierStyle? name).isNone &&
+  (Lex.textSymbols.lookup name).isNone && (theCounterName? name).isNone &&
+  (modifierStyle? name).isNone &&
   (decorationCtrls.lookup name).isNone && (phantomAxes.lookup name).isNone &&
   (refCtrlForm? name).isNone && (Ir.natbibCites.lookup name).isNone &&
   (FaIcons.byMacro.get[name]?).isNone && (Blueprint.Mark.ofName? name).isNone &&
@@ -6724,9 +6788,12 @@ public theorem elabInlines_option_run_exact (file name w kept : String) (st : ES
 
 public theorem unknownCmdDiag_code_exact (name : String) (shape : RunShape) :
     (unknownCmdDiag name shape).1 =
-      (if name == "footnotemark" || name == "footnotetext" then .W0370 else .W0301) := by
+      (if name.startsWith "pagenumbering " then .W0104
+        else if name == "footnotemark" || name == "footnotetext" then .W0370 else .W0301) := by
   unfold unknownCmdDiag
-  split <;> rfl
+  split
+  · rfl
+  · split <;> rfl
 
 private theorem unknownCmdDiag_shape_id (name : String) (shape : RunShape) :
     (unknownCmdDiag name shape).1 = (unknownCmdDiag name {}).1 := by
@@ -7095,15 +7162,14 @@ private def captionSite (caption : Array Inline) : Option Span :=
     | .located sp _ => some sp
     | _ => none) none caption
 
-/-- The first captioned float or listing after a numbered chapter, its number one a chapter would
-restart, with its caption's site. -/
+/-- The first captioned listing after a numbered chapter, its number one a chapter would restart,
+with its caption's site. -/
 private def chapterFloat (blocks : Array Block) : Option (Option Span) := Id.run do
   let mut chaptered := false
   for b in blocks do
     if b matches .section .h1 _ (some _) _ then chaptered := true
     else if chaptered then
       let found := Ir.foldBlocks (fun acc x => acc.orElse fun _ => match x with
-        | .float _ _ _ _ caption => if caption.isEmpty then none else some (captionSite caption)
         | .verbatim _ _ spec => spec.caption.map (captionSite ·.2)
         | _ => none) (fun acc _ => acc) none #[b]
       if found.isSome then return found
@@ -9977,6 +10043,23 @@ private def verbRunsInline (env : String) (v : Parse.Verbatim) (cur raws : Array
   verbAlwaysInline env ||
     ((env == "minted" || env == "lstlisting") && !v.src.contains '\n' && (cur.any text || after))
 
+/-- A listing's source lines `first` to `last`, counted from one, each where given, its line ends
+kept. -/
+private def sliceLines (text : String) (first last : Option Nat) : String :=
+  if first.isNone && last.isNone then text else
+  -- The line end after the environment's opening line belongs to no source line.
+  let (lead, text) := if text.startsWith "\n" then ("\n", (text.drop 1).toString) else ("", text)
+  let ends := text.endsWith "\n"
+  let lines := text.splitOn "\n"
+  let lines := if ends then lines.dropLast else lines
+  let kept := (lines.take (last.getD lines.length)).drop ((first.getD 1) - 1)
+  lead ++ "\n".intercalate kept ++ (if ends && !kept.isEmpty then "\n" else "")
+
+/-- The source lines a listing's `first` leaves out ahead of it, each with its line end. -/
+private def slicedAhead (text : String) (first : Option Nat) : String :=
+  let text := if text.startsWith "\n" then (text.drop 1).toString else text
+  String.join ((text.splitOn "\n").take ((first.getD 1) - 1) |>.map (· ++ "\n"))
+
 /-- A listing block from a lexically blind capture, honouring the supported
 listings and minted keys and naming every other key or value. -/
 private def listingBody (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : Pos) :
@@ -10012,6 +10095,8 @@ is set as a display listing" pos
   let mut tabSize := base.tabSize
   let mut breakLines := base.breakLines
   let mut ground := base.ground
+  let mut firstLine : Option Nat := none
+  let mut lastLine : Option Nat := none
   -- Keyed by its words and its key: listings share a loss when they print the same.
   let unhonoured (item key msg : String) (help : Option String) : EM Unit := do
     noteMentions item
@@ -10045,6 +10130,14 @@ is set as a display listing" pos
   does not draw; lines keep no numbers" "numbers=left draws them"
       | some ("linenos", v) =>
         numbers := v.trimAscii.toString != "false"
+      -- listings' and minted's line range: the source's lines from the first to the last named.
+      | some ("firstline", v) | some ("lastline", v) =>
+        match (listingVal v).trimAscii.toString.toNat? with
+        | some n =>
+          if key == "firstline" then firstLine := some n else lastLine := some n
+        | none =>
+          unhonoured bare key s!"listing {key} '{listingVal v}' is not a line number; every line is set"
+            none
       | some ("language", v) =>
         if env == "minted" then
           unhonoured bare key "minted has no key 'language'; the language argument names the lexer"
@@ -10122,8 +10215,9 @@ is set as a display listing" pos
     | some lang => language ← langOf lang
     | none =>
       diag ctx .E0304 s!"'\\begin\{minted}' needs its \{language} argument" (some pos)
-  let content := v.text
-  let contentPos := v.head.foldl (fun p c => p.next (c == '\n')) sourceStart
+  let content := sliceLines v.text firstLine lastLine
+  let contentPos := (v.head ++ slicedAhead v.text firstLine).foldl (fun p c => p.next (c == '\n'))
+    sourceStart
   let spec : Ir.ListingSpec := {
     numbers := numbers
     language := language
@@ -10328,6 +10422,7 @@ private def refsHeading (ctx : Ctx) (pos : Pos) : EM Block := do
 `\appendixname` after `\appendix`, as the document declares or the language names it. -/
 private def chapterHead (ctx : Ctx) (starred : Bool) (pos : Pos) : EM (Option String) := do
   let some (num, lettered) ← chapterNumber ctx starred | return none
+  if (← get).ctr.chapterInline then return some num
   let word ← if lettered then definedOr ctx "appendixname" pos (pure #[.text ctx.locale.appendix])
     else definedOr ctx "chaptername" pos (pure #[.text ctx.locale.chapter])
   return some s!"{Ir.plainText word} {num}"
@@ -10404,15 +10499,6 @@ private def withinSnap (c : Counters) : Option Nat → String
       | _ => s!"{s1}.{s2}.{s3}"
     (if c.inAppendix then "A" else "") ++ (if c.chapters then s!"{c.chapNum}:" else "") ++ levels
 
-/-- `\the<counter>` for value `v`: `\arabic`, after `\the<within>.` when
-numbered within a heading counter. -/
-private def withinNumber (c : Counters) (within : Option Nat) (v : Nat) : String :=
-  match within with
-  -- report.cls's `\theequation`: `\thechapter.` only once a chapter is numbered.
-  | some 0 => if c.chapNum > 0 then s!"{chapterLabel c}.{v}" else toString v
-  | some lvl => s!"{renderSecLevel c.secFmts c.secNums (secBase c) secFmtFuel lvl}.{v}"
-  | none => toString v
-
 /-- Steps the equation counter and renders `\theequation`, restarting within
 its heading as amsmath's `\numberwithin` does. -/
 private def stepEquation : EM String := do
@@ -10420,7 +10506,7 @@ private def stepEquation : EM String := do
   let snap := withinSnap st.ctr st.ctr.eqWithin
   let v := if snap == st.ctr.eqSnap then st.ctr.eqNum + 1 else 1
   modify fun st => { st with ctr := { st.ctr with eqNum := v, eqSnap := snap } }
-  return withinNumber st.ctr st.ctr.eqWithin v
+  return eqText st.ctr v
 
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
@@ -10891,6 +10977,11 @@ private theorem carryTokens_quiet (ctx : Ctx) (cur : Array Raw)
   funext blocks
   simp only [carryTokens, carryTokensGo_quiet ctx cur.toList _ h]
   rfl
+
+/-- Whether a control is a `\pagenumbering` role: mid-paragraph it opens the page the paragraph
+starts on, as TeX ships that page after it, and leaves the paragraph whole. -/
+private def numberingRole (n : String) : Bool :=
+  n.startsWith "pagenumbering " && (Ir.pageOpeningOfRole? n).isSome
 
 /-- Flushes the open paragraph, carries its declarations past its end, and
 settles the owners that began inside it. -/
@@ -12948,7 +13039,7 @@ text width; the box shares the leftover" spos
     let mut inner := innerBlocks ++ rb
     unless caption.isEmpty do
       inner := Ir.captionAltBlocks caption inner
-    return blocks.push (.float kind none capAbove inner caption)
+    return blocks.push (.float kind (floatChapter (← get).ctr) capAbove inner caption)
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + nestedParsList body.toList,
   visWeightGo ctx.user ctx.limit + rawWeightList body.toList + 1, 0,
@@ -13511,9 +13602,13 @@ when it is empty — '{}'")
   else
     let level := (sectionLevel n).getD 1
     let starred := raws[i + 1]? matches some (.word "*" _)
+    let listed := match raws[i + 1]? with
+      | some (.word w _) => w == Parse.listedUnnumbered
+      | _ => false
     let i1p : { x : Nat // i + 1 ≤ x } :=
       match raws[i + 1]? with
       | some (.word "*" _) => ⟨i + 2, by omega⟩
+      | some (.word w _) => if w == Parse.listedUnnumbered then ⟨i + 2, by omega⟩ else ⟨i + 1, by omega⟩
       | _ => ⟨i + 1, by omega⟩
     let i1 := i1p.1
     let shown := headingShown n
@@ -13523,7 +13618,11 @@ when it is empty — '{}'")
       blocks := blocks.push p
     match raws[j]? with
     | some (.group title _) =>
+      -- An unnumbered listed heading numbers past every depth, the depth then as it stood.
+      let depth := (← get).ctr.secDepth
+      if listed then modify fun st => { st with ctr := { st.ctr with secDepth := -100 } }
       blocks ← headingArm ctx n level starred short title pos blocks
+      if listed then modify fun st => { st with ctr := { st.ctr with secDepth := depth } }
       return (blocks, ⟨j + 1, by omega⟩)
     | _ =>
       if recovered then
@@ -13641,6 +13740,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
+      if !cur.isEmpty && numberingRole n then
+        return ← elabBlocksGo ctx' raws (i + 1) (blocks.push (.role n #[])) cur gen'
       -- A page-ground command mid-paragraph changes shipout state, not structure.
       if !cur.isEmpty && isPageGround n then
         let pal? ← pageGround ctx' n cpos
@@ -14645,9 +14746,9 @@ private theorem recovered_para_census (ctx : Ctx) (wp : Pos) (w : String)
       (Ir.paraAt ds #[sourceInline ctx wp (.text w)])) = w
     rw [String.empty_append, Ir.langWrap_text tag _, Ir.paraAt_text ds _, hw]
 
-private theorem numbered_recovered_para (lang : Option String) (xs : Array Inline) :
-    Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
-  cases lang <;> exact Ir.numberFloats_para_exact _
+private theorem numbered_recovered_para (lang : Option String) (xs : Array Inline) (within : Bool) :
+    Ir.numberFloats #[paraUnder lang xs] within = #[paraUnder lang xs] := by
+  cases lang <;> exact Ir.numberFloats_para_exact _ _
 
 private theorem referent_recovered_para (keys : Ir.ReferentKeys) (lang : Option String)
     (xs : Array Inline) : Ir.anchorReferents keys #[paraUnder lang xs] = #[paraUnder lang xs] := by
@@ -16502,8 +16603,9 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       | none => s
     -- report.cls: chapters, `secnumdepth` 2, and equations numbered within each chapter.
     if (KeyVal.items (options.getD "")).contains "chapters" then
+      let inline := (cls.bind Ir.DocClass.ofString?) == some .koma
       modify fun st => { st with ctr := { st.ctr with chapters := true, secDepth := 2,
-                                                       eqWithin := some 0 } }
+                                                       eqWithin := some 0, chapterInline := inline } }
     match cls with
     | some named =>
       match Ir.DocClass.ofString? named with
@@ -17117,8 +17219,10 @@ does not model; the number is arabic" pos
           s!"'\\numberwithin\{{c}}\{{w}}' numbers within '{w}', a counter the engine \
 does not keep; the number stands alone" pos
       | some lvl =>
+        -- amsmath's `\numberwithin` defines `\theequation` again, replacing an earlier one.
         if c == "equation" then
-          modify fun e => { e with ctr := { e.ctr with eqWithin := some lvl } }
+          modify fun e => { e with ctr := { e.ctr with
+            eqWithin := some lvl, secFmts := e.ctr.secFmts.filter (·.1 != eqFmtLevel) } }
         else if thms.counters.any (·.1 == c) then
           modify fun e => { e with ctr := { e.ctr with thm := { e.ctr.thm with
             counters := e.ctr.thm.counters.map fun p =>
@@ -17126,7 +17230,7 @@ does not keep; the number stands alone" pos
         else
           warnOnce s.ctx ("numberwithin:" ++ c) .W0110
             s!"'\\numberwithin\{{c}}' names a counter the engine does not number within \
-a heading; its numbers stand alone" pos
+a heading; its numbers stand as the class numbers them" pos
       return s
   | .sectionHook name starred code pos =>
     -- the hooks are beamer's: outside a deck LaTeX knows neither
@@ -17684,7 +17788,8 @@ private def referentKeys (ctx : Ctx) (st : ESt) : Ir.ReferentKeys :=
 attaches the body. -/
 public def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
-  let blocks := Ir.anchorReferents (referentKeys plan.ctx (← get)) (Ir.numberFloats blocks)
+  let st ← get
+  let blocks := Ir.anchorReferents (referentKeys plan.ctx st) (Ir.numberFloats blocks st.ctr.chapters)
   let completion ← plan.finish blocks
   return (completion.attach blocks, completion.table, completion.pictureReport)
 
@@ -17763,10 +17868,12 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
   obtain ⟨lang, ds, hbs⟩ := hbs
   change Ir.blocksText ((((plan.finish
     (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
-      (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1))).run
+      (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1
+        ((elabBlocks plan.ctx plan.raws).run st).2.ctr.chapters))).run
       ((elabBlocks plan.ctx plan.raws).run st).2).1.attach
         (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
-          (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1))).body) = _
+          (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1
+            ((elabBlocks plan.ctx plan.raws).run st).2.ctr.chapters))).body) = _
   rw [hbs, numbered_recovered_para, referent_recovered_para, attach_paraUnder,
     BodyCompletion.resolved_body_exact]
   split
@@ -18025,6 +18132,8 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     | .bodyStart source p => some (.ctrl (Marker.name .ink source) p)
     | _ => none
   -- `\end{document}` ends the last paragraph as a paragraph break does, draining what it stashed.
+  -- What elaborates from here is the body's, where a folio names the page it lands on.
+  modify fun st => { st with ctr := { st.ctr with inBody := true } }
   return { ctx, raws := opening ++ body ++ #[.par { sourceMapped := false }],
            finish := fun blocks => do
     let mut asserts := asserts
@@ -18033,9 +18142,15 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     finishBeamerColors ctx
     if let some site := if (← get).ctr.chapters then chapterFloat blocks else none then
       modify fun st => { st with diags := st.diags.push (Diag.of .W0110
-        "figure, table, algorithm and listing numbers run through the document, where the class \
-and listings number them within each chapter" site (subject := some "chapters:floats")
+        "listing numbers run through the document, where listings number them within each \
+chapter" site (subject := some "chapters:floats")
         (help := "\\ref names each by the number it carries here")) }
+    -- premise: numberingStateChecks — a declared float number format is read nowhere
+    for n in ["thefigure", "thetable"] do
+      if (← get).ctr.chapters && (lookupUser ctx n).isSome then
+        modify fun st => { st with diags := st.diags.push (diagOf ctx .W0110
+          s!"'\\{n}' is declared and not read: the engine numbers its floats within each chapter" none
+          (subject := some s!"chapters:{n}") (help := "\\ref names each by the number it carries here")) }
     let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
     let stRefs ← get
     -- A deck's frame label takes its frame's number, and every label the title of what it names.
@@ -18401,6 +18516,8 @@ package's options it sets ending with it, else its raws kept from the walk at `p
 public def markdownAnswer [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
     (file : String) (raws : Array Raw) (hybrid : Bool) (pos : Pos) :
     m (Array Raw × Compat.InputContext) := do
+  -- premise: markdownHeadingChecks — a fragment's headings are the document's sectioning
+  let raws := context.markdownHeadings raws
   if hybrid then
     let (answer, after) ← resumeInput reader context file raws
     return (answer, after.restoreMarkdown context.markdown)

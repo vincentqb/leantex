@@ -679,7 +679,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\framefoot{note}\n\\begin{frame}{T}\nx\n\\end{frame}")).2.any
       (·.code == "W0332"))
   t "substPage leaves a rendered frame slot alone"
-    (Layout.substPage 7 9 (Ir.ChromeSlot.frameFraction.render #[] 2 5) ==
+    (Layout.substPage "7" 9 (Ir.ChromeSlot.frameFraction.render #[] 2 5) ==
       Ir.ChromeSlot.frameFraction.render #[] 2 5)
   -- The muted rule is load-bearing: one step weaker (fg!60!bg) fails the bundle contract.
   let weaker : Ir.Palette := { entries :=
@@ -937,7 +937,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "runningfoot suppresses chrome and the physical count is the page count"
     (rOut.pages.size == 2 && rOut.pages.all (·.foot.isNone) && rDoc.frameCount == 1)
   t "the physical sequence substitutes per page"
-    (Ir.plainText (Layout.substPage 2 2 (rDoc.foot.getD #[])) == "page 2 of 2")
+    (Ir.plainText (Layout.substPage "2" 2 (rDoc.foot.getD #[])) == "page 2 of 2")
   let (fDoc, _) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
     ("\\begin{frame}{One}\na\n\\end{frame}\n\\section{End}"))
   let fGeom := Layout.Geom.ofPage fDoc.page

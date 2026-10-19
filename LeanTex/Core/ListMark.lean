@@ -124,6 +124,20 @@ public def romanN (n : Nat) : String :=
     (acc ++ String.join (List.replicate (r / v) s), r % v)) ("", n)
   out
 
+/-- A counter's value in a numeral style, as `\arabic`, `\alph`, `\Alph`, `\roman` and `\Roman`
+set it. -/
+public def numText (style : Ir.NumStyle) (n : Nat) : String :=
+  match style with
+  | .arabic => arabicN n
+  | .alph => alphN n
+  | .uAlph => AlphN n
+  | .roman => romanN n
+  | .uRoman => (romanN n).toUpper
+  | .gobble => ""
+
+/-- The page's folio as its numeral style sets it. -/
+public def folioText (s : Ir.PageState) : String := numText s.style s.folio
+
 def romanCharVal (c : Char) : Nat :=
   if c = 'm' then 1000 else if c = 'd' then 500 else if c = 'c' then 100
   else if c = 'l' then 50 else if c = 'x' then 10 else if c = 'v' then 5

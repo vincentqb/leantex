@@ -9532,6 +9532,8 @@ public structure Spacing.Context where
   private abstractForm : Ir.AbstractForm := .quotation
   /-- Whether a body h1 is a chapter (`Ir.Doc.chapters`). -/
   private chapters : Bool := false
+  /-- A chapter's head sets its number before its title on one line, as KOMA-Script's classes do. -/
+  private chapterInline : Bool := false
   /-- A frame body owns its headings: they neither open section dividers
   nor replace the enclosing top-level section or its footer. -/
   private inFrame : Bool := false
@@ -11622,6 +11624,26 @@ private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Arr
   { ({ a with ops := a.ops.push .texInterline }).vskip { width := pt 40 } with -- report.cls: `\vskip 40\p@`
     afterHeading := true, noBreakNext := true }
 
+/-- A KOMA-Script chapter head on the next page, as scrreprt.cls's default `headings=big` sets it:
+its number and an en space before its title on one line in the disposition's bold sans at `\huge`,
+its baseline `2.3\baselineskip` past the page's first, and `1.725\baselineskip` below it. -/
+private def collectKomaChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
+    (indent : Sp) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
+  let a := a.pageBreak
+  let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
+    (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
+  let skip := Ir.leadingFor r.geom.fontSize r.geom.leading
+  -- lualatex: `\topskip`, then `3.3\baselineskip` less one, then the head's own leading.
+  let a := a.vskip { width := skip * 23 / 10 }
+  let after := skip * 1725 / 1000
+  let shown := match num with
+    | some n => #[.text (n ++ "\u2002")] ++ title
+    | none => title
+  let a := collectDisplay r a #[.styled (.size "huge") #[.styled (.family 1) #[.styled .bold shown]]]
+    indent false r.geom.fontSize (leaf := leaf) (span := span) (keepNext := after + 2 * skip)
+  { ({ a with ops := a.ops.push .texInterline }).vskip { width := after } with
+    afterHeading := true }
+
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     (num : Option String) (title : Array Inline) (indent : Length) (top : Bool := false)
     (anchor : Option String := none) (page : Bool := false) : Acc :=
@@ -11692,6 +11714,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
   -- Without a section page a deck's section inks nothing: its anchors ride the next line set.
   else if divider then
     { a with ops := a.ops ++ (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor) }
+  else if level == .h1 && r.chapters && r.chapterInline then
+    collectKomaChapter r a num title indent leaf span (anchor.getD (Ir.slug title))
   else if level == .h1 && r.chapters then
     collectChapter r a num title indent leaf span (anchor.getD (Ir.slug title))
   else
@@ -11771,7 +11795,7 @@ private def collectContentsEntry (r : Rd) (a : Acc) (e : Ir.ContentsEntry) (cont
 right-aligned in `\@pnumwidth` past the `rightMargin` its lines wrap short of, as article.cls's. -/
 private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold : Bool)
     (rightMargin : Nat) : Array Inline × Acc :=
-  let folio := (e.page.map toString).getD ""
+  let folio := e.page.getD ""
   let shown : Array Inline := if bold then #[.styled .bold #[.text folio]] else #[.text folio]
   let (w, a) := if folio.isEmpty then (0, a)
     else a.naturalWidth r r.geom.fontSize shown r.geom.textWidth
@@ -12997,17 +13021,17 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     { a with wantDefault := true, fg := savedFg }
 
 /-- The one rewrite of the physical pass: `\pagenumber` and `\pagecount`
-become literal text, both known once the body is laid out. -/
-private def substPageLeaf (n total : Nat)
+become literal text, both known once the body is laid out, the folio as its style sets it. -/
+private def substPageLeaf (folio : String) (total : Nat)
     (x : Ir.Inline) : Ir.Inline :=
   match x with
-  | .pageNumber => .text (toString n)
+  | .pageNumber => .text folio
   | .pageCount => .text (toString total)
   | _ => x
 
 /-- Replace `\pagenumber` and `\pagecount` with literal text over `Ir.mapInline`. -/
-public def substPage (n total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
-  Ir.mapInlines (substPageLeaf n total) xs
+public def substPage (folio : String) (total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
+  Ir.mapInlines (substPageLeaf folio total) xs
 
 /-- A chrome band slot set as one line at its natural width at the footline's
 step, the setting both the page's floor and the furniture pass read. -/
@@ -13033,7 +13057,7 @@ ink of its slots, beamer's `\ht` and `\dp` of the footline. -/
 private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Length)
     (n : Nat) (band : Array Ir.BandSlot) : Length × Length :=
   band.foldl (fun (acc : Length × Length) slot =>
-    match (setBandSlot none fs imgs geom xHeight {} (substPage n 0 slot.content) {}).1 with
+    match (setBandSlot none fs imgs geom xHeight {} (substPage (toString n) 0 slot.content) {}).1 with
     | some (segs, _) =>
       let (h, d) := segsInk fs segs
       (max acc.1 h, max acc.2 d)
@@ -16059,12 +16083,12 @@ private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool →
     exact kp_members_lt _ _ _ _ _ _ (by simp [paraItems_size])
 
 
-public theorem substPage_id (n total : Nat) (xs : Array Ir.Inline)
+public theorem substPage_id (n : String) (total : Nat) (xs : Array Ir.Inline)
     (h : Ir.hasPhysicalPage xs = false) : substPage n total xs = xs :=
   Ir.mapInlines_id (substPageLeaf n total) Ir.isPhysicalPage
     (fun x hx => by cases x <;> simp_all [Ir.isPhysicalPage, substPageLeaf]) xs h
 
-public theorem substPage_leaves_frame_slot (n total k tot : Nat) (s : Ir.ChromeSlot)
+public theorem substPage_leaves_frame_slot (n : String) (total k tot : Nat) (s : Ir.ChromeSlot)
     (sec : Array Inline) (hs : s.isFrameSequence = true) :
     substPage n total (s.render sec k tot) = s.render sec k tot :=
   substPage_id n total _ (Ir.frame_sequence_carries_no_physical s sec k tot hs)
@@ -19186,7 +19210,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
   let numRight := match doc.page.furnitureGap with
     | some g => geom.hmargin - g
     | none => geom.hmargin / 2
-  let runLine (content : Array Inline) (n : Nat) (y size : Length) (baseStyle : TextStyle)
+  let runLine (content : Array Inline) (n : String) (y size : Length) (baseStyle : TextStyle)
       (cache : _) :
       Option LineOut × Array Diag × _ :=
     let sub := substPage n total content
@@ -19215,7 +19239,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
       (some { x := geom.hmargin, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
   -- A band slot is its own line, placed by its side and the paper's edge alone (`bandSlotX`).
-  let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
+  let slotLine (side : Ir.BandSide) (content : Array Inline) (n : String)
       (y : Length) (baseStyle : TextStyle) (cache : _) :
       Option LineOut × Array Diag × _ :=
     let (set?, wraps, ds, cache) := setBandSlot pats fs imgs geom xHeight
@@ -19280,19 +19304,19 @@ public def runPost (sh : Shipped) : Out := Id.run do
     let footOn := page.pageState.furniture && doc.footFrom ≤ i + 1
     if headOn then
       if let some content := doc.head then
-        let (l?, ds, c) := runLine content page.pageState.folio headY geom.fontSize {} cache
+        let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then head := #[l]
     if footOn then
       if let some content := doc.foot then
-        let (l?, ds, c) := runLine content page.pageState.folio footY geom.fontSize {} cache
+        let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) footY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
       else if plainFoot then
         -- plain's foot: the page number between two fills, as `\ps@plain` sets it.
-        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] page.pageState.folio footY
+        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (ListMark.folioText page.pageState) footY
           geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
@@ -19324,7 +19348,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
       let footY := footBaseline geom.pageH ((page.footBox.map (·.2)).getD 0)
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
-        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) footY
+        let (l?, ds, c) := slotLine slot.side slot.content (toString (i + 1)) footY
           { color := (page.footLook.map (·.fg)).getD mutedC,
             ground := page.footLook.bind (·.bar) } cache
         diags := diags ++ ds
@@ -20371,6 +20395,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    slides := doc.docClass.record.model == .frame
                    abstractForm := doc.abstractForm
                    chapters := doc.chapters
+                   chapterInline := doc.docClass == Ir.DocClass.koma
                    lists := doc.docClass.record.lists
                    listExtra := doc.docClass.record.listExtra
                    quotationIndent := doc.docClass.record.quotationIndent
@@ -21080,8 +21105,8 @@ public structure Fitted where
 
 /-- The folio of the page an anchor of `out` lands on, read from its anchor index `index`. -/
 private def folioAt (out : Out) (index : Std.HashMap String (Nat × AnchorSite)) (name : String) :
-    Option Nat :=
-  (index[name]?).bind fun (i, _) => (out.pages[i]?).map (·.pageState.folio)
+    Option String :=
+  (index[name]?).bind fun (i, _) => (out.pages[i]?).map (ListMark.folioText ·.pageState)
 
 /-- The pages pass: a document printing folios is set again with those its setting `laid` lands
 their anchors on, and once more where a folio's width moved one, else it stands as laid. -/

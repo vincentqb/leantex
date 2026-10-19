@@ -855,50 +855,94 @@ public def fitContinuesRole (step : Nat) : String := fitMarkPrefix ++ s!"continu
 /-- Whether a role is one of the overflow ladder's marks. -/
 @[expose] public def fitMarkRole (n : String) : Bool := n.startsWith fitMarkPrefix
 
-/-- A declaration at a page boundary, independent of the page's ground and vertical distribution. -/
+/-- A counter's numeral style: LaTeX's `\arabic`, `\alph`, `\Alph`, `\roman` or `\Roman`, or
+`\pagenumbering{gobble}`'s, which sets none. -/
+public inductive NumStyle where
+  | arabic
+  | alph
+  | uAlph
+  | roman
+  | uRoman
+  | gobble
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The numeral style a LaTeX style command names. -/
+public def NumStyle.ofName? : String → Option NumStyle
+  | "arabic" => some .arabic
+  | "alph" => some .alph
+  | "Alph" => some .uAlph
+  | "roman" => some .roman
+  | "Roman" => some .uRoman
+  | _ => none
+
+/-- The numeral style `\pagenumbering` names, `gobble` among them. -/
+public def NumStyle.ofPageName? (n : String) : Option NumStyle :=
+  if n == "gobble" then some .gobble else NumStyle.ofName? n
+
+/-- A declaration at a page boundary, independent of the page's ground and vertical distribution:
+a folio to count from, an empty running style, and the folio's numeral style. -/
 public structure PageOpening where
   folio : Option Nat := none
   empty : Bool := false
+  style : Option NumStyle := none
   deriving Repr, BEq, Inhabited
 
-/-- The logical folio and running style of the page being built. -/
+/-- The logical folio, its numeral style and the running style of the page being built. -/
 public structure PageState where
   folio : Nat := 1
   furniture : Bool := true
+  style : NumStyle := .arabic
   deriving Repr, BEq, Inhabited
 
 /-- Apply only the opening's declarations; a reset keeps an empty style that has not yet shipped. -/
 public def PageState.applyOpening (s : PageState) (opening : PageOpening) : PageState :=
   { folio := opening.folio.getD s.folio
-    furniture := s.furniture && !opening.empty }
+    furniture := s.furniture && !opening.empty
+    style := opening.style.getD s.style }
 
 /-- Ship one physical page: advance its logical folio and restore the ordinary
 running style, as `\@outputpage` does. -/
 public def PageState.ship (s : PageState) : PageState :=
-  { folio := s.folio + 1, furniture := true }
+  { folio := s.folio + 1, furniture := true, style := s.style }
 
 public theorem PageState.opening_contract (s : PageState) (opening : PageOpening) :
     (s.applyOpening opening).folio = opening.folio.getD s.folio ∧
-      (s.applyOpening opening).furniture = (s.furniture && !opening.empty) :=
-  ⟨rfl, rfl⟩
+      (s.applyOpening opening).furniture = (s.furniture && !opening.empty) ∧
+      (s.applyOpening opening).style = opening.style.getD s.style :=
+  ⟨rfl, rfl, rfl⟩
 
 public theorem PageState.ship_contract (s : PageState) :
-    s.ship.folio = s.folio + 1 ∧ s.ship.furniture = true := ⟨rfl, rfl⟩
+    s.ship.folio = s.folio + 1 ∧ s.ship.furniture = true ∧ s.ship.style = s.style := ⟨rfl, rfl, rfl⟩
 
 /-- Reserved roles for article titlepage's two boundary declarations,
 unspellable as control words. -/
 public def titlePageBeginRole : String := "titlepage begin"
 public def titlePageEndRole : String := "titlepage end"
 
-/-- The page opening a titlepage boundary role declares. -/
+/-- The reserved role `\pagenumbering{style}` declares: the folio counts from one in its numeral
+style from the page it stands on. -/
+public def pageNumberingRole (style : NumStyle) : String :=
+  let name := match style with
+    | .arabic => "arabic"
+    | .alph => "alph"
+    | .uAlph => "Alph"
+    | .roman => "roman"
+    | .uRoman => "Roman"
+    | .gobble => "gobble"
+  "pagenumbering " ++ name
+
+/-- The page opening a titlepage boundary or a page numbering role declares. -/
 public def pageOpeningOfRole? (n : String) : Option PageOpening :=
   if n == titlePageBeginRole then some { folio := some 1, empty := true }
   else if n == titlePageEndRole then some { folio := some 1 }
+  else if n.startsWith "pagenumbering " then
+    (NumStyle.ofPageName? (n.drop "pagenumbering ".length).toString).map fun s =>
+      { folio := some 1, style := some s }
   else none
 
 public theorem titlepage_empty_exact (s : PageState) :
     (s.applyOpening { folio := some 1, empty := true }).applyOpening
-        { folio := some 1 } = { folio := 1, furniture := false } := by
+        { folio := some 1 } = { folio := 1, furniture := false, style := s.style } := by
   simp [PageState.applyOpening]
 
 /-- The role an empty marker rides in after an environment whose paragraph goes on past it, as
@@ -4644,6 +4688,22 @@ public inductive FloatKind where
   | algorithm
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- A captioned float's number: its count among its kind, within the chapter `within` names where
+the class numbers floats by chapter. -/
+public structure FloatNum where
+  within : String := ""
+  n : Nat
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A literal number is a float's count outside any chapter. -/
+public instance (n : Nat) : OfNat FloatNum n := ⟨{ n }⟩
+
+/-- The number as the caption and a reference print it: `1`, or `2.1` in chapter 2. -/
+public def FloatNum.render (f : FloatNum) : String :=
+  if f.within.isEmpty then toString f.n else f.within ++ "." ++ toString f.n
+
+public instance : ToString FloatNum := ⟨FloatNum.render⟩
+
 /-- What an algorithm's input/output line declares (algorithm2e's
 `\KwIn`/`\KwOut`/`\KwData`/`\KwResult`, algorithmicx's
 `\Require`/`\Ensure`). -/
@@ -5134,7 +5194,7 @@ public structure ContentsEntry where
   title : Array Inline
   target : Option String
   shaded : Bool
-  page : Option Nat := none
+  page : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- An entry's words as both backends set them: its title, linked to its heading's anchor where it
@@ -5293,7 +5353,7 @@ public inductive Block where
   /-- `{figure}`/`{table}`: a captioned object standing where written;
   `capAbove` is source order, `num` its number among captioned floats of its
   kind. -/
-  | float (kind : FloatKind) (num : Option Nat) (capAbove : Bool) (body : Array Block)
+  | float (kind : FloatKind) (num : Option FloatNum) (capAbove : Bool) (body : Array Block)
       (caption : Array Inline)
   /-- `\bibliography{src}`: the reference list, standing where the command was
   written; its items fill once the `.bib` is read. -/
@@ -5808,6 +5868,8 @@ private structure FloatCtr where
   tab : Nat := 0
   sub : Nat := 0
   alg : Nat := 0
+  /-- The chapter the counters stand in, numbering by chapter. -/
+  within : String := ""
   deriving Repr, BEq
 
 private def FloatCtr.get : FloatCtr → FloatKind → Nat
@@ -5827,66 +5889,66 @@ mutual
 /-- The numbering walk: every captioned float outside a speaker note takes the
 next number of its kind in document order, a float's subfloats lettered from
 one. -/
-private def numberFloatList (c : FloatCtr) (out : Array Block) :
+private def numberFloatList (within : Bool) (c : FloatCtr) (out : Array Block) :
     List Block → FloatCtr × Array Block
   | [] => (c, out)
   | b :: rest =>
-    let (c2, b2) := numberFloatOne c b
-    numberFloatList c2 (out.push b2) rest
+    let (c2, b2) := numberFloatOne within c b
+    numberFloatList within c2 (out.push b2) rest
 
-private def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
+private def numberFloatOne (within : Bool) (c : FloatCtr) : Block → FloatCtr × Block
   | .para content => (c, .para content)
   | .equation n content => (c, .equation n content)
   | .section l st num title => (c, .section l st num title)
   | .list o s items =>
-    let (c2, items2) := numberFloatItems c #[] items.toList
+    let (c2, items2) := numberFloatItems within c #[] items.toList
     (c2, .list o s items2)
   | .center body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .center body2)
   | .ragged s body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .ragged s body2)
   | .quote q body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .quote q body2)
   | .lines ls => (c, .lines ls)
   | .abstract body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .abstract body2)
   | .titled kind title body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .titled kind title body2)
   | .disclosure summary expanded body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .disclosure summary expanded body2)
   | .role n body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .role n body2)
   | .link target body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .link target body2)
   | .spaced g body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .spaced g body2)
   | .columns cols =>
-    let (c2, cols2) := numberFloatCols c #[] cols.toList
+    let (c2, cols2) := numberFloatCols within c #[] cols.toList
     (c2, .columns cols2)
   | .onSteps spec body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .onSteps spec body2)
   | .altSteps spec firstPage otherPage =>
-    let (c2, active2) := numberFloatList c #[] firstPage.toList
-    let (c3, otherwise2) := numberFloatList c2 #[] otherPage.toList
+    let (c2, active2) := numberFloatList within c #[] firstPage.toList
+    let (c3, otherwise2) := numberFloatList within c2 #[] otherPage.toList
     (c3, .altSteps spec active2 otherwise2)
   | .only targets body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .only targets body2)
   | .nav spec body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .nav spec body2)
   | .frame t s v br body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
+    let (c2, body2) := numberFloatList within c #[] body.toList
     (c2, .frame t s v br body2)
   | .note body => (c, .note body)
   | .verbatim k s sp => (c, .verbatim k s sp)
@@ -5901,33 +5963,40 @@ private def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .algorithm n sm lines => (c, .algorithm n sm lines)
   | .bibliography src style items => (c, .bibliography src style items)
   | .contents spec entries => (c, .contents spec entries)
-  | .float kind _ capAbove body caption =>
+  | .float kind num capAbove body caption =>
+    -- By chapter, a float of a chapter the counters have not stood in starts its kinds from one.
+    let lab := (num.map (·.within)).getD ""
+    let byChapter := within && (kind == .figure || kind == .table)
+    let c := if byChapter && lab != c.within then { c with fig := 0, tab := 0, within := lab } else c
     let cAfter := if caption.isEmpty then c else c.bump kind
-    let num := if caption.isEmpty then none else some (c.get kind + 1)
-    let (cBody, body2) := numberFloatList { cAfter with sub := 0 } #[] body.toList
-    (⟨cBody.fig, cBody.tab, cAfter.sub, cBody.alg⟩, .float kind num capAbove body2 caption)
+    let num := if caption.isEmpty then none
+      else some { within := if byChapter then lab else "", n := c.get kind + 1 }
+    let (cBody, body2) := numberFloatList within { cAfter with sub := 0 } #[] body.toList
+    (⟨cBody.fig, cBody.tab, cAfter.sub, cBody.alg, cBody.within⟩, .float kind num capAbove body2 caption)
 
-private def numberFloatItems (c : FloatCtr) (out : Array (Array Block)) :
+private def numberFloatItems (within : Bool) (c : FloatCtr) (out : Array (Array Block)) :
     List (Array Block) → FloatCtr × Array (Array Block)
   | [] => (c, out)
   | item :: rest =>
-    let (c2, item2) := numberFloatList c #[] item.toList
-    numberFloatItems c2 (out.push item2) rest
+    let (c2, item2) := numberFloatList within c #[] item.toList
+    numberFloatItems within c2 (out.push item2) rest
 
-private def numberFloatCols (c : FloatCtr) (out : Array (BoxWidth × Array Block)) :
+private def numberFloatCols (within : Bool) (c : FloatCtr) (out : Array (BoxWidth × Array Block)) :
     List (BoxWidth × Array Block) → FloatCtr × Array (BoxWidth × Array Block)
   | [] => (c, out)
   | (w, body) :: rest =>
-    let (c2, body2) := numberFloatList c #[] body.toList
-    numberFloatCols c2 (out.push (w, body2)) rest
+    let (c2, body2) := numberFloatList within c #[] body.toList
+    numberFloatCols within c2 (out.push (w, body2)) rest
 
 end
 
-public def numberFloats (xs : Array Block) : Array Block :=
-  (numberFloatList {} #[] xs.toList).2
+/-- The body's captioned floats numbered, by chapter where `within`, as a class with chapters
+numbers them (`\@addtoreset`). -/
+public def numberFloats (xs : Array Block) (within : Bool := false) : Array Block :=
+  (numberFloatList within {} #[] xs.toList).2
 
-public theorem numberFloats_para_exact (xs : Array Inline) :
-    numberFloats #[.para xs] = #[.para xs] := by
+public theorem numberFloats_para_exact (xs : Array Inline) (within : Bool) :
+    numberFloats #[.para xs] within = #[.para xs] := by
   rfl
 
 mutual
@@ -5974,7 +6043,7 @@ private def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .bibliography _ _ _ | .contents _ _ => out
   | .float kind num _ body _ =>
     let out := match num with
-      | some n => if kind = k then out ++ [n] else out
+      | some n => if kind = k then out ++ [n.n] else out
       | none => out
     if k = .sub then out else floatNumsList k out body.toList
 
@@ -6005,22 +6074,22 @@ mutual
 
 private theorem numberFloatList_exact (k : FloatKind) (c : FloatCtr) (acc : Array Block)
     (out : List Nat) (bs : List Block) :
-    ∃ n, ((numberFloatList c acc bs).1).get k = c.get k + n ∧
-      floatNumsList k out ((numberFloatList c acc bs).2).toList
+    ∃ n, ((numberFloatList false c acc bs).1).get k = c.get k + n ∧
+      floatNumsList k out ((numberFloatList false c acc bs).2).toList
         = floatNumsList k out acc.toList ++ List.range' (c.get k + 1) n := by
   match bs with
   | [] => exact ⟨0, by simp [numberFloatList], by simp [numberFloatList]⟩
   | b :: rest =>
     obtain ⟨m, hcm, hnm⟩ :=
       numberFloatOne_exact k c (floatNumsList k out acc.toList) b
-    obtain ⟨n, hcn, hnn⟩ := numberFloatList_exact k (numberFloatOne c b).1
-      (acc.push (numberFloatOne c b).2) out rest
+    obtain ⟨n, hcn, hnn⟩ := numberFloatList_exact k (numberFloatOne false c b).1
+      (acc.push (numberFloatOne false c b).2) out rest
     refine ⟨m + n, ?_, ?_⟩
-    · show ((numberFloatList (numberFloatOne c b).1
-        (acc.push (numberFloatOne c b).2) rest).1).get k = _
+    · show ((numberFloatList false (numberFloatOne false c b).1
+        (acc.push (numberFloatOne false c b).2) rest).1).get k = _
       rw [hcn, hcm, Nat.add_assoc]
-    · show floatNumsList k out ((numberFloatList (numberFloatOne c b).1
-        (acc.push (numberFloatOne c b).2) rest).2).toList = _
+    · show floatNumsList k out ((numberFloatList false (numberFloatOne false c b).1
+        (acc.push (numberFloatOne false c b).2) rest).2).toList = _
       rw [hnn, Array.toList_push, floatNumsList_append]
       simp only [floatNumsList]
       rw [hnm, hcm, List.append_assoc,
@@ -6028,8 +6097,8 @@ private theorem numberFloatList_exact (k : FloatKind) (c : FloatCtr) (acc : Arra
 
 private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     (b : Block) :
-    ∃ n, ((numberFloatOne c b).1).get k = c.get k + n ∧
-      floatNumsOne k out (numberFloatOne c b).2
+    ∃ n, ((numberFloatOne false c b).1).get k = c.get k + n ∧
+      floatNumsOne k out (numberFloatOne false c b).2
         = out ++ List.range' (c.get k + 1) n := by
   match b with
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
@@ -6089,16 +6158,16 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
   | .altSteps _ firstPage otherPage =>
     obtain ⟨m, hcm, hnm⟩ := numberFloatList_exact k c #[] out firstPage.toList
     obtain ⟨p, hcp, hnp⟩ := numberFloatList_exact k
-      (numberFloatList c #[] firstPage.toList).1 #[]
-      (floatNumsList k out (numberFloatList c #[] firstPage.toList).2.toList)
+      (numberFloatList false c #[] firstPage.toList).1 #[]
+      (floatNumsList k out (numberFloatList false c #[] firstPage.toList).2.toList)
       otherPage.toList
     refine ⟨m + p, ?_, ?_⟩
-    · show ((numberFloatList (numberFloatList c #[] firstPage.toList).1 #[]
+    · show ((numberFloatList false (numberFloatList false c #[] firstPage.toList).1 #[]
         otherPage.toList).1).get k = _
       rw [hcp, hcm, Nat.add_assoc]
     · show floatNumsList k (floatNumsList k out
-        ((numberFloatList c #[] firstPage.toList).2).toList)
-        ((numberFloatList (numberFloatList c #[] firstPage.toList).1 #[]
+        ((numberFloatList false c #[] firstPage.toList).2).toList)
+        ((numberFloatList false (numberFloatList false c #[] firstPage.toList).1 #[]
           otherPage.toList).2).toList = _
       rw [hnp]
       simp only [floatNumsList]
@@ -6277,8 +6346,8 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
 
 private theorem numberFloatItems_exact (k : FloatKind) (c : FloatCtr)
     (acc : Array (Array Block)) (out : List Nat) (items : List (Array Block)) :
-    ∃ n, ((numberFloatItems c acc items).1).get k = c.get k + n ∧
-      floatNumsItems k out ((numberFloatItems c acc items).2).toList
+    ∃ n, ((numberFloatItems false c acc items).1).get k = c.get k + n ∧
+      floatNumsItems k out ((numberFloatItems false c acc items).2).toList
         = floatNumsItems k out acc.toList ++ List.range' (c.get k + 1) n := by
   match items with
   | [] => exact ⟨0, by simp [numberFloatItems], by simp [numberFloatItems]⟩
@@ -6286,14 +6355,14 @@ private theorem numberFloatItems_exact (k : FloatKind) (c : FloatCtr)
     obtain ⟨m, hcm, hnm⟩ := numberFloatList_exact k c #[]
       (floatNumsItems k out acc.toList) item.toList
     obtain ⟨n, hcn, hnn⟩ := numberFloatItems_exact k
-      (numberFloatList c #[] item.toList).1
-      (acc.push (numberFloatList c #[] item.toList).2) out rest
+      (numberFloatList false c #[] item.toList).1
+      (acc.push (numberFloatList false c #[] item.toList).2) out rest
     refine ⟨m + n, ?_, ?_⟩
-    · show ((numberFloatItems (numberFloatList c #[] item.toList).1
-        (acc.push (numberFloatList c #[] item.toList).2) rest).1).get k = _
+    · show ((numberFloatItems false (numberFloatList false c #[] item.toList).1
+        (acc.push (numberFloatList false c #[] item.toList).2) rest).1).get k = _
       rw [hcn, hcm, Nat.add_assoc]
-    · show floatNumsItems k out ((numberFloatItems (numberFloatList c #[] item.toList).1
-        (acc.push (numberFloatList c #[] item.toList).2) rest).2).toList = _
+    · show floatNumsItems k out ((numberFloatItems false (numberFloatList false c #[] item.toList).1
+        (acc.push (numberFloatList false c #[] item.toList).2) rest).2).toList = _
       rw [hnn, Array.toList_push]
       have happ : ∀ (l1 : List (Array Block)) (o : List Nat) (x : Array Block),
           floatNumsItems k o (l1 ++ [x])
@@ -6310,8 +6379,8 @@ private theorem numberFloatItems_exact (k : FloatKind) (c : FloatCtr)
 private theorem numberFloatCols_exact (k : FloatKind) (c : FloatCtr)
     (acc : Array (BoxWidth × Array Block)) (out : List Nat)
     (cols : List (BoxWidth × Array Block)) :
-    ∃ n, ((numberFloatCols c acc cols).1).get k = c.get k + n ∧
-      floatNumsCols k out ((numberFloatCols c acc cols).2).toList
+    ∃ n, ((numberFloatCols false c acc cols).1).get k = c.get k + n ∧
+      floatNumsCols k out ((numberFloatCols false c acc cols).2).toList
         = floatNumsCols k out acc.toList ++ List.range' (c.get k + 1) n := by
   match cols with
   | [] => exact ⟨0, by simp [numberFloatCols], by simp [numberFloatCols]⟩
@@ -6319,14 +6388,14 @@ private theorem numberFloatCols_exact (k : FloatKind) (c : FloatCtr)
     obtain ⟨m, hcm, hnm⟩ := numberFloatList_exact k c #[]
       (floatNumsCols k out acc.toList) body.toList
     obtain ⟨n, hcn, hnn⟩ := numberFloatCols_exact k
-      (numberFloatList c #[] body.toList).1
-      (acc.push (w, (numberFloatList c #[] body.toList).2)) out rest
+      (numberFloatList false c #[] body.toList).1
+      (acc.push (w, (numberFloatList false c #[] body.toList).2)) out rest
     refine ⟨m + n, ?_, ?_⟩
-    · show ((numberFloatCols (numberFloatList c #[] body.toList).1
-        (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).1).get k = _
+    · show ((numberFloatCols false (numberFloatList false c #[] body.toList).1
+        (acc.push (w, (numberFloatList false c #[] body.toList).2)) rest).1).get k = _
       rw [hcn, hcm, Nat.add_assoc]
-    · show floatNumsCols k out ((numberFloatCols (numberFloatList c #[] body.toList).1
-        (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).2).toList = _
+    · show floatNumsCols k out ((numberFloatCols false (numberFloatList false c #[] body.toList).1
+        (acc.push (w, (numberFloatList false c #[] body.toList).2)) rest).2).toList = _
       rw [hnn, Array.toList_push]
       have happ : ∀ (l1 : List (BoxWidth × Array Block)) (o : List Nat)
           (x : BoxWidth × Array Block),
@@ -6354,9 +6423,9 @@ public theorem numberFloats_exact (k : FloatKind) (xs : Array Block) :
 
 private theorem numberFloats_sub_letters (c : FloatCtr) (body : Array Block) :
     floatNumsList .sub []
-        ((numberFloatList { c with sub := 0 } #[] body.toList).2).toList
+        ((numberFloatList false { c with sub := 0 } #[] body.toList).2).toList
       = List.range' 1
-        (((numberFloatList { c with sub := 0 } #[] body.toList).1).get .sub) := by
+        (((numberFloatList false { c with sub := 0 } #[] body.toList).1).get .sub) := by
   obtain ⟨n, hc, hn⟩ :=
     numberFloatList_exact .sub { c with sub := 0 } #[] [] body.toList
   have h0 : (({ c with sub := 0 } : FloatCtr)).get .sub = 0 := by rfl
@@ -6368,16 +6437,16 @@ public def subLetter (n : Nat) : String :=
   if 1 ≤ n && n ≤ 26 then String.ofList [Char.ofNat (96 + n)] else s!"{n}"
 
 /-- The caption's number prefix, derived from the node, as article's `\@makecaption` sets it. -/
-public def captionPrefix (loc : Locale) (kind : FloatKind) (num : Option Nat) : Option String :=
+public def captionPrefix (loc : Locale) (kind : FloatKind) (num : Option FloatNum) : Option String :=
   num.map fun n =>
     match kind with
-    | .figure => s!"{loc.figure} {n}: "
-    | .table => s!"{loc.table} {n}: "
-    | .algorithm => s!"{loc.algorithm} {n}: "
-    | .sub => s!"({subLetter n}) "
+    | .figure => s!"{loc.figure} {n.render}: "
+    | .table => s!"{loc.table} {n.render}: "
+    | .algorithm => s!"{loc.algorithm} {n.render}: "
+    | .sub => s!"({subLetter n.n}) "
 
 /-- A caption with its number prefix set in front. -/
-public def numberedCaption (loc : Locale) (kind : FloatKind) (num : Option Nat)
+public def numberedCaption (loc : Locale) (kind : FloatKind) (num : Option FloatNum)
     (caption : Array Inline) : Array Inline :=
   match captionPrefix loc kind num with
   | some p => (Inline.text p :: caption.toList).toArray
@@ -9318,6 +9387,8 @@ public def firstPageTextOne (acc : String) (x : Inline) : String :=
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
   | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     firstPageTextList acc body.toList
+  -- A page reference's folio is the layout's, so a reading made before it and one after agree.
+  | .ref _ .page _ _ => acc
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -10922,7 +10993,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
       | .sub => "sub"
       | .algorithm => "algorithm"
     let n := match num with
-      | some n => s!" {n}"
+      | some n => s!" {n.render}"
       | none => ""
     s!"{ind}float {k}{n}{if capAbove then " caption-above" else ""}\n" ++
     (if caption.isEmpty then ""
@@ -14130,22 +14201,22 @@ public theorem boxed_text (b : InlineBox) :
 
 mutual
 
-private theorem numberFloatList_text (c : FloatCtr) (acc : Array Block)
+private theorem numberFloatList_text {wf : Bool} (c : FloatCtr) (acc : Array Block)
     (bs : List Block) (s : String) :
-    blockTextList s ((numberFloatList c acc bs).2).toList
+    blockTextList s ((numberFloatList wf c acc bs).2).toList
       = blockTextList (blockTextList s acc.toList) bs := by
   match bs with
   | [] => simp [numberFloatList, blockTextList]
   | b :: rest =>
-    show blockTextList s ((numberFloatList (numberFloatOne c b).1
-      (acc.push (numberFloatOne c b).2) rest).2).toList = _
-    rw [numberFloatList_text (numberFloatOne c b).1
-      (acc.push (numberFloatOne c b).2) rest s]
+    show blockTextList s ((numberFloatList wf (numberFloatOne wf c b).1
+      (acc.push (numberFloatOne wf c b).2) rest).2).toList = _
+    rw [numberFloatList_text (numberFloatOne wf c b).1
+      (acc.push (numberFloatOne wf c b).2) rest s]
     rw [Array.toList_push, blockTextList_chain]
     simp [blockTextList, numberFloatOne_text c b]
 
-private theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
-    blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
+private theorem numberFloatOne_text {wf : Bool} (c : FloatCtr) (b : Block) (s : String) :
+    blockTextOne s (numberFloatOne wf c b).2 = blockTextOne s b := by
   match b with
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .bibliography _ _ _ | .contents _ _ | .algorithm _ _ _
@@ -14201,39 +14272,40 @@ private theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .float kind _ capAbove body caption =>
     simp [numberFloatOne, blockTextOne, numberFloatList_text, blockTextList]
 
-private theorem numberFloatItems_text (c : FloatCtr) (acc : Array (Array Block))
+private theorem numberFloatItems_text {wf : Bool} (c : FloatCtr) (acc : Array (Array Block))
     (items : List (Array Block)) (s : String) :
-    blockTextItems s ((numberFloatItems c acc items).2).toList
+    blockTextItems s ((numberFloatItems wf c acc items).2).toList
       = blockTextItems (blockTextItems s acc.toList) items := by
   match items with
   | [] => simp [numberFloatItems, blockTextItems]
   | item :: rest =>
-    show blockTextItems s ((numberFloatItems (numberFloatList c #[] item.toList).1
-      (acc.push (numberFloatList c #[] item.toList).2) rest).2).toList = _
-    rw [numberFloatItems_text (numberFloatList c #[] item.toList).1
-      (acc.push (numberFloatList c #[] item.toList).2) rest s]
+    show blockTextItems s ((numberFloatItems wf (numberFloatList wf c #[] item.toList).1
+      (acc.push (numberFloatList wf c #[] item.toList).2) rest).2).toList = _
+    rw [numberFloatItems_text (numberFloatList wf c #[] item.toList).1
+      (acc.push (numberFloatList wf c #[] item.toList).2) rest s]
     rw [Array.toList_push, blockTextItems_chain]
     simp [blockTextItems, numberFloatList_text c #[] item.toList, blockTextList]
 
-private theorem numberFloatCols_text (c : FloatCtr)
+private theorem numberFloatCols_text {wf : Bool} (c : FloatCtr)
     (acc : Array (BoxWidth × Array Block))
     (cols : List (BoxWidth × Array Block)) (s : String) :
-    blockTextColumns s ((numberFloatCols c acc cols).2).toList
+    blockTextColumns s ((numberFloatCols wf c acc cols).2).toList
       = blockTextColumns (blockTextColumns s acc.toList) cols := by
   match cols with
   | [] => simp [numberFloatCols, blockTextColumns]
   | (w, body) :: rest =>
-    show blockTextColumns s ((numberFloatCols (numberFloatList c #[] body.toList).1
-      (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).2).toList = _
-    rw [numberFloatCols_text (numberFloatList c #[] body.toList).1
-      (acc.push (w, (numberFloatList c #[] body.toList).2)) rest s]
+    show blockTextColumns s ((numberFloatCols wf (numberFloatList wf c #[] body.toList).1
+      (acc.push (w, (numberFloatList wf c #[] body.toList).2)) rest).2).toList = _
+    rw [numberFloatCols_text (numberFloatList wf c #[] body.toList).1
+      (acc.push (w, (numberFloatList wf c #[] body.toList).2)) rest s]
     rw [Array.toList_push, blockTextColumns_chain]
     simp [blockTextColumns, numberFloatList_text c #[] body.toList, blockTextList]
 
 end
 
-public theorem numberFloats_text : Conserves blocksText numberFloats := fun xs => by
-  simp [blocksText, numberFloats, numberFloatList_text {} #[] xs.toList "",
+public theorem numberFloats_text (within : Bool) :
+    Conserves blocksText (numberFloats · within) := fun xs => by
+  simp [blocksText, numberFloats, numberFloatList_text (wf := within) {} #[] xs.toList "",
     blockTextList]
 
 private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
@@ -17834,6 +17906,8 @@ public def captionRunsOne (acc : Array AltRun) (x : Inline) : Array AltRun :=
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
   | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     captionRunsList acc body.toList
+  -- A page reference's folio is the layout's, as the first page's reading leaves it.
+  | .ref _ .page _ _ => acc
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -17890,7 +17964,9 @@ private theorem captionRunsOne_said (acc : Array AltRun) (x : Inline) :
   | decorated _ body | boxed _ body | onSteps _ body | footnote _ body | cited _ _ body =>
     simp only [captionRunsOne, firstPageTextOne]
     exact captionRunsList_said acc body.toList
-  | text _ | math _ _ | formula _ _ _ | image _ _ _ | icon _ _ | label _ | ref _ _ _ _ | fill
+  | ref key form text target =>
+    cases form <;> simp only [captionRunsOne, firstPageTextOne, pushText_said] <;> rfl
+  | text _ | math _ _ | formula _ _ _ | image _ _ _ | icon _ _ | label _ | fill
   | hspace _ _ | rule _ _ _ | strut _ | italicCorr _ | pageNumber | pageCount | linebreak _ =>
     simp only [captionRunsOne, firstPageTextOne, pushText_said]
     rfl
@@ -18889,10 +18965,10 @@ public def floatLabelEnter (float : Option RefBinding) (out : Array (String × O
         match kind with
         -- A subfloat keeps its parent's kind, as cleveref's subfigure names are the figure's.
         | .sub => some { kind := float.bind (·.kind)
-                         num := ((float.map (·.num)).getD "") ++ subLetter m }
-        | .figure => some { kind := some .figure, num := toString m }
-        | .table => some { kind := some .table, num := toString m }
-        | .algorithm => some { kind := some .algorithm, num := toString m })
+                         num := ((float.map (·.num)).getD "") ++ subLetter m.n }
+        | .figure => some { kind := some .figure, num := m.render }
+        | .table => some { kind := some .table, num := m.render }
+        | .algorithm => some { kind := some .algorithm, num := m.render })
   | .para _ | .list _ _ _ | .center _ | .ragged _ _ | .quote _ _ | .lines _ | .abstract _
   | .titled _ _ _ | .disclosure _ _ _ | .role _ _ | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _
   | .altSteps _ _ _ | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _
@@ -19106,11 +19182,11 @@ public theorem withFloatRows_finds (labels rows : RefTable) (key : String) (b : 
   simp [hrow]
 
 public theorem refs_agree_with_numbering (loc : Locale) (labels : RefTable) (xs : Array Block)
-    (key : String) (b : RefBinding) (form : RefForm) (t : String) (a : Option String)
-    (hrow : (floatLabelRows (numberFloats xs)).find? (·.1 == key)
+    (within : Bool) (key : String) (b : RefBinding) (form : RefForm) (t : String) (a : Option String)
+    (hrow : (floatLabelRows (numberFloats xs within)).find? (·.1 == key)
       = some (key, some b))
     (hkey : (labels.find? (·.1 == key)).isSome) :
-    resolveRefInline loc (withFloatRows labels (floatLabelRows (numberFloats xs)))
+    resolveRefInline loc (withFloatRows labels (floatLabelRows (numberFloats xs within)))
         (.ref key form t a)
       = refResolved loc key form b := by
   have h := withFloatRows_finds labels _ key b hrow hkey

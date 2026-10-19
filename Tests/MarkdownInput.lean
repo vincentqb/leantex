@@ -125,9 +125,31 @@ def inputFileChecks (ref : IO.Ref (List String)) : IO Unit := do
               (d.span.any (·.file == (dir / name).toString) ||
                 hasStr d.message (dir / name).toString))
 
+/-- A Markdown fragment's headings in a class with chapters as the markdown package sets them: the
+chapter for `#`, each deeper one a level down, numbered as the class numbers them (lualatex); in a
+class without, the fragment reads as the file alone (doors D1), where lualatex numbers sections. -/
+def markdownHeadingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  IO.FS.withTempDir fun dir => do
+    let file := (dir / "host.tex").toString
+    IO.FS.writeFile (dir / "frag.md") "# Toplevel\n\nText.\n\n## Nested\n\nMore.\n"
+    let heads (cls : String) : IO (Array (Option String × String)) := do
+      let (doc, _) ← elabInputSrc file ("\\documentclass{" ++ cls ++ "}\n\\usepackage{markdown}\n" ++
+        "\\begin{document}\n\\markdownInput{frag.md}\n\\end{document}")
+      return doc.body.filterMap fun b => match b with
+        | .section _ _ num title => some (num, Ir.plainText title)
+        | _ => none
+    let report ← heads "report"
+    let article ← heads "article"
+    t s!"markdown headings: a report's # is a numbered chapter, its ## a section ({report})"
+      (report == #[(some "Chapter 1", "Toplevel"), (some "1.1", "Nested")])
+    t s!"markdown headings: an article's fragment reads as the file alone ({article})"
+      (article == #[(none, "Toplevel"), (none, "Nested")])
+
 /-- An included markdown fragment ships between its neighbours in both artifacts, its losses at its
 own file and line. -/
 def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
+  markdownHeadingChecks ref
   quotedInputFilenameChecks ref
   inputFileChecks ref
   let t := check ref
