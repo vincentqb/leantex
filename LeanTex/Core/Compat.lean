@@ -8550,6 +8550,16 @@ private def ctrlNative? (name : String) : Option Native.Setting :=
   | none | some (.tokens ..) | some (.skip _) | some (.refuse ..) | some (.discard ..)
   | some .inert | some (.lower ..) => none
 
+/-- setspace's stretch for a spacing at an 11pt or 12pt class size, as setspace.sty reads
+`\@ptsize`; at 10pt its command's row stands. -/
+private def setspaceStretch (pt : Option Nat) (name : String) : Option String :=
+  match name, pt with
+  | "onehalfspacing", some 11 => some "1.213"
+  | "onehalfspacing", some 12 => some "1.241"
+  | "doublespacing", some 11 => some "1.618"
+  | "doublespacing", some 12 => some "1.655"
+  | _, _ => none
+
 /-- Options of a native package without an option reader of its own whose meaning is one native
 declaration: setspace's spacings as its commands read, microtype's switches, and url's `lowtilde`. -/
 public def packageOptionNatives : List (String × List (String × Native.Setting)) :=
@@ -10074,6 +10084,9 @@ private def packageOptions (name p : String) (opts : List String) (pos : Pos)
       unreadParam s!"usepackage:{p}" key s!"'fontenc' main encoding '{o}', which sets Latin input \
 in its own script's glyphs," pos
     else if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
+      let pt := (← get).classPt
+      let native := if p == "setspace" then ((setspaceStretch pt spelled).map fun v =>
+        Native.Setting.page #[(.leading, v)]).getD native else native
       -- setspace's spacings set the strut box again as the package loads.
       if p == "setspace" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
       out := out ++ (← setting what native pos (subject := some (paramSubject s!"usepackage:{p}" key)))
@@ -11734,6 +11747,8 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
     if let some native := note then became s!"\\{row.name}" native pos
     return toks.toArray.map (rebase (fun _ => pos) true)
   | .native src =>
+    let src := ((setspaceStretch (← get).classPt row.name).map fun v =>
+      Native.Setting.page #[(.leading, v)]).getD src
     -- setspace's spacings set the strut box again where they stand.
     if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == row.name)) then
       write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }

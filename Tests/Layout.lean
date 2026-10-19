@@ -2411,6 +2411,40 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "kept: an undeclared footskip hangs the foot from half the margin"
     (drop native == some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.bottomMargin)))
 
+/-- A LaTeX class's body lines stand its size file's `\normalsize` baselineskip apart, within the
+leading factor's thousandth, and a native class's at the 6⁄5 rule. -/
+def classLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let words := String.intercalate " " (List.replicate 120 "invented")
+  let pitch (cls : String) (pre : String := "") (size : String := "") : Option Dim.Length := do
+    let (doc, _) := elabStr (s!"\\documentclass{cls}\n{pre}\\begin\{document}\n{size}" ++ words ++
+      "\n\\end{document}\n")
+    let body := ((((layoutOf oneFace doc).pages[0]?).map (·.lines)).getD #[]).filter (!·.furniture)
+    let a ← body[0]?
+    let b ← body[1]?
+    pure (b.y - a.y)
+  let near (p : Option Dim.Length) (want : Dim.Length) : Bool :=
+    p.any fun p => (p - want).abs ≤ want / 1000
+  -- lualatex: `\the\baselineskip` 12pt, 13.6pt and 14.5pt under size10, size11 and size12.clo.
+  for (cls, size) in [("[10pt]{article}", 10), ("[11pt]{article}", 11), ("[12pt]{report}", 12),
+      ("{scrartcl}", 11), ("[12pt]{scrreprt}", 12)] do
+    t s!"class leading: {cls}'s lines stand its size file's baselineskip apart ({reprStr (pitch cls)})"
+      (near (pitch cls) (Ir.sizeFileLeading (Dim.pt size) 1000 "normalsize"))
+  -- lualatex: `\huge` sets its baselineskip at 25pt under size11.clo, not 2.5 of the body's 11pt.
+  t s!"class leading: an 11pt class's \\huge lines stand 25pt apart ({reprStr (pitch "[11pt]{article}" "" "\\huge ")})"
+    (near (pitch "[11pt]{article}" "" "\\huge ") (Dim.pt 25))
+  -- lualatex: setspace's one-and-a-half and double spacing are 1.5 and 2 of the size at 11pt and 12pt.
+  t "class leading: setspace's spacings stand 1.5 and 2 of an 11pt or 12pt size apart"
+    (near (pitch "[11pt]{article}" "\\usepackage{setspace}\n\\onehalfspacing\n") (Dim.pt 33 / 2) &&
+      near (pitch "{scrartcl}" "\\usepackage[onehalfspacing]{setspace}\n") (Dim.pt 33 / 2) &&
+      near (pitch "[12pt]{article}" "\\usepackage{setspace}\n\\doublespacing\n") (Dim.pt 24))
+  -- lualatex: a redefined \small leaves the class's other sizes as its size file sets them.
+  t "class leading: one redefined size leaves the size file's other rows"
+    (near (pitch "[11pt]{article}" "\\makeatletter\n\\renewcommand\\small{\\@setfontsize\\small{10}{12}}\n")
+      (Dim.pt 136 / 10))
+  t "class leading: the resume class keeps the 6/5 rule"
+    (pitch "[fontsize=11pt]{resume}" == some (Ir.leadingFor (Dim.pt 11)))
+
 /-- The strut box a preamble length reads stands as the class set it, `.7` and `.3` of its
 `\baselineskip` in TeX's arithmetic, and where the preamble may have set it again the length is
 named and dropped. -/

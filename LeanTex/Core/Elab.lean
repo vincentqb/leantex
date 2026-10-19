@@ -18620,6 +18620,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     | none =>
       if let some d := record.fontSize then
         page := { page with fontSize := d }
+  -- The class's size file sets each size's baselineskip, which size10.clo's ladder meets at 10pt.
+  if record.sizeFileSkip && !s.classUnknown && page.bodySkip.isNone && page.skips.isNone &&
+      sawClass then
+    let skip := Ir.sizeFileLeading page.fontSize 1000 "normalsize"
+    if skip != Ir.leadingFor page.fontSize then
+      let ladder := Ir.sizeSkipScale.map fun (name, _) =>
+        (name, Ir.skipRowOf (Ir.sizeFileLeading page.fontSize 1000 name * 1000) page.fontSize)
+      page := composeLeading { page with bodySkip := some skip, skips := some ladder }
   -- A declared size is absolute, so its step is read against the body size the class settles.
   page := (← applyRefusedSizeLadder { s with page }).page
   let classOpts := (KeyVal.items classOptions).toList

@@ -194,13 +194,13 @@ def numberingStateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   let ktop := (Layout.Geom.ofPage (elabStr koma).1.page).bodyTop
   match line 0 "Introduction", line 0 "Some text in the first chapter.", line 1 "Unnumbered" with
   | some head, some body, some bare =>
-    let skip := Ir.leadingFor (Dim.pt 11) 1000
     -- lualatex at 11pt: the head's baseline 67.28pt below the text's top, the text 37.07pt, one
-    -- \baselineskip past 1.725 of them, below it; the page's own leading stands in here.
+    -- \baselineskip past 1.725 of them, below it; each within a quarter point here.
+    let near (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.pt 1 / 4
     t s!"KOMA-Script chapters: the number and title on one line, the text 1.725\\baselineskip and one \
 line below ({head - ktop}, {body - head}, {bare - ktop})"
-      (head - ktop == bare - ktop && body - head == skip * 1725 / 1000 + skip &&
-        head - ktop < Dim.pt 70 && head - ktop > Dim.pt 64)
+      (head - ktop == bare - ktop && near (head - ktop) (Dim.pt 6728 / 100) &&
+        near (body - head) (Dim.pt 3707 / 100))
   | _, _, _ => t s!"KOMA-Script chapters: the head sets its number before its title ({kpages.map (·.map (·.2.2))})" false
   let listing := "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n" ++
     "\\begin{lstlisting}[firstline=2,lastline=3]\nline one\nline two\nline three\nline four\n" ++

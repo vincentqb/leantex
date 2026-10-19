@@ -2295,6 +2295,13 @@ def reports : List Report := [
     accept := ["lualatex on invented probes on letter paper: geometry's default layout, vmarginratio=1:1 and 2:1, each followed by a kernel text height of 15cm, keep the first word where geometry alone puts it (its top 93.8pt, 117.5pt and 157.1pt from the page's) and end the block 15cm below; a textheight geometry key stands as before; this tree sets each within the faces' 2pt bounding-box offset",
       "main's binary at 730c0b54 on the same probes: the first word's top at 147.4pt, 184.1pt and 245.3pt, the block centred or split around the new height; the guard fails there",
       "the corpus built by main's binary at 730c0b54 and by this tree's: every PDF and web page byte-identical, diagnostics identical"]
+    state := .guarded "730c0b54" .before .author },
+  { id := "R250", date := "2026-10-19"
+    what := "an 11pt or 12pt LaTeX document, KOMA-Script's 11pt default among them, set its body lines six fifths of the size apart where the class's size file sets 13.6pt and 14.5pt, a line short by 0.4pt or so a line, about a line a page; each named size led at size10.clo's proportions, so an 11pt huge line stood 27.5pt apart where size11.clo sets 25pt, and KOMA-Script's chapter head, placed by both, stood about 1.6pt low"
+    pins := [check% classLeadingChecks]
+    accept := ["lualatex on invented probes: the baselineskip 12pt, 13.6pt and 14.5pt under the 10pt, 11pt and 12pt options of article, report and KOMA-Script's classes, KOMA-Script's default 11pt; the huge size 25pt under size11.clo; KOMA-Script's 11pt chapter head's baseline 67.28pt below the text's top and the text 37.07pt below it; this tree sets each within a quarter point, setspace's spacings 1.5 and 2 of the size, a redefined size leaving the others as the size file sets them, the native resume class keeping the six-fifths rule",
+      "main's binary at 730c0b54: 13.2pt and 14.4pt; the guard fails there",
+      "the corpus built by main's binary at 730c0b54 and by this tree's: one PDF differs visibly, an 11pt KOMA-Script article whose line pitch moves from 14.78bp to 15.23bp beside lualatex's 15.18bp, its web page invisibly; every other artifact byte-identical"]
     state := .guarded "730c0b54" .before .author }
 ]
 

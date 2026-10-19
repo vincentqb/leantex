@@ -8190,6 +8190,9 @@ public structure ClassRecord where
   model : PageModel
   /-- The class's body-size default, when it declares one (`slides`: beamer's documented 11 pt). -/
   fontSize : Option Length := none
+  /-- Whether the body's `\baselineskip` is its size file's `\normalsize` one, as LaTeX's standard
+  classes and KOMA-Script's set it (size11.clo's 13.6pt), not the 6⁄5 rule. -/
+  sizeFileSkip : Bool := false
   /-- The class's paragraph-separation default, when it declares one. -/
   parskip : Option Dim.SymGlue := none
   /-- Whether the class's `parskip` option sets the paragraph separation in lines of its
@@ -8302,6 +8305,7 @@ résumé's floor the fluent-reading x-height at hand-held distance. -/
 @[expose] public def DocClass.record : DocClass → ClassRecord
   | .article =>
     { model := .flow
+      sizeFileSkip := true
       numberHeadings := true
       measureBand := true
       pageNumbers := true }
@@ -8374,6 +8378,7 @@ calibration reads fluently; declare \
   | .koma =>
     { model := .flow
       fontSize := some (Dim.pt 11)
+      sizeFileSkip := true
       -- typearea's `paper=a4`, its default.
       trimDefault := some a4Page
       parskip := some texParskipDefault

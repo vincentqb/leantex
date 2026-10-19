@@ -1119,6 +1119,7 @@ def commandSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.Chapters.chapterReadingChecks ref oneFace
   Tests.Chapters.chapterDeclarationChecks ref oneFace
   Tests.Chapters.numberingStateChecks ref oneFace
+  classLeadingChecks ref oneFace
 
 /-- The compat, class, bibliography and math elaboration blocks, dispatched together so `main` stays
 within its elaboration budget. -/
