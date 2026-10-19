@@ -141,6 +141,8 @@ public import LeanTex.Core.XmlRoundTrip
 public import LeanTex.Core.Css
 public import LeanTex.Core.CssColorData
 public import LeanTex.Core.CssColor
+public import LeanTex.Core.HtmlEntityData
+public import LeanTex.Core.HtmlEntity
 public import LeanTex.Core.PathData
 public import LeanTex.Core.PathDataContract
 public import LeanTex.Core.SvgJudge

@@ -1,0 +1,20 @@
+# The HTML Standard's named character references, vendored as the source of
+# LeanTex/Core/HtmlEntityData.lean (scripts/gen-html-entity-data.lean).
+#
+# source:   https://html.spec.whatwg.org/entities.json, the JSON form of the
+#           HTML Living Standard's table of named character references
+#           (§13.5), byte for byte; served with last-modified
+#           Wed, 12 Nov 2025 00:20:03 GMT and etag "6913d2b3-239e9"
+# fetched:  2026-10-19, from that URL
+# license:  Creative Commons Attribution 4.0 International, and BSD
+#           3-Clause where incorporated into source code — the generated
+#           module is such a portion; LICENSE beside this file is the
+#           upstream file verbatim (https://github.com/whatwg/html, LICENSE).
+#           Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+# checked:  SHA256SUMS lists the sha256 of each file's upstream bytes;
+#           `sha256sum -c SHA256SUMS` run from this directory verifies them
+#
+# Taken: entities.json (2231 names, each with its code points and characters)
+# and LICENSE. The generator keeps the 2125 names ending in `;`, the only
+# ones CommonMark reads (§2.5, "Entity and numeric character references");
+# the 106 legacy names without it are HTML's parse-error recovery.

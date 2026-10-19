@@ -9,6 +9,7 @@ import LeanTex.Core.CiteKey
 import LeanTex.Core.MdSmart
 import LeanTex.Core.CaseFold
 import LeanTex.Core.Nfc
+import LeanTex.Core.HtmlEntity
 import Std.Data.HashMap
 public import Std.Data.HashSet
 
@@ -1483,8 +1484,8 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
   unless c.at? j == some ')' do return none
   return some (dest, title, j + 1)
 
-/-- Named and numeric character references (§2.5): the five named ones the
-engine needs and the numeric forms. -/
+/-- Named and numeric character references (§2.5): every name the HTML Standard ends in `;`
+and the numeric forms. -/
 def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
   unless c.at? i == some '&' do return none
   let mut j := i + 1
@@ -1497,13 +1498,7 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
       j := j + 1
     | none => break
   unless c.at? j == some ';' do return none
-  let named : List (String × String) :=
-    [("amp", "&"), ("lt", "<"), ("gt", ">"), ("quot", "\""), ("apos", "'"),
-     ("nbsp", "\u00a0"), ("copy", "\u00a9"), ("auml", "\u00e4"),
-     ("ouml", "\u00f6"), ("uuml", "\u00fc"), ("szlig", "\u00df"),
-     ("Dagger", "\u2021"), ("dagger", "\u2020"), ("hellip", "\u2026"),
-     ("mdash", "\u2014"), ("ndash", "\u2013"), ("ouml;", "\u00f6")]
-  if let some (_, v) := named.find? (·.1 == body) then
+  if let some v := HtmlEntity.lookup body then
     return some (v, j + 1)
   match body.toList with
   | '#' :: rest =>

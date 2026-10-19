@@ -29,7 +29,7 @@
 22	Backslash escapes	owed	blocked-by:md:link-title
 23	Backslash escapes	owed	blocked-by:md:link-title
 24	Backslash escapes	match
-25	Entity and numeric character references	owed
+25	Entity and numeric character references	match
 26	Entity and numeric character references	match
 27	Entity and numeric character references	owed	pending-decision:smart-punctuation
 28	Entity and numeric character references	match

@@ -157,7 +157,7 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
       "<details/>\n<summary>Amber</summary>\nCedar\n</details>\n",
       "<details>\n<summary>Amber</summary>Visible\nCedar\n</details>\n",
       "<details>\n<summary>Amber</summary>\nCedar\n</details>Visible\n",
-      "<details>\n<summary>Amber &NotEqualTilde;</summary>\nCedar\n</details>\n",
+      "<details>\n<summary>Amber &NotAnEntity;</summary>\nCedar\n</details>\n",
       "<details>\n<summary>Amber &copy</summary>\nCedar\n</details>\n",
       "<details>\n<summary>Amber &#128;</summary>\nCedar\n</details>\n",
       "<details>\n<summary></summary>\nCedar\n</details>\n",

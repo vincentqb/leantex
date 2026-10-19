@@ -70,6 +70,13 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       && has "*e* **s** `c`\n" "<code>")
   t "a link keeps its destination"
     (has "[t](https://example.org)\n" "https://example.org")
+  t "the entity table holds every HTML name ending in a semicolon"
+    (HtmlEntity.size () == 2125 && HtmlEntity.lookup "eacute" == some "é" &&
+      HtmlEntity.lookup "NotEqualTilde" == some "≂̸" && HtmlEntity.lookup "Eacute" == some "É" &&
+      HtmlEntity.lookup "bogus" == none)
+  t "a named reference decodes, one without its semicolon or unknown stays text"
+    (hasStr (Ir.blocksText (elabMd "Caf&eacute; &NotEqualTilde; &eacute &bogus;\n").1.body)
+      "Café ≂̸ &eacute &bogus;")
   t "a second ordered item is a sibling, not a lazy continuation"
     ((dvMd "1. one\n2. two\n").all (·.kind != .E0390))
   t "both ordered items ship"
