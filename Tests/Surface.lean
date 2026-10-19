@@ -2256,7 +2256,7 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
      | #[.frame _ _ _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
      | _ => false)
   t "frame options on the begin line are consumed, never content"
-    (match (elabStr (deck169Body "\\begin{frame}[plain][t]{T}\nbody\n\\end{frame}")).1.body with
+    (match (elabStr (deck169Body "\\begin{frame}[shrink][t]{T}\nbody\n\\end{frame}")).1.body with
      | #[.frame title _ _ _ #[.para xs]] =>
        Ir.plainText title == "T" && Ir.plainText xs == "body"
      | _ => false)

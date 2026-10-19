@@ -837,6 +837,9 @@ public def squeezeRole : String := "frame squeeze"
 /-- The mark opening a frame beamer's `[noframenumbering]` leaves out of the frame count. -/
 public def unnumberedRole : String := "frame unnumbered"
 
+/-- The mark opening a frame beamer's `[plain]` sets without its footline. -/
+public def plainRole : String := "frame plain"
+
 /-- The squeezed list spacing as the overflow ladder sets it on an overfull
 frame, for the web deck alone. -/
 public def squeezeFitRole : String := "frame squeeze fit"
@@ -959,7 +962,7 @@ public def parRunsOnRole : String := "par runs on"
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
-    n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole
+    n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -5768,12 +5771,31 @@ public def carrierDisplays (inPar endPe parEnd broken : Bool) (blocks : Array Bl
     Array Block :=
   (carrierCloseList parEnd (carrierOpenList inPar endPe broken blocks.toList)).toArray
 
-/-- The frames the deck numbers: every `.frame` except a golden title page, a standout frame and one
-its first mark leaves unnumbered. -/
+/-- The frames the deck numbers: every `.frame` except a standout frame and one its first mark
+leaves unnumbered. -/
 public def Block.countable : Block → Bool
-  | .frame _ standout valign _ body => !standout && !(valign matches .golden) &&
+  | .frame _ standout _ _ body => !standout &&
       !(body.toList.takeWhile (· matches .role _ #[])).contains (.role unnumberedRole #[])
   | _ => false
+
+/-- Whether a block is a frame whose first marks set it `[plain]`. -/
+public def Block.plainFrame : Block → Bool
+  | .frame _ _ _ _ body => (body.toList.takeWhile (· matches .role _ #[])).contains (.role plainRole #[])
+  | _ => false
+
+/-- Whether a frame shows no number: a `[plain]` frame, which sets no footline, a title page and a
+standout frame, whose furniture shows none; every other block. -/
+public def Block.numberless : Block → Bool
+  | b@(.frame _ standout valign _ _) => b.plainFrame || standout || (valign matches .golden)
+  | _ => true
+
+/-- The footline number fold: a frame showing a number shows the counter beamer's
+`\insertframenumber` reads, the count of numbered frames up to it; every other block none. -/
+public def shownFrom (k : Nat) : List Block → List (Option Nat)
+  | [] => []
+  | b :: rest =>
+    let k' := if b.countable then k + 1 else k
+    (if b.numberless then none else some k') :: shownFrom k' rest
 
 public def countTrue : List Bool → Nat
   | [] => 0
@@ -5890,6 +5912,43 @@ public theorem frameNumbers_last_is_count (body : Array Block)
 public theorem frameNumbers_size (body : Array Block) :
     (frameNumbers body).size = body.size := by
   simp [frameNumbers, frameMask, numbersFrom_length]
+
+/-- The number each top-level block's footline shows (`shownFrom`). -/
+public def frameShown (body : Array Block) : Array (Option Nat) :=
+  (shownFrom 0 body.toList).toArray
+
+public theorem shownFrom_numbered (k : Nat) (bs : List Block) (i n : Nat)
+    (hn : (numbersFrom k (bs.map Block.countable))[i]? = some (some n))
+    (hp : bs[i]?.map Block.numberless = some false) :
+    (shownFrom k bs)[i]? = some (some n) := by
+  induction bs generalizing k i with
+  | nil => simp [numbersFrom] at hn
+  | cons b rest ih =>
+    cases i with
+    | zero =>
+      have hpb : b.numberless = false := by simpa using hp
+      cases hc : b.countable
+      · simp [numbersFrom, hc] at hn
+      · simp only [List.map_cons, numbersFrom, hc, ite_true, List.getElem?_cons_zero,
+          Option.some.injEq] at hn
+        simp [shownFrom, hc, hpb, hn]
+    | succ j =>
+      cases hc : b.countable
+      · simp only [List.map_cons, numbersFrom, hc] at hn
+        have := ih k j (by simpa using hn) (by simpa using hp)
+        simpa [shownFrom, hc] using this
+      · simp only [List.map_cons, numbersFrom, hc, ite_true] at hn
+        have := ih (k + 1) j (by simpa using hn) (by simpa using hp)
+        simpa [shownFrom, hc] using this
+
+/-- A numbered frame that shows a number shows its own. -/
+public theorem frameShown_numbered (body : Array Block) (i n : Nat)
+    (hn : (frameNumbers body)[i]? = some (some n))
+    (hp : body[i]?.map Block.numberless = some false) :
+    (frameShown body)[i]? = some (some n) := by
+  have := shownFrom_numbered 0 body.toList i n
+    (by simpa [frameNumbers, frameMask] using hn) (by simpa using hp)
+  simpa [frameShown] using this
 
 /-- The counters `numberFloats` threads: captioned figures, tables and
 algorithms, and captioned subfloats reset for every float body. -/
@@ -7155,7 +7214,8 @@ public inductive FrameSqueeze where
 /-- Whether a block is one of a frame's marks: an empty engine role opening the frame's body. -/
 @[expose] public def Block.isFrameMark : Block → Bool
   | .role n inner => inner.isEmpty &&
-      (n == squeezeRole || n == squeezeFitRole || fitMarkRole n || n == unnumberedRole)
+      (n == squeezeRole || n == squeezeFitRole || fitMarkRole n || n == unnumberedRole ||
+        n == plainRole)
   | _ => false
 
 /-- The marks a frame's body opens with, in order. -/
@@ -8315,11 +8375,21 @@ public def sectionPageCtrl : String := " sectionpage"
 /-- The block a theme's section hook leaves right after its section: the section's own page. -/
 public def sectionPageRole : String := "section-page"
 
+/-- The block a frame of the document's own setting only `\sectionpage` leaves after its section:
+the section's page, centred as the deck's `[c]` frames are. -/
+public def framedSectionPageRole : String := "section-page framed"
+
 /-- Whether the block after a deck's section is its section page, so the section stands on a page
 of its own; any other names navigation alone, as beamer's `\section` does. -/
 @[expose] public def standsOnPage (next : Option Block) : Bool :=
   match next with
-  | some (.role n body) => n == sectionPageRole && body.isEmpty
+  | some (.role n body) => (n == sectionPageRole || n == framedSectionPageRole) && body.isEmpty
+  | _ => false
+
+/-- Whether the block after a deck's section is a section page the document's own frame set. -/
+public def framedSectionPage (next : Option Block) : Bool :=
+  match next with
+  | some (.role n body) => n == framedSectionPageRole && body.isEmpty
   | _ => false
 
 /-- A heading's short title, `\section[short]{long}`'s: the heading by its number, its words and how
@@ -8430,6 +8500,12 @@ public def frameNumbersFrom (restart : Option Nat) (body : Array Block) : Array 
 public def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
   frameNumbersFrom doc.frameRestart doc.body
 
+/-- The document's footline numbers, from 1 again where `frameRestart` splits the body. -/
+public def Doc.frameShown (doc : Doc) : Array (Option Nat) :=
+  match doc.frameRestart with
+  | none => Ir.frameShown doc.body
+  | some p => Ir.frameShown (doc.body.extract 0 p) ++ Ir.frameShown (doc.body.extract p doc.body.size)
+
 /-- The numbering's denominator at body index `i`: the count of the part `i` stands in. -/
 public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
   match doc.frameRestart with
@@ -8453,13 +8529,13 @@ public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
   let mut out : Array (Option String) := #[]
   for h : i in [0:doc.body.size] do
     match doc.body[i] with
-    | .frame _ standout _ _ fbody =>
+    | .frame _ standout valign _ fbody =>
       match nums[i]?.getD none with
       | some n =>
         out := out.push (some (if doc.frameRestart.any (· ≤ i) then s!"appendix-{n}"
           else toString n))
       | none =>
-        if (frameMarks fbody).contains unnumberedRole then
+        if (frameMarks fbody).contains unnumberedRole && !(valign matches .golden) then
           unnumbered := unnumbered + 1
           out := out.push (some s!"unnumbered-{unnumbered}")
         else if standout then

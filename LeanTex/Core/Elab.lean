@@ -316,6 +316,8 @@ public structure Ctx where
   /-- A frame's vertical alignment when its options name none, from beamer's
   class options `t` and `c`. -/
   frameAlign : VAlign := .center
+  /-- The frame conventions of the inner theme in force, whose `\maketitle` sets its frame. -/
+  frameKeys : Ir.FrameKeys := .beamer
   /-- The page model is `face`: display text with no note apparatus. -/
   face : Bool := false
   numberHeadings : Bool := false
@@ -7482,7 +7484,7 @@ setting it under a title or beside other content is named, that page not set. -/
 private def sectionPageFrame (ctx : Ctx) (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   if let some (.frame title _ _ _ body) := blocks.back? then
     if title.isEmpty && body.size == 1 && Ir.standsOnPage body[0]? then
-      return blocks.pop.push (.role Ir.sectionPageRole #[])
+      return blocks.pop.push (.role Ir.framedSectionPageRole #[])
     else if body.any fun b => Ir.standsOnPage (some b) then
       warnOnce ctx "sectionpage:shared" .W0307
         "a section page sharing its frame with a title or other content is not set yet; the frame \
@@ -10951,7 +10953,10 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     let content := if tps.align == some .left || !tps.slots.isEmpty then inner
       else #[.center inner]
     recordFrameSource ctx pos blocks.size
-    blocks := blocks.push (.frame #[] false .golden false content)
+    let frame : Block := .frame #[] false .golden false content
+    -- moloch's `\maketitle` outside a frame is `\frame[plain,noframenumbering]{\titlepage}`.
+    blocks := blocks.push (if ctx.inFrame || ctx.frameKeys != .moloch then frame
+      else (frame.markFrame Ir.plainRole).markFrame Ir.unnumberedRole)
   else
     -- The flow classes centre the title block, as `\@maketitle` does.
     modify fun st => { st with titleDone := true }
@@ -12760,6 +12765,8 @@ private structure FrameOpts where
   breakable : Bool := false
   /-- beamer's `[noframenumbering]`: the frame stands out of the frame count. -/
   unnumbered : Bool := false
+  /-- beamer's `[plain]`: the frame sets no footline. -/
+  plain : Bool := false
   /-- beamer's `[squeeze]` (beamerbaseframesize.sty): the frame's lists set
   tight. -/
   squeeze : Bool := false
@@ -12800,6 +12807,7 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | ("allowframebreaks", none) => o := { o with breakable := true }
         | ("squeeze", none) => o := { o with squeeze := true }
         | ("noframenumbering", none) => o := { o with unnumbered := true }
+        | ("plain", none) => o := { o with plain := true }
         | ("t", none) => o := { o with valign := .top, aligns := o.aligns.push "t" }
         | ("c", none) => o := { o with valign := .center, aligns := o.aligns.push "c" }
         | ("b", none) => o := { o with valign := .bottom, aligns := o.aligns.push "b" }
@@ -13070,6 +13078,7 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
   recordFrameSource ctx pos blocks.size
   let frame := flattenFrame title opts.standout opts.valign opts.breakable inner
   let frame := if opts.squeeze then frame.markFrame Ir.squeezeRole else frame
+  let frame := if opts.plain then frame.markFrame Ir.plainRole else frame
   let blocks := blocks.push (if opts.unnumbered then frame.markFrame Ir.unnumberedRole else frame)
   if !aliasScope then return blocks
   let colors := (← get).scope.palette
@@ -18373,6 +18382,7 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
   ctx := { ctx with slides := record.model == .frame
                     groundDepth := record.groundDepth
                     frameAlign := classFrameAlign classOpts
+                    frameKeys := if defaultBundle then Theme.daylight.frameKeys else s.frameKeys
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists

@@ -25,6 +25,8 @@ chrome footer right framenumber
 meta title "A Themed Deck"
 meta author "Pat Placeholder"
 frame golden
+  role frame unnumbered
+  role frame plain
   section* 0
     text "A Themed Deck"
   block before 300/1000em from subtitlegap

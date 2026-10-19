@@ -1205,10 +1205,10 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "frame is first-class with its title"
     (fDoc.body == #[.frame #[.text "T"] false .center false #[.para #[.text "body"]]])
   t "frame title after a blank line is content"
-    ((elabStr (deck169Body "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
+    ((elabStr (deck169Body "\\begin{frame}[shrink]\n\n{scope group}\n\\end{frame}")).1.body ==
       #[.frame #[] false .center false #[.para #[.text "scope group"]]])
   t "an unmodelled frame option is a note"
-    ((elabStr (deck169Body "\\begin{frame}[plain]{T}\nbody\n\\end{frame}")).2.any
+    ((elabStr (deck169Body "\\begin{frame}[shrink]{T}\nbody\n\\end{frame}")).2.any
       fun d => d.code == "N0102" && d.severity == .note)
   t "frametitle names the frame"
     ((elabStr (deck169Body "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==

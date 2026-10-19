@@ -25,6 +25,8 @@ chrome footer right framenumber
 meta title "Two Sequences"
 meta author "Pat Placeholder"
 frame golden
+  role frame unnumbered
+  role frame plain
   section* 0
     text "Two Sequences"
   block before 800/1000em from separatorgap

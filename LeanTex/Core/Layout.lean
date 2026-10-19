@@ -1035,7 +1035,7 @@ public structure PageOut where
   frameArea : FrameArea := .margins
   /-- The footer's resolved colour pair from the frame's palette epoch. -/
   footLook : Option Ir.TitledLook := none
-  /-- The displayed frame counter (`Ir.frameNumbers`), which is no source identity. -/
+  /-- The displayed frame counter (`Ir.Doc.frameShown`), which is no source identity. -/
   frame : Option Nat := none
   /-- The source frame and overlay step owning this physical
   page; continuation pages keep the step that spilled. -/
@@ -9719,6 +9719,8 @@ public structure Spacing.Context where
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
+  /-- The number each frame's footline shows at its body index (`Ir.Doc.frameShown`). -/
+  private frameShown : Array (Option Nat) := #[]
   /-- Each top-level heading's claimed anchor at its body index (`Ir.flowAnchors`, in a deck
   `Ir.deckAnchors`). -/
   private sectionAnchors : Array (Option Ir.SectionAnchor) := #[]
@@ -9805,7 +9807,7 @@ public structure Spacing.Pending where
   /-- The enclosing painted body's ground, surviving a palette declaration. -/
   private bodyGround : Option Ir.Color := none
   private bodyInk : Option (Ir.ColorRef × Ir.Color) := none
-  /-- The number of the frame being collected, from `Ir.frameNumbers`; `none` for a title frame. -/
+  /-- The number the collected frame's footline shows (`Ir.Doc.frameShown`), `none` where it shows none. -/
   private frameNum : Option Nat := none
   /-- The frame's label, from `Ir.Doc.frameLabels` by the same driver. -/
   private frameLabel : Option String := none
@@ -11859,7 +11861,7 @@ private def collectKomaChapter (r : Rd) (a : Acc) (num : Option String) (title :
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     (num : Option String) (title : Array Inline) (indent : Length) (top : Bool := false)
-    (anchor : Option String := none) (page : Bool := false) : Acc :=
+    (anchor : Option String := none) (page : Bool := false) (framed : Bool := false) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
@@ -11889,7 +11891,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
       origin := none, number := none, label := none, allowed := false, stage := true }
     let a := { a with ops := (a.ops.push .frameClose).push (.frameOpen false none opening) }
     let ground := Ir.frameGroundOf a.pal false .center
-    let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
+    -- A theme's divider is moloch's `[c]` frame; the document's own frame the deck's.
+    let dist := if framed then VDist.of r.frameKeys .center else VDist.center
+    let a := { a with ops := a.ops.push (.pageStyle ground dist) }
     let a := openFrameBody r a false .center area
     let mp : Length := Ir.sectionPageMeasure r.geom.textWidth
     let indent : Length := (r.geom.textWidth - mp) / 2
@@ -14291,7 +14295,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
@@ -19783,7 +19787,9 @@ slot yields in place: shorten the content or drop a slot")
               (detail := some s!"on page {i + 1}") (output := furniture))
       for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
         lines := lines.push p.2
-    let logoContent := Ir.logoInForce doc.logo logoSpans i
+    -- beamer's `[plain]` frame sets no logo, its sidebars and footline gone.
+    let plainPage := (page.frameOrigin.bind fun o => doc.body[o.source]?.map Ir.Block.plainFrame).getD false
+    let logoContent := if plainPage then none else Ir.logoInForce doc.logo logoSpans i
     if headOn && footOn then
       if let some content := logoContent then
         unless content.isEmpty do
@@ -20025,7 +20031,8 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
   match blk with
   | .frame title standout valign breakable body =>
     let num := nums[i]?.getD none
-    acc := { acc with frameNum := num, frameLabel := rd.frameLabels[i]?.getD none,
+    acc := { acc with frameNum := rd.frameShown[i]?.getD none
+                      frameLabel := rd.frameLabels[i]?.getD none,
                       frameOrigin := some ⟨i, 1⟩,
                       framesDone := num.getD acc.framesDone
                       frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
@@ -20052,7 +20059,7 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
         { routed with ops := routed.ops.push (.anchor (Ir.outlineMark i)) }
       else routed
     acc := collectSection rd routed level num title 0 (top := true)
-      (page := Ir.standsOnPage doc.body[i + 1]?)
+      (page := Ir.standsOnPage doc.body[i + 1]?) (framed := Ir.framedSectionPage doc.body[i + 1]?)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
   return (acc, firstBlk)
@@ -20807,6 +20814,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    quotationIndent := doc.docClass.record.quotationIndent
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels
+                   frameShown := doc.frameShown
                    sectionAnchors := if doc.docClass.record.model == .flow then
                      Ir.flowAnchors doc.body
                      else if doc.docClass.record.model == .frame then deckIds.sections else #[]

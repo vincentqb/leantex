@@ -25,6 +25,8 @@ chrome footer right framenumber
 meta title "List Marks"
 meta author "Pat Placeholder"
 frame golden
+  role frame unnumbered
+  role frame plain
   section* 0
     text "List Marks"
   block before 800/1000em from separatorgap

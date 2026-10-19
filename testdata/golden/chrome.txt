@@ -25,6 +25,8 @@ chrome footer left sectiontitle right framenumber
 meta title "Slide Chrome"
 meta author "Pat Placeholder"
 frame golden
+  role frame unnumbered
+  role frame plain
   section* 0
     text "Slide Chrome"
   block before 800/1000em from separatorgap

@@ -10204,6 +10204,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     else Id.run do
       -- frame numbers come only from `Ir.frameNumbers`, the PDF's own
       let nums := doc.frameNumbers
+      let shownNums := doc.frameShown
       let mut total := doc.frameCount
       let mut done := 0
       let labels := doc.frameLabels
@@ -10259,6 +10260,7 @@ via \\chrome is the sequence both backends share"))
         | .frame title standout _ _ fbody =>
           let frameCfg := cfg.inFrame b
           let num := nums[i]?.getD none
+          let shown := shownNums[i]?.getD none
           let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
           let label := (labels[i]?.getD none).getD "slide"
           done := num.getD done
@@ -10295,7 +10297,7 @@ retitle them apart, or link to the numbered anchor")
               (#[], walkDiags)
           walkDiags := diags2
           let node := if chromeFoot then
-              match doc.chrome.frameFootBand frameFoot curSection num total standout, node with
+              match doc.chrome.frameFootBand frameFoot curSection shown total standout, node with
               | some band, .elem tag attrs kids =>
                 let design := Design.ofPalette cfg.pal
                 let look := design.frameFootLook standout
@@ -10312,10 +10314,11 @@ retitle them apart, or link to the numbered anchor")
                   #[("class", "slide-foot size-" ++ Ir.footline.step),
                     ("style", String.intercalate " "
                       (paint ++ footCapDecl doc.page.scale band ++
-                        footBoxDecls doc.page (cfg.footBox (num.getD 0) band)))]))
+                        footBoxDecls doc.page (cfg.footBox (shown.getD 0) band)))]))
               | _, other => other
             else node
-          let node := attachLogo frameCfg node (Ir.logoInForce doc.logo logoSpans i)
+          let node := if b.plainFrame then node
+            else attachLogo frameCfg node (Ir.logoInForce doc.logo logoSpans i)
           let node := if steps > 1 then
               Html.elem "div" (#[node] ++ spacers)
                 (#[("class", "slide-track"), ("style", s!"--steps: {steps}"),
@@ -10361,6 +10364,15 @@ retitle them apart, or link to the numbered anchor")
               else kids.push (Html.elem "div"
                 #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
                 #[("class", "progress")])
+            -- a frame of the document's own spends the deck's `[c]` shares, a theme's divider centres
+            let kids := if Ir.framedSectionPage doc.body[i + 1]? then
+                let (above, below) := vdistShares doc.frameKeys .center
+                let spacer (n : Nat) : Array Node := if n == 0 then #[] else
+                  #[Html.elem "div" #[] #[("class", "fill"), ("style", s!"flex-grow: {n}")]]
+                let up := spacer above
+                let down := spacer below
+                up ++ kids ++ down
+              else kids
             let (name, named2) := claimName named (sectionPageName title)
             named := named2
             acc := acc.push (cfg.applyEpoch

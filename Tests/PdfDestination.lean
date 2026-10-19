@@ -610,8 +610,8 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
      | _, _ => false)
   -- A deck's stages answer to the names its web deck's do: frames, steps, routes, section pages.
   let deckSrc := "\\documentclass{beamer}\n\\title{Deck Title}\n\\begin{document}\n\\maketitle\n" ++
-    "\\section{Divider}\n\\begin{frame}{Intro}\n\\href{#1}{one} \\href{#1.2}{step} " ++
-    "\\href{#titlepage}{title} \\href{#section-0}{divider} \\href{#intro}{intro} " ++
+    "\\section{Divider}\n\\begin{frame}{Intro}\n\\href{#1}{one} \\href{#2.2}{step} " ++
+    "\\href{#2}{frame} \\href{#section-0}{divider} \\href{#intro}{intro} " ++
     "\\href{#intro-2}{second} \\href{#aside}{aside}\n\n\\pause\nLater words.\n\\end{frame}\n" ++
     "\\begin{frame}[standout]{Aside}Aside words.\\end{frame}\n\\end{document}\n"
   let (ddoc', dds) := elabStr deckSrc
@@ -624,7 +624,7 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
     (pdfLinks dout' == htmlLinks ddoc' && (htmlLinks ddoc').size == 7 &&
       (pdfLinks dout').all fun f => (Layout.landing? danchors dout'.pages f).isSome)
   t "a deck's stage names: a step's route lands on that step's page"
-    (match Layout.landing? danchors dout'.pages "1.2", Layout.landing? danchors dout'.pages "1.1" with
+    (match Layout.landing? danchors dout'.pages "2.2", Layout.landing? danchors dout'.pages "2.1" with
      | some a, some b => a.page == b.page + 1
      | _, _ => false)
   -- Sections sharing a title claim numbered anchors, the same in both artifacts.

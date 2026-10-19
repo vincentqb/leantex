@@ -570,6 +570,19 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       | some n, some ti => n.y < ti.y && (hasStr (lineText n) "3") &&
         (mid n - mid ti).abs * 50 < (Layout.Geom.ofPage sp.page).textWidth.abs
       | _, _ => false)
+  -- beamer's `[c]` sets 1fill above the page's content against 1.5fill below.
+  let pageH := (Layout.Geom.ofPage sp.page).pageH
+  t s!"the document's section page frame stands above the page's middle, as beamer's [c] sets it \
+({(lineWith sout 2 "Section").map (·.y.toBpString)}, \
+{(lineWith sout 2 "Teapots").map (·.y.toBpString)} of {pageH.toBpString})"
+    (match lineWith sout 2 "Section", lineWith sout 2 "Teapots" with
+      | some n, some ti => (n.y + ti.y) / 2 < pageH / 2 - pageH / 20
+      | _, _ => false)
+  let sweb := (HtmlDoc.emit {} sp).1
+  t "the web section page spends the same shares"
+    (((sweb.splitOn "<section class=\"section-page")[1]?.map fun sec =>
+      let sec := (sec.splitOn "</section>").headD ""
+      hasStr sec "flex-grow: 1000" && hasStr sec "flex-grow: 1500") == some true)
   -- A hook calls a command the preamble defines after it, a shaded entry mixes its declared colour,
   -- and beamer's hyperref option is hypersetup's keys.
   let (hooked, hds) := elabStr ("\\documentclass[hyperref={colorlinks}]{beamer}\n\\usetheme{default}\n" ++
@@ -602,3 +615,45 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     "\\begin{document}\n\\begin{frame}{One}Body.\\end{frame}\n\\end{document}\n")
   t s!"beamer's hyperref option keeps a braced value whole ({hyp.info.title})"
     (hyp.info.title == some "Kettles, Teapots")
+
+/-- Each web slide's footline text, in order: its right band's words, empty where it sets none. -/
+private def slideFeet (html : String) : Array String :=
+  ((html.splitOn "<section ").drop 1).toArray.map fun sec =>
+    let sec := (sec.splitOn "</section>").headD ""
+    match (sec.splitOn "class=\"band-right\"")[1]? with
+    | some rest => (((rest.splitOn ">")[1]?.getD "").splitOn "<").headD ""
+    | none => ""
+
+open ContentsChecks in
+/-- Frames count as the theme in force numbers them: beamer's `\maketitle` frame counted, moloch's
+plain and uncounted, a title page showing no number; a noframenumbering frame shows the number before
+it, a plain frame no footline and no logo, in both backends. -/
+def frameCountChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("frame count / " ++ claim)
+  let deck (theme : String) : String :=
+    "\\documentclass{beamer}\n" ++ theme ++ "\\title{Kettle Notes}\n\\logo{Logomark}\n" ++
+    "\\begin{document}\n\\maketitle\n\\begin{frame}{First}Alpha.\\end{frame}\n" ++
+    "\\begin{frame}[noframenumbering]{Second}Beta.\\end{frame}\n" ++
+    "\\begin{frame}[plain]{Third}Gamma.\\end{frame}\n" ++
+    "\\begin{frame}{Fourth}Delta.\\end{frame}\n\\end{document}\n"
+  let footText (p : Layout.PageOut) : String :=
+    (p.foot.map fun b => Ir.plainText (Ir.bandInlines b)).getD ""
+  let (beamer, _) := elabStr (deck "")
+  let bout := (fittedOf fonts beamer).out
+  t s!"beamer counts its title frame, a noframenumbering frame shows the number before it and a \
+plain frame none ({bout.pages.map footText})"
+    (bout.pages.map footText == #["", "2", "2", "", "4"])
+  let (moloch, _) := elabStr (deck "\\usetheme{moloch}\n")
+  let mout := (fittedOf fonts moloch).out
+  t s!"moloch's title frame is plain and uncounted ({mout.pages.map footText})"
+    (mout.pages.map footText == #["", "1", "1", "", "3"])
+  t "a plain frame sets no logo, the frames beside it theirs"
+    ((lineWith bout 3 "Logomark").isNone && (lineWith bout 2 "Logomark").isSome &&
+      (lineWith mout 3 "Logomark").isNone && (lineWith mout 4 "Logomark").isSome)
+  let bweb := (HtmlDoc.emit {} beamer).1
+  let mweb := (HtmlDoc.emit {} moloch).1
+  t s!"the web decks' footlines show the same numbers ({slideFeet bweb}, {slideFeet mweb})"
+    (slideFeet bweb == #["", "2", "2", "", "4"] && slideFeet mweb == #["", "1", "1", "", "3"])
+  t "a plain web slide carries no logo"
+    (((bweb.splitOn "<section ")[4]?.map fun s => hasStr s "Logomark") == some false &&
+      ((bweb.splitOn "<section ")[3]?.map fun s => hasStr s "Logomark") == some true)

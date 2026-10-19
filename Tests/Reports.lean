@@ -2224,7 +2224,14 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: a description label alone sets on its list's first line at the outer margin, the line after it moved by the label's width and labelsep less the 25pt indent (10.2pt for a five-letter label, -12.3pt for one letter), an inner description's label a labelsep past the outer's end; a tabular opening an item centred on its bullet, a top-aligned minipage on its first line, a parbox centred, a listing's first code line holding the bullet; a five-character label hanging in its margin and a wide one running in; the 12pt body after KOMAoptions fontsize 12pt, its lines 24.4pt apart in a list; this tree sets each the same",
       "main's binary at 6714141d on the same probes sets every such label on a line of its own, numbers the twin's items one to four, writes an inline-block for the empty box, runs in the five-character label and sets the 11pt body; the checks fail there",
       "the corpus built by main's binary at 6714141d and by this tree's: every artifact and twin byte-identical"]
-    state := .guarded "6714141d" .before .author }
+    state := .guarded "6714141d" .before .author },
+  { id := "R251", date := "2026-10-19"
+    what := "a deck's title frame went uncounted whatever the theme, where beamer's maketitle frame counts and only moloch's is plain and uncounted; a noframenumbering frame showed no number, where beamer's shows the one before it; beamer's plain frame option was ignored, the frame keeping its footline and logo; and a section page the document's own frame set was centred as moloch's, about 20pt below beamer's"
+    pins := [check% frameCountChecks, check% contentsDeckChecks, thm% Ir.frameShown_numbered]
+    accept := ["lualatex with beamer on invented probes: the default theme's maketitle frame and a frame holding titlepage number 1, the next frame 2, a noframenumbering frame after it 2 again and the frame after that 3; moloch's maketitle frame shows no number and its next frame 1; a plain frame sets no footline and no logo; and a frame setting only sectionpage under the default theme puts its section name 80.3pt and its title 114.5pt below the paper's top; this tree sets the numbers the same, a title page showing none, and the name and title at 79.4pt and 114.5pt",
+      "main's binary at 730c0b54 on the same probes: the title frame takes no number, the noframenumbering frame shows none, the plain frame shows its number and logo, and the section page's name stands at 99.9pt; the guards fail there",
+      "the corpus built by main's binary at 730c0b54 and by this tree's: the seven decks whose maketitle runs under a theme other than moloch number every frame after the title one more, and the parity deck whose plain frame sets its title page counts it the same; every other artifact is visually identical, most byte-identical"]
+    state := .guarded "730c0b54" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -281,7 +281,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0501 => probed .E0501
   | .E0502 => probed .E0502
   | .N0100 => dvE (w := w) (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
-  | .N0102 => dvE (w := w) (dvDeck "" "\\begin{frame}[plain]{T}\nx\n\\end{frame}")
+  | .N0102 => dvE (w := w) (dvDeck "" "\\begin{frame}[shrink]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (w := w) (dvDoc "" "\\paragraph[short]{A long title} x")
   | .N0104 => dvE (w := w) (dvDeck ""
       "\\begin{frame}<presentation:0>[noframenumbering]{T}\nx\n\\end{frame}")
