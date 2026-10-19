@@ -79,5 +79,38 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t "page turns: a preamble's \\widowpenalty assignment ships, read as the page's penalty"
     (ds.all (fun d => d.kind != .E0313 && d.kind != .W0301) && doc.page.penalties.widow == 10000 &&
       doc.page.penalties.club == 150)
+  -- TeX's `\parskip` stretches a point, so a page turns between paragraphs before inside one.
+  let peers (cls : String) : String :=
+    s!"\\documentclass\{{cls}}\n\\begin\{document}\n" ++
+      String.join ((List.range 80).map fun i =>
+        s!"Zulu {i} " ++ String.join (List.replicate 14 "Kilo ") ++ "Kilo.\n\n") ++ "\\end{document}\n"
+  for cls in ["article", "report"] do
+    let pages := (fittedOf oneFace (elabStr (peers cls)).1).out.pages
+    t s!"page turns: a {cls}'s pages of short paragraphs turn between them"
+      (1 < pages.size && pages.all fun p => p.lines[0]?.all fun l => hasStr (lineText l) "Zulu")
+  -- TeX's `\predisplaypenalty` keeps a display on the page of the line before it.
+  let shownAt (pre : String) (high : Nat) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\n\\noindent\\rule{1pt}{100pt}\\par\n" ++
+      s!"\\noindent\\rule\{1pt}\{{high}pt}\\par\n" ++ String.join (List.replicate 30 "Kilo ") ++
+      "Yankee\n\\[ x = y \\]\nMike " ++ String.join (List.replicate 30 "Kilo ") ++ "Kilo.\n\\end{document}\n"
+  -- Each sweep: whether it turned a page, opened one with the display, or with the line before it.
+  let sweep (pre : String) : List (Bool × Bool × Bool) := (List.range 75).map fun i =>
+    let pages := (fittedOf oneFace (elabStr (shownAt pre (300 + 4 * i))).1).out.pages
+    let opening (w : String) := (pages.extract 1 pages.size).any fun p =>
+      p.lines[0]?.any fun l => hasStr (lineText l) w && !hasStr (lineText l) "Mike"
+    (decide (1 < pages.size), opening "=", opening "Yankee")
+  let shown := sweep ""
+  t "page turns: no page opens with a display its paragraph's lines stand before"
+    (shown.any (·.1) && !shown.any (·.2.1))
+  -- The line before a display costs `\displaywidowpenalty` (50) to leave alone on a page.
+  let widowed := sweep "\\displaywidowpenalty=10000\n"
+  t "page turns: the line before a display opens a page at 50, never at a declared 10000"
+    (shown.any (·.2.2) && widowed.any (·.1) && !widowed.any (·.2.2) && !widowed.any (·.2.1))
+  let (pdoc, pds) := elabStr ("\\documentclass{article}\n\\displaywidowpenalty=10000\n" ++
+    "\\interlinepenalty=200\n\\predisplaypenalty=0\n\\begin{document}\nKilo.\n\\end{document}\n")
+  t "page turns: a preamble's display and interline penalties ship as the page's"
+    (pds.all (fun d => d.kind != .E0313 && d.kind != .W0301) &&
+      pdoc.page.penalties.displayWidow == 10000 && pdoc.page.penalties.interline == 200 &&
+      pdoc.page.penalties.predisplay == 0)
 
 end Tests.PageTurns

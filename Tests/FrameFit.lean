@@ -211,11 +211,13 @@ def breakableTitleChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _, _ => false)
   t "breakable title: the frame continues" (out.pages.size == 2)
   let article (n : Nat) : String :=
-    "\\documentclass{article}\n\\usepackage{beamerarticle}\n\\begin{document}\n" ++
+    "\\documentclass{article}\n\\usepackage{beamerarticle}\n\\clubpenalty=0\n\\widowpenalty=0\n" ++
+      "\\begin{document}\n" ++
       "\n\n".intercalate ((List.range n).map fun i =>
         s!"Kilo {i + 1} words in an invented paragraph long enough to fill a line of the " ++
           "article's measure, more or less.") ++
       "\n\n\\begin{block}{Alpha}\nLima words.\\\\\nMike words.\n\\end{block}\n\\end{document}\n"
+  -- Unpenalised, a club and widow line costs less than moving the body whole, as in TeX.
   let splits := (List.range 30).filter fun k =>
     let out := (fittedOf fira (elabStr (article (30 + k))).1).out
     match pageOf out "Alpha", pageOf out "Lima", pageOf out "Mike" with

@@ -7488,6 +7488,19 @@ private structure DisplayJob where
   lead : Nat := 0
   deriving Inhabited
 
+/-- What an in-paragraph display's first line needs below the line before it, as placement sets it:
+its two skips above and the choice between them, its baseline skip, and its box. -/
+private structure DisplayReserve where
+  above : Glue
+  aboveShort : Glue
+  ctx : Ir.DisplayCtx
+  left : Length
+  size : Length
+  baselineSkip : Length
+  height : Length
+  inkBelow : Length
+  deriving Inhabited
+
 /-- The preceding band's spacing reference: a text
 baseline, a rule's ink edge, or a box's painted extent. -/
 public inductive Spacing.Band where
@@ -7887,12 +7900,17 @@ private def Spacing.Page.keepInk (b : B) (ink : Length) : B :=
 private def Spacing.Page.displayState (b : B) (tex : Bool) (lineEnd : Option Length) : B :=
   { b with texAfter := tex, lineEnd := lineEnd }
 
-/-- TeX's choice of skip above a display (tex.web §1203), joined
-to the pending glue and remembered for the skip below. -/
+/-- Whether a display takes its long skip above, TeX's choice by the line before it (tex.web §1146). -/
+private def Spacing.Page.displayLong (b : B) (ctx : Ir.DisplayCtx) (emptyLine : Bool)
+    (left size : Length) : Bool :=
+  ctx.align ||
+    (if ctx.inPar then (b.lineEnd.map fun e => decide (left ≤ e + 2 * size)).getD true
+     else emptyLine && decide (left ≤ 2 * size))
+
+/-- TeX's choice of skip above a display (tex.web §1203), joined to the pending glue and remembered
+for the skip below. -/
 private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Length) : B :=
-  let long := dj.ctx.align ||
-    (if dj.ctx.inPar then (b.lineEnd.map fun e => decide (left ≤ e + 2 * size)).getD true
-     else dj.emptyLine && decide (left ≤ 2 * size))
+  let long := b.displayLong dj.ctx dj.emptyLine left size
   { b with skip := b.skip.add (if long then dj.above else dj.aboveShort), dispShort := !long }
 
 private theorem keepInk_boxDepth_exact (b : B) (d : Length) : (b.keepInk d).boxDepth = d := by
@@ -9505,6 +9523,9 @@ public structure Spacing.Paragraph where
   /-- The space the text after this paragraph needs on its page: nonzero
   for a heading, which TeX never lets end a page (`\@xsect`). -/
   private keepNext : Length := 0
+  /-- The display its last line runs into, which TeX's `\predisplaypenalty` keeps on that line's
+  page. -/
+  private displayNext : Option DisplayReserve := none
   /-- The paragraph is display math, set as TeX sets a display. -/
   private display : Option DisplayJob := none
   /-- The paragraph opens a painted colour box with this inset (`Ir.titledPadding`). -/
@@ -15614,8 +15635,8 @@ private def TurnRoom.cost (r : TurnRoom) (pen : Int) : Option Int :=
   bad.map fun v => if v < 10000 then (v : Int) + pen else 100000
 
 /-- The penalty of a page turn before line `k` of a paragraph broken at `breaks`: the club's after
-its first line (none after a heading may stand), the widow's before its last, the broken one's after
-a hyphen. -/
+its first line (none after a heading may stand), the widow's before its last, or the display widow's
+before a display, the broken one's after a hyphen, and the one between any two lines. -/
 private def turnPenalty (pen : Ir.PagePenalties) (j : ParaJob) (breaks : Array Nat) (k : Nat) :
     Int :=
   let hyphen := match breaks[k - 1]? with
@@ -15624,8 +15645,10 @@ private def turnPenalty (pen : Ir.PagePenalties) (j : ParaJob) (breaks : Array N
       | _ => false
     | none => false
   (if k == 1 then (if j.afterHead then 10000 else pen.club) else 0)
-    + (if k + 1 == breaks.size then pen.widow else 0)
+    + (if 0 < k && k + 1 == breaks.size then
+        (if j.displayNext.isSome then pen.displayWidow else pen.widow) else 0)
     + (if 0 < k && hyphen then pen.broken else 0)
+    + (if 0 < k then pen.interline else 0)
 
 /-- The line, from `lo` to `k`, before which TeX's page builder turns a page the line `k` overran:
 the latest at the least cost. -/
@@ -15642,21 +15665,47 @@ private def bestTurn (rooms : Array TurnRoom) (pen : Nat → Int) (lo k : Nat) :
     | none => pure ()
   return best
 
+/-- Whether the display a paragraph's last line runs into fails to stand on that line's page, by
+the skip and interline rule its placement takes (`displaySkip`, `placeLine`, `fitWith`). -/
+private def Spacing.Page.displayFails (b : B) (j : ParaJob) : Bool :=
+  j.displayNext.any fun d =>
+    let long := b.displayLong d.ctx false d.left d.size
+    let skip := b.skip.add (if long then d.above else d.aboveShort)
+    let y := b.y + skip.width + texBaselineGap d.baselineSkip b.boxDepth d.height + b.surfaceTop
+    let bottom := noteFloor b.bottom b.noteGap b.notesH (b.noteHang none)
+    !b.fresh && !b.noBreak && b.pageShrink + skip.shrink < y + d.inkBelow + b.surfaceBottom - bottom
+
 /-- The breaks before which widow and club control turns the page: at each page turn the paragraph's
 lines make, the latest line at TeX's least cost (tex.web §1005), its first only off a heading; a
 turn moved back re-places the lines from it, so each line is placed again at most once a page. -/
 private def keptTurns (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Array Nat :=
   Id.run do
   let jp := placedJob fs b j breaks
-  let pen := turnPenalty b.geom.penalties j breaks
+  let pen (k : Nat) : Int :=
+    if k < breaks.size then turnPenalty b.geom.penalties j breaks k else b.geom.penalties.predisplay
   let startOk := !b.fresh && !j.afterHead
   let mut turns : Array Nat := #[]
   let mut states : Array (B × Nat × Bool) := #[]
   let mut st := paragraphStart b j breaks
   let mut done := 0
   let mut i := 0
-  for _ in [0:breaks.size * breaks.size + breaks.size + 1] do
-    let some brk := breaks[i]? | break
+  let mut reserved := false
+  for _ in [0:breaks.size * breaks.size + 2 * breaks.size + 2] do
+    let some brk := breaks[i]? |
+      -- A display the last line runs into and its page cannot hold turns the page among the lines.
+      if reserved || !st.1.displayFails j then break
+      reserved := true
+      states := if h : i < states.size then states.set i st h else states.push st
+      let lo := if done == 0 && turns.isEmpty && startOk then 0 else done + 1
+      let t := bestTurn ((states.extract 0 (i + 1)).map (·.1.turnRoom)) pen lo i
+      if t < i then
+        if let (some tb, some back) := (breaks[t]?, states[t]?) then
+          turns := turns.push tb
+          done := t
+          st := back
+          i := t
+          continue
+      break
     states := if h : i < states.size then states.set i st h else states.push st
     let next := placeParaTurning fs jp turns st brk
     if done < i && st.1.pages.size < next.1.pages.size then
@@ -15678,11 +15727,12 @@ private def keptTurns (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
 a table row's, a float's or a listing's. -/
 private def turnsRead (b : B) (j : ParaJob) (breaks : Array Nat) : Bool :=
   b.frameBreak.isNone && !b.noBreak && j.display.isNone && j.keepNext ≤ 0 && j.rowStrut.isNone &&
-    !j.inFloat && !j.literal && 2 ≤ breaks.size
+    !j.inFloat && !j.literal && (2 ≤ breaks.size || j.displayNext.isSome)
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   let plain := placeParaWith fs b j breaks #[]
-  if plain.pages.size == b.pages.size || !turnsRead b j breaks then plain else
+  if (plain.pages.size == b.pages.size && !plain.displayFails j) || !turnsRead b j breaks then plain
+  else
   let turns := keptTurns fs b j breaks
   if turns.isEmpty then plain else placeParaWith fs b j breaks turns
 
@@ -17962,6 +18012,28 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
   else 0
 termination_by staged.size - k
 
+/-- The in-paragraph display after a paragraph, its first line as placement sets it. -/
+private def displayAfter (b : B) (fs : FontSet) (staged : Array Op) (k : Nat) :
+    Option DisplayReserve :=
+  if h : k < staged.size then
+    match staged[k] with
+    | .anchor _ => displayAfter b fs staged (k + 1)
+    | .para d t => d.display.bind fun dj =>
+      if !dj.ctx.inPar then none else
+      (t.get[0]?).map fun brk =>
+        let d := placedJob fs b d t.get
+        let g := paraLineGeom fs d b true 0 brk
+        let bs := Ir.stepSkip d.lead d.size b.geom.leading
+        let strut := if dj.ctx.align then some bs else d.strut
+        { above := dj.above, aboveShort := dj.aboveShort, ctx := dj.ctx
+          left := g.2.1 - b.geom.hmargin + (g.1.extract 0 dj.lead).foldl (· + ·.advance) 0
+          size := d.size, baselineSkip := bs, height := (lineStrutInk strut (segsInk fs g.1)).1
+          inkBelow := (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading
+            d.size g.1 d.lead).inkBelow }
+    | _ => none
+  else none
+termination_by staged.size - k
+
 /-- The op placement steps: a heading's reserve
 reaching the box after it, every other op as collected. -/
 private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array Op)
@@ -17971,8 +18043,27 @@ private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array O
     if 0 < j.keepNext then
       let reserve := max j.keepNext (keepExt b fs imgs staged (si + 1) 0)
       .para { j with keepNext := reserve } t
-    else s
+    else
+      let next := if j.display.isNone then displayAfter b fs staged (si + 1) else none
+      .para { j with displayNext := next.orElse fun _ => j.displayNext } t
   | _ => s
+
+private theorem displayAfter_end (b : B) (fs : FontSet) (staged : Array Op) (k : Nat)
+    (h : staged.size ≤ k) : displayAfter b fs staged k = none := by
+  rw [displayAfter]
+  simp only [Nat.not_lt.mpr h, dite_false]
+
+private theorem displayAfter_skip (b : B) (fs : FontSet) (staged : Array Op) (k : Nat) (g : Glue)
+    (h : k < staged.size) (hs : staged[k] = .skip g) : displayAfter b fs staged k = none := by
+  rw [displayAfter]
+  simp only [h, dite_true, hs]
+
+/-- A paragraph no in-paragraph display follows is placed as collected. -/
+private theorem keepAt_plain (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array Op)
+    (si : Nat) (j : ParaJob) (t : Task (Array Nat)) (hk : j.keepNext ≤ 0)
+    (hn : displayAfter b fs staged (si + 1) = none) :
+    keepAt b fs imgs staged si (.para j t) = .para j t := by
+  simp only [keepAt, Length.not_lt.mpr hk, ite_false, hn, ite_self, Option.orElse_none]
 
 private theorem keepAt_preservesGround (b : B) (fs : FontSet) (imgs : Image.Store)
     (staged : Array Op) (si : Nat) (s : Op) :
@@ -18305,9 +18396,7 @@ private theorem sourceBound_keepAt {n : Nat} (b : B) (fs : FontSet)
   cases op with
   | para j t =>
     simp only [keepAt]
-    split
-    · exact ⟨ho.source, ho.notes, ho.marker, ho.rule⟩
-    · exact ho
+    split <;> exact ⟨ho.source, ho.notes, ho.marker, ho.rule⟩
   | _ => exact ho
 
 private theorem sourceBound_stepFlow {n : Nat} (fs : FontSet)
@@ -22692,7 +22781,7 @@ private theorem placeParaTurning_empty (fs : FontSet) (j : ParaJob) :
 
 /-- A paragraph whose lines all fit where they stand is placed with no page turned. -/
 private theorem placePara_fits (fs : FontSet) (j : ParaJob) (breaks : Array Nat) (b : B)
-    (hj : j.display = none) (hn : j.notes.isEmpty = true)
+    (hj : j.display = none) (hd : j.displayNext = none) (hn : j.notes.isEmpty = true)
     (ha : ParagraphInputs fs (placedJob fs b j breaks) breaks.toList (paragraphStart b j breaks)) :
     placePara fs b j breaks =
       (breaks.foldl (placeParaLine fs (placedJob fs b j breaks)) (paragraphStart b j breaks)).1 := by
@@ -22704,10 +22793,11 @@ private theorem placePara_fits (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
   rw [Array.foldl_toList] at hp
   unfold placePara
   simp only [placeParaWith, placeParaTurning_empty, hp, hs, beq_self_eq_true, Bool.true_or,
-    ite_true]
+    Spacing.Page.displayFails, hd, Option.any_none, Bool.not_false, Bool.and_self, ite_true]
 
 private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
-    (a b : B) (hj : j.display = none) (hn : j.notes.isEmpty = true) (h : PageRise a b)
+    (a b : B) (hj : j.display = none) (hd : j.displayNext = none) (hn : j.notes.isEmpty = true)
+    (h : PageRise a b)
     (ha : ParagraphInputs fs (placedJob fs a j breaks) breaks.toList (paragraphStart a j breaks))
     (hb : ParagraphInputs fs (placedJob fs b j breaks) breaks.toList (paragraphStart b j breaks)) :
     PageRise (placePara fs a j breaks) (placePara fs b j breaks) := by
@@ -22718,7 +22808,7 @@ private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
     all_goals exact { h with }
   have hw : placedJob fs a j breaks = placedJob fs b j breaks := by
     simp only [placedJob, paraLineGeom, h.geom, h.xHeight]
-  rw [placePara_fits fs j breaks a hj hn ha, placePara_fits fs j breaks b hj hn hb]
+  rw [placePara_fits fs j breaks a hj hd hn ha, placePara_fits fs j breaks b hj hd hn hb]
   rw [hw] at ha
   have hp := paragraph_fold fs (placedJob fs b j breaks) hj hn breaks.toList _ _ hs rfl ha hb
   simpa only [Array.foldl_toList, hw] using hp
@@ -23004,8 +23094,10 @@ private theorem paragraph_tail_place (fs : FontSet) (ops : Array Op)
       placePara fs { st.placed.b with skip := gs.foldl Glue.add st.placed.b.skip } j t.get := by
   induction h generalizing st with
   | @last i hi hop hend =>
+    have hkp : ∀ bb, keepAt bb fs {} ops i (.para j t) = .para j t := fun bb =>
+      keepAt_plain bb fs {} ops i j t hk (displayAfter_end bb fs ops (i + 1) (by omega))
     rw [placeFlowFrom]
-    simp only [hi, reduceDIte, hop, keepAt, Length.not_lt.mpr hk, ite_false]
+    simp only [hi, reduceDIte, hop, hkp]
     rw [placeFlowFrom]
     simp only [hend, Nat.lt_irrefl, reduceDIte]
     simpa using para_step_b fs st j t hk
@@ -23062,7 +23154,8 @@ private def boundaryEnd (fs : FontSet) (b : B) (j : ParaJob)
 ordinary modes, numeric fit at every commit, natural close. -/
 public def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) : Prop :=
-  Spacing.Page.fresh b = false ∧ j.keepNext ≤ 0 ∧ j.display = none ∧ j.notes.isEmpty = true ∧
+  Spacing.Page.fresh b = false ∧ j.keepNext ≤ 0 ∧ (j.display = none ∧ j.displayNext = none) ∧
+    j.notes.isEmpty = true ∧
     ParagraphInputs fs (placedJob fs (boundaryStart b gs) j breaks) breaks.toList
       (paragraphStart (boundaryStart b gs) j breaks) ∧
     NaturalClose (boundaryEnd fs b j breaks gs)
@@ -23112,7 +23205,7 @@ public theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir
   have hb : PageRise (boundaryStart b gs) (boundaryStart b gs') :=
     ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, Length.add_le_add_left hw _,
       LinesRise.refl _, rfl, rfl⟩
-  have hp := paragraph_rise fs j breaks _ _ hs.2.2.1 hs.2.2.2.1 hb
+  have hp := paragraph_rise fs j breaks _ _ hs.2.2.1.1 hs.2.2.1.2 hs.2.2.2.1 hb
     hs.2.2.2.2.1 hs'.2.2.2.2.1
   change PageRise (boundaryEnd fs b j breaks gs) (boundaryEnd fs b j breaks gs') at hp
   rw [tail_baselines geom fs before b j breaks gs ha hs,
@@ -23135,7 +23228,7 @@ deriving instance DecidableEq for Diag
 deriving instance DecidableEq for Geom, Attribution, DecorationRule, LeaderPaint, Decorations,
   MathLineMetrics, RunMetrics
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
-deriving instance DecidableEq for NoteBlock, DisplayJob
+deriving instance DecidableEq for NoteBlock, DisplayJob, DisplayReserve
 
 private def bucketEq :
     DecidableEq (Std.DHashMap.Internal.AssocList Nat (fun _ => Length))
@@ -23220,7 +23313,10 @@ private def preparedTail? (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
       have hn : p.ops[0] ≠ .floatOpen := by simp [heq]
       have hkeep : keepAt p.initial fs {} p.ops 0 p.ops[0] =
           .para first firstTask := by
-        simp [heq, keepAt, Length.not_lt.mpr hk]
+        have hs : displayAfter p.initial fs p.ops 1 = none :=
+          displayAfter_skip p.initial fs p.ops 1 g (by simp [heq]) (by simp [heq])
+        simp only [heq, List.getElem_toArray, List.getElem_cons_zero]
+        exact keepAt_plain p.initial fs {} _ 0 first firstTask hk (heq ▸ hs)
       let st := stepFlow fs {} { placed := { b := p.initial } }
         (keepAt p.initial fs {} p.ops 0 p.ops[0])
       let input : TailInput :=
@@ -23260,6 +23356,10 @@ public def paragraphSafeDecision (fs : FontSet) (b : Page) (j : Paragraph)
     Decidable (ParagraphSafe fs b j breaks gs) := by
   letI : Decidable (j.display = none) :=
     match j.display with
+    | none => isTrue rfl
+    | some _ => isFalse fun h => by contradiction
+  letI : Decidable (j.displayNext = none) :=
+    match j.displayNext with
     | none => isTrue rfl
     | some _ => isFalse fun h => by contradiction
   letI := paragraphInputsDecidable fs (placedJob fs (boundaryStart b gs) j breaks)

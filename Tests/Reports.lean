@@ -2253,7 +2253,14 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: an itemize after text in a p{5cm} cell sets its items a leftmargin in, wrapped lines hanging at the item's text, a topsep of 8pt above and below; a paragraph break in the cell opens a line one baselineskip down, a declaration before it reaching the paragraph after; the cell's last line stands its row's strut above the next row; a list opening a minipage stands a baselineskip below the line before it, a label before it changing nothing, and one opening a beamer column spends beamer's 3pt; this tree sets the same, but a list opening a cell, where LaTeX spends its topsep below the row's baseline, stands on that baseline as a minipage's list does",
       "main's binary at 730c0b54 on the same probes: the cell stops the build with E0312 and no artifact, the paragraphs share a line, and the minipage's list stands its topsep lower; the guards fail there",
       "the corpus and the private references built by main's binary at bbdd0223c and by this tree's: every PDF byte-identical, every web page differing only in the stylesheet's rule zeroing a cell's paragraph gap, with no visible difference"]
-    state := .guarded "730c0b54" .before .author }
+    state := .guarded "730c0b54" .before .author },
+  { id := "R999", date := "2026-10-19"
+    what := "the peer gap between paragraphs had no stretch, so a page split a short paragraph into a club and a widow line LaTeX moves whole; a page could end between a display and the line before it, as it still may after a heading's one-line paragraph; and displaywidowpenalty, interlinepenalty and predisplaypenalty went unread"
+    pins := [check% Tests.PageTurns.checks]
+    accept := ["lualatex 1.24 on invented probes: two-line paragraphs in article, report and book turn every page between paragraphs, its page builder's trace costing the break before a paragraph 53 against 150 and more inside one; around a display the trace offers the break after it at 0 and before the line ahead of it at displaywidowpenalty's 50, never one between them; this tree sets each so, markdown pages taking the same stretch",
+      "main's binary at 6714141d on the checks' documents: two of three page turns split a paragraph in an article and a report, and seven of 150 pages open with a display; the checks fail there",
+      "the corpus built by main's binary at bbdd0223 and by this tree's: every artifact byte-identical"]
+    state := .guarded "6714141d" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

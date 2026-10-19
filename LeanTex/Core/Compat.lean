@@ -6634,6 +6634,9 @@ private def penaltyParam? : String → Option Native.PageKey
   | "clubpenalty" => some .clubpenalty
   | "widowpenalty" => some .widowpenalty
   | "brokenpenalty" => some .brokenpenalty
+  | "displaywidowpenalty" => some .displaywidowpenalty
+  | "interlinepenalty" => some .interlinepenalty
+  | "predisplaypenalty" => some .predisplaypenalty
   | _ => none
 
 /-- TeX's own assignment to a page-break penalty, `\widowpenalty=10000` or `\clubpenalty 150`: its
@@ -10640,18 +10643,19 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let kept := (keptItems ++ extra).filter fun kv =>
         (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright") && !memoirTitle kv &&
           !(cls == "book" && (kv == "oneside" || kv == "twoside=false")) && !oneSidedOf cls kv
-      -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
+      -- A class's `\parskip` is latex.ltx's `0pt plus 1pt` unless KOMA's `parskip=` asks for a skip
+      -- (scrkernel-paragraphs.dtx `\setparsizes`).
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
         match KeyVal.entry kv with
         | ("parskip", some v) =>
-          if v.startsWith "full" then some "1.2em plus 0.24em"
-          else if v.startsWith "half" then some "0.6em plus 0.12em"
-          else if v == "false" || v == "never" then some "0pt"
-          else some "0.6em plus 0.12em"
-        | ("parskip", none) => some "1.2em plus 0.24em"
+          if v.startsWith "half" then some "0.6em plus 0.6em"
+          else if ["false", "off", "no"].contains v then some "0pt plus 1pt"
+          else if v == "never" then some "0pt"
+          else some "1.2em plus 0.12em"
+        | ("parskip", none) => some "1.2em plus 0.12em"
         | _ => none
       let cls0 := Native.Head.documentclass kept.toArray native0
-      let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt")]
+      let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt plus 1pt")]
       became s!"\\documentclass\{{cls}}" (cls0.render ++ (page.note?.getD "")) pos
       -- memoir.cls numbers and lists headings down to the section (`\setsecnumdepth{section}`).
       let depths : Array Raw := if cls != "memoir" then #[] else

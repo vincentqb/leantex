@@ -15298,7 +15298,9 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .rule | .frontRule => "\"x; y; width; height; colour\""
   | .tmargin | .bmargin | .textheight => "a dimension, or auto"
   | .vmarginratio => "a ratio such as 2:3, or auto"
-  | .clubpenalty | .widowpenalty | .brokenpenalty => "a whole number"
+  | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty | .interlinepenalty
+  | .predisplaypenalty =>
+    "a whole number"
   | .hscale | .vscale => "a fraction of the page between 0 and 1, or auto"
   | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
 
@@ -15495,6 +15497,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         spec := { spec with penalties := { spec.penalties with widow := n } }
       | .brokenpenalty, .int n =>
         spec := { spec with penalties := { spec.penalties with broken := n } }
+      | .displaywidowpenalty, .int n =>
+        spec := { spec with penalties := { spec.penalties with displayWidow := n } }
+      | .interlinepenalty, .int n =>
+        spec := { spec with penalties := { spec.penalties with interline := n } }
+      | .predisplaypenalty, .int n =>
+        spec := { spec with penalties := { spec.penalties with predisplay := n } }
       | .bottom, .ident v =>
         match v with
         | "flush" => spec := { spec with flushBottom := some true }

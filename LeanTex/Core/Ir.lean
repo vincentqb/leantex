@@ -43,12 +43,13 @@ open LeanTex.Core LeanTex.Core.Dim
 @[expose] public def rhythmQuantum (size : Length) (factor : Nat := 1000) : Length :=
   leadingFor size factor / 2
 
-/-- The default gap between peer paragraphs: one rhythm quantum of the governing size. -/
-@[expose] public def parskipDefault (size : Length) : SymGlue :=
-  { width := Dim.SymLength.ofLength (rhythmQuantum size) }
-
 /-- TeX's own `\parskip` where nothing declares one: latex.ltx's `\parskip 0pt plus 1pt`. -/
 public def texParskipDefault : SymGlue := { stretch := Dim.SymLength.ofLength (Dim.pt 1) }
+
+/-- The default gap between peer paragraphs: one rhythm quantum of the governing size, stretching
+as TeX's `\parskip` does. -/
+@[expose] public def parskipDefault (size : Length) : SymGlue :=
+  { texParskipDefault with width := Dim.SymLength.ofLength (rhythmQuantum size) }
 
 public theorem rhythmQuantum_pos (size : Length) (h : Dim.pt 1 ≤ size) :
     0 < rhythmQuantum size := by
@@ -165,12 +166,15 @@ public theorem TextBlockDecl.place_bottom (b : TextBlockDecl) (page vm bm h m : 
   simp only [TextBlockDecl.place, hh, hm, ht]
   exact place_over _ _ _
 
-/-- TeX's page-break penalties after a paragraph's first line, before its last and after a
-hyphenated line, as latex.ltx sets them (`\clubpenalty`, `\widowpenalty`, `\brokenpenalty`). -/
+/-- TeX's page-break penalties at a paragraph's lines as latex.ltx sets them (`\clubpenalty`,
+`\widowpenalty`, `\brokenpenalty`, `\displaywidowpenalty`, `\interlinepenalty`, `\predisplaypenalty`). -/
 public structure PagePenalties where
   club : Int := 150
   widow : Int := 150
   broken : Int := 100
+  displayWidow : Int := 50
+  interline : Int := 0
+  predisplay : Int := 10000
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Page geometry, as declared by `\page`. -/
