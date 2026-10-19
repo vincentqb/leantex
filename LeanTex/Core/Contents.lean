@@ -50,11 +50,11 @@ private def nextStages (doc : Doc) : Array (Option String) := Id.run do
 private def blankTitle (title : Array Inline) : Bool :=
   (plainText title).all fun c => c.isWhitespace || c == '\u00A0'
 
-/-- A shaded entry's declared colours at the share it keeps over the page, as beamer's `colormixin`
-mixes every colour inside it. -/
+/-- A shaded entry's declared colours at the share it keeps over the page, mixed in sRGB as beamer's
+`colormixin` mixes every colour inside it. -/
 private def shadeDeclared (bg : Color) (xs : Array Inline) : Array Inline :=
   mapInlines id xs (finish := fun ys => ys.map fun x =>
-    if let .colored c _ b := x then .colored (Oklab.cover contentsShadeShare bg c) none b else x)
+    if let .colored c _ b := x then .colored (c.mix contentsShadeShare bg) none b else x)
 
 /-- One entry, unless its options hide it, a shaded one's declared colours mixed over `bg`. -/
 private def entryUnless (bg : Color) (look : ContentsShow) (e : ContentsEntry) :
@@ -70,7 +70,7 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
   let stages := nextStages doc
   let mut out : Array ContentsEntry := #[]
   let mut counts : Nat × Nat × Nat := (0, 0, 0)
-  let mut step := spec.step
+  let mut paused := 0
   for h : i in [0:doc.body.size] do
     if let .section level starred _ title := doc.body[i] then
       let (s1, s2, s3) := counts
@@ -83,14 +83,14 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
       if let some (depth, look) := at? then
         let look := if listedSection spec s1 then look else .hidden
         if !starred && !blankTitle title && depth < spec.depth then
+          -- beamerbasetoc.sty pauses before an entry's hiding is decided.
+          if (if depth == 0 then spec.pauses.1 else spec.pauses.2) then paused := paused + 1
           let shown := if depth == 2 then #[.styled (.size "footnotesize") (nameOf title)]
             else nameOf title
           if let some e := entryUnless (Design.ofPalette doc.palette).bg look
               { depth, number := none, title := shown, target := stages[i]?.join, shaded := false } then
-            let pauses := if depth == 0 then spec.pauses.1 else depth == 1 && spec.pauses.2
-            step := if pauses && !out.isEmpty then step + 1 else step
-            out := out.push (if step == spec.step then e
-              else { e with title := #[.onSteps { first := step, last := none } e.title] })
+            out := out.push (if paused ≤ 1 then e
+              else { e with title := #[.onSteps { first := paused, last := none } e.title] })
   return out
 
 /-- The rank a flow's contents list a heading at, LaTeX's section level: a section one, a

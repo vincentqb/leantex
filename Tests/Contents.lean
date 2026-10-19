@@ -527,6 +527,20 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       !shown 1 "Trays" && shown 2 "Trays")
   t s!"firstsection reads to nothing it would name ({pds.toList.map (·.code)})"
     (!pds.any fun d => d.code == "W0104")
+  let subBody := "\\section{Kettles}\n\\subsection{Copper}\n\\subsection{Steel}\n" ++
+    "\\begin{frame}{Boiling}Water boils.\\end{frame}\n\\section{Teapots}\n\\subsection{Clay}\n" ++
+    "\\begin{frame}{Steeping}Leaves steep.\\end{frame}\n"
+  let (subs, _) := elabStr ("\\documentclass{beamer}\n\\usetheme{default}\n\\begin{document}\n" ++
+    "\\begin{frame}{Overview}\\tableofcontents[pausesubsections]\\end{frame}\n" ++ subBody ++
+    "\\end{document}\n")
+  let sbout := (fittedOf fonts subs).out
+  let sdesign := Ir.Design.ofPalette subs.palette
+  let subShown (i : Nat) (w : String) : Bool :=
+    ((lineWith sbout i w).bind firstRun).map (·.1) == some sdesign.fg
+  t s!"pausesubsections steps each subsection alone, a section showing with the one before it \
+({sbout.pages.size} pages)"
+    (sbout.pages.size == 5 && subShown 0 "Kettles" && subShown 0 "Copper" && !subShown 0 "Steel" &&
+      subShown 1 "Steel" && subShown 1 "Teapots" && !subShown 1 "Clay" && subShown 2 "Clay")
   let (chosen, _) := elabStr (deck "\\tableofcontents[sections={2-3}]")
   let cout := (fittedOf fonts chosen).out
   t "sections= lists the sections it names alone"
@@ -547,12 +561,13 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let paged := "\\documentclass{beamer}\n\\usetheme{default}\n" ++
     "\\AtBeginSection[]{\\begin{frame}\\sectionpage\\end{frame}}\n\\begin{document}\n" ++ body ++
     "\\end{document}\n"
-  let (sp, _) := elabStr paged
+  let (sp, _) := elabStr (paged.replace "\\begin{document}\n"
+    "\\AtBeginSubsection[]{\\begin{frame}\\subsectionpage\\end{frame}}\n\\begin{document}\n\\section*{Lead}\n")
   let sout := (fittedOf fonts sp).out
   let mid (l : Layout.LineOut) : Dim.Sp := l.x + (l.segs.foldl (fun w s => w + s.advance) 0) / 2
-  t "the default section page sets 'Section 2' over the second section's title, both centred"
+  t "the default section page sets 'Section 3' over the third section's title, both centred"
     (match lineWith sout 2 "Section", lineWith sout 2 "Teapots" with
-      | some n, some ti => n.y < ti.y && (hasStr (lineText n) "2") &&
+      | some n, some ti => n.y < ti.y && (hasStr (lineText n) "3") &&
         (mid n - mid ti).natAbs * 50 < (Layout.Geom.ofPage sp.page).textWidth.natAbs
       | _, _ => false)
   -- A hook calls a command the preamble defines after it, a shaded entry mixes its declared colour,
@@ -574,12 +589,16 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let red := ((lineWith hout 0 "Kettles").map colorsOf).bind fun cs => cs.find? (· != hdesign.fg)
   t "a shaded entry's declared colour is mixed over the page as its other words are"
     (match lineWith hout 2 "Kettles", red with
-      | some l, some red => (colorsOf l).contains (Oklab.cover Ir.contentsShadeShare hdesign.bg red) &&
+      | some l, some red => (colorsOf l).contains (red.mix Ir.contentsShadeShare hdesign.bg) &&
           !(colorsOf l).contains red
       | _, _ => false)
   let (_, sbody, _) := HtmlDoc.emitTree {} sp
-  t "the web deck's section page carries the same name line"
+  t "the web deck's section page carries the same name line, counting the starred section"
     ((elemNodesList (· == "p") #[] sbody.toList).any fun k => match k with
       | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "section-name" &&
-          hasStr (nodeTextOne "" k) "Section"
+          hasStr (nodeTextOne "" k) "Section\u00A03"
       | _ => false)
+  let (hyp, _) := elabStr ("\\documentclass[hyperref={pdftitle={Kettles, Teapots}}]{beamer}\n" ++
+    "\\begin{document}\n\\begin{frame}{One}Body.\\end{frame}\n\\end{document}\n")
+  t s!"beamer's hyperref option keeps a braced value whole ({hyp.info.title})"
+    (hyp.info.title == some "Kettles, Teapots")

@@ -5098,10 +5098,9 @@ public structure ContentsSpec where
   depth : Nat := 3
   /-- beamer's `sections=`: the section numbers listed, every one where none is given. -/
   listed : Option (List (Nat × Option Nat)) := none
-  /-- beamer's `pausesections` and `pausesubsections`: a `\pause` before each such entry after the
-  first, the frame's step where the contents open. -/
+  /-- beamer's `pausesections` and `pausesubsections`: a `\pause` before each section, or each
+  subsection and subsubsection, entry, the first slide's counted from `\pause[0]`. -/
   pauses : Bool × Bool := (false, false)
-  step : Nat := 1
   deriving Repr, BEq, Inhabited
 
 /-- One entry of a table of contents: its depth, the number its heading prints, its title as

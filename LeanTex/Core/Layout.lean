@@ -11616,9 +11616,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
         -- beamer's default `section page`: `\sectionname~\insertsectionnumber` over the title,
         -- both centred in the section title's font.
         let large := Ir.scaleStepIn r.geom.scale r.geom.fontSize "Large"
-        let named := collectDisplay r a #[.text s!"{r.locale.crefSection.capOne}\u00A0{a.sections}"]
-          0 true large
-        let named := named.vspace { width := Ir.sectionNameSkip r.geom.fontSize large }
+        let named := if level != 1 then a else
+          (collectDisplay r a #[.text s!"{r.locale.crefSection.capOne}\u00A0{a.sections}"] 0 true
+            large).vspace { width := Ir.sectionNameSkip r.geom.fontSize large }
         collectDisplay r named title 0 true large (leaf := leaf) (span := span)
     let a := { a with fg := saved.1, ground := saved.2 }
     let thick := ((a.tokens.find? "progressheight").map

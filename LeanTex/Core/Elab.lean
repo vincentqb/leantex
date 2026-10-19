@@ -6982,8 +6982,9 @@ an option it does not model is named. -/
 private def contentsSpecOf (ctx : Ctx) (opts : Option String) (pos : Pos) :
     EM Ir.ContentsSpec := do
   let st ← get
-  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth.toNat
-                                      step := (st.ctr.pauses.getD 0) + 1 }
+  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth.toNat }
+  -- beamerbasetoc.sty's `\pause[0]`: the entries and what follows count their slides from the first.
+  modify fun st => { st with ctr := { st.ctr with pauses := st.ctr.pauses.map fun _ => 0 } }
   -- premise: contentsChecks — a run-in paragraph heading is no heading block the contents list
   if !ctx.slides && st.ctr.tocDepth > 3 then
     warnOnce ctx "contents:tocdepth" .W0104
@@ -7016,7 +7017,7 @@ the contents stop at subsubsections" pos
     | "subsubsectionstyle", some [a, b, c, d] =>
       spec := { spec with subsubsections := (a, b, c, d) }
     | "pausesections", _ => spec := { spec with pauses := (true, spec.pauses.2) }
-    | "pausesubsections", _ => spec := { spec with pauses := (true, true) }
+    | "pausesubsections", _ => spec := { spec with pauses := (spec.pauses.1, true) }
     -- premise: contentsDeckChecks — the default templates print no section number to renumber
     | "firstsection", _ => pure ()
     | "sections", _ =>

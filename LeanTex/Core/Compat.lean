@@ -9841,9 +9841,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       became "\\documentclass{beamer}" declaration.render pos
       let mut setup : Array Raw := #[]
       for e in hyper do
-        let v := (e.value.getD #[]).foldl (fun out r => match r with
-          | .group g _ => out ++ g
-          | r => out.push r) #[]
+        let v := match (e.value.getD #[]).filter (· != .space) with
+          | #[.group g _] => g
+          | _ => e.value.getD #[]
         setup := setup ++ (← hyperrefLowered "\\documentclass[hyperref={...}]{beamer}"
           "documentclass:hyperref" (← hyperrefKeys v pos) pos)
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>

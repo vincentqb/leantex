@@ -9890,6 +9890,7 @@ retitle them apart, or link to the numbered anchor")
           lastStage := some (acc.size - 1)
           cfg := cfg.afterBlock b
         | .section level _ _ title =>
+          if level == 1 then sections := sections + 1
           -- a level-one section answers to the anchor the deck's ledger claims for it
           let sa := deckIds.sections[i]?.join
           if let some a := sa then
@@ -9906,7 +9907,6 @@ retitle them apart, or link to the numbered anchor")
             held := #[]
           else if kind == .stage then
             if level == 1 then curSection := title
-            if level == 1 then sections := sections + 1
             -- beamer's default `section page`: `\sectionname~\insertsectionnumber` over the title
             let nameLine := level == 1 && ((cfg.styles.find? "sectionpage").bind (·.font)).isNone
             let kids := held ++ (if nameLine then #[Html.elem "p"
