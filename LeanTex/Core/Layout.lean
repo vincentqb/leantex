@@ -3281,6 +3281,10 @@ public def docWeightKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys fal
 /-- Every face key the document's text asks `FontSet.lookup` for, corners included. -/
 public def docFaceKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys true doc
 
+/-- The faces the document's runs ask the font set for, as both backends resolve their keys. -/
+@[expose] public def docFaceIndices (fs : FontSet) (doc : Doc) : Array Nat :=
+  (docFaceKeys doc).map fun (slot, weight, italic) => fs.lookup slot weight italic
+
 /-- One mu: 1/18 of an em at the given size (TeXbook p. 168). -/
 private def muAt (size : Sp) (mu : Int) : Sp :=
   size * mu / 18

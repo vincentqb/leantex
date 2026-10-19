@@ -15,10 +15,16 @@ open LeanTex.Core LeanTex.Core.Font LeanTex.Core.Layout
 public theorem pdf_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] :=
   Ir.OutputContract.unmet_default_exact profile
 
-public theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
-    (h : 0 < fs.fonts.size) :
-    ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.allFaces fs, ff.index = k :=
-  fun k hk => HtmlDoc.allFaces_covers fs (keepFaces_lt fs pages h k hk)
+/-- Every face the document's runs ask the PDF for, the page ships, whatever its text's uses. -/
+public theorem html_fonts_cover_pdf (fs : FontSet) (doc : Ir.Doc)
+    (uses : Option (Array HtmlFaces.Use)) (h0 : 0 < fs.fonts.size)
+    (hwf : ∀ e ∈ fs.index, e.2 < fs.fonts.size) :
+    ∀ k ∈ docFaceIndices fs doc,
+      ∃ ff ∈ HtmlDoc.shipFaces fs (docFaceIndices fs doc) uses, ff.index = k := by
+  intro k hk
+  refine HtmlDoc.shipFaces_required fs _ uses k hk ?_
+  obtain ⟨⟨slot, weight, italic⟩, _, rfl⟩ := Array.mem_map.mp hk
+  exact fs.index_total h0 hwf slot weight italic
 
 public theorem features_agree (features : Ir.Features) :
     (!(HtmlDoc.kernCssFor features).isEmpty) = Layout.kernEnabled features := by
@@ -71,12 +77,14 @@ public theorem alt_hidden_agree (floor : String) (a : Ir.Alt) :
   rw [altElem_size_exact]
   cases a <;> simp [HtmlDoc.pictureAltAttrs, HtmlDoc.attrOf?]
 
-public theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array PageOut)
-    (h : 0 < fs.fonts.size) (hp : doc.fontPolicy == .embedded) :
-    ∀ k ∈ keepFaces fs pages,
-      ∃ ff ∈ (if doc.fontPolicy == .embedded then HtmlDoc.allFaces fs else #[]),
+public theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet)
+    (uses : Option (Array HtmlFaces.Use)) (h0 : 0 < fs.fonts.size)
+    (hwf : ∀ e ∈ fs.index, e.2 < fs.fonts.size) (hp : doc.fontPolicy == .embedded) :
+    ∀ k ∈ docFaceIndices fs doc,
+      ∃ ff ∈ (if doc.fontPolicy == .embedded then
+          HtmlDoc.shipFaces fs (docFaceIndices fs doc) uses else #[]),
         ff.index = k := by
   rw [ite_eq_left hp]
-  exact html_fonts_cover_pdf fs pages h
+  exact html_fonts_cover_pdf fs doc uses h0 hwf
 
 end LeanTex.Core.Pdf

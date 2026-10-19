@@ -61,6 +61,10 @@ public structure Config where
   chapters : Bool := false
   /-- The script of the client-side math renderer the run declares, shipped inline. -/
   mathRenderer : Option String := none
+  /-- Whether the page ships every face, as where a math renderer may set text in any of them. -/
+  everyFace : Bool := false
+  /-- The faces the document's runs ask the font set for (`Layout.docFaceIndices`), each shipped. -/
+  requiredFaces : Array Nat := #[]
   styles : Styles := {}
   /-- The document's loaded images, whose intrinsic sizes `<img>` carries. -/
   imgs : Image.Store := {}
@@ -3320,40 +3324,58 @@ public def selected (faces : Array FontFace) (u : HtmlFaces.Use) : Option FontFa
   HtmlFaces.select? (fun ff => (ff.weight, ff.italic)) (u.weight, u.italic)
     (familyFaces faces u.family)
 
-/-- The `@font-face` list: the faces some use of the page selects, every face where its uses are
-unknown. -/
-public def shipFaces (fs : Font.FontSet) : Option (Array HtmlFaces.Use) → Array FontFace
+/-- Whether `ff` is the first `@font-face` of its face, the one a face the document's runs ask
+ships under. -/
+public def firstOfFace (fs : Font.FontSet) (ff : FontFace) : Bool :=
+  (allFaces fs).find? (·.index == ff.index) == some ff
+
+/-- Whether the page ships `ff`: some use selects it, or it is the first of a face the document's
+runs ask (`required`). -/
+public def shipsFace (fs : Font.FontSet) (required : Array Nat) (us : Array HtmlFaces.Use)
+    (ff : FontFace) : Bool :=
+  us.any (fun u => selected (allFaces fs) u == some ff) ||
+    (required.contains ff.index && firstOfFace fs ff)
+
+/-- The `@font-face` list: the faces some use of the page selects and the first of each face the
+document's runs ask, every face where its uses are unknown. -/
+public def shipFaces (fs : Font.FontSet) (required : Array Nat) :
+    Option (Array HtmlFaces.Use) → Array FontFace
   | none => allFaces fs
-  | some us => (allFaces fs).filter fun ff => us.any fun u => selected (allFaces fs) u == some ff
+  | some us => (allFaces fs).filter (shipsFace fs required us)
 
 /-- Every face a use selects is shipped. -/
-public theorem shipFaces_covers (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
-    ∀ u ∈ us, ∀ ff, selected (allFaces fs) u = some ff → ff ∈ shipFaces fs (some us) := by
+public theorem shipFaces_covers (fs : Font.FontSet) (required : Array Nat) (us : Array HtmlFaces.Use) :
+    ∀ u ∈ us, ∀ ff, selected (allFaces fs) u = some ff → ff ∈ shipFaces fs required (some us) := by
   intro u hu ff hsel
-  simp only [shipFaces, Array.mem_filter, Array.any_eq_true, beq_iff_eq]
-  refine ⟨?_, ?_⟩
+  simp only [shipFaces, Array.mem_filter, shipsFace, Bool.or_eq_true, Array.any_eq_true,
+    beq_iff_eq]
+  refine ⟨?_, Or.inl ?_⟩
   · have := HtmlFaces.select?_mem _ _ _ ff hsel
     simp only [familyFaces, List.mem_filter] at this
     exact Array.mem_toList_iff.mp this.1
   · obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp hu
     exact ⟨i, hi, hsel⟩
 
-/-- Nothing is shipped that no use selects. -/
-public theorem shipFaces_used (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
-    ∀ ff ∈ shipFaces fs (some us), ∃ u ∈ us, selected (allFaces fs) u = some ff := by
+/-- Nothing is shipped that no use selects but the first of a face the document's runs ask. -/
+public theorem shipFaces_used (fs : Font.FontSet) (required : Array Nat) (us : Array HtmlFaces.Use) :
+    ∀ ff ∈ shipFaces fs required (some us),
+      (∃ u ∈ us, selected (allFaces fs) u = some ff) ∨
+        (ff.index ∈ required ∧ firstOfFace fs ff = true) := by
   intro ff hff
-  simp only [shipFaces, Array.mem_filter, Array.any_eq_true, beq_iff_eq] at hff
-  obtain ⟨_, i, hi, hsel⟩ := hff
-  exact ⟨us[i], Array.getElem_mem hi, hsel⟩
+  simp only [shipFaces, Array.mem_filter, shipsFace, Bool.or_eq_true, Array.any_eq_true,
+    beq_iff_eq, Bool.and_eq_true, Array.contains_iff_mem] at hff
+  rcases hff.2 with ⟨i, hi, hsel⟩ | hreq
+  · exact Or.inl ⟨us[i], Array.getElem_mem hi, hsel⟩
+  · exact Or.inr hreq
 
 /-- Each use selects from the shipped faces what it selects from all of them, so the page's text
 sets in the faces it would with every face shipped. -/
-public theorem shipFaces_select_exact (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
-    ∀ u ∈ us, selected (shipFaces fs (some us)) u = selected (allFaces fs) u := by
+public theorem shipFaces_select_exact (fs : Font.FontSet) (required : Array Nat)
+    (us : Array HtmlFaces.Use) :
+    ∀ u ∈ us, selected (shipFaces fs required (some us)) u = selected (allFaces fs) u := by
   intro u hu
-  have hfam : familyFaces (shipFaces fs (some us)) u.family =
-      (familyFaces (allFaces fs) u.family).filter
-        (fun ff => us.any fun u => selected (allFaces fs) u == some ff) := by
+  have hfam : familyFaces (shipFaces fs required (some us)) u.family =
+      (familyFaces (allFaces fs) u.family).filter (shipsFace fs required us) := by
     simp only [familyFaces, shipFaces, Array.toList_filter, List.filter_filter, Bool.and_comm]
   unfold selected
   rw [hfam]
@@ -3364,12 +3386,35 @@ public theorem shipFaces_select_exact (fs : Font.FontSet) (us : Array HtmlFaces.
     simp [HtmlFaces.select?_nil]
   | some ff =>
     refine HtmlFaces.select?_filter _ _ _ _ ff hsel ?_
-    have := shipFaces_covers fs us u hu ff hsel
+    have := shipFaces_covers fs required us u hu ff hsel
     simp only [shipFaces, Array.mem_filter] at this
     exact this.2
 
-public theorem shipFaces_sub (fs : Font.FontSet) (uses : Option (Array HtmlFaces.Use)) :
-    ∀ ff ∈ shipFaces fs uses, ff ∈ allFaces fs := by
+/-- Every face the document's runs ask is shipped, under its first `@font-face`. -/
+public theorem shipFaces_required (fs : Font.FontSet) (required : Array Nat)
+    (uses : Option (Array HtmlFaces.Use)) :
+    ∀ k ∈ required, k < fs.fonts.size → ∃ ff ∈ shipFaces fs required uses, ff.index = k := by
+  intro k hk hlt
+  obtain ⟨ff0, hmem0, hidx0⟩ := allFaces_covers fs hlt
+  obtain ⟨ff, hfind⟩ : ∃ ff, (allFaces fs).find? (·.index == k) = some ff := by
+    cases h : (allFaces fs).find? (·.index == k) with
+    | some ff => exact ⟨ff, rfl⟩
+    | none =>
+      have := Array.find?_eq_none.mp h ff0 hmem0
+      simp [hidx0] at this
+  have hidx : ff.index = k := by simpa using Array.find?_some hfind
+  have hmem : ff ∈ allFaces fs := Array.mem_of_find?_eq_some hfind
+  refine ⟨ff, ?_, hidx⟩
+  cases uses with
+  | none => exact hmem
+  | some us =>
+    have hc : required.contains k = true := Array.contains_iff_mem.mpr hk
+    simp only [shipFaces, Array.mem_filter, shipsFace, firstOfFace, hidx, hfind, hc]
+    exact ⟨hmem, by simp⟩
+
+public theorem shipFaces_sub (fs : Font.FontSet) (required : Array Nat)
+    (uses : Option (Array HtmlFaces.Use)) :
+    ∀ ff ∈ shipFaces fs required uses, ff ∈ allFaces fs := by
   intro ff hff
   cases uses with
   | none => exact hff
@@ -3398,10 +3443,11 @@ public def profile : Ir.Realization :=
     math := .mathmlCore }
 
 /-- Artifact-specific. -/
-public theorem shipFaces_src_shipped (fs : Font.FontSet) (uses : Option (Array HtmlFaces.Use)) :
-    ∀ ff ∈ shipFaces fs uses, fontResource (fs.get ff.index) ∈ fontResources fs := by
+public theorem shipFaces_src_shipped (fs : Font.FontSet) (required : Array Nat)
+    (uses : Option (Array HtmlFaces.Use)) :
+    ∀ ff ∈ shipFaces fs required uses, fontResource (fs.get ff.index) ∈ fontResources fs := by
   intro ff hff
-  have hff := shipFaces_sub fs uses ff hff
+  have hff := shipFaces_sub fs required uses ff hff
   simp only [allFaces, Array.mem_flatMap] at hff
   obtain ⟨i, hi, hmem⟩ := hff
   simp only [Array.mem_map, List.mem_toArray] at hmem
@@ -3703,9 +3749,9 @@ private def fontFaceRule (u : PageResources) (fs : Font.FontSet) (ff : FontFace)
   s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
   s!"src: url(\"{u.fontHref fs ff.index}\") format(\"{ff.format}\"); }\n"
 
-private def fontFaceCss (u : PageResources) (fs : Font.FontSet)
+private def fontFaceCss (u : PageResources) (fs : Font.FontSet) (required : Array Nat)
     (uses : Option (Array HtmlFaces.Use)) : String :=
-  String.join ((shipFaces fs uses).toList.map (fontFaceRule u fs))
+  String.join ((shipFaces fs required uses).toList.map (fontFaceRule u fs))
 
 /-- The body weight the document resolved, and small caps as the only synthesis. -/
 private def bodyFontCss (fs : Font.FontSet) : String :=
@@ -10171,7 +10217,8 @@ one in the article class"
           (used.filter (·.startsWith "--ltx--"))) ++ "\n" ++ theme ++ styled))
   if let some fs := cfg.fonts then
     if cssCfg.css != .none then
-      let faces := fontFaceCss cfg.captured fs (faceUses fs head shipped)
+      let uses := if cfg.everyFace then none else faceUses fs head shipped
+      let faces := fontFaceCss cfg.captured fs cfg.requiredFaces uses
       if let some (.style css) := head[styleAt]? then
         head := head.modify styleAt fun _ => .style (faces ++ css)
   return (head, shipped, diags)
@@ -10185,7 +10232,8 @@ private def emitTreeWith (cfg : Config) (u : PageResources) (doc : Doc) :
     |>.map (·.family) |>.getD "math face"
   let resolved := Ir.resolveMathAlphas coverage family doc
   -- locations erased, so they hide nothing from the structural classifiers
-  let tree := emitTreeCore { cfg with mathRenderer := none, captured := u }
+  let tree := emitTreeCore
+    { cfg with mathRenderer := none, captured := u, everyFace := cfg.everyFace || cfg.mathRenderer.isSome }
     (Ir.eraseLocations resolved.1) (fun lit => styleRules resolved.1 lit)
   -- projections, not a destructuring `let`, keep `emitTree_resolve_agree` cheap to check
   (tree.1, tree.2.1 ++ mathBoundaryNodes cfg.mathRenderer, resolved.2 ++ tree.2.2)
@@ -10209,12 +10257,13 @@ public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
 set_option maxHeartbeats 2000 in
 /-- Artifact-specific. -/
 public theorem math_boundary_floor_exact (cfg : Config) (doc : Doc) :
-    (emitTree cfg doc).1 = (emitTree { cfg with mathRenderer := none } doc).1 ∧
-      (emitTree cfg doc).2.1 =
-        (emitTree { cfg with mathRenderer := none } doc).2.1 ++ mathBoundaryNodes cfg.mathRenderer ∧
-      (emitTree cfg doc).2.2 = (emitTree { cfg with mathRenderer := none } doc).2.2 := by
-  refine ⟨rfl, ?_, rfl⟩
-  simp only [emitTree, emitTreeWith, mathBoundaryNodes, Array.append_empty]
+    let floor := { cfg with mathRenderer := none, everyFace := cfg.everyFace || cfg.mathRenderer.isSome }
+    (emitTree cfg doc).1 = (emitTree floor doc).1 ∧
+      (emitTree cfg doc).2.1 = (emitTree floor doc).2.1 ++ mathBoundaryNodes cfg.mathRenderer ∧
+      (emitTree cfg doc).2.2 = (emitTree floor doc).2.2 := by
+  refine ⟨?_, ?_, ?_⟩ <;>
+    simp only [emitTree, emitTreeWith, mathBoundaryNodes, Array.append_empty, Option.isSome_none,
+      Bool.or_false]
 
 /-- Emit a document: the file, and the diagnostics the backend itself raises. -/
 public def emit (cfg : Config) (doc : Doc) : String × Array Diag :=

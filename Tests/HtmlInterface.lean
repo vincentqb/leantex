@@ -20,9 +20,10 @@ example (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
     ∃ ff ∈ HtmlDoc.allFaces fs, ff.index = k :=
   HtmlDoc.allFaces_covers fs hk
 
-example (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
-    ∀ u ∈ us, HtmlDoc.selected (HtmlDoc.shipFaces fs (some us)) u = HtmlDoc.selected (HtmlDoc.allFaces fs) u :=
-  HtmlDoc.shipFaces_select_exact fs us
+example (fs : Font.FontSet) (required : Array Nat) (us : Array HtmlFaces.Use) :
+    ∀ u ∈ us, HtmlDoc.selected (HtmlDoc.shipFaces fs required (some us)) u =
+      HtmlDoc.selected (HtmlDoc.allFaces fs) u :=
+  HtmlDoc.shipFaces_select_exact fs required us
 
 example (cfg : HtmlDoc.Config) (pic : Ir.Pic.Picture) :
     (HtmlDoc.blockNode cfg (.picture pic)).tag? = some "svg" ∧

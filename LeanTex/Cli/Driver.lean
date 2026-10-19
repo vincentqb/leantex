@@ -1054,6 +1054,7 @@ in the HTML" (← since t)
           css := cssMode
           imgs := imgs
           fonts := if shipFonts then some fs else none
+          requiredFaces := Layout.docFaceIndices fs htmlDoc
           mdHref := if emit.contains .md then twinHref mdPath doc.output.md else none
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
           footBox := fun n band => some (Layout.footBandBox (Layout.Geom.ofPage doc.page) fs imgs n band)

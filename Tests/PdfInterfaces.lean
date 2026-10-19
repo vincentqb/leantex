@@ -106,11 +106,11 @@ example (error : Pdf.WriteError) : Nat :=
   | .objectSpelling id => id
   | .inkRaster page => page
 
-example (fonts : Font.FontSet) (pages : Array Layout.PageOut)
-    (h : 0 < fonts.fonts.size) :
-    ∀ k ∈ Pdf.keepFaces fonts pages,
-      ∃ face ∈ HtmlDoc.allFaces fonts, face.index = k :=
-  Pdf.html_fonts_cover_pdf fonts pages h
+example (fonts : Font.FontSet) (doc : Ir.Doc) (uses : Option (Array HtmlFaces.Use))
+    (h : 0 < fonts.fonts.size) (hwf : ∀ e ∈ fonts.index, e.2 < fonts.fonts.size) :
+    ∀ k ∈ Layout.docFaceIndices fonts doc,
+      ∃ face ∈ HtmlDoc.shipFaces fonts (Layout.docFaceIndices fonts doc) uses, face.index = k :=
+  Pdf.html_fonts_cover_pdf fonts doc uses h hwf
 
 example (features : Ir.Features) :
     (!(HtmlDoc.kernCssFor features).isEmpty) = Layout.kernEnabled features :=

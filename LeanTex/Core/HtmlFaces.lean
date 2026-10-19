@@ -4,6 +4,7 @@ public import LeanTex.Core.Html
 public import Std.Data.HashMap
 public import Std.Data.HashSet
 import LeanTex.Core.Css
+import LeanTex.Core.Hex
 
 /-! The font requests a web page's text makes, read from its typed tree and style sheets as a
 browser's cascade (CSS Cascading 4 §6) sets `font-family`, `font-weight` and `font-style`, and the
@@ -364,10 +365,25 @@ private def inertAt (name : String) : Bool :=
   ["@font-face", "@keyframes", "@-webkit-keyframes", "@page", "@property", "@counter-style",
    "@font-feature-values", "@font-palette-values", "@view-transition"].contains name
 
+/-- Whether a style rule's block holds a nested rule (CSS Nesting), which this reading does not
+model. -/
+private def nestsRules (body : String) : Bool :=
+  (Css.atoms body).any (·.head? == some '{')
+
+/-- Whether an at-rule's block may set text's font in a way this reading does not model: a
+registered property's initial value, or a page margin box's generated content. -/
+private def unmodeledAt (name body : String) : Bool :=
+  name == "@property" || (name == "@page" && (nestsRules body || (body.splitOn "content").length > 1))
+
+/-- Whether a value rolls back to an earlier origin's, which this reading does not model. -/
+private def reverts (v : String) : Bool :=
+  (v.toLower.splitOn "revert").length > 1
+
 structure Sheet where
   rules : Array FRule := #[]
   vars : Std.HashMap String (Array String) := {}
-  /-- A sheet this reading does not see (an import) leaves every face possible. -/
+  /-- A sheet this reading does not see (an import) or a construct it does not model leaves every
+  face possible. -/
   elsewhere : Bool := false
 
 /-- A sheet's rules onto `sh`, a conditional group's rules gated. -/
@@ -392,9 +408,13 @@ def Sheet.read (sh : Sheet) (text : String) (gated : Bool) : Sheet := Id.run do
           prelude := ""
           if pre.startsWith "@" then
             let name := (pre.takeWhile (fun c => !Css.isWs c && c != '(')).toString.toLower
-            unless inertAt name do todo := todo ++ [(body, true)]
+            if unmodeledAt name body then sh := { sh with elsewhere := true }
+            else unless inertAt name do todo := todo ++ [(body, true)]
           else
+            if nestsRules body then sh := { sh with elsewhere := true }
             let decls := declsOf body
+            if decls.any fun (p, v, _) => fontProp p && reverts v then
+              sh := { sh with elsewhere := true }
             for (p, v, _) in decls do
               if p.startsWith "--" then
                 sh := { sh with vars := sh.vars.insert p ((sh.vars.getD p #[]).push v) }
@@ -561,13 +581,39 @@ private def counterChars : String :=
 /-- Characters a list item's or a disclosure's own marker may print. -/
 private def markerChars : String := "•◦▪▸▾▶▼–-.()" ++ counterChars
 
+/-- A CSS string's characters with its escapes read (CSS Syntax 3 §4.3.7): hex digits naming a code
+point and one whitespace after them, an escaped line end dropped, any other character itself. -/
+public def unescape (cs : List Char) : String := Id.run do
+  let isHex (c : Char) : Bool := (Hex.digit? c).isSome
+  let value (h : String) : Nat := (Hex.value? h.toList).getD 0
+  let mut out := ""
+  -- the hex digits after a backslash, `none` outside an escape
+  let mut hex : Option String := none
+  for c in cs do
+    match hex with
+    | none => if c == '\\' then hex := some "" else out := out.push c
+    | some h =>
+      if isHex c && h.length < 6 then hex := some (h.push c)
+      else if h.isEmpty then
+        unless Css.isLineEnd c do out := out.push c
+        hex := none
+      else
+        out := out.push (Char.ofNat (value h))
+        hex := if c == '\\' then some "" else none
+        unless Css.isWs c || c == '\\' do out := out.push c
+  if let some h := hex then
+    unless h.isEmpty do out := out.push (Char.ofNat (value h))
+  return out
+
 /-- The characters a `content` value may print: its strings, a counter's digits and letters, and
 the attributes it reads. -/
 def contentChars (attrs : Array (String × String)) (v : String) : String := Id.run do
   let mut out := ""
   for a in Css.atoms v do
     match a with
-    | q :: rest => if q == '"' || q == '\'' then out := out ++ String.ofList (rest.filter (· != q))
+    | q :: rest =>
+      if q == '"' || q == '\'' then
+        out := out ++ unescape (if rest.getLast? == some q then rest.dropLast else rest)
     | [] => pure ()
   if (v.splitOn "counter").length > 1 then out := out ++ counterChars
   for part in (v.splitOn "attr(").drop 1 do
@@ -575,14 +621,24 @@ def contentChars (attrs : Array (String × String)) (v : String) : String := Id.
     out := out ++ ((attrs.find? (·.1 == name)).map (·.2)).getD ""
   return out
 
-/-- Mathematical italic for a letter MathML Core's `math-auto` transforms: Latin and Greek. -/
+/-- Mathematical italic for a character MathML Core's `math-auto` transforms (§5.1, its italic
+table): Latin and Greek letters, dotless i and j, and the italic Greek symbols. -/
 def mathItalic (c : Char) : Option Char :=
   let n := c.toNat
   if c == 'h' then some (Char.ofNat 0x210E)
   else if 'a'.toNat ≤ n && n ≤ 'z'.toNat then some (Char.ofNat (0x1D44E + n - 'a'.toNat))
   else if 'A'.toNat ≤ n && n ≤ 'Z'.toNat then some (Char.ofNat (0x1D434 + n - 'A'.toNat))
   else if 0x3B1 ≤ n && n ≤ 0x3C9 then some (Char.ofNat (0x1D6FC + n - 0x3B1))
-  else if 0x391 ≤ n && n ≤ 0x3A9 then some (Char.ofNat (0x1D6E2 + n - 0x391))
+  else if 0x391 ≤ n && n ≤ 0x3A9 && n != 0x3A2 then some (Char.ofNat (0x1D6E2 + n - 0x391))
+  else if n == 0x3F4 then some (Char.ofNat 0x1D6F3)
+  else if n == 0x2207 then some (Char.ofNat 0x1D6FB)
+  else if n == 0x2202 then some (Char.ofNat 0x1D715)
+  else if n == 0x3F5 then some (Char.ofNat 0x1D716)
+  else if n == 0x3D1 then some (Char.ofNat 0x1D717)
+  else if n == 0x3F0 then some (Char.ofNat 0x1D718)
+  else if n == 0x3D5 then some (Char.ofNat 0x1D719)
+  else if n == 0x3F1 then some (Char.ofNat 0x1D71A)
+  else if n == 0x3D6 then some (Char.ofNat 0x1D71B)
   else if n == 0x131 then some (Char.ofNat 0x1D6A4)
   else if n == 0x237 then some (Char.ofNat 0x1D6A5)
   else none
@@ -648,6 +704,11 @@ def stateFor (env : Env) (parent : FState) (pe : Option String)
   resolve env.sheet.vars parent fun p =>
     (cands.filter fun (q, p', _) => q == pe && p' == p).map (·.2.2)
 
+/-- A box's first available font, the face holding U+0020 that sets its strut, `ex` and
+underline (CSS Fonts 4 §5.4), asked as a request for the space. -/
+private def addBox (reqs : Requests) (w : Want) : Requests :=
+  reqs.insert w ((reqs.getD w {}).insert ' ')
+
 private def addChars (reqs : Requests) (w : Want) (s : String) : Requests :=
   let set := s.foldl (fun set c =>
     if inkless c then set else (set.insert c).insert c.toUpper) (reqs.getD w {})
@@ -672,7 +733,7 @@ def walk (env : Env) : Walk Ctx Requests where
     match ctx.up with
     | [] => acc
     | e :: _ => Id.run do
-      let mut acc := acc
+      let mut acc := addBox acc ctx.state.want
       let listItem := e.tag == "li" || e.tag == "summary" ||
         ctx.cands.any fun (q, p, c) => q.isNone && p == "display" &&
           (c.value.splitOn "list-item").length > 1
@@ -683,7 +744,8 @@ def walk (env : Env) : Walk Ctx Requests where
         let chars := shown.foldl (fun s v => s ++ contentChars attrs v) ""
         let chars := if pe == "marker" && listItem then chars.append markerChars else chars
         unless chars.isEmpty do
-          acc := addChars acc (stateFor env ctx.state (some pe) ctx.cands).want chars
+          let w := (stateFor env ctx.state (some pe) ctx.cands).want
+          acc := addBox (addChars acc w chars) w
       return acc
 
 /-- What a page loads its fonts' rules from: its style sheets, the custom properties its style
@@ -714,7 +776,7 @@ public def requests (head body : Array Node) (dyn : Array String) : Option Reque
   let bodyE := subjectOf "body" #[]
   let bodyCands := candsFor env bodyE [root] #[]
   let bodyState := stateFor env rootState none bodyCands
-  return some ((walk env).list { up := [bodyE, root], state := bodyState, cands := bodyCands } {}
-    body.toList)
+  return some ((walk env).list { up := [bodyE, root], state := bodyState, cands := bodyCands }
+    (addBox (addBox {} rootState.want) bodyState.want) body.toList)
 
 end LeanTex.Core.HtmlFaces
