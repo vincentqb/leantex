@@ -677,17 +677,24 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("\\begin{figure}[h]\n\\centering\n" ++ figBody ++ "\\end{figure}\nSee \\ref{fig:p}.")
   let sig (ds : Array Diag) : Array (String × Severity × String) :=
     ds.map fun d => (d.code, d.severity, d.message)
+  -- A center's close after the caption is its float's marker (`Ir.captionCloseRole`), else nothing.
+  let unmark (d : Ir.Doc) : Ir.Doc := { d with body := d.body.map fun b => match b with
+    | .float k n ca body cap =>
+      .float k n ca (body.filter fun x => match x with
+        | .role r _ => r != Ir.captionCloseRole
+        | _ => true) cap
+    | b => b }
   let (gDoc, gDs) := elabStr (grouped "center")
   let (fDoc, fDs) := elabStr flat
-  t "a float's center group is transparent: same Ir as \\centering"
-    (gDoc == fDoc)
+  t "a float's center group is transparent: the Ir of \\centering, its close after the caption marked"
+    (unmark gDoc == fDoc && gDoc != fDoc)
   t "a float's center group is transparent: same diagnostics"
     (sig gDs == sig fDs)
   t "the caption inside the group is the float's, never unknown"
     (gDs.all (·.code != "W0301"))
   let (cDoc, cDs) := elabStr (grouped "centering")
   t "the centering environment name is the same transparent group"
-    (cDoc == fDoc && sig cDs == sig fDs)
+    (unmark cDoc == fDoc && sig cDs == sig fDs)
   let tblBody := "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n" ++
     "\\caption{An invented strip.}\n\\label{tab:s}\n"
   let (tg, tgDs) := elabStr (floatDoc
@@ -695,7 +702,7 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (tf, tfDs) := elabStr (floatDoc
     ("\\begin{table}[h]\n\\centering\n" ++ tblBody ++ "\\end{table}"))
   t "a table's center group is transparent: same Ir and diagnostics"
-    (tg == tf && sig tgDs == sig tfDs && tgDs.all (·.code != "W0301"))
+    (unmark tg == tf && tg != tf && sig tgDs == sig tfDs && tgDs.all (·.code != "W0301"))
 
 theorem backend_rgb_exact (c : Ir.Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     HtmlDoc.cssColor c =

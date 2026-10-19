@@ -9642,6 +9642,17 @@ private theorem SliceFits.keep {cur body : Array Raw} {j bound pbound : Nat} {r 
   rw [rawWeightList_push, nestedParsList_push]
   omega
 
+private theorem SliceFits.mark {cur body : Array Raw} {j bound pbound : Nat}
+    (hf : SliceFits cur body j bound pbound) (h : j < body.size) (n : String) (p : Pos) :
+    SliceFits (cur.push (.ctrl n p)) body (j + 1) bound pbound := by
+  have h1 := sliceWeight_here body h
+  have h2 := slicePars_here body h
+  have h3 := rawWeight_pos body[j]
+  unfold SliceFits at hf ⊢
+  rw [rawWeightList_push, nestedParsList_push]
+  simp only [rawWeight, nestedPars]
+  omega
+
 private theorem SliceFits.flush {cur body : Array Raw} {j k bound pbound : Nat}
     (hf : SliceFits cur body j bound pbound) (hk : j ≤ k) : SliceFits #[] body k bound pbound := by
   have := sliceWeight_le body hk
@@ -9826,15 +9837,6 @@ private theorem ItemSplitFits.close {items : Array (Array Raw)} {cur body : Arra
   simp only [rawWeightList, nestedParsList]
   omega
 
-private theorem ItemSplitFits.restart {items : Array (Array Raw)} {cur body : Array Raw}
-    {j bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : j < body.size) :
-    ItemSplitFits items #[] body (j + 1) bound pbound := by
-  have := sliceWeight_here body h
-  have := slicePars_here body h
-  unfold ItemSplitFits at hf ⊢
-  simp only [rawWeightList, nestedParsList]
-  omega
-
 private theorem ItemSplitFits.done {items : Array (Array Raw)} {cur body : Array Raw}
     {j bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : body.size ≤ j) :
     (itemsMeas rawWeightList (items.push cur).toList ≤ bound ∧
@@ -9875,6 +9877,14 @@ private def pausesKept (act : EM α) : EM α := do
   modify fun st => { st with ctr := { st.ctr with pauses := saved } }
   return r
 
+/-- Whether a `\tokens` block before a list's first `\item` sets only what the list reads as its
+own spacing (`preItemSet`). -/
+private def preItemOnly : Option Raw → Bool
+  | some (.group g _) =>
+    (Decl.splitEntries (declSrc g)).all fun entry =>
+      (Decl.splitEntry entry).any fun (key, _) => key == "itemsep" || key == "parskip"
+  | _ => false
+
 /-- Splits a list body at its `\item`s, each item with its overlay step; a `\pause` before the
 first item is the frame's, which every item stands after. -/
 private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (scope : ListScope) (j : Nat)
@@ -9894,9 +9904,10 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (scope : List
           none true inOpt true strayDiagged bound pbound
           (hfit.close h)
       else
-        itemSplitGo ctx body pos scope (j + 1) items steps #[]
+        -- The first item opens under the lengths the list's body set before it.
+        itemSplitGo ctx body pos scope (j + 1) items steps curItem
           none true inOpt true strayDiagged bound pbound
-          (hfit.restart h)
+          (hfit.skip h (Nat.le_refl _))
     | .ctrl "pause" _ =>
       -- Kept in the item, so a mid-item pause steps the rest of the frame from there.
       if seen then
@@ -9942,6 +9953,15 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (scope : List
           bound pbound
           (hfit.keep h)
       else do
+        -- An `\itemsep` or `\parskip` set here is the list's own spacing (`preItemSet`).
+        if item matches .ctrl "tokens" _ && (body[j + 1]? matches some (.group ..)) &&
+            preItemOnly body[j + 1]? then
+          return ← itemSplitGo ctx body pos scope (j + 2) items steps curItem
+            curStep awaitSpec inOpt seen strayDiagged bound pbound (hfit.skip h (by omega))
+        if item matches .ctrl "tokens" _ || (curItem.back? matches some (.ctrl "tokens" _) &&
+            item matches .group ..) then
+          return ← itemSplitGo ctx body pos scope (j + 1) items steps (curItem.push body[j])
+            curStep awaitSpec inOpt seen strayDiagged bound pbound (hfit.keep h)
         if let .ctrl c cpos := item then
           if counterCtrl c then
             -- ltlists.dtx: a counter set before the first `\item` declares.
@@ -12814,13 +12834,21 @@ after the group ends. -/
   let pal := (← get).scope.palette.current.getD ctx.palette
   return (← carryDeclsGo ctx cur 0 cur.toList (blocks, pal)).1
 
+/-- The blocks past `k` without the token and palette epochs that end them, and those epochs. -/
+private def splitEpochs (blocks : Array Block) (k : Nat) : Array Block × Array Block :=
+  let n := ((List.range (blocks.size - k)).find? fun d =>
+    !(blocks[blocks.size - 1 - d]? matches some (.setTokens _) | some (.setPalette _))).getD
+      (blocks.size - k)
+  (blocks.extract 0 (blocks.size - n), blocks.extract (blocks.size - n) blocks.size)
+
 /-- An environment's blocks, grouped unless it wraps an `\input` file, with
-their in-paragraph and display marks. -/
+their in-paragraph and display marks, read past the epochs its length scope ends on. -/
 @[noinline] private def envGroup (n : String) (base : Palette) (inPar parEnd afterEnv : Bool)
     (k : Nat) (act : EM (Array Block)) : EM (Array Block) := do
   let (blocks, epoch) ←
     if (Parse.inputEnvFile? n).isSome then (·, #[]) <$> act else texGroup base act
-  return Ir.markDisplay inPar parEnd afterEnv k (Ir.markInParagraph inPar k blocks) ++ epoch
+  let (blocks, tail) := if inPar then splitEpochs blocks k else (blocks, #[])
+  return Ir.markDisplay inPar parEnd afterEnv k (Ir.markInParagraph inPar k blocks) ++ tail ++ epoch
 
 seal nativeLinkedRow linkedRowChoice noteLinkedRow
 seal texGroup groupBlocks restoringGroup envGroup
@@ -12855,7 +12883,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || n == "framefoot" || n == "pagebreak" || n == "appendix" || (Compat.matterOf? n).isSome
     || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
       || Ir.isSectionHookName n || isSectionPageCtrl n))
-    || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
+    || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
     || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
@@ -13039,6 +13067,24 @@ private def listOptionLength (ctx : Ctx) (src : String) : Option SymGlue :=
     | .ok g => some g
     | .error _ => none
 
+/-- The `\itemsep` and `\parskip` a list's body sets from `k` before its first `\item`, as the
+list's own spacing, `\parskip` its `\parsep`. -/
+private def preItemSet (ctx : Ctx) (body : Array Raw) (k : Nat) : Ir.ListSet := Id.run do
+  let mut set : Ir.ListSet := {}
+  let mut j := k
+  for _ in [0:body.size] do
+    match body[j]?, body[j + 1]? with
+    | none, _ | some (.ctrl "item" _), _ => break
+    | some (.ctrl "tokens" _), some (.group g _) =>
+      for entry in Decl.splitEntries (declSrc g) do
+        if let some (key, v) := Decl.splitEntry entry then
+          if key == "itemsep" || key == "parskip" then
+            if let some gl := listOptionLength ctx v then
+              set := set.put (if key == "parskip" then "parsep" else key) (some gl)
+      j := j + 2
+    | some _, _ => j := j + 1
+  return set
+
 /-- A list's options and the scopes over it: the index past its options, the spacing it declares as
 enumitem sets it, its scopes in order, its own options last, over what its level's macro sets from
 the `\parskip` in force and what it keeps of the enclosing list's, and its `\parsep`. -/
@@ -13076,7 +13122,14 @@ their own specifications say" pos
     acc.over (((ctx.styles.find? e).map (·.list)).getD {})) {}
   let size := ctx.page.fontSize
   let extra := ctx.listExtra.over size depth (nest.parskip.getD (Ir.texParskipOf ctx.page))
-  let set := ((Ir.ListSet.within ctx.lists size depth nest.set).over extra).over (scopes.over own)
+  -- `\small` and `\footnotesize` redefine `\@listi` (size1x.clo) for the lists opening in them.
+  let step := (← get).scope.blockDecls.foldl (fun acc d => match d with
+    | .style (.size n) =>
+      if n == "normalsize" then none else if n == "small" || n == "footnotesize" then some n else acc
+    | _ => acc) none
+  let set := ((((Ir.ListSet.within ctx.lists size depth nest.set).over
+    (Ir.stepListI ctx.lists size step depth)).over extra).over (scopes.over own)).over
+    (preItemSet ctx body bodyFrom)
   let parsep := ((Ir.listSpacing ctx.lists size depth ctx.tokens set).map (·.1.parsep)).getD {}
   return (bodyFrom, set, parsep)
 
@@ -13181,6 +13234,7 @@ private def pageMark? (n : String) : Option Block :=
   if n == "pagebreak" then some .pagebreak
   else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
+  else if n == Ir.captionCloseRole then some (.role n #[])
   else if (Ir.pageOpeningOfRole? n).isSome then some (.role n #[])
   else none
 
@@ -13198,21 +13252,23 @@ private def openLengthScope (ctx : Ctx) (raws : Array Raw) :
       rawParsList body.toList ≤ rawParsList raws.toList ∧
       nestedParsList body.toList ≤ nestedParsList raws.toList } :=
   if let some keys := lengthScopeKeys? raws then
-    -- A length no token declared at the opening stands undeclared again at the close.
-    let saved := keys.map fun key => (key, ctx.tokens.find? key)
+    let saved := keys.map fun key =>
+      (key, (ctx.tokens.find? key).orElse fun _ => (ctx.engineTokens.find? (·.1 == key)).map (·.2))
     (saved, ⟨raws.extract 0 (raws.size - 1),
       extract_weight_le .., extract_pars_le .., extract_nested_le ..⟩)
   else
     (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩)
 
-/-- Restores a scope's saved lengths as one token epoch. -/
+/-- Restores a scope's saved lengths as one token epoch, a length none declared at its opening
+undeclared again. -/
 private def closeLengthScope (ctx : Ctx) (saved : Array (String × Option SymGlue))
     (blocks : Array Block) : EM (Array Block) := do
   if saved.isEmpty then return blocks
   let st ← get
   let tk := saved.foldl (fun tk (key, value) => match value with
-    | some g => tk.declare key g
-    | none => tk.erase key) (st.flowTokens.getD ctx.tokens)
+      | some v => tk.declare key v
+      | none => tk.erase key)
+    (st.flowTokens.getD ctx.tokens)
   modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
   return blocks.push (.setTokens tk)
 
@@ -13523,11 +13579,10 @@ text width; the box shares the leftover" spos
         figureGo ctx n kind body (j + 1) innerBlocks
           (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
           #[] caption capAbove blocks (hf.flush (by omega))
-      -- A spliced center's close after its caption stands below the caption, where the float
-      -- sets the caption last: the close has no place of its own.
+      -- A spliced center's close after its caption marks where the float sets it, after the caption.
       else if sn == "trivlist" && sbody.isEmpty && !caption.isEmpty && !capAbove then
-        figureGo ctx n kind body (j + 1) innerBlocks cols rest caption capAbove blocks
-          (hf.skip (by omega))
+        figureGo ctx n kind body (j + 1) innerBlocks cols
+          (rest.push (.ctrl Ir.captionCloseRole spos)) caption capAbove blocks (hf.mark h _ _)
       else
         figureGo ctx n kind body (j + 1) innerBlocks cols
           (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
@@ -15295,6 +15350,7 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .marks => "'cut' or 'none'"
   | .modulo => "a count of at least 1"
   | .bottom => "'flush' or 'ragged'"
+  | .lists => "'parskip' or 'standard'"
   | .rule | .frontRule => "\"x; y; width; height; colour\""
   | .tmargin | .bmargin | .textheight => "a dimension, or auto"
   | .vmarginratio => "a ratio such as 2:3, or auto"
@@ -15503,6 +15559,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         spec := { spec with penalties := { spec.penalties with interline := n } }
       | .predisplaypenalty, .int n =>
         spec := { spec with penalties := { spec.penalties with predisplay := n } }
+      | .lists, .ident v =>
+        match v with
+        | "parskip" => spec := { spec with listsParskip := true }
+        | "standard" => spec := { spec with listsParskip := false }
+        | _ =>
+          evs := say evs .E0323 s!"'lists' in '\\page' expects parskip or standard, got '{v}'"
       | .bottom, .ident v =>
         match v with
         | "flush" => spec := { spec with flushBottom := some true }
@@ -18581,7 +18643,8 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists
-                    listExtra := record.listExtra, preamble := face
+                    listExtra := if page.listsParskip then .koma else record.listExtra
+                    preamble := face
                     engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists
                     abstractNests := s.abstractForm.getD
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }

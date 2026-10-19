@@ -294,7 +294,7 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "list spacing: a list's own length the engine cannot read is named"
     (named ownUnread "itemsep" && ownUnread.all (·.severity != .error))
   t "list spacing: a scope no list spacing reads is named, and spaces nothing"
-    (["\\setlist[trivlist]{topsep=0pt}", "\\setlist[5]{itemsep=0pt}",
+    (["\\setlist[5]{itemsep=0pt}",
         "\\setlist[itemize,5]{itemsep=0pt}"].all fun pre =>
       named (ds pre basic) "sep" && steps (doc "[10pt]{article}" pre basic) abcd == over [10, 8, 10])
   t "list spacing: a list's other options are still named per list"

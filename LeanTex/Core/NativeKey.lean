@@ -11,7 +11,7 @@ public inductive PageKey where
   | expansion | numbers | marks | markGap | markThickness | linenumbers | modulo | furnituregap
   | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom | tmargin
   | bmargin | vmarginratio | clubpenalty | widowpenalty | brokenpenalty | displaywidowpenalty
-  | interlinepenalty | predisplaypenalty | hscale | vscale
+  | interlinepenalty | predisplaypenalty | hscale | vscale | lists
   deriving DecidableEq, Repr, Inhabited
 
 public def PageKey.names : List (String × PageKey) :=
@@ -30,7 +30,7 @@ public def PageKey.names : List (String × PageKey) :=
    ("displaywidowpenalty", .displaywidowpenalty), ("interlinepenalty", .interlinepenalty),
    ("predisplaypenalty", .predisplaypenalty),
    ("hscale", .hscale),
-   ("vscale", .vscale)]
+   ("vscale", .vscale), ("lists", .lists)]
 
 public def PageKey.name (k : PageKey) : String := ((PageKey.names.find? (·.2 == k)).map (·.1)).getD ""
 
@@ -41,7 +41,7 @@ public def PageKey.listed : PageKey → Bool
   | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .markGap | .markThickness
   | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom | .tmargin
   | .bmargin | .vmarginratio | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty
-  | .interlinepenalty | .predisplaypenalty | .hscale | .vscale
+  | .interlinepenalty | .predisplaypenalty | .hscale | .vscale | .lists
     => false
   | _ => true
 

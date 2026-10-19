@@ -1130,7 +1130,7 @@ milli-rem, the size file's lineage alone stating them on its levels' content. -/
 public def trivInMilli (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length)
     (tokens : Ir.Tokens) (level : Nat) (sk : Ir.ListSkips) (pts : SymGlue) : Option (Nat × Nat) :=
   if l != .sizeFile then none else
-  let t := Ir.TrivIn.within l extra size level sk pts (Ir.TrivIn.top l tokens size)
+  let t := (Ir.TrivIn.within l extra size level sk pts (Ir.TrivIn.top l tokens size)).declared tokens
   some (screenMilli size (listSkipSp size ex t.topsep),
     screenMilli size (listSkipSp size ex t.partopsep))
 
@@ -1226,7 +1226,7 @@ public structure SpineStep where
 /-- The trivlist values a list or quotation spaced `sk`, `pts` at `level` leaves in force. -/
 private def spineTrivIn (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Length) (tokens : Ir.Tokens)
     (level : Nat) (sk : Ir.ListSkips) (pts : SymGlue) : Ir.TrivIn :=
-  Ir.TrivIn.within l extra size level sk pts (Ir.TrivIn.top l tokens size)
+  (Ir.TrivIn.within l extra size level sk pts (Ir.TrivIn.top l tokens size)).declared tokens
 
 mutual
 
@@ -6229,8 +6229,8 @@ white-space: nowrap; }\n" ++
     (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome)
     (squeezed := anySqueezed doc) (sets := (Ir.listSetsOf doc.body).toList)
     (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize ex doc.tokens
-      (doc.abstractForm == .quotation) doc.body doc.docClass.record.listExtra)
-    (kinds := (Ir.quoteKindsOf doc.body).toList) (extra := doc.docClass.record.listExtra) ++
+      (doc.abstractForm == .quotation) doc.body doc.listExtra)
+    (kinds := (Ir.quoteKindsOf doc.body).toList) (extra := doc.listExtra) ++
   slideCss doc ++
   -- a standout frame inverts, at the scale's Large step for the whole frame
   s!"section.slide.standout \{ background: {roleRef .standoutGround};\n" ++
@@ -6266,8 +6266,8 @@ white-space: nowrap; }\n" ++
           (Ir.blockShapeOf doc.styles k).isSome)
         (squeezed := anySqueezed doc) (sets := (Ir.listSetsOf doc.body).toList)
         (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize ex doc.tokens
-          (doc.abstractForm == .quotation) doc.body doc.docClass.record.listExtra)
-        (kinds := (Ir.quoteKindsOf doc.body).toList) (extra := doc.docClass.record.listExtra)
+          (doc.abstractForm == .quotation) doc.body doc.listExtra)
+        (kinds := (Ir.quoteKindsOf doc.body).toList) (extra := doc.listExtra)
   else "") ++
   -- an overhanging markdown table stands centred over both margins, as its page sets it
   (if docHasNarrowingTable doc then
@@ -9571,10 +9571,13 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       else #[Html.elem "figcaption"
         (inlines cfg (Ir.numberedCaption cfg.locale kind num caption))]
     let kids := blockNodesInto cfg.into #[] body.toList
+    -- A center's close the caption below stood in stands after the caption.
+    let tail := if Ir.closesAfterCaption (!capAbove && !caption.isEmpty) body
+      then #[Html.elem "div" #[] #[("class", roleClass Ir.trivlistRole)]] else #[]
     let kindCls := floatKindClass kind
     let cls := if kind == .figure then "float" else "float " ++ kindCls
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
-      (Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
+      (Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode ++ tail)
         #[("class", cls)])
   | .contents spec entries => contentsNode cfg spec entries
   | .bibliography _ _ items =>

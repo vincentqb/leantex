@@ -235,6 +235,9 @@ public structure PageSpec where
   /-- Print only line numbers divisible by this modulus (lineno's
   `\modulolinenumbers[n]`); `none` prints every counted line. -/
   lineModulo : Option Nat := none
+  /-- Whether the list levels are the parskip package's (parskip.sty), which read a positive
+  `\parskip` as KOMA-Script's do (`ListExtra.koma`). -/
+  listsParskip : Bool := false
   /-- The distance from the running head's and foot's body-side ink edge to the body area. -/
   furnitureGap : Option Length := none
   /-- LaTeX's `\headsep`, as declared: it positions the header's baseline against the body. -/
@@ -652,6 +655,10 @@ public def Tokens.erase (t : Tokens) (key : String) : Tokens :=
 public def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
   { entries := redeclare t.entries key g }
 
+/-- The tokens with no declaration of `key`. -/
+public def Tokens.erase (t : Tokens) (key : String) : Tokens :=
+  { entries := t.entries.filter (·.1 != key) }
+
 public theorem declare_find_eq {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
     (redeclare xs k v).find? (·.1 == k) = some (k, v) := by
   have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
@@ -966,11 +973,16 @@ public def parContinuesRole : String := "par continues"
 runs on into, which stands with no paragraph gap above it. -/
 public def parRunsOnRole : String := "par runs on"
 
+/-- The role an empty marker rides in where a float's center closed after its caption, which the
+float sets after the caption (latex.ltx `\endtrivlist`). -/
+public def captionCloseRole : String := "caption close"
+
 /-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
-    n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole
+    n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
+      n == captionCloseRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -1064,6 +1076,17 @@ public def listSkips (l : ListLineage) (size : Length) (level : Nat) : Option Li
                 itemsep := s.itemsep.scaleRatio size base
                 parsep := s.parsep.scaleRatio size base
                 partopsep := s.partopsep.map (·.scaleRatio size base) }
+
+/-- The `\@listi` a size step's command redefines in the standard size files: its `\topsep`, and its
+`\parsep` that `\itemsep` repeats (size1x.clo `\small`, `\footnotesize`). -/
+private def stepListITable : Nat → String → Option (SymGlue × SymGlue)
+  | 10, "small" => some (ptsGlue 400 200 200, ptsGlue 200 100 100)
+  | 10, "footnotesize" => some (ptsGlue 300 100 100, ptsGlue 200 100 100)
+  | 11, "small" => some (ptsGlue 600 200 200, ptsGlue 300 200 100)
+  | 11, "footnotesize" => some (ptsGlue 400 200 200, ptsGlue 200 100 100)
+  | 12, "small" => some (ptsGlue 900 300 500, ptsGlue 450 200 100)
+  | 12, "footnotesize" => some (ptsGlue 600 200 200, ptsGlue 300 200 100)
+  | _, _ => none
 
 public theorem listSkips_web_exact (size : Length) (level : Nat) :
     listSkips .web size level = none := by
@@ -1159,6 +1182,22 @@ public theorem ListSet.over_absorb (s t : ListSet) : (s.over t).over t = s.over 
   rcases t with ⟨e, f, g, h⟩
   cases e <;> cases f <;> cases g <;> cases h <;> rfl
 
+/-- The values a first-level list opening in a size step takes from the `\@listi` that step's
+command redefines; none elsewhere. -/
+public def stepListI (l : ListLineage) (size : Length) (step : Option String) (level : Nat) :
+    ListSet :=
+  match l, step with
+  | .sizeFile, some n =>
+    if level != 1 then {} else
+    let f := sizeFileOf size
+    match stepListITable f n with
+    | some (t, p) =>
+      let t := if size == Dim.pt f then t else t.scaleRatio size (Dim.pt f)
+      let p := if size == Dim.pt f then p else p.scaleRatio size (Dim.pt f)
+      { topsep := some t, itemsep := some p, parsep := some p }
+    | none => {}
+  | _, _ => {}
+
 /-- What a list at `\@listdepth` `level` keeps of its enclosing list's declared values: those its
 class's level macro does not set again, the three skips at every level a size file or beamer
 defines and `\partopsep` where the level sets its own. -/
@@ -1215,8 +1254,8 @@ public theorem listSpacing_declared_exact (l : ListLineage) (size : Length) (lev
 public inductive ListExtra where
   /-- Each level's own skips stand, as the standard classes' do. -/
   | none
-  /-- KOMA-Script's `\@list@extra` (scrkernel-paragraphs.dtx): a positive `\parskip` becomes the
-  level's `\parsep`, with no `\topsep` and no `\itemsep`. -/
+  /-- KOMA-Script's `\@list@extra` (scrkernel-paragraphs.dtx), as the parskip package's levels:
+  a positive `\parskip` becomes the level's `\parsep`, with no `\topsep` and no `\itemsep`. -/
   | koma
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -1249,7 +1288,21 @@ public theorem ListExtra.koma_exact (l : ListLineage) (size : Length) (level : N
 public structure TrivIn where
   topsep : SymGlue
   partopsep : SymGlue
+  /-- The `\itemsep` a trivlist's items stand apart by. -/
+  itemsep : SymGlue
   deriving Repr, BEq, Inhabited
+
+/-- The tokens the trivlist scope's keys (enumitem's `\setlist[trivlist]`) stand in, by key. -/
+public def trivlistKeyNames : List (String × String) :=
+  [("topsep", "trivlist-topsep"), ("partopsep", "trivlist-partopsep"),
+   ("itemsep", "trivlist-itemsep")]
+
+/-- A trivlist's spacing under the trivlist scope's own keys (enumitem's `\setlist[trivlist]`),
+read wherever it opens. -/
+public def TrivIn.declared (t : TrivIn) (tokens : Tokens) : TrivIn :=
+  { topsep := (tokens.find? "trivlist-topsep").getD t.topsep
+    partopsep := (tokens.find? "trivlist-partopsep").getD t.partopsep
+    itemsep := (tokens.find? "trivlist-itemsep").getD t.itemsep }
 
 /-- `\@topsepadd`: the `\topsep` in force, with the `\partopsep` where the trivlist opens in
 vertical mode. -/
@@ -1259,8 +1312,11 @@ public def TrivIn.add (t : TrivIn) (vertical : Bool) : SymGlue :=
 /-- Outside every list: the document's `\topsep` and `\partopsep` where declared, else the
 class's. -/
 public def TrivIn.top (l : ListLineage) (tokens : Tokens) (size : Length) : TrivIn :=
-  { topsep := trivlistSkipFor l tokens size 0
-    partopsep := (tokens.find? "partopsep").getD (partopsepDefault l size) }
+  TrivIn.declared
+    { topsep := trivlistSkipFor l tokens size 0
+      partopsep := (tokens.find? "partopsep").getD (partopsepDefault l size)
+      itemsep := (tokens.find? "itemsep").getD (((listSkips l size 1).map (·.itemsep)).getD {}) }
+    tokens
 
 /-- Inside a list at `level` spaced `sk`, `pts` (`listSpacing`): the level's `\topsep` or the zero
 the class's extra leaves, which enumitem's `\trivlist` sets again over a declared one, and the
@@ -1273,7 +1329,8 @@ public def TrivIn.within (l : ListLineage) (extra : ListExtra) (size : Length) (
     { topsep := if sk.topsep == lv.topsep then lv.topsep
         else if extra == .koma && sk.topsep == {} then {}
         else ((extra.over size level sk.parsep).topsep).getD lv.topsep
-      partopsep := pts }
+      partopsep := pts
+      itemsep := sk.itemsep }
 
 /-- Where a lineage's trivlists take TeX's `\parskip` on their space; beamer's and the web's take
 the page's own, beamer's TeX's in a frame. -/
@@ -5402,6 +5459,19 @@ public inductive Block where
 @[expose] public def cellLine (cell : Array Block) : Array Inline :=
   (cellLine? cell).getD #[]
 
+/-- Whether a float's body ends where a center its caption below stood in closed
+(`captionCloseRole`). -/
+public def closesAfterCaption (capBelow : Bool) (body : Array Block) : Bool :=
+  let mark (b : Block) : Bool := match b with
+    | .role n _ => n == captionCloseRole
+    | _ => false
+  capBelow && match body.back? with
+    | some b@(.role n inner) =>
+      mark b || (n == inParagraphRole && match inner.toList with
+        | [c] => mark c
+        | _ => false)
+    | _ => false
+
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
 @[match_pattern, expose] public def Block.step (n : Nat) (last : Option Nat) (body : Array Block) : Block :=
   .onSteps ⟨n, last, [], false⟩ body
@@ -6678,7 +6748,8 @@ public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Le
 /-- Every token name an engine site reads, the names a document's length reaches the engine by. -/
 public def engineTokenNames : List String :=
   let kinds : List FloatKind := [.figure, .table, .sub, .algorithm]
-  [trivlistSkipName, "partopsep", "floatsep", "footins", bibHangName, bibSepName,
+  [trivlistSkipName, "partopsep", "itemsep", "trivlist-topsep", "trivlist-partopsep", "trivlist-itemsep",
+   "floatsep", "footins", bibHangName, bibSepName,
    displaySkipAbove, displaySkipBelow, displaySkipAboveShort, displaySkipBelowShort,
    "smallskipamount", "medskipamount", "bigskipamount", "fboxsep", "fboxrule", "headsep", "footskip",
    "topskip",
@@ -8564,6 +8635,11 @@ public def frameNumbersFrom (restart : Option Nat) (body : Array Block) : Array 
   match restart with
   | none => frameNumbers body
   | some p => frameNumbers (body.extract 0 p) ++ frameNumbers (body.extract p body.size)
+
+/-- The rule the document's list levels read the `\parskip` in force by: the parskip package's
+where it loads, else the class's. -/
+public def Doc.listExtra (doc : Doc) : ListExtra :=
+  if doc.page.listsParskip then .koma else doc.docClass.record.listExtra
 
 /-- The document's frame numbering: the body numbered whole, or each part from
 1 where `frameRestart` splits it. -/

@@ -638,10 +638,8 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let idiom := doc "" (listBody "\\setlength{\\itemsep}{0pt}")
   let ids := dvE idiom
   t "a length set before a list's first item builds" (!ids.any (·.severity == .error))
-  t "a length before a list's first item is named once, spacing that list only"
-    ((ids.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:itemsep"])
-  t "a length set before a list's first item keeps the list's level spacing"
-    (pagesOf oneFace idiom == pagesOf oneFace (doc "" (listBody "")))
+  t "a length before a list's first item is read by that list, named by nothing"
+    (!ids.any (·.code == "W0104") && pagesOf oneFace idiom != pagesOf oneFace (doc "" (listBody "")))
   let enumBody (lead : String) : String :=
     "\\begin{enumerate}" ++ lead ++ "\\item Four.\\item Five.\\end{enumerate}"
   let start := dvE (doc "" (enumBody "\\setcounter{enumi}{3}"))
@@ -721,16 +719,14 @@ def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         ds.any (·.subject == some s!"ctrl:nothing:setlength:{n}"))
     t s!"'\\{n}' in a list's body ships the page the list ships without it"
       (pagesOf oneFace src == bare)
-  -- LaTeX's trivlists after a list body's `\topsep` read it; here they read the list's level.
   let centred (lead : String) : String :=
     "\\documentclass{article}\n\\begin{document}\nAlpha words.\n\\begin{itemize}" ++ lead ++
       "\\item One.\n\\begin{center}\nTwo.\n\\end{center}\nThree.\\end{itemize}\n\\end{document}"
   let tds := dvE (centred "\\setlength{\\topsep}{7pt}")
-  t "'\\topsep' in a list's body builds, named once"
-    (!fails tds && (tds.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:topsep"])
-  t "the naming gate's premise: no trivlist in the list reads '\\topsep' set in its body"
-    (pagesOf oneFace (centred "\\setlength{\\topsep}{7pt}") == pagesOf oneFace (centred ""))
-  for n in Compat.listPerItem do
+  t "'\\topsep' in a list's body builds, read by its trivlists"
+    (!fails tds && !tds.any (·.code == "W0104") &&
+      pagesOf oneFace (centred "\\setlength{\\topsep}{7pt}") != pagesOf oneFace (centred ""))
+  for n in Compat.listPerItem.filter (!["itemsep", "parskip"].contains ·) do
     let src := doc "" s!"\\setlength\{\\{n}}\{7pt}"
     let ds := dvE src
     t s!"'\\{n}' in a list's body builds, named once"
@@ -738,14 +734,16 @@ def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         #[some s!"ctrl:setlength:{n}"])
     t s!"the naming gate's premise: no list here reads '\\{n}' set in its body"
       (pagesOf oneFace src == bare)
+  for n in ["itemsep", "parskip"] do
+    let src := doc "" s!"\\setlength\{\\{n}}\{7pt}"
+    let ds := dvE src
+    t s!"'\\{n}' in a list's body builds, read by its items"
+      (!fails ds && !ds.any (·.code == "W0104") && pagesOf oneFace src != bare)
   let tight := doc "\\providecommand{\\tightlist}{\\setlength{\\itemsep}{0pt}\\setlength{\\parskip}{0pt}}"
     "\\tightlist"
   let tds := dvE tight
-  t "pandoc's \\tightlist in a list builds" (!fails tds)
-  t "pandoc's \\tightlist names its two settings once each"
-    ((tds.filter (·.code == "W0104")).map (·.subject) ==
-      #[some "ctrl:setlength:itemsep", some "ctrl:setlength:parskip"])
-
+  t "pandoc's \\tightlist in a list builds, read by its items"
+    (!fails tds && !tds.any (·.code == "W0104") && pagesOf oneFace tight != bare)
 
 
 /-- The lengths LaTeX's kernel and standard classes declare for a document to set, each decided in

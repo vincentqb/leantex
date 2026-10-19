@@ -318,7 +318,7 @@ def styleRow : Row :=
       elements.map fun e => shown e s!"\\style\{{e}}\{ rule = {probeColor} }" }
 
 /-- An article setting every element an engine token spaces: a running head, lists at every depth,
-floats with captions above and below, a booktabs table, displays, footnotes, a framed box, skips, an
+a trivlist's items, floats with captions above and below, a booktabs table, displays, footnotes, a framed box, skips, an
 algorithm and a natbib reference list. -/
 def tokenedArticle (pre : String) : String :=
   s!"\\documentclass\{article}\n\\usepackage\{natbib}\\usepackage\{booktabs}\\usepackage\{algpseudocode}" ++
@@ -326,6 +326,7 @@ def tokenedArticle (pre : String) : String :=
     "Words before.\\footnote{Note words.} A \\fbox{boxed} word.\n" ++ setlistLists ++
     "\\begin{itemize}\\item One\\begin{itemize}\\item Two\\begin{itemize}\\item Three\\begin{itemize}" ++
     "\\item Four\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\n" ++
+    "\\begin{trivlist}\\item Trivlist one.\\item Trivlist two.\\end{trivlist}\n" ++
     "\\begin{figure}[ht]\\centering\\rule{2cm}{1cm}\\caption{Figure words}\\end{figure}\n" ++
     "\\begin{figure}[ht]\\centering\\begin{subfigure}{0.4\\textwidth}\\rule{1cm}{1cm}" ++
     "\\caption{Sub words}\\end{subfigure}\\caption{Outer words}\\end{figure}\n" ++

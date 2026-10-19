@@ -86,6 +86,8 @@ public structure Geom where
   frameTextHeight : Option Length := none
   /-- The row strut every line of a table cell's paragraphs stands on (`tableStrut`). -/
   cellStrut : Option (Length × Length) := none
+  /-- The baseline distance a scope sets its paragraphs at where their own size names no step. -/
+  lead : Option Length := none
   deriving Repr
 
 /-- Ink bounds from four lengths. -/
@@ -9735,6 +9737,8 @@ public structure Spacing.Context where
   /-- The `\topsep` and `\partopsep` the innermost list or quotation leaves in force for a trivlist
   (`Ir.TrivIn.within`); `none` outside every list, where the document's tokens stand. -/
   private trivIn : Option Ir.TrivIn := none
+  /-- The tokens in force where the innermost list opened, against which its body's `\topsep` is read. -/
+  private trivOpened : Ir.Tokens := {}
   /-- A quotation's `\listparindent`, from the class (`Ir.ClassRecord.quotationIndent`). -/
   private quotationIndent : Dim.SymLength := {}
   /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`). -/
@@ -10086,7 +10090,14 @@ private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
 
 /-- The trivlist values in force around a list opening here. -/
 private def Spacing.Context.trivOuter (r : Rd) (a : Acc) : Ir.TrivIn :=
-  r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)
+  match r.trivIn with
+  | some t =>
+    -- A `\topsep` the list's body sets is the one its trivlists after it read.
+    let t := match a.tokens.find? Ir.trivlistSkipName with
+      | some g => if r.trivOpened.find? Ir.trivlistSkipName != some g then { t with topsep := g } else t
+      | none => t
+    t.declared a.tokens
+  | none => Ir.TrivIn.top r.lists a.tokens r.geom.fontSize
 
 /-- The `\@topsepadd` a trivlist opening here spends: beamer's squeezed `\topsep` in a squeezed
 frame's list, else the `\topsep` in force, with its `\partopsep` where it opens in vertical mode. -/
@@ -10524,7 +10535,7 @@ private def collectPara (r : Rd) (a : Acc)
       itemSources := itemSources, diags := ds
       target := measure
       indent := indent, center := center, size := strutSize
-      lead := step.bind (Ir.stepLead r.geom.skips · size)
+      lead := (step.bind (Ir.stepLead r.geom.skips · size)).orElse fun _ => r.geom.lead
       firstBaseline := firstBaseline
       paintPadding := paintPadding
       strut := strut
@@ -11750,6 +11761,16 @@ private def floatPlan (capAbove hasCaption : Bool) (floatSep capSep farSep : Glu
     [.gap (floatSep.add farSep), .caption, .gap capSep, .object, .gap floatSep]
   else
     [.gap floatSep, .object, .gap capSep, .caption, .gap (floatSep.add farSep)]
+
+/-- The size step an item's opening paragraph sets its text in. -/
+private def openingStep (item : Array Block) : Option String :=
+  if let some (Block.para xs) := item[0]? then Ir.paraStep? xs else none
+
+/-- Whether a trivlist role's body is an environment's items, not a center's or a flush scope's. -/
+private def trivItems (body : Array Block) : Bool :=
+  match body.toList with
+  | [.center _] | [.ragged _ _] => false
+  | _ => true
 
 /-- Blocks that are pure state changes, which pay no
 peer gap and count as no scope's first content. -/
@@ -13815,10 +13836,17 @@ private def collectItemStep (r : Rd) (a : Acc) (spec : Ir.OverlaySpec) (body : A
 private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Length) (st : Ir.ElementStyle)
     (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) (hang : Length)
-    (num : Nat := idx) : Acc :=
+    (opened : Ir.Tokens) (num : Nat := idx) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
+    -- An `\itemsep` or a `\parskip` the list's body sets is read by the items after it.
+    let set (n : String) : Option SymGlue :=
+      (a.tokens.find? n).filter fun g => opened.find? n != some g
+    let itemsep := ((set "itemsep").map r.resolve).orElse fun _ => itemsep
+    let r := match set "parskip" with
+      | some g => { r with geom := { r.geom with parskip := g, texParskip := g } }
+      | none => r
     -- Items are peers: `\@item` spends `\addvspace\itemsep` and the paragraph its `\parskip`.
     let a := match idx == 1, st.gap, itemsep with
       | true, _, _ => a
@@ -13831,11 +13859,13 @@ private def collectItems (r : Rd) (a : Acc)
     -- A level's declared style marks it, else its redefined class label, else the class's own.
     let label := if ordered then none else (r.itemLabels.find? (·.1 == level)).map (·.2)
     let marker := st.marker.getD (label.getD (ListMark.marker ordered level num covered))
+    -- `\makelabel` sets in the font in force at the item, the step its text sets in.
+    let marker := ((openingStep item).map fun n => #[.styled (.size n) marker]).getD marker
     -- The markers of the items this list opens in stand on its first item's line, or on none.
     let a := { collectItem r a item.toList indent true marker hang with outerMarkers := #[] }
     -- An `\item[label]` steps no counter (latex.ltx `\@item`'s `\if@noitemarg`).
     let labelled := (Ir.itemLabelOf? item).isSome
-    collectItems r a rest indent st ordered level (idx + 1) itemsep hang
+    collectItems r a rest indent st ordered level (idx + 1) itemsep hang opened
       (if labelled then num else num + 1)
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
@@ -13880,7 +13910,7 @@ private def collectCentered (r : Rd) (a : Acc)
       | .waits => true
       | _ => false
     collectCentered (if statefulBlock blk || waits then r else { r with labels := #[] })
-      (if rest.isEmpty || statefulBlock blk then a else a.wantGap) rest indent (ruleBlock blk)
+      (if rest.all statefulBlock || statefulBlock blk then a else a.wantGap) rest indent (ruleBlock blk)
 
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
@@ -13973,13 +14003,14 @@ private def collectBlock (r : Rd) (a : Acc)
     let ri := match sp with
       | some (s, pts) =>
         { r with inPar := false, inLabel := false
+                 trivOpened := a.tokens
                  trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv s pts
                    (r.trivOuter a))
                  geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
       | none => { r with inPar := false, inLabel := false }
     -- beamer's squeeze (`\beamer@cramped`): `\itemsep0pt` in every list.
     let a := collectItems ri a items.toList indent st ordered level 1
-      (sk.map fun s => if r.squeeze then {} else r.resolve s.itemsep) step
+      (sk.map fun s => if r.squeeze then {} else r.resolve s.itemsep) step a.tokens
     let a := if ordered then { a with enumDepth := depth - 1 }
       else if desc then { a with descDepth := depth - 1 } else { a with itemDepth := depth - 1 }
     match st.before, top with
@@ -14014,6 +14045,10 @@ private def collectBlock (r : Rd) (a : Acc)
     if n == Ir.trivlistRole then
       let (r, a) := r.takeLabel a
       let (ri, a, g) := a.trivOpen r
+      -- The environment's items stand `\itemsep` and its `\parsep`, TeX's `\parskip`, apart.
+      let ri := if !r.lists.trivTexParskip || !trivItems body then ri
+        else { ri with geom := { ri.geom with
+          parskip := (r.trivOuter a).itemsep.add r.geom.texParskip } }
       (collectBlocks ri a body indent).trivClose r g
     else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
     -- A theorem-like block (`Ir.thmSkips`): its own space above, the `\topsep` in force below.
@@ -14063,6 +14098,7 @@ private def collectBlock (r : Rd) (a : Acc)
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
         inPar := false, inLabel := false
+        trivOpened := a.tokens
         trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv sk pts
           (r.trivOuter a))
         geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
@@ -14159,7 +14195,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A centred bold heading, then the body at its size in the class's form (`Ir.AbstractForm`).
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
-    let rs := { (r.within blk) with geom := { r.geom with fontSize := small } }
+    let lead := Ir.stepLead r.geom.skips (Ir.abstractBodySize r.styles) r.geom.fontSize
+    let rs := { (r.within blk) with geom := { r.geom with fontSize := small, lead := lead } }
     match r.abstractForm with
     | .quotation =>
       let saved := a.measure
@@ -14283,6 +14320,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let rf := { (r.within blk) with inFloat := true }
     -- In beamer's lineage the text-side gaps are the trivlist's (`Ir.floatSpaceFor`).
     let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
+    let tail := Ir.closesAfterCaption (!capAbove && !caption.isEmpty) body
     -- The caption's skip after the object adds to a trivlist's close there, as `\@makecaption`'s
     -- `\vskip\abovecaptionskip` does.
     let a := plan.zipIdx.foldl
@@ -14290,11 +14328,17 @@ private def collectBlock (r : Rd) (a : Acc)
         | .gap g =>
           if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g
           else if !capAbove && i == 2 && !caption.isEmpty then a.vskip g else a.addvspace g
-        | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
+        | .caption =>
+          let a := collectFloatCaption r rf a kind caption capLeaf capSpan indent
+          -- A center's close after the caption spends its space below it, inside the float's box.
+          if tail then
+            let a := a.trivClose rf (some (rf.trivAdd a))
+            { a with owed := a.owed.push {} }
+          else a
         -- The float's box opens as a minipage does, unless its caption above set a line first.
         | .object =>
-          collectCentered rf { a with boxTop := !capAbove || caption.isEmpty } body.toList indent
-            false) a
+          collectCentered rf { a with boxTop := !capAbove || caption.isEmpty }
+            body.toList indent false) a
     { a.pushOp .floatClose with noBreakNext := held }
   | .frame title standout valign breakable body =>
     let marks := Ir.frameMarks body
@@ -20986,7 +21030,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    chapters := doc.chapters
                    chapterInline := doc.docClass == Ir.DocClass.koma
                    lists := doc.docClass.record.lists
-                   listExtra := doc.docClass.record.listExtra
+                   listExtra := doc.listExtra
                    quotationIndent := doc.docClass.record.quotationIndent
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels

@@ -323,4 +323,96 @@ def cellChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "cells: the web page zeroes a cell's paragraph gap"
     (hasStr html ":where(:is(td, th) > *) { --parskip: 0rem; }")
 
+/-- The sizes of a line's glyph runs, in order. -/
+private def runSizes (l : Layout.LineOut) : Array Dim.Length :=
+  l.segs.filterMap fun
+    | .run _ _ _ _ glyphs size .. => if glyphs.isEmpty then none else some size
+    | _ => none
+
+/-- A list opening in `\small` spaces as size10.clo's `\small` `\@listi`, its marker set at the
+item's size; a trivlist's items stand `\itemsep` apart; an abstract leads at `\small`'s
+baselineskip; a center's close after its caption stands below the caption. -/
+def itemSpaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pitch (src a b : String) : Option Dim.Length :=
+    match yOf oneFace src a, yOf oneFace src b with
+    | some x, some y => some (y - x)
+    | _, _ => none
+  let small := article "{\\small\n\\begin{itemize}\n\\item Kilo\n\\item Lima\n\\end{itemize}\n\\par}"
+  t s!"lists: a small list's items stand 15pt apart, the small \\@listi's: {(pitch small "Kilo" "Lima").map (·.toBpString)}"
+    (pitch small "Kilo" "Lima" == some (Dim.pt 15))
+  t "lists: a small list's marker sets at its item's size"
+    ((bodyLines (layoutOf oneFace (elabStr small).1)).all fun l =>
+      let ss := runSizes l
+      ss.all (· == (ss[0]?.getD 0)))
+  let triv := article "Mike.\n\\begin{trivlist}\n\\item Kilo\n\\item Lima\n\\end{trivlist}\nOscar."
+  t s!"trivlist: items stand an itemsep apart: {(pitch triv "Kilo" "Lima").map (·.toBpString)}"
+    (pitch triv "Kilo" "Lima" == some (Dim.pt 16))
+  let abs := article ("\\begin{abstract}\nKilo words " ++
+    String.join (List.replicate 40 "lima words ") ++ "\n\\end{abstract}")
+  let absLines := (bodyLines (layoutOf oneFace (elabStr abs).1)).filter fun l =>
+    hasStr (lineText l) "lima"
+  t "abstract: its lines lead at the small baselineskip, 11pt"
+    (match absLines[0]?, absLines[1]? with
+      | some a, some b => b.y - a.y == Dim.pt 11
+      | _, _ => false)
+  let cap (opener closer : String) : Option Dim.Length :=
+    pitch (article ("Mike.\n\n\\begin{figure}[h]\n" ++ opener ++ "\\rule{2cm}{1cm}\n" ++
+      "\\caption{Kilo.}\n" ++ closer ++ "\\end{figure}\n\nLima words.")) "Kilo" "Lima"
+  t "floats: a center's close after its caption stands below the caption"
+    (match cap "\\begin{center}\n" "\\end{center}\n", cap "\\centering\n" "" with
+      | some c, some d => d + Dim.pt 8 ≤ c
+      | _, _ => false)
+  -- lualatex sets each of these lines 17.9pt below the one before.
+  let parskipped := "\\documentclass{article}\n\\usepackage{parskip}\n\\begin{document}\nMike.\n\n" ++
+    "\\begin{itemize}\n\\item Kilo\n\\item Lima\n\\end{itemize}\n\nNovember.\n\n" ++
+    "\\begin{center}\nOscar.\n\\end{center}\n\nPapa.\n\\end{document}\n"
+  let pitches := [("Mike", "Kilo"), ("Kilo", "Lima"), ("Lima", "November"), ("November", "Oscar"),
+    ("Oscar", "Papa")].map fun (a, b) => pitch parskipped a b
+  t s!"lists: the parskip package's lists and trivlists stand a parskip apart: {pitches.map (·.map (·.toBpString))}"
+    (pitches.all (· == some (Dim.pt 18)))
+  -- lualatex: items 12pt apart, the list 20pt below its lead line.
+  let tight := article ("\\providecommand{\\tightlist}{\\setlength{\\itemsep}{0pt}" ++
+    "\\setlength{\\parskip}{0pt}}\nMike.\n\\begin{itemize}\\tightlist\\item Kilo\\item Lima\\end{itemize}")
+  t s!"lists: a body's lengths set before its first item space its items: {(pitch tight "Kilo" "Lima").map (·.toBpString)}"
+    (pitch tight "Kilo" "Lima" == some (Dim.pt 12) && pitch tight "Mike" "Kilo" == some (Dim.pt 20))
+  -- lualatex: each list's items 11.95pt apart, a nested one's too, and a center after the list as
+  -- far below it as without the lengths.
+  let tl := "\\providecommand{\\tightlist}{\\setlength{\\itemsep}{0pt}\\setlength{\\parskip}{0pt}}\n"
+  let twice := article (tl ++ "Mike.\n\\begin{itemize}\\tightlist\\item Kilo\\item Lima\\end{itemize}\n" ++
+    "\\begin{itemize}\\tightlist\\item November\\item Oscar\n\\begin{itemize}\\tightlist\\item Papa" ++
+    "\\item Quebec\\end{itemize}\\end{itemize}")
+  t s!"lists: every list's own body lengths space its items, nested or after another: {[pitch twice "November" "Oscar", pitch twice "Papa" "Quebec"].map (·.map (·.toBpString))}"
+    (pitch twice "November" "Oscar" == some (Dim.pt 12) && pitch twice "Papa" "Quebec" == some (Dim.pt 12))
+  let leak (lead : String) : String := article ("Mike.\n\\begin{itemize}" ++ lead ++
+    "\\item Kilo\\end{itemize}\n\\begin{center}\nLima\n\\end{center}")
+  t "lists: a list body's lengths end with the list"
+    (pitch (leak "\\setlength{\\topsep}{30pt}\\setlength{\\itemsep}{30pt}") "Kilo" "Lima" ==
+      pitch (leak "") "Kilo" "Lima" && (pitch (leak "") "Kilo" "Lima").isSome)
+  let before (opener closer : String) : Option Dim.Length :=
+    pitch (article ("Mike.\n\n\\begin{figure}[h]\n" ++ opener ++ "\\rule{2cm}{1cm}\n" ++ closer ++
+      "\\caption{Kilo.}\n\\end{figure}\n\nLima words.")) "Mike" "Kilo"
+  t "floats: a center closing before its caption spends its close above the caption"
+    (match before "\\begin{center}\n" "\\end{center}\n", before "\\centering\n" "" with
+      | some c, some d => d + Dim.pt 8 ≤ c
+      | _, _ => false)
+  -- lualatex: a center inside a list under the trivlist scope's topsep of 20pt stands 35.9pt below.
+  let trivScoped (pre : String) : String :=
+    "\\documentclass{article}\n\\usepackage{enumitem}\n" ++ pre ++ "\\begin{document}\nMike.\n" ++
+      "\\begin{itemize}\n\\item Kilo\n\\begin{center}\nLima\n\\end{center}\n\\end{itemize}\n\\end{document}\n"
+  t "lists: the trivlist scope's topsep spaces a center inside a list"
+    (match pitch (trivScoped "\\setlist[trivlist]{topsep=20pt}\n") "Kilo" "Lima", pitch (trivScoped "") "Kilo" "Lima" with
+      | some s, some d => d + Dim.pt 10 ≤ s
+      | _, _ => false)
+  -- lualatex: under the parskip package a quote's lines stand 17.93pt from the text around it.
+  let quoted := "\\documentclass{article}\n\\usepackage{parskip}\n\\begin{document}\nMike.\n\n" ++
+    "\\begin{quote}\nKilo\n\\end{quote}\n\nLima.\n\\end{document}\n"
+  t s!"lists: the parskip package's quote stands a parskip apart: {(pitch quoted "Mike" "Kilo").map (·.toBpString)}"
+    (pitch quoted "Mike" "Kilo" == some (Dim.pt 18) && pitch quoted "Kilo" "Lima" == some (Dim.pt 18))
+  let tightDesc := article (tl ++ "Mike.\n\\begin{description}\n\\tightlist\n\\item[Kilo] Lima words.\n" ++
+    "\\item[November] Oscar words.\n\\end{description}\nPapa.")
+  t "lists: a tight description's label runs into its item's text"
+    (yOf oneFace tightDesc "Kilo" == yOf oneFace tightDesc "Lima" &&
+      pitch tightDesc "Kilo" "November" == some (Dim.pt 12) && pitch tightDesc "Mike" "Kilo" == some (Dim.pt 20))
+
 end Tests.ItemLabels

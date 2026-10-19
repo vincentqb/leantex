@@ -6353,10 +6353,12 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   let named (why : String) : M (Array Raw) := do
     nameParam n why pos
     return #[]
-  -- premise: listBodyChecks — a list-body `\topsep` ships the page without it
-  if st.inList && !st.inDef && n == Ir.trivlistSkipName then
-    nameParam n "reaches the trivlists after it in this list; here they read the list's level" pos
-    return #[]
+  -- An item's `\itemsep`, its paragraphs' `\parskip` and its trivlists' `\topsep` are read as
+  -- each sets.
+  if st.inList && !st.inDef && (n == "itemsep" || n == "parskip" || n == Ir.trivlistSkipName) then
+    write fun st => { st with localLengths :=
+      if st.localLengths.contains n then st.localLengths else st.localLengths.push n }
+    return ← carry own pos
   -- premise: listBodyChecks — a list-body parameter ships the page without it
   if st.inList && !st.inDef && (listSpent.contains n || listPerItem.contains n) then
     if listSpent.contains n then
@@ -10082,6 +10084,19 @@ in its own script's glyphs," pos
       unreadParam s!"usepackage:{p}" key s!"'{p}' option '{o}'" pos
   return out
 
+/-- parskip.sty's list levels under a positive `\parskip`: no `\topsep`, `\partopsep` or
+`\itemsep`, and the `\parskip` as each level's `\parsep` (`Ir.ListExtra.koma`), its trivlists'
+outside lists as theirs. -/
+private def parskipLists (parsep : String) (pos : Pos) : M (Array Raw) := do
+  let v := parsep.trimAscii.toString
+  let digits := (v.takeWhile fun c => c.isDigit || c == '.').toString
+  if v.startsWith "-" || (!digits.isEmpty && digits.all (fun c => c == '0' || c == '.')) then
+    return #[]
+  let what := "\\usepackage{parskip}"
+  let page ← setting what (.page #[(.lists, "parskip")]) pos
+  let triv ← setting what (.tokens #[("topsep", "0pt"), ("partopsep", "0pt"), ("itemsep", "0pt")]) pos
+  return page ++ triv
+
 /-- One package interpreted in the loading call's declared order. -/
 private def rewritePackageBody (name p : String) (opt : Option String) (optRaws : Array Raw)
     (pos : Pos) : M (Array Raw) := do
@@ -10113,6 +10128,9 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
     | _, _ =>
       out := out ++ (← setting "\\usepackage{parskip}" (.page #[(.parskip, "0.6em plus 2pt")]) pos)
       if let some v := skip then out := out ++ (← unreadableLength "parskip" (rawSrc v) pos)
+    out := out ++ (← parskipLists (match skip, read with
+      | some _, some src => src
+      | _, _ => "0.6em plus 2pt") pos)
     out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
@@ -11047,8 +11065,12 @@ a deeper level apart"
         else if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}",
           "lists nest four levels")
         else none
+  -- enumitem's trivlist scope sets the trivlists' own `\topsep`, `\partopsep` and `\itemsep`.
+  let trivTokens := if kinds.contains "trivlist" && levels.isEmpty then
+      vertical.filterMap fun (k, v) => (Ir.trivlistKeyNames.lookup k).map (·, v) else #[]
   let vUnstyled : List (String × String × String) :=
-    (kinds.filter (!Ir.listSetKinds.contains ·)).map (fun kd =>
+    (kinds.filter fun kd => !Ir.listSetKinds.contains kd &&
+      !(kd == "trivlist" && !trivTokens.isEmpty)).map (fun kd =>
         (kd, s!"'{what}' for '{kd}' lists", "a list's spacing reads itemize, enumerate and \
 description scopes")) ++
       levels.filterMap fun l =>
@@ -11081,8 +11103,9 @@ description scopes")) ++
       unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
   if vScopes.isEmpty then
     for (key, _) in vertical do
-      unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
-        (help := ((vUnstyled.head?.map (·.2.2)).getD listHelp))
+      unless (Ir.trivlistKeyNames.lookup key).any fun t => trivTokens.any (·.1 == t) do
+        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+          (help := ((vUnstyled.head?.map (·.2.2)).getD listHelp))
   -- A scope part no element styles is named once, its keys standing for the parts styled.
   unless scopes.isEmpty || styled.isEmpty do
     for (name, part, help) in unstyled do
@@ -11135,9 +11158,10 @@ description scopes")) ++
   for (el, es) in spaced do
     let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
     records := Ir.redeclare records el (held ++ es.map fun (k, v) => (k, .text v))
-  if records.isEmpty then return #[]
+  let triv ← if trivTokens.isEmpty then pure #[] else setting what (.tokens trivTokens) pos
+  if records.isEmpty then return triv
   became what (String.join (records.toList.map fun (el, es) => Native.texStyleRender el es)) pos
-  return records.foldl (init := #[]) fun out (el, es) =>
+  return records.foldl (init := triv) fun out (el, es) =>
     let style := Native.texStyle el es pos
     out ++ style
 
