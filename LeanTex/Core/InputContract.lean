@@ -393,7 +393,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
   · rename_i heq
     rw [hr] at heq
     cases heq
-    simp [input_ne_linkedBoxRowMark hn, hn, hb, pictureInSentence_input ctx hn,
+    simp [input_ne_modeEnv hn, input_ne_linkedBoxRowMark hn, hn, hb, pictureInSentence_input ctx hn,
       flushPara_empty ctx _ hm, Ir.opensInParagraph_empty_exact, Ir.lastLeavesEndPe_empty_exact,
       Ir.markInParagraph_false_id, endPeAt, envGroup]
   · rename_i heq; rw [hr] at heq; cases heq
@@ -407,7 +407,7 @@ private theorem elabEnvArm_input_scope (ctx : Ctx) (n f : String) (hn : Parse.in
         (ctx.enterInput n f)
         body) := by
   rw [elabEnvArm, openLengthScope_inert ctx body hlen]
-  simp [input_ne_scopeEnv hn, input_ne_modeEnv hn, input_ne_linesEnv hn, hn, closeLengthScope]
+  simp [input_ne_scopeEnv hn, input_ne_linesEnv hn, hn, closeLengthScope]
   rfl
 
 private theorem elabBlocksGo_blanks_end (raws : Array Raw) (blocks : Array Block) :

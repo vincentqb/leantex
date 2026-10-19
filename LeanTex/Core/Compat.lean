@@ -3723,7 +3723,8 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
        | _ => false)
   | .group body _ => condLiveList flags binds body.toList
   | .env n body _ =>
-    overlayTitled n || pictureEnvs.contains n || n == "tcolorbox" ||
+    -- An `\ifmmode`'s branch executes where its use stands, as the use's own text.
+    n == Parse.modeEnv || overlayTitled n || pictureEnvs.contains n || n == "tcolorbox" ||
       binds.contains (Tcolorbox.bindingName n) || condLiveList flags binds body.toList
   | .math _ body _ => condLiveList flags binds body.toList
   | .word _ _ => false
@@ -13012,24 +13013,26 @@ end
 
 mutual
 
-/-- Does the text spell a call of `n`: the control anywhere but as the name a definer defines,
-`naming` holding where that name is next? -/
-private def callsList (n : String) (naming : Bool) : List Raw → Bool
-  | [] => false
-  | .space :: rest => callsList n naming rest
-  | .word "*" _ :: rest => callsList n naming rest
+/-- The controls a text calls, onto `acc`: each spelled anywhere but as the name a definer
+defines, `naming` holding where that name is next, and each a `\csname` spells. -/
+private def callsList (acc : Std.HashSet String) (naming : Bool) : List Raw → Std.HashSet String
+  | [] => acc
+  | .space :: rest => callsList acc naming rest
+  | .word "*" _ :: rest => callsList acc naming rest
+  | .ctrl "csname" _ :: .word w _ :: .ctrl "endcsname" _ :: rest =>
+    callsList (acc.insert w) false rest
   | .ctrl d _ :: rest =>
-    if naming then callsList n false rest
-    else d == n || callsList n (Definer.nameDefiners.contains d) rest
+    if naming then callsList acc false rest
+    else callsList (acc.insert d) (Definer.nameDefiners.contains d) rest
   | .group g p :: rest =>
-    if naming && (g.toList.filter (· != .space)) matches [.ctrl _ _] then callsList n false rest
-    else callsRaw n (.group g p) || callsList n false rest
-  | r :: rest => callsRaw n r || callsList n false rest
+    if naming && (g.toList.filter (· != .space)) matches [.ctrl _ _] then callsList acc false rest
+    else callsList (callsRaw acc (.group g p)) false rest
+  | r :: rest => callsList (callsRaw acc r) false rest
 termination_by structural l => l
 
-private def callsRaw (n : String) : Raw → Bool
-  | .group g _ | .env _ g _ | .math _ g _ => callsList n false g.toList
-  | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => false
+private def callsRaw (acc : Std.HashSet String) : Raw → Std.HashSet String
+  | .group g _ | .env _ g _ | .math _ g _ => callsList acc false g.toList
+  | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => acc
 termination_by structural r => r
 
 end
@@ -13803,6 +13806,11 @@ private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
     match out.back? with
     | some (.env n head p) =>
       if n == parboxPending then out.pop.push (.env "minipage" (head ++ body) p) else out.push r'
+    | _ => out.push r'
+  | .group _ _, _ =>
+    match out.back? with
+    | some (.env n head p) =>
+      if n == parboxPending then (out.pop.push (.env "minipage" head p)).push r' else out.push r'
     | _ => out.push r'
   | _, _ => out.push r'
 
@@ -14996,7 +15004,9 @@ public def Executed.mentions (executed : Executed) : Array String :=
 
 /-- Each called definition execution skipped part of, by the name it defines, with that loss. -/
 public def Executed.stripped (executed : Executed) : Array Stripped :=
-  executed.state.stripped.filter fun s => callsList s.name false executed.raws.toList
+  let called := executed.state.deferred.foldl (fun acc (_, _, _, body) =>
+    callsList acc false body.toList) (callsList {} false executed.raws.toList)
+  executed.state.stripped.filter (called.contains ·.name)
 
 public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
     (executed.withRaws raws).raws = raws ∧

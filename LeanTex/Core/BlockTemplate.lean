@@ -1051,13 +1051,6 @@ private def St.close (s : St) (simple : Bool) : St :=
       let s := ({ s with frames := rest, scope := fr.saved, lst := fr.outer } : St).restoreBoxes fr
       s.pushH node
 
-/-- TeX's conditional heads: an `\if…` among them opens a conditional the
-skip counts; any other `\if…` word the reader does not read. -/
-private def condHeads : List String :=
-  ["if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner",
-   "ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase",
-   "ifdefined", "ifcsname", "iffontchar"]
-
 /-- From `i`, the index past the matching `\else` (`true`) or `\fi`, nested conditionals
 skipped whole. -/
 private def skipArm (flags : String → Option Bool) (toks : Array Tok) (i : Nat) :
@@ -1067,7 +1060,7 @@ private def skipArm (flags : String → Option Bool) (toks : Array Tok) (i : Nat
   for _ in [i:toks.size] do
     match toks[k]? with
     | some (.ctrl n) =>
-      if condHeads.contains n || (n.startsWith "if" && n.length > 2 && (flags (n.drop 2).toString).isSome)
+      if Parse.condPrimitives.contains n || (n.startsWith "if" && n.length > 2 && (flags (n.drop 2).toString).isSome)
       then depth := depth + 1
       else if n == "fi" then
         if depth == 0 then return some (k + 1, false)

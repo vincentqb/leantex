@@ -6,6 +6,7 @@ public import LeanTex.Core.ListingLang
 public import LeanTex.Core.CiteDecl
 import LeanTex.Core.Definer
 import LeanTex.Core.KeyVal
+import Std.Data.HashSet
 
 namespace LeanTex.Core.Parse
 
@@ -472,29 +473,34 @@ private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
 its mode, unforgeable because its name holds a space. -/
 @[expose] public def modeEnv : String := "ifmmode "
 
-/-- The command a `modeEnv`'s math branch records, so its source reads back as written. -/
+/-- The command a `modeEnv`'s math branch records, so its source reads back as
+`\ifmmode <math>\else <text>\fi`, the conditional TeX reads the same. -/
 @[expose] public def modeBranch : String := "\\ifmmode"
 
-/-- TeX's conditional primitives, whose `\fi` an enclosing `\ifmmode` does not take. -/
-private def condPrimitives : List String :=
-  ["if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner", "ifvoid",
-   "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase", "ifdefined", "ifcsname",
-   "iffontchar", "ifincsname"]
+/-- TeX's conditional heads, TeX82's and e-TeX's, each closed by its own `\fi`. -/
+public def condPrimitives : List String :=
+  ["if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner",
+   "ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase",
+   "ifdefined", "ifcsname", "iffontchar"]
 
 mutual
 
 /-- The conditionals `\newif` declares in a text, by name, and whether it spells `\ifmmode`. -/
-private def newifsIn (acc : Array String × Bool) : List Raw → Array String × Bool
+private def newifsIn (acc : Std.HashSet String × Bool) : List Raw → Std.HashSet String × Bool
   | [] => acc
-  | .ctrl "newif" _ :: .ctrl n _ :: rest => newifsIn (acc.1.push n, acc.2) rest
+  | .ctrl "newif" _ :: .ctrl n _ :: rest => newifsIn (acc.1.insert n, acc.2) rest
   | r :: rest => newifsIn (newifsOf acc r) rest
 
-private def newifsOf (acc : Array String × Bool) : Raw → Array String × Bool
+private def newifsOf (acc : Std.HashSet String × Bool) : Raw → Std.HashSet String × Bool
   | .group body _ | .env _ body _ | .math _ body _ => newifsIn acc body.toList
   | .ctrl n _ => (acc.1, acc.2 || n == "ifmmode")
   | .word .. | .space | .par _ | .sym .. | .verb .. => acc
 
 end
+
+/-- The engine-test conditionals packages define (ifpdf, iftex), each closed by its own `\fi`. -/
+private def packageConds : List String :=
+  ["ifpdf", "ifxetex", "ifluatex", "ifPDFTeX", "ifXeTeX", "ifLuaTeX", "ifpTeX", "ifupTeX", "iftutex"]
 
 /-- An open `\ifmmode` while one list level is read: the output before it, its math branch once
 `\else` is met, and how many other conditionals stand open inside it. -/
@@ -506,8 +512,9 @@ private structure ModeFrame where
 
 /-- One list level with each `\ifmmode … \else … \fi` it closes read as a `modeEnv`; one left
 open stays as written. -/
-private def modeLevel (conds : Array String) (xs : Array Raw) : Array Raw := Id.run do
-  let isCond (n : String) : Bool := condPrimitives.contains n || n.startsWith "if@" || conds.contains n
+private def modeLevel (conds : Std.HashSet String) (xs : Array Raw) : Array Raw := Id.run do
+  let isCond (n : String) : Bool :=
+    condPrimitives.contains n || packageConds.contains n || n.startsWith "if@" || conds.contains n
   let mut frames : Array ModeFrame := #[]
   let mut acc : Array Raw := #[]
   for r in xs do
@@ -539,12 +546,12 @@ private def modeLevel (conds : Array String) (xs : Array Raw) : Array Raw := Id.
       if isCond n then frames := frames.pop.push { f with depth := f.depth + 1 }
       acc := acc.push r
     | _, _ => acc := acc.push r
-  for f in frames.reverse do
-    let opened := match f.math with
-      | some (m, ep) => (#[Raw.ctrl "ifmmode" f.pos] ++ m).push (.ctrl "else" ep)
-      | none => #[Raw.ctrl "ifmmode" f.pos]
-    acc := f.outer ++ opened ++ acc
-  return acc
+  -- Each open frame's output precedes the one it holds, so the levels join outermost first.
+  let mut out : Array Raw := #[]
+  for f in frames do
+    out := (out ++ f.outer).push (.ctrl "ifmmode" f.pos)
+    if let some (m, ep) := f.math then out := (out ++ m).push (.ctrl "else" ep)
+  return out ++ acc
 
 /-- The picture environments, whose reader decides `\ifmmode` as pgf's horizontal box does. -/
 private def pictureBodies : List String := ["tikzpicture", "picture", "tikzcd", "external"]
@@ -552,11 +559,11 @@ private def pictureBodies : List String := ["tikzpicture", "picture", "tikzcd", 
 mutual
 
 -- conserves: none — reads each closed `\ifmmode` as the mode reading it
-private def modeList (conds : Array String) (acc : Array Raw) : List Raw → Array Raw
+private def modeList (conds : Std.HashSet String) (acc : Array Raw) : List Raw → Array Raw
   | [] => acc
   | r :: rest => modeList conds (acc.push (modeRaw conds r)) rest
 
-private def modeRaw (conds : Array String) : Raw → Raw
+private def modeRaw (conds : Std.HashSet String) : Raw → Raw
   | .group body p => .group (modeLevel conds (modeList conds #[] body.toList)) p
   | .env n body p =>
     if pictureBodies.contains n then .env n body p
@@ -573,7 +580,7 @@ end
 
 /-- A parsed text with each `\ifmmode` it closes at one list level read as a `modeEnv`. -/
 public def modeChoices (raws : Array Raw) : Array Raw :=
-  let (conds, spelled) := newifsIn (#[], false) raws.toList
+  let (conds, spelled) := newifsIn ({}, false) raws.toList
   if spelled then modeLevel conds (modeList conds #[] raws.toList) else raws
 
 /-- Parses tokens into a `Raw` forest in one pass with an explicit frame stack;

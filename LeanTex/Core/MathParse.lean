@@ -227,11 +227,12 @@ public structure Env where
 named as lost. -/
 private def textStyleCtrl : List String :=
   ["textbf", "textit", "textsf", "texttt", "textsc", "emph",
-   "bf", "it", "sf", "tt"]
+   "bf", "it", "sf", "tt", "bfseries", "itshape", "slshape", "scshape", "sffamily", "ttfamily"]
 
 /-- Wrappers asking for upright roman, which `\text` already sets: they lose nothing. -/
 private def textNeutralCtrl : List String :=
-  ["text", "mbox", "textrm", "textup", "textnormal", "rm"]
+  ["text", "mbox", "textrm", "textup", "textnormal", "rm", "rmfamily", "upshape", "mdseries",
+   "normalfont"]
 
 /-- The shared accent registry: parsing and the plaintext reading use one
 mapping between the control name, combining mark and stretch flag. -/
@@ -299,6 +300,12 @@ public def knownCtrl (n : String) : Bool :=
     || (ctrlSpace.lookup n).isSome
     || (ctrlAtom.lookup n).isSome
     || (ctrlWord.lookup n).isSome
+    || textStyleCtrl.contains n || textNeutralCtrl.contains n
+
+/-- The markers an `\ifmmode`'s branches flatten between, names no control word spells. -/
+private def modeIf : String := " ifmmode"
+private def modeElse : String := " else"
+private def modeFi : String := " fi"
 
 /-- The flat token stream a formula parses from, group and alignment edges as markers. -/
 private inductive MTok where
@@ -357,7 +364,10 @@ private def flattenOne (out : Array MTok) : Parse.Raw →
     let o ← flattenList (out.push .arrOpen) body.toList
     .ok (o.push .arrClose)
   | .env n body p =>
-    if (gridEnvs.lookup n).isSome then do
+    if n == Parse.modeEnv then do
+      let o ← flattenModeHead out body.toList
+      .ok (o.push (.ctrl modeFi))
+    else if (gridEnvs.lookup n).isSome then do
       let o ← flattenList (out.push (.gridOpen n)) body.toList
       .ok (o.push .arrClose)
     else match flattenErr (.env n body p) with
@@ -367,7 +377,57 @@ private def flattenOne (out : Array MTok) : Parse.Raw →
     | some what => .error what
     | none => .error "this construct"
 
+/-- An `\ifmmode`'s body as marked tokens: its math branch, then its text branch. -/
+private def flattenModeHead (out : Array MTok) : List Parse.Raw → Except String (Array MTok)
+  | first :: rest => do
+    let o ← flattenModeMath (out.push (.ctrl modeIf)) first
+    flattenList (o.push (.ctrl modeElse)) rest
+  | [] => .ok ((out.push (.ctrl modeIf)).push (.ctrl modeElse))
+
+private def flattenModeMath (out : Array MTok) : Parse.Raw → Except String (Array MTok)
+  | .math _ m _ => flattenList out m.toList
+  | .group .. | .env .. | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. =>
+    .error "this construct"
+
 end
+
+/-- The controls whose group a formula reads as text, where `\ifmmode` is false. -/
+private def textArgCtrl : List String :=
+  ["text", "mbox", "hbox", "textrm", "textup", "textnormal", "textbf", "textit", "textsf", "texttt",
+   "textsc", "textsl", "textmd", "emph", "intertext"]
+
+/-- The tokens an `\ifmmode` leaves where it stands: its math branch in math, its text branch in a
+group a formula reads as text, each marker dropped. -/
+private def chooseModes (toks : Array MTok) : Array MTok := Id.run do
+  let mut out : Array MTok := #[]
+  let mut groups : Array Bool := #[]
+  let mut textNext := false
+  -- While skipping a branch: the marker depth inside it, and whether `\else` ends it.
+  let mut skip : Option (Nat × Bool) := none
+  for t in toks do
+    match skip with
+    | some (d, toElse) =>
+      if t == .ctrl modeIf then skip := some (d + 1, toElse)
+      else if t == .ctrl modeFi then
+        skip := if d == 0 then none else some (d - 1, toElse)
+      else if t == .ctrl modeElse && d == 0 && toElse then skip := none
+    | none =>
+      let inText := groups.back?.getD false
+      if t == .ctrl modeIf then
+        if inText then skip := some (0, true)
+      else if t == .ctrl modeElse then
+        if !inText then skip := some (0, false)
+      else if t == .ctrl modeFi then pure ()
+      else
+        match t with
+        | .openGrp =>
+          groups := groups.push (textNext || inText)
+          textNext := false
+        | .closeGrp => groups := groups.pop
+        | .ctrl n => if textArgCtrl.contains n then textNext := true
+        | _ => pure ()
+        out := out.push t
+  return out
 
 /-- Past the spaces at `i`. -/
 private def skipTokWs (toks : Array MTok) (i : Nat) : Nat := Id.run do
@@ -1381,7 +1441,7 @@ private theorem parseToks_notes (toks : Array MTok) (top : Option GridKind)
 outside the model. -/
 public def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
-  let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
+  let (toks, names) ← containUnknown (chooseModes (← flattenList #[] raws.toList))
   let (l, notes) ← parseToks toks none display env
   if let some n := names[0]? then
     if (MList.scalarsList true #[] l).isEmpty then throw n
@@ -1400,7 +1460,7 @@ public theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
     refine Loop.except_bind_of_inv (fun _ => True) _ _ _
       (Loop.onSuccess_true _) ?_
     intro toks _
-    refine Loop.except_bind_of_inv _ _ _ _ (containUnknown_accounts toks) ?_
+    refine Loop.except_bind_of_inv _ _ _ _ (containUnknown_accounts (chooseModes toks)) ?_
     intro contained hc
     refine Loop.except_bind_of_inv _ _ _ _
       (parseToks_notes contained.1 none display env) ?_
@@ -1425,7 +1485,7 @@ public theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
 /-- Parse an alignment environment's body into one grid formula, with containment. -/
 public def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
-  let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
+  let (toks, names) ← containUnknown (chooseModes (← flattenList #[] raws.toList))
   let (l, notes) ← parseToks toks (some kind) true env
   if let some n := names[0]? then
     if (MList.scalarsList true #[] l).isEmpty then throw n

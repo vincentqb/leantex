@@ -361,15 +361,15 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ((grounds (dvDoc "\\usepackage{xcolor}\n"
       "Aaa words.\n\\clearpage\n\\section{Bbb \\pagecolor{yellow}head}\nCcc.")).1 ==
       #[none, some yellow])
-  t "group scope/a page colour in a caption grounds the figure's page"
+  t "group scope/a page colour in a caption grounds the figure's page, which opens with it"
     ((grounds (dvDoc "\\usepackage{xcolor}\n"
-      ("Aaa words.\n\\clearpage\nBbb.\n\\begin{figure}[h]\\centering\\rule{2cm}{1cm}" ++
+      ("Aaa words.\n\\clearpage\n\\begin{figure}[h]\\centering\\rule{2cm}{1cm}" ++
         "\\caption{Ccc \\pagecolor{yellow}}\\end{figure}\nDdd.\n\\clearpage\nEee."))).1 ==
       #[none, some yellow, some yellow])
-  t "group scope/a page colour reset in a footnote grounds the page its mark stands on"
+  t "group scope/a page colour in a footnote grounds the page its mark stands on"
     ((grounds (dvDoc "\\usepackage{xcolor}\n"
-      "\\pagecolor{yellow}Aaa.\n\\clearpage\nBbb\\footnote{Ccc \\nopagecolor} words.\n\\clearpage\nDdd.")).1 ==
-      #[some yellow, none, none])
+      "Aaa.\n\\clearpage\nBbb\\footnote{Ccc \\pagecolor{yellow}} words.\n\\clearpage\nDdd.")).1 ==
+      #[none, some yellow, some yellow])
   t "group scope/a page colour in an unknown command's argument grounds its page"
     ((grounds (dvDoc "\\usepackage{xcolor}\n" "Aaa \\probeunknown{\\pagecolor{yellow}} more.")).1 ==
       #[some yellow])
@@ -381,6 +381,15 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ((l.tags.splitOn " ").contains "em", (l.classes.splitOn " ").contains "sc")
   t "group scope/small caps keeps the italic before it, to its group's end"
     (shape "Ddd" == some (true, true) && shape "Eee" == some (false, false))
+  -- A conditional opens no group: its text branch's declaration holds past paragraphs.
+  let (mdoc, _) := Elab.run "group-scope.tex" (dvDoc "\\newcommand{\\bfon}{\\ifmmode\\else\\bfseries\\fi}\n"
+    "Aaa \\bfon Bbb.\n\nCcc.\n\n\\ifmmode\\else\\itshape\\fi Ddd.\n\nEee.")
+  let mleaves := (leavesOf mdoc fonts).1
+  let tagged (marker tag : String) : Bool :=
+    (htmlLeaf mleaves marker).any fun l => (l.tags.splitOn " ").contains tag
+  t "group scope/an ifmmode's text branch declares to its group's end, past paragraphs"
+    (tagged "Bbb" "strong" && tagged "Ccc" "strong" && tagged "Eee" "em" && !tagged "Ccc" "em" &&
+      !tagged "Aaa" "strong")
   -- A `\selectlanguage` between blocks is local to its group.
   let (ldoc, _) := Elab.run "group-scope.tex"
     (dvDoc "\\usepackage[french,english]{babel}\n"

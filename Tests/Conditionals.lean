@@ -32,6 +32,21 @@ pgf sets a picture in a horizontal box. -/
 def condPicTaken : List (String × Bool) :=
   [("ifhmode", true), ("ifinner", true), ("ifmmode", false), ("ifvmode", false)]
 
+/-- `\ifmmode` reads by the mode its text sets in: the text branch in text and in a formula's text
+argument, the math branch in a formula; one the text leaves open stays as written; and its
+source reads back as TeX spells the conditional. -/
+def modeReadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := dvDoc "\\usepackage{amsmath}\n\\newcommand{\\mm}[1]{\\ifmmode 7#1\\else 8#1\\fi}\n"
+    "Aaa \\mm{1} and $\\mm{2}$ and $\\text{\\mm{3}}$ and \\ensuremath{\\mm{4}}."
+  let text := censusText (censusOfSrc oneFace src)
+  t s!"ifmmode: text takes the text branch, a formula the math branch, its text argument the text ({text})"
+    (hasStr text "81" && hasStr text "72" && hasStr text "83" && hasStr text "74" &&
+      !hasStr text "71" && !hasStr text "82" && !hasStr text "73")
+  let raws := (Parse.parse "m.tex" (Lex.lex "m.tex" "\\ifmmode a\\else b\\fi \\ifmmode c").1).1
+  t s!"ifmmode: a closed conditional reads back as written, an open one stays ({Parse.rawSrc raws})"
+    (raws.any (· matches .env _ _ _) && Parse.rawSrc raws == "\\ifmmode a\\else b\\fi \\ifmmode c")
+
 /-- Every conditional is accounted for, decided with its branch named or refused by name: wrapping
 content in one adds a subjected diagnostic, and a decided head ships TeX's branch. -/
 def condAccountingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
@@ -70,6 +85,7 @@ def condAccountingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a declared flag's conditional is decided by name"
     (decide (keyed (elabStr flagSrc).2 >
       keyed (elabStr (dvDoc "\\newif\\ifprobe\n" "Other")).2))
+  modeReadingChecks ref oneFace
 
 /-- A picture honours the macro state at its own site, read off the shipped page census. -/
 def picStateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :

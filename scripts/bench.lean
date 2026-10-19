@@ -249,8 +249,8 @@ def pictureLines (k : Nat) : String :=
     "\\end{tikzpicture}\n\\end{document}\n"
 
 /-- Elaboration over one long paragraph, one inside a macro's argument, macro uses across sections,
-overlay selections in a frame, one long note and one long picture, and the macro uses' execution,
-whose phases may grow only linearly. -/
+overlay selections in a frame, one long note and one long picture, the macro uses' execution and
+the parse of unclosed conditionals, whose phases may grow only linearly. -/
 def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
   let rows : List (String × String × (Nat → String) × Nat) :=
     [("words in a paragraph", "para.tex", longParagraph, 8000),
@@ -263,6 +263,12 @@ def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
     growthBound s!"elab, {4 * size} / {size} {label}"
       (← phaseRunMs "elab" n leantex s!"{size} {label}" file (doc size))
       (← phaseRunMs "elab" n leantex s!"{4 * size} {label}" file (doc (4 * size)))
+  let unclosed (k : Nat) : String :=
+    "\\documentclass{article}\n\\begin{document}\n" ++
+      String.join (List.replicate k "\\ifmmode a ") ++ "\n\\end{document}\n"
+  growthBound "parse, 16000 / 4000 unclosed ifmmode conditionals"
+    (← phaseRunMs "parse" n leantex "4000 unclosed ifmmode" "ifmmode.tex" (unclosed 4000))
+    (← phaseRunMs "parse" n leantex "16000 unclosed ifmmode" "ifmmode.tex" (unclosed 16000))
   growthBound "input, 32 / 8 sections of macro uses"
     (← phaseRunMs "input" n leantex "8 sections of macro uses" "macros.tex" (macroSections 8))
     (← phaseRunMs "input" n leantex "32 sections of macro uses" "macros.tex" (macroSections 32))
