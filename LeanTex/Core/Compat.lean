@@ -14799,7 +14799,7 @@ private def trivlistItems (body : Array Raw) : Array Raw := Id.run do
         if let some c := close then
           let kept (w : String) : Array Raw :=
             #[.ctrl "hspace" p, .word "*" p, .group #[.word w p] p]
-          out := out ++ kept "-0.5em" ++ body.extract (j + 1) c ++ kept "0.5em"
+          out := out ++ kept "-0.5em" ++ #[.group (body.extract (j + 1) c) p] ++ kept "0.5em"
           -- `\@item` ends in `\ignorespaces`.
           skipTo := skipSpaces body (c + 1)
     | some r => out := out.push r

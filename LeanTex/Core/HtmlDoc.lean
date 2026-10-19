@@ -5859,7 +5859,7 @@ public def baseRules (doc : Doc) (ex : Int) (pairs : List (Nat × Nat) := []) : 
    else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
   -- an `\item[label]` sets its label where the marker stands, stepping no counter (latex.ltx)
-  "li.labelled { position: relative; counter-increment: list-item 0; }\n" ++
+  "li.labelled { position: relative; counter-increment: list-item 0; min-block-size: 1lh; }\n" ++
   "li.labelled::marker { content: none; }\n" ++
   ".u-item-label { position: absolute; inset-inline-end: 100%; margin-inline-end: 0.5em; \
 white-space: nowrap; }\n" ++

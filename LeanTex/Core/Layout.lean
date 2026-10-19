@@ -13164,7 +13164,8 @@ private def collectBlocks (r : Rd) (a : Acc)
 private def collectBlockList (r : Rd) (a : Acc)
     (blocks : List Block) (indent : Sp) (first prevRule : Bool) : Acc :=
   match blocks with
-  | [] => a
+  -- Labels still waiting where their block ends set a line of their own.
+  | [] => r.settleLabels a indent
   | blk :: rest =>
     if statefulBlock blk then
       collectBlockList r (collectBlock r a blk indent) rest indent first prevRule
@@ -13213,7 +13214,7 @@ an overlay carrier's blocks set as the quotation's own. -/
 private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : List Block)
     (indent : Sp) (first prevRule cont brk : Bool) : Acc :=
   match blocks with
-  | [] => a
+  | [] => r.settleLabels a indent
   | .onSteps spec inner :: rest =>
     let a := if r.hides spec then
         (collectQuoteList r a.openHidden kind inner.toList indent first prevRule cont brk).closeHidden
@@ -13415,7 +13416,7 @@ private def collectItems (r : Rd) (a : Acc)
 private def collectCentered (r : Rd) (a : Acc)
     (body : List Block) (indent : Sp) (prevRule : Bool) : Acc :=
   match body with
-  | [] => a
+  | [] => r.settleLabels a indent
   -- An overlay carrier is grouping, as `collectBlock` reads it: what it
   -- shows on this step centres as the scope's own blocks do.
   | .onSteps spec inner :: rest =>
@@ -13771,7 +13772,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let g := if r.boxed then { g with fil := false } else g
     let a := if body.isEmpty then a.vspace g
       else { a.vskip g with declaredSkip := false }
-    collectBlocks r a body indent
+    collectBlocks (if body.isEmpty then { r with labels := #[] } else r) a body indent
   | .onSteps spec body =>
     -- Dimming was painted into the colours before layout; what resolves here takes the cover.
     if r.hides spec then (collectBlocks r a.openHidden body indent).closeHidden

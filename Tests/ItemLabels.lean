@@ -134,6 +134,13 @@ def openerChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     "\\item Kilo.\n\\end{enumerate}\n\\end{enumerate}"))
   t s!"item labels: a label before a list stands on the list's first line: {lead}"
     (lead == #["y) (a) Kilo."])
+  let closed := texts oneFace (article ("\\begin{itemize}\n\\item \\begin{quote}\\vspace{2pt}" ++
+    "\\end{quote} Kilo.\n\\item \\begin{quote}\\end{quote}\n\\end{itemize}"))
+  t s!"item markers: labels an opener's end leaves waiting set a line of their own: {closed}"
+    ((closed.filter (· == "•")).size == 2)
+  let (tl, _) := elabStr (article "\\begin{trivlist}\n\\item[\\bfseries Lima.] Kilo.\n\\end{trivlist}")
+  t "trivlist: a label's declarations stay in the label"
+    (!hasStr (reprStr tl.body) "bold\" \"Kilo" && hasStr (reprStr tl.body) "Kilo")
   let empty := texts oneFace (article "\\begin{itemize}\n\\item\n\\item Kilo.\n\\end{itemize}")
   t s!"item markers: an empty item sets its bullet on a line of its own: {empty}"
     (empty[0]? == some "•" && empty[1]? == some "• Kilo.")
@@ -158,7 +165,7 @@ def openerChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     "\\end{frame}\n\\end{document}\n")
   t "item labels: an overlay's item label steps no counter and drops the web marker"
     ((bodyLines (layoutOf oneFace deck)).any (fun l => hasStr (lineText l) "2. Mike.") &&
-      hasStr (HtmlDoc.emit {} deck).1 "labelled")
+      hasStr (HtmlDoc.emit {} deck).1 "step labelled")
   let (ldoc, lds) := elabStr (article "\\begin{itemize}\n\\item[+] Kilo.\n\\end{itemize}")
   let html := (HtmlDoc.emit {} ldoc).1
   t "item labels: the web page sets the label where the marker stands, unnamed"
