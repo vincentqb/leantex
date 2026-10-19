@@ -1666,7 +1666,7 @@ private theorem shorterThan_iff {α : Type} (l : List α) (k : Nat) :
   | cons x t ih => cases k <;> simp [shorterThan, ih]
 
 /-- Raws read in order through segments, each from its offset: an expansion's text before the
-rest of the text it stands in, never copied. -/
+rest of the text it stands in, never copied (`get?_eq`, `cons_toArray`, `get?_drop`). -/
 private structure RawStream where
   segs : List (Array Raw × Nat)
 
@@ -1709,10 +1709,12 @@ private def extract (s : RawStream) (i j : Nat) : Array Raw := Id.run do
 private def any (s : RawStream) (p : Raw → Bool) : Bool :=
   s.segs.any fun (a, o) => a.any p o
 
+private def skipSpacesTo (s : RawStream) (n i : Nat) : Nat :=
+  if i < n then if s.get? i matches some .space then s.skipSpacesTo n (i + 1) else i else i
+termination_by n - i
+
 /-- The index past the leading run of `.space` raws at `i`. -/
-private def skipSpaces (s : RawStream) (i : Nat) : Nat :=
-  if i < s.size then if s.get? i matches some .space then s.skipSpaces (i + 1) else i else i
-termination_by s.size - i
+private def skipSpaces (s : RawStream) (i : Nat) : Nat := s.skipSpacesTo s.size i
 
 /-- `Compat.takeRawOpt` over a stream. -/
 private def takeRawOpt (s : RawStream) (i : Nat) : Option (Array Raw) × Nat := Id.run do
@@ -1771,16 +1773,85 @@ private def takeRawArgs (s : RawStream) (i count : Nat) :
 
 @[simp] private theorem skipSpaces_ofArray (a : Array Raw) (i : Nat) :
     (ofArray a).skipSpaces i = Parse.skipSpaces a i := by
+  rw [skipSpaces, size_ofArray]
   fun_induction Parse.skipSpaces a i with
   | case1 i h hs ih =>
-    rw [skipSpaces]
-    simp only [size_ofArray, h, ↓reduceIte, get?_ofArray, Array.getElem?_eq_getElem h]
+    rw [skipSpacesTo]
+    simp only [h, ↓reduceIte, get?_ofArray, Array.getElem?_eq_getElem h]
     cases hai : a[i] <;> simp_all
   | case2 i h hs =>
-    rw [skipSpaces]
-    simp only [size_ofArray, h, ↓reduceIte, get?_ofArray, Array.getElem?_eq_getElem h]
+    rw [skipSpacesTo]
+    simp only [h, ↓reduceIte, get?_ofArray, Array.getElem?_eq_getElem h]
     cases hai : a[i] <;> simp_all
-  | case3 i h => rw [skipSpaces]; simp [h]
+  | case3 i h => rw [skipSpacesTo]; simp [h]
+
+private def segsArray (segs : List (Array Raw × Nat)) : Array Raw :=
+  segs.foldl (fun acc seg => acc ++ seg.1.extract seg.2 seg.1.size) #[]
+
+private theorem segsArray_from (segs : List (Array Raw × Nat)) (acc : Array Raw) :
+    segs.foldl (fun acc seg => acc ++ seg.1.extract seg.2 seg.1.size) acc =
+      acc ++ segsArray segs := by
+  induction segs generalizing acc with
+  | nil => simp [segsArray]
+  | cons seg rest ih =>
+    have h : segsArray (seg :: rest) =
+        (#[] ++ seg.1.extract seg.2 seg.1.size) ++ segsArray rest := ih _
+    rw [List.foldl_cons, ih, h, Array.empty_append, Array.append_assoc]
+
+private theorem segsArray_cons (a : Array Raw) (o : Nat) (rest : List (Array Raw × Nat)) :
+    segsArray ((a, o) :: rest) = a.extract o a.size ++ segsArray rest := by
+  rw [segsArray, List.foldl_cons, segsArray_from, Array.empty_append]
+
+/-- The raws the stream reads, in order. -/
+private def toArray (s : RawStream) : Array Raw := segsArray s.segs
+
+private theorem getSegs_eq (segs : List (Array Raw × Nat)) (k : Nat) :
+    getSegs segs k = (segsArray segs)[k]? := by
+  induction segs generalizing k with
+  | nil => simp [getSegs, segsArray]
+  | cons seg rest ih =>
+    obtain ⟨a, o⟩ := seg
+    simp only [getSegs, segsArray_cons]
+    split
+    · rename_i hk
+      rw [Array.getElem?_append_left (by simp; omega), Array.getElem?_extract]
+      simp [hk]
+    · rename_i hk
+      rw [Array.getElem?_append_right (by simp; omega), ih]
+      simp only [Array.size_extract, Nat.min_self]
+
+/-- The stream reads at `k` what its raws hold there. -/
+private theorem get?_eq (s : RawStream) (k : Nat) : s.get? k = s.toArray[k]? :=
+  getSegs_eq s.segs k
+
+/-- A text read before a stream is read before its raws. -/
+private theorem cons_toArray (a : Array Raw) (s : RawStream) :
+    (s.cons a).toArray = a ++ s.toArray := by
+  unfold cons toArray
+  split
+  · rename_i h; simp [Array.isEmpty_iff.mp h]
+  · simp [segsArray_cons]
+
+private theorem getSegs_dropSegs (segs : List (Array Raw × Nat)) (k j : Nat) :
+    getSegs (dropSegs segs k) j = getSegs segs (k + j) := by
+  induction segs generalizing k with
+  | nil => simp [dropSegs, getSegs]
+  | cons seg rest ih =>
+    obtain ⟨a, o⟩ := seg
+    by_cases hk : k < a.size - o
+    · simp only [dropSegs, hk, ↓reduceIte, getSegs]
+      by_cases hj : j < a.size - (o + k)
+      · simp only [hj, ↓reduceIte, show k + j < a.size - o by omega, Nat.add_assoc]
+      · simp only [hj, ↓reduceIte, show ¬ k + j < a.size - o by omega]
+        congr 1
+        omega
+    · simp only [dropSegs, hk, ↓reduceIte, getSegs, show ¬ k + j < a.size - o by omega, ih]
+      congr 1
+      omega
+
+/-- The stream from `k` on reads at `j` what the stream reads at `k + j`. -/
+private theorem get?_drop (s : RawStream) (k j : Nat) : (s.drop k).get? j = s.get? (k + j) :=
+  getSegs_dropSegs s.segs k j
 
 end RawStream
 
@@ -5601,7 +5672,7 @@ private theorem packageCall_stream_readers (command names : String)
       1 = (none, 1) := by
   have hs : (RawStream.cons (packageCall command names pos groupPos namePos)
       RawStream.empty).skipSpaces 1 = 1 := by
-    rw [RawStream.skipSpaces]
+    rw [RawStream.skipSpaces, RawStream.skipSpacesTo]
     simp [packageCall, RawStream.cons, RawStream.empty, RawStream.size, RawStream.get?,
       RawStream.getSegs]
   refine ⟨hs, ?_⟩
