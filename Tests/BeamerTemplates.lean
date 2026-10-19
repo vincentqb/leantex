@@ -236,7 +236,7 @@ def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     "\\setbeamertemplate{footline}{Payload\\setbeamertemplate{frame footer}{Nested}}"
     frames)
   let plain := (elabStr (templateDeck "" frames)).1
-  t "unknown template: one degradation owns the entire body"
-    ((ds.filter (·.code == "W0110")).size == 1 && !ds.any (·.severity == .error) &&
+  t "unknown template: one refusal owns the entire body"
+    ((ds.filter (·.code == "E0111")).size == 1 &&
       reprStr (layoutOf fonts refused).pages == reprStr (layoutOf fonts plain).pages &&
       templateHtmlFacts refused == templateHtmlFacts plain)

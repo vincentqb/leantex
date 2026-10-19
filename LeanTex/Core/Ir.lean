@@ -8541,9 +8541,9 @@ public def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
   frameNumbersFrom doc.frameRestart doc.body
 
 /-- The document's footline numbers, from 1 again where `frameRestart` splits the body; a counted
-title page shows its number under moloch's inner theme, whose footline it keeps. -/
+title page shows its number under a footer the document declares or moloch's, which it keeps. -/
 public def Doc.frameShown (doc : Doc) : Array (Option Nat) :=
-  let t := doc.frameKeys == .moloch
+  let t := doc.frameKeys == .moloch || doc.chromeDeclared
   match doc.frameRestart with
   | none => Ir.frameShown t doc.body
   | some p => Ir.frameShown t (doc.body.extract 0 p) ++ Ir.frameShown t (doc.body.extract p doc.body.size)

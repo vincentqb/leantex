@@ -659,6 +659,10 @@ plain frame none ({bout.pages.map footText})"
   t s!"moloch's own footline numbers a title page its frame counts \
 ({(fittedOf fonts framed).out.pages.map footText})"
     ((fittedOf fonts framed).out.pages.map footText == #["1", "2", "2", "", "4"])
+  let (declared, _) := elabStr ((deck "\\chrome{footer={right=\\framenumber}}\n"))
+  t s!"a footer the document declares numbers its title page too \
+({(fittedOf fonts declared).out.pages.map footText})"
+    ((fittedOf fonts declared).out.pages.map footText == #["1", "2", "2", "", "4"])
   t "a plain frame sets no logo, the frames beside it theirs"
     ((lineWith bout 3 "Logomark").isNone && (lineWith bout 2 "Logomark").isSome &&
       (lineWith mout 3 "Logomark").isNone && (lineWith mout 4 "Logomark").isSome)
@@ -672,8 +676,8 @@ plain frame none ({bout.pages.map footText})"
 
 open ContentsChecks in
 /-- A footline template reading the frame counter sets it in the native band, at the left alone or
-after an `\hfill` at the right, beamer's `frame number` the counter over the total; any other body
-ships the deck's own footer, named once. -/
+after an `\hfill` or a fill's `\hspace` at the right, beamer's `frame number` the counter over the
+total; another body is refused as carrying content, and one in the body is named and ignored. -/
 def footlineTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := fun claim => check ref ("footline template / " ++ claim)
   let deck (footline : String) : String :=
@@ -690,16 +694,18 @@ def footlineTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let (right, _) := elabStr (deck "{\\hfill\\insertframenumber\\hspace*{2mm}}")
   t s!"after an hfill the counter stands at the right ({feet right})"
     (feet right == #[("", "1"), ("", "2")])
+  let (filled, _) := elabStr (deck "{\\hspace*{\\fill}\\insertframenumber}")
+  t s!"a fill's hspace splits the footline as an hfill does ({feet filled})"
+    (feet filled == #[("", "1"), ("", "2")])
   let (named, _) := elabStr (deck "[frame number]")
   t s!"beamer's frame number template sets the counter over the total ({feet named})"
     (feet named == #[("", "1 / 2"), ("", "2 / 2")])
   let (other, ods) := elabStr (deck "{\\insertshorttitle\\hfill\\insertpagenumber}")
-  t s!"another footline ships the deck's own footer, named once ({ods.toList.map (·.code)})"
-    ((fittedOf fonts other).out.pages.size == 2 && !ods.any (·.severity == .error) &&
-      (ods.filter (·.code == "W0110")).size == 1)
+  t s!"another footline is refused as carrying content, once ({ods.toList.map (·.code)})"
+    ((ods.filter (·.code == "E0111")).size == 1 && (other.body.size > 0))
   let (inBody, bds) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
     "\\setbeamertemplate{footline}{\\insertframenumber}\n\\begin{frame}{First}Alpha.\\end{frame}\n" ++
     "\\end{document}\n")
-  t s!"a footline set in the body ships the deck's own footer, named ({bds.toList.map (·.code)})"
+  t s!"a footline set in the body is a declaration the body ignores, named ({bds.toList.map (·.code)})"
     ((fittedOf fonts inBody).out.pages.size == 1 && !bds.any (·.severity == .error) &&
-      bds.any (·.code == "W0110"))
+      bds.any (·.code == "W0340"))

@@ -8766,6 +8766,16 @@ private def footlineInk : List Raw → Bool → Array Raw → Array Raw
   | .group #[] _ :: rest, false, acc => footlineInk rest false acc
   | r :: rest, _, acc => footlineInk rest false (acc.push r)
 
+/-- A footline's raws with `\hspace{\fill}` and `\hspace*{\fill}` read as the `\hfill` they are. -/
+private def fillSplits : List Raw → Array Raw → Array Raw
+  | [], acc => acc
+  | .ctrl "hspace" p :: .group #[.ctrl "fill" _] _ :: rest, acc => fillSplits rest (acc.push (.ctrl "hfill" p))
+  | .ctrl "hspace" p :: .sym '*' _ :: .group #[.ctrl "fill" _] _ :: rest, acc =>
+    fillSplits rest (acc.push (.ctrl "hfill" p))
+  | .ctrl "hspace" p :: .word "*" _ :: .group #[.ctrl "fill" _] _ :: rest, acc =>
+    fillSplits rest (acc.push (.ctrl "hfill" p))
+  | r :: rest, acc => fillSplits rest (acc.push r)
+
 /-- The native counter a footline's counter spells: `\insertframenumber` alone, or over
 `\inserttotalframenumber`. -/
 private def footlineCounter? (raws : Array Raw) : Option String :=
@@ -8792,6 +8802,7 @@ private def numberedFootline? (body : Array Raw) :
           | _ => (none, j)
         some (options, font, box.extract j box.size)
     | _ => some (none, none, body)
+  let content := fillSplits content.toList #[]
   match content.findIdx? (fun r => r matches .ctrl "hfill" _) with
   | some split =>
     let counter ← footlineCounter? (content.extract (split + 1) content.size)
@@ -9723,7 +9734,7 @@ defines; those blocks keep beamer's default template" pos
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
             InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws k)
-        -- beamerouterthemedefault.sty's `frame number`: the counter over the total, at the right.
+        -- beamerbaseauxtemplates.sty's `frame number`: the counter over the total, at the right.
         if name.trimAscii.toString == "frame number" then
           let file := (← get).file
           let body := #[.ctrl "hfill" pos, .ctrl "insertframenumber" pos, .word "/" pos,
@@ -9749,9 +9760,8 @@ defines; those blocks keep beamer's default template" pos
                                   beamerCaptures := st.beamerCaptures + 1 }
         became "\\setbeamertemplate{footline}" "an empty footer band" pos
       else
-        sayOnce "beamer:setbeamertemplate:footline" .W0110
-          "'\\setbeamertemplate{footline}' sets content the native footer band does not hold; \
-the deck keeps its own footer" pos
+        say .E0111
+          "'\\setbeamertemplate{footline}' is dropped with its template body, which carries content" pos
           (help := beamerNative.lookup "setbeamertemplate")
         mention (rawSrc body)
       return some (#[], k)
@@ -9867,11 +9877,10 @@ skipped" pos
 template around it; the engine's own {element} stands" pos
           (help := beamerNative.lookup "setbeamertemplate")
         mention (rawSrc (bodyArgs.getD 0 #[]))
-      else if element == "footline" then
-        sayOnce "beamer:setbeamertemplate:footline" .W0110
-          "'\\setbeamertemplate{footline}' after the preamble is not set; the deck keeps \
-its own footer" pos
-          (help := beamerNative.lookup "setbeamertemplate")
+      else if element == "footline" && (← get).inDoc then
+        sayOnce "beamer:setbeamertemplate:footline:body" .W0340
+          "'\\setbeamertemplate{footline}' is a declaration; in the body it is ignored" pos
+          (help := "declare it in the preamble, before '\\begin{document}'")
         mention (rawSrc (bodyArgs.getD 0 #[]))
       else
         say .E0111

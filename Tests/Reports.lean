@@ -2234,11 +2234,11 @@ def reports : List Report := [
       "the corpus built by main's binary at 730c0b54 and by this tree's: the seven decks whose maketitle runs under a theme other than moloch number every frame after the title one more, and the parity deck whose plain frame sets its title page counts it the same; every other artifact is visually identical, most byte-identical"]
     state := .guarded "730c0b54" .before .author },
   { id := "R245", date := "2026-10-19"
-    what := "a beamer footline template holding the frame counter alone, or after an hfill with spacing around it, stopped the build (E0111) with no artifact, and beamer's frame number footline was not read; any other footline body, and any footline set in the body, stopped the build the same way"
-    pins := [check% footlineTemplateChecks]
-    accept := ["lualatex with beamer on invented probes: the counter alone stands at the footline's left, after an hfill at its right, the frame number template sets the counter over the total at the right, and every probe builds; this tree sets the counter in the native band's left or right slot, the frame number template's as the fraction, and ships a deck whose footline it cannot set, or whose body sets one, with its own footer, named once (W0110)",
-      "main's binary at 70096387 on the same probes: E0111 and no artifact for the bodies, W0104 for the predefined template; the guards fail there",
-      "the corpus built by main's binary at 70096387 and by this tree's: no corpus document's footline changes"]
+    what := "a beamer footline template holding the frame counter alone, or after an hfill or a fill's hspace with spacing around it, stopped the build (E0111) with no artifact, beamer's frame number footline was not read, a footline set in the document body stopped the build the same way, and a deck declaring its footer left its title page bare"
+    pins := [check% footlineTemplateChecks, check% frameCountChecks]
+    accept := ["lualatex with beamer on invented probes: the counter alone stands at the footline's left, after an hfill or an hspace of fill at its right, the frame number template sets the counter over the total at the right, a counted title page under a declared footline shows 1, and every probe builds; this tree sets the counter in the native band's left or right slot, the frame number template's as the fraction, the title page's 1, and names a footline set in the body as a declaration the body ignores (W0340)",
+      "main's binary at 70096387 on the same probes: E0111 and no artifact for the bodies and the body form, W0104 for the predefined template; the guards fail there",
+      "the corpus built by main's binary at 70096387 and by this tree's: no corpus document's footline changes; another footline body is still refused as carrying content (E0111)"]
     state := .guarded "70096387" .before .author }
 ]
 

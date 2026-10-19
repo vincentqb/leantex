@@ -149,8 +149,8 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let (dropped, droppedDs) := elabStr (hookDeck
     "\\setbeamertemplate{footline}{FooterPayload\\setbeamertemplate{frame footer}{NestedPayload}}"
     (hookBlocks))
-  t "beamer footer: an unsupported outer template owns the whole degradation"
-    ((droppedDs.filter (·.code == "W0110")).size == 1 && !droppedDs.any (·.severity == .error) &&
+  t "beamer footer: an unsupported outer template owns the whole refusal"
+    ((droppedDs.filter (·.code == "E0111")).size == 1 &&
       reprStr (layoutOf fonts dropped).pages == plainPages && hookHtmlFacts dropped == plainHtml)
   let (logged, logDs) := elabStr (hookDeck
     "\\AtBeginDocument{\\PackageError{probe}{LogPayload}{HelpPayload}}" (hookBlocks))
@@ -299,10 +299,10 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let titlePre := footerPre ++ "\\title{TitleProbe}"
   let titlePlain := (elabStr (hookDeck titlePre titleBody)).1
   let titleRestored := (elabStr (hookDeck (titlePre ++ standoutFooterHook) titleBody)).1
-  t "standout footer hook: title pages stay plain even with an explicit note in force"
+  t "standout footer hook: a title page under a declared footer keeps it, whatever the hook"
     (reprStr ((layoutOf fonts titlePlain).pages[0]?) ==
         reprStr ((layoutOf fonts titleRestored).pages[0]?) &&
-      treeOccurs (hookHtml titleRestored) "TitleNote" == 0)
+      treeOccurs (hookHtml titleRestored) "TitleNote" == treeOccurs (hookHtml titlePlain) "TitleNote")
   let epochBody :=
     "\\palette{standoutfg=#F9F7F1,standoutbg=#18364A}\\framefoot{EpochNote}" ++
     "\\begin{frame}[standout]{Epoch}EpochBody\\end{frame}"

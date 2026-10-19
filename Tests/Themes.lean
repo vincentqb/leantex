@@ -1043,8 +1043,8 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let (_, fDs) := elabStr (deck169 ""
     ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
      "\\begin{frame}{T}\nx\n\\end{frame}"))
-  t "a footline template in the body ships the deck's own footer, named"
-    (!fDs.any (·.severity == .error) && fDs.any (·.code == "W0110"))
+  t "a footline template in the body is a declaration the body ignores, named"
+    (!fDs.any (·.severity == .error) && fDs.any (·.code == "W0340"))
   let (html, _) := HtmlDoc.emit {} doc
   t "html wrapped frame carries the note"
     ((html.splitOn "origin: example.org").length == 2)
