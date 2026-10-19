@@ -2149,7 +2149,7 @@ def reports : List Report := [
       "lualatex 1.24 on invented articles: a page colour inside bold text grounds page 1 yellow, a reset inside emphasis leaves page 2 white, one inside a framed box grounds page 3 blue, and one inside bold text at the head of a paragraph running over three pages grounds all three; this tree sets the same grounds",
       "the corpus built by main's binary at 03c2ff1d and by this tree's: every PDF and web page byte-identical but the trio page's and deck's, whose enquiries line now stands sep below what precedes it so that neither accepts W0104 whole; the diagnostics differ only in theme-modern, whose token 'large' only a bullet's prose spells, now named"]
     state := .guarded "6095f103" .before .author },
-  { id := "R238", date := "2026-10-18"
+  { id := "R241", date := "2026-10-18"
     what := "the paginator turned a page where the next line no longer fitted, so a paragraph's first line stood alone at a page's foot and its last alone at the next page's head whatever the page held to stretch, where TeX's page builder ends the page at the least cost, its badness and LaTeX's club, widow and broken penalties; and a widow penalty of 10000 assigned in the preamble stopped the build, one in the body printing its value"
     pins := [check% Tests.PageTurns.checks]
     accept := ["lualatex on invented probes: a nine-line paragraph after a 518pt rule on an article page keeps its first line alone at the page's foot with no stretch above it, and with 40pt of stretch above the rule moves whole to the next page; this tree sets the same at its own page height, a page with no stretch keeping its club or widow as TeX does",
