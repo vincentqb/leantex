@@ -709,3 +709,67 @@ def footlineTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   t s!"a footline set in the body is a declaration the body ignores, named ({bds.toList.map (·.code)})"
     ((fittedOf fonts inBody).out.pages.size == 1 && !bds.any (·.severity == .error) &&
       bds.any (·.code == "W0340"))
+
+/-- Where a line's first glyph run starts on the page. -/
+private def inkStart (l : Layout.LineOut) : Dim.Length :=
+  (l.segs.foldl (fun (acc : Dim.Length × Option Dim.Length) s =>
+    match acc.2, s with
+    | none, .run .. => (acc.1, some acc.1)
+    | _, _ => (acc.1 + s.advance, acc.2)) (l.x, none)).2.getD l.x
+
+open ContentsChecks in
+/-- A class with chapters lists them in its contents, its sections an indent in, under its
+`\chapter*` contents and bibliography heads, as report.cls's; a `\numberline` sets its entry's
+number box, an empty one its indent, as article.cls's under lualatex. -/
+def chapterContentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("chapter contents / " ++ claim)
+  let src (cls pre : String) : String :=
+    s!"\\documentclass\{{cls}}\n{pre}\\begin\{document}\n\\tableofcontents\n" ++
+      "\\chapter{Kettles}\nWater boils.\\cite{k}\n\\section{Spouts}\nWords.\n" ++
+      "\\subsection{Lids}\nWords.\n\\subsubsection{Knobs}\nWords.\n" ++
+      "\\begin{thebibliography}{9}\\bibitem{k} A. Writer, On Kettles.\\end{thebibliography}\n" ++
+      "\\end{document}\n"
+  let (rep, rds) := elabStr (src "report" "")
+  let rout := (fittedOf fonts rep).out
+  let em := rep.page.fontSize
+  let near (a b : Dim.Length) : Bool := (a - b).abs * 100 < em
+  t s!"report's contents list its chapter, its section an indent in and its subsection two, \
+none deeper ({rds.toList.map (·.code)})"
+    (match lineWith rout 0 "Contents", lineWith rout 0 "Kettles", lineWith rout 0 "Spouts",
+        lineWith rout 0 "Lids" with
+      | some c, some k, some s, some l =>
+        near k.x c.x && near s.x (c.x + em * 3 / 2) && near l.x (c.x + em * 38 / 10) &&
+          (lineWith rout 0 "Knobs").isNone
+      | _, _, _, _ => false)
+  t "a chapter's entry sets its bare number, its section's the section's"
+    ((lineWith rout 0 "Kettles").any (fun l => (lineText l).trimAscii.startsWith "1 ") &&
+      !(lineWith rout 0 "Kettles").any (fun l => hasStr (lineText l) "Chapter") &&
+      (lineWith rout 0 "Spouts").any (fun l => hasStr (lineText l) "1.1"))
+  t "report heads its reference list Bibliography, as a chapter on a page of its own"
+    (rout.pages.any (fun p => p.lines.any fun l => hasStr (lineText l) "Bibliography") &&
+      !rout.pages.any (fun p => p.lines.any fun l => hasStr (lineText l) "References") &&
+      ((rout.pages.findIdx? fun p => p.lines.any fun l => hasStr (lineText l) "Bibliography") !=
+        (rout.pages.findIdx? fun p => p.lines.any fun l => hasStr (lineText l) "Words.")))
+  let (de, _) := elabStr (src "report" "\\usepackage[ngerman]{babel}\n")
+  t "the language names the bibliography as its \\bibname"
+    (hasStr (Ir.blocksText de.body) "Literaturverzeichnis")
+  let (_, body, _) := HtmlDoc.emitTree {} rep
+  let words := ((navEntries body)[0]?.map (·.map (·.2.1))).getD #[]
+  t s!"the web page lists the same entries ({words})"
+    (words == #["1 Kettles", "1.1 Spouts", "1.1.1 Lids"])
+  let (art, _) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section{Kettles}\nWords.\n\\section*{Preface}\n\\addcontentsline{toc}{section}{\\numberline{}Preface}\n" ++
+    "Words.\n\\subsection*{Spouts}\n\\addcontentsline{toc}{subsection}{\\numberline{}Spouts}\nWords.\n" ++
+    "\\subsection*{Saucers}\n\\addcontentsline{toc}{subsection}{\\numberline{A}Saucers}\nWords.\n" ++
+    "\\subsection*{Lids}\n\\addcontentsline{toc}{subsection}{Lids}\nWords.\n\\end{document}\n")
+  let aout := (fittedOf fonts art).out
+  let ax (w : String) : Option Dim.Length := (lineWith aout 0 w).map inkStart
+  t s!"an empty numberline sets its entry's words past the number's box, a written one its number \
+there ({[ax "Contents", ax "Preface", ax "Spouts", ax "Lids"].map (·.map (·.toBpString))})"
+    (match ax "Contents", ax "Preface", ax "Spouts", ax "Lids" with
+      | some c, some p, some s, some l =>
+        near p (c + em * 3 / 2) && near s (c + em * 38 / 10) && near l (c + em * 3 / 2)
+      | _, _, _, _ => false)
+  t "a written numberline's number stands in the box, not in the entry's words"
+    ((lineWith aout 0 "Saucers").any fun l => (lineText l).trimAscii.startsWith "A" &&
+      near (inkStart l) ((ax "Contents").getD 0 + em * 3 / 2))

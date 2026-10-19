@@ -5268,8 +5268,9 @@ article.cls's `\@pnumwidth`. -/
 article.cls's `\@tocrmarg`. -/
 @[expose] public def contentsRightMargin : Nat := 2550
 
-/-- article.cls's levels: a section at 0 with 1.5em, a subsection at 1.5em with 2.3em, a
-subsubsection at 3.8em with 3.2em, a paragraph at 7em with 4.1em, a subparagraph at 10em with 5em. -/
+/-- article.cls's levels, report.cls's from its chapter at 0 the same: a section at 0 with 1.5em, a
+subsection at 1.5em with 2.3em, a subsubsection at 3.8em with 3.2em, a paragraph at 7em with 4.1em,
+a subparagraph at 10em with 5em. -/
 @[expose] public def contentsFlowLevel : Nat → ContentsLevel
   | 0 => ⟨0, 1500⟩
   | 1 => ⟨1500, 2300⟩
@@ -8441,6 +8442,9 @@ public structure ShortTitle where
   short : Array Inline
   /-- Whether `\nameref` reads it, as a heading's own short title, not a contents line's. -/
   named : Bool
+  /-- The number its contents line sets where it is not the heading's own: a chapter's bare number,
+  `\numberline`'s argument. -/
+  listed : Option String
   deriving Repr, BEq, Inhabited
 
 public structure Doc where
@@ -9793,11 +9797,14 @@ public def outsideUnder (next : Option Block) (b : Block) : Outside :=
 /-- What a deck sets for its top-level block `i` outside every frame (`outsideUnder`). -/
 public def Doc.outside (doc : Doc) (i : Nat) (b : Block) : Outside := outsideUnder doc.body[i + 1]? b
 
-/-- Each top-level block's short title where it is a heading that declared one, every unstarred
-heading counted in document order by its number and words, as elaboration holds them. -/
-public def shortTitlesAt (shorts : Array ShortTitle) (body : Array Block) :
-    Array (Option (Array Inline)) := Id.run do
+/-- Each top-level block's short-title record where it is a heading elaboration holds one for,
+every unstarred heading counted in document order by its number and words. -/
+public def shortEntriesAt (shorts : Array ShortTitle) (body : Array Block) :
+    Array (Option ShortTitle) := Id.run do
   if shorts.isEmpty then return body.map fun _ => none
+  let byKey : Std.HashMap (Option String × String × Nat) ShortTitle :=
+    shorts.foldl (fun m s => if m.contains (s.number, s.words, s.nth) then m
+      else m.insert (s.number, s.words, s.nth) s) {}
   let count := fun (m : Std.HashMap (Option String × String) Nat) (b : Block) =>
     if let .section level false num title := b then
       if level == .title then m else
@@ -9805,18 +9812,21 @@ public def shortTitlesAt (shorts : Array ShortTitle) (body : Array Block) :
         m.insert k (m.getD k 0 + 1)
     else m
   let mut seen : Std.HashMap (Option String × String) Nat := {}
-  let mut out : Array (Option (Array Inline)) := #[]
+  let mut out : Array (Option ShortTitle) := #[]
   for b in body do
-    let mut here : Option (Array Inline) := none
+    let mut here : Option ShortTitle := none
     if let .section level false num title := b then
       if level != .title then
         let words := plainText title
-        let n := seen.getD (num, words) 0
-        here := (shorts.find? fun s => s.number == num && s.words == words && s.nth == n).map
-          (·.short)
+        here := byKey.get? (num, words, seen.getD (num, words) 0)
     out := out.push here
     seen := foldBlocks count (fun m _ => m) seen #[b]
   return out
+
+/-- Each top-level block's short title where it is a heading that declared one (`shortEntriesAt`). -/
+public def shortTitlesAt (shorts : Array ShortTitle) (body : Array Block) :
+    Array (Option (Array Inline)) :=
+  (shortEntriesAt shorts body).map (·.map (·.short))
 
 /-- The title a flow's contents and bookmarks list for top-level block `i`, a heading setting
 `title`: its short title where it declared one (`shortTitlesAt`), else its title. -/
@@ -18645,7 +18655,7 @@ public def headingAnchors (body : Array Block) : Array (Option SectionAnchor) :=
   let mut out := sections
   for h : i in [0:body.size] do
     if let .section level _ _ title := body[i] then
-      if level != .title && level != .h1 && level != .h2 then
+      if level != .title && level != .h2 then
         let base := if (slug title).isEmpty then "section" else slug title
         let (id, clash, next) := taken.claim base (firstPageText title)
         taken := next

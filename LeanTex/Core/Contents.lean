@@ -93,45 +93,52 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
               else { e with title := #[.onSteps { first := paused, last := none } e.title] })
   return out
 
-/-- The rank a flow's contents list a heading at, LaTeX's section level: a section one, a
-subsection two, a subsubsection three, a paragraph four. -/
-private def contentsLevel : HeadingLevel → Option Nat
+/-- The rank a flow's contents list a heading at, LaTeX's section level: a chapter zero where the
+class heads chapters, a section one, a subsection two, a subsubsection three, a paragraph four. -/
+private def contentsLevel (chapters : Bool) : HeadingLevel → Option Nat
+  | .h1 => if chapters then some 0 else none
   | .h2 => some 1
   | .h3 => some 2
   | .h4 => some 3
   | .h5 => some 4
   | .h6 => some 5
-  | .title | .h1 => none
+  | .title => none
 
 /-- The entries a flow's `\tableofcontents` lists: its unstarred headings down to the depth, each by
-its short title where it declared one, as article's, and opening its heading. -/
+its short title where it declared one and the number its line sets, as article's and report's, a
+chapter's entry at the top level, and opening its heading. -/
 public def flowContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry := Id.run do
   let anchors := flowAnchors doc.body
-  let shorts := shortTitlesAt doc.shortTitles doc.body
+  let entries := shortEntriesAt doc.shortTitles doc.body
+  let shorts := entries.map (·.map (·.short))
   let mut out : Array ContentsEntry := #[]
   for h : i in [0:doc.body.size] do
     if let .section level starred num title := doc.body[i] then
-      if let some rank := contentsLevel level then
+      if let some rank := contentsLevel doc.chapters level then
         if !starred && rank ≤ spec.depth then
           let target := (anchors[i]?.join).map (·.id)
           let title := nameOf (listedTitleAt shorts i title)
-          out := out.push { depth := rank - 1, number := num, target, shaded := false
-                            title := if blankTitle title then #[] else title }
+          let number := ((entries[i]?.join).bind (·.listed)).orElse fun _ => num
+          out := out.push { depth := if doc.chapters then rank else rank - 1, number, target
+                            shaded := false, title := if blankTitle title then #[] else title }
   return out
 
 /-- A flow's outline: its anchored, titled headings of the two shallowest contents ranks, starred
 or not, each by its short title and opening its heading. -/
 public def flowOutline (doc : Doc) : Array ContentsEntry := Id.run do
   let anchors := flowAnchors doc.body
-  let shorts := shortTitlesAt doc.shortTitles doc.body
+  let entries := shortEntriesAt doc.shortTitles doc.body
+  let shorts := entries.map (·.map (·.short))
+  let top := if doc.chapters then 0 else 1
   let mut out : Array ContentsEntry := #[]
   for h : i in [0:doc.body.size] do
     if let .section level _ num title := doc.body[i] then
-      if let some rank := contentsLevel level then
+      if let some rank := contentsLevel doc.chapters level then
         if let some a := anchors[i]?.join then
           let title := nameOf (listedTitleAt shorts i title)
-          if rank ≤ 2 && !blankTitle title then
-            out := out.push { depth := rank - 1, number := num, target := some a.id
+          let number := ((entries[i]?.join).bind (·.listed)).orElse fun _ => num
+          if rank ≤ top + 1 && !blankTitle title then
+            out := out.push { depth := rank - top, number, target := some a.id
                               shaded := false, title }
   return out
 

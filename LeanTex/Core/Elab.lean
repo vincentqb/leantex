@@ -672,7 +672,7 @@ public structure ESt where
   headingCounts : Std.HashMap (Option String × String) Nat := {}
   /-- An `\addcontentsline` entry waiting for the starred heading or reference list it stands
   before: that opener's site, the entry's unit and its words. -/
-  contentsLine : Option (Pos × String × Array Inline) := none
+  contentsLine : Option (Pos × String × Array Inline × Option String) := none
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -10468,16 +10468,16 @@ private def macroBlocks (name : String) (bare : Bool) (blocks expanded : Array B
   let spliced := macroRunBlocks name expanded
   return blocks ++ spliced
 
-/-- A starred heading an `\addcontentsline` entry of `unit` lists: unnumbered and unstarred, as the
-contents and bookmarks list a heading past `secnumdepth`, the entry's words its contents title where
-they differ, a unit other than the heading's own named. -/
+/-- A starred heading an `\addcontentsline` entry of `unit` lists, unnumbered and unstarred: the
+entry's words its contents title where they differ, its `\numberline` the number its line sets, a
+unit other than the heading's own named. -/
 private def listedHeading (ctx : Ctx) (pos : Pos) (unit : String) (level : Ir.HeadingLevel)
-    (title text : Array Inline) : EM Block := do
+    (title text : Array Inline) (listed : Option String) : EM Block := do
   let words := Ir.plainText title
   let nth := (← get).headingCounts.getD (none, words) 0
   modify fun st => { st with headingCounts := st.headingCounts.insert (none, words) (nth + 1) }
-  if Ir.plainText text != words then
-    let short : Ir.ShortTitle := { number := none, words, nth, short := text, named := false }
+  if Ir.plainText text != words || listed.isSome then
+    let short : Ir.ShortTitle := { number := none, words, nth, short := text, named := false, listed }
     modify fun st => { st with headingShorts := st.headingShorts.push short }
   if blockHeading? unit != some level then
     warnOnce ctx "contents:addcontentsline:unit" .W0104 s!"'\\addcontentsline' names a '{unit}' \
@@ -10490,10 +10490,10 @@ private def sameSite (p q : Pos) : Bool := p.line == q.line && p.col == q.col
 /-- A starred heading opening at `pos`, listed where an `\addcontentsline` before it waits for it; an
 entry waiting for another opener is named lost. -/
 private def pendingListed (ctx : Ctx) (pos : Pos) (b : Block) : EM Block := do
-  let some (at_, unit, text) := (← get).contentsLine | return b
+  let some (at_, unit, text, listed) := (← get).contentsLine | return b
   modify fun st => { st with contentsLine := none }
   if let .section level true none title := b then
-    if sameSite at_ pos then return ← listedHeading ctx pos unit level title text
+    if sameSite at_ pos then return ← listedHeading ctx pos unit level title text listed
   warnOnce ctx "contents:addcontentsline" .W0104 "'\\addcontentsline' stands before nothing it \
 could list; the contents list without it" pos
   return b
@@ -10550,15 +10550,23 @@ private def starredBefore (blocks : Array Block) : Option Nat := Id.run do
       | _ => return none
   return none
 
-/-- An entry's words as the contents set them: hyperref's `\protect` dropped, `\numberline`'s
-number kept before them. -/
-private def entryWords (raws : Array Raw) : Array Raw :=
-  raws.foldl (fun out r => match r with
-    | .ctrl "protect" _ => out
-    | .ctrl "numberline" _ => out
-    | .group g p => if out.back? matches some (.ctrl "numberline" _) then out ++ g.push .space
-      else out.push (.group g p)
-    | r => out.push r) #[]
+/-- An entry's `\numberline` argument, the number its line sets in the number's box, and its words
+past it, hyperref's `\protect` dropped. -/
+private def entryParts (raws : Array Raw) : Option (Array Raw) × Array Raw :=
+  let (num, out, _) := raws.foldl (fun (num, out, after) r => match r with
+    | .ctrl "protect" _ => (num, out, false)
+    | .ctrl "numberline" _ => (num, out, true)
+    | .group g p => if after then (some g, out, false) else (num, out.push (.group g p), false)
+    | .space => (num, if after || out.isEmpty then out else out.push .space, after)
+    | r => (num, out.push r, false)) (none, #[], false)
+  (num, out)
+
+/-- A contents line's words and `\numberline` number, elaborated. -/
+private def entryOf (ctx : Ctx) (raws : Array Raw) : EM (Array Inline × Option String) := do
+  let (num, words) := entryParts raws
+  let text ← elabInlines ctx words
+  let listed ← num.mapM fun g => return Ir.plainText (← elabInlines ctx g)
+  return (text, listed)
 
 /-- `\addcontentsline{toc}{unit}{entry}` and `\addtocontents{toc}{material}`: an entry beside a
 starred heading lists that heading, before it once it stands; material the contents would set, and
@@ -10577,22 +10585,24 @@ private def contentsLineArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : String
   match starredBefore blocks with
   | some k =>
     if let some (.section level true none title) := blocks[k]? then
-      let text ← elabInlines ctx (entryWords (gs.getD 2 #[]))
-      return (blocks.set! k (← listedHeading ctx pos unit level title text), j)
+      let (text, listed) ← entryOf ctx (gs.getD 2 #[])
+      return (blocks.set! k (← listedHeading ctx pos unit level title text listed), j)
     return (blocks, j)
   | none =>
     match headingAhead raws j.1 with
     | some at_ =>
-      let text ← elabInlines ctx (entryWords (gs.getD 2 #[]))
-      modify fun st => { st with contentsLine := some (at_, unit, text) }
+      let (text, listed) ← entryOf ctx (gs.getD 2 #[])
+      modify fun st => { st with contentsLine := some (at_, unit, text, listed) }
     | none => contentsLineLost ctx n "stands beside no starred heading it could list" pos
     return (blocks, j)
 
 /-- The unnumbered heading a class sets over its reference list: `\refname`, or report.cls's
-`\bibname` where the class heads chapters, as the document declares or the language names it. -/
+`\chapter*{\bibname}` where the class heads chapters, as the document declares or the language
+names it. -/
 private def refsHeading (ctx : Ctx) (pos : Pos) : EM Block := do
-  let name := if (← get).ctr.chapters then "bibname" else "refname"
-  return .section 1 true none (← definedOr ctx name pos (pure #[.text ctx.locale.references]))
+  if (← get).ctr.chapters then
+    return .section .h1 true none (← definedOr ctx "bibname" pos (pure #[.text ctx.locale.bibliography]))
+  return .section 1 true none (← definedOr ctx "refname" pos (pure #[.text ctx.locale.references]))
 
 /-- A chapter's head label, report.cls's `\@chapapp\space\thechapter`: `\chaptername`, or
 `\appendixname` after `\appendix`, as the document declares or the language names it. -/
@@ -10625,14 +10635,15 @@ private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
   let nth := ((← get).headingCounts.getD (number, words) 0)
   unless starred do
     modify fun st => { st with headingCounts := st.headingCounts.insert (number, words) (nth + 1) }
+  -- A chapter's contents line sets its bare number, as report.cls's `\numberline{\thechapter}`.
+  let target := (← get).refTarget
+  let listed := if n == Parse.chapterControl && number.isSome then target.map (·.num) else none
   let head ← match short with
-    | some s =>
-      let s ← elabInlines ctx s
-      unless starred do
-        modify fun st =>
-          { st with headingShorts := st.headingShorts.push { number, words, nth, short := s, named := true } }
-      pure s
+    | some s => elabInlines ctx s
     | none => pure title
+  unless starred || (short.isNone && listed.isNone) do
+    let entry : Ir.ShortTitle := { number, words, nth, short := head, named := short.isSome, listed }
+    modify fun st => { st with headingShorts := st.headingShorts.push entry }
   if ctx.slides && !ctx.inFrame then setSectionInForce level title head
   return blocks.push (← pendingListed ctx pos (.section ((blockHeading? n).getD .h2) starred number title))
 
@@ -13905,8 +13916,9 @@ when it is empty — '{}'")
         first | omega | exact Nat.le_trans hj0 (skipBracketRun_ge raws j0)
     let spec ← contentsSpecOf ctx (if ctx.slides then (bracketRunSrc raws j0).map rawSrc else none)
       pos
+    -- report.cls sets it as `\chapter*{\contentsname}`.
     unless ctx.slides do
-      blocks := blocks.push (.section .h2 true none
+      blocks := blocks.push (.section (if (← get).ctr.chapters then .h1 else .h2) true none
         (← definedOr ctx "contentsname" pos (pure #[.text ctx.locale.contents])))
     return (blocks.push (.contents spec #[]), ⟨j, by omega⟩)
   else if n == "maketitle" || n == "titlepage" then
@@ -16896,10 +16908,10 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     let s := match options with
       | some o => { s with classOptions := o }
       | none => s
-    -- report.cls: chapters, `secnumdepth` 2, and equations numbered within each chapter.
+    -- report.cls: chapters, `secnumdepth` and `tocdepth` 2, and equations numbered within each chapter.
     if (KeyVal.items (options.getD "")).contains "chapters" then
       let inline := (cls.bind Ir.DocClass.ofString?) == some .koma
-      modify fun st => { st with ctr := { st.ctr with chapters := true, secDepth := 2,
+      modify fun st => { st with ctr := { st.ctr with chapters := true, secDepth := 2, tocDepth := 2,
                                                        eqWithin := some 0, chapterInline := inline } }
     match cls with
     | some named =>

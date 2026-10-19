@@ -23,7 +23,9 @@ public structure Locale where
   /-- The algorithm float's caption word, from algorithm2e's language options. -/
   algorithm : String
   abstract : String
+  /-- `\refname` and `\bibname`: the ini's `captions` `ref` and `bib` keys. -/
   references : String
+  bibliography : String
   /-- `\proofname` and `\contentsname`: the ini's `captions` `proof` and `contents` keys. -/
   proof : String
   contents : String

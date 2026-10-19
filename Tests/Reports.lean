@@ -2239,6 +2239,13 @@ def reports : List Report := [
     accept := ["lualatex with beamer on invented probes: the counter alone stands at the footline's left, after an hfill or an hspace of fill at its right, the frame number template sets the counter over the total at the right, a counted title page under a declared footline shows 1, and every probe builds; this tree sets the counter in the native band's left or right slot, the frame number template's as the fraction, the title page's 1, and names a footline set in the body as a declaration the body ignores (W0340)",
       "main's binary at 70096387 on the same probes: E0111 and no artifact for the bodies and the body form, W0104 for the predefined template; the guards fail there",
       "the corpus built by main's binary at 70096387 and by this tree's: no corpus document's footline changes; another footline body is still refused as carrying content (E0111)"]
+    state := .guarded "70096387" .before .author },
+  { id := "R248", date := "2026-10-19"
+    what := "a class with chapters listed none in its contents, its sections at article's top level, every subsubsection listed and its contents and reference list headed as sections, the reference list named References; and a contents line's numberline was set as words before the entry's own, an empty one leaving the entry flush where its number's box stands"
+    pins := [check% chapterContentsChecks, check% contentsGapChecks]
+    accept := ["lualatex on invented probes: report lists its chapter bold at the margin with its bare number, its section 1.5em in and its subsection 3.8em in, no subsubsection, under a chapter head reading Contents, and heads its reference list Bibliography as a chapter on a page of its own, Literaturverzeichnis in German; article sets an empty numberline's words 1.5em in for a section and 3.8em in for a subsection, a written one's number in the box there; this tree sets the same",
+      "main's binary at 70096387 on the same probes: no chapter entry, the section's number running into its title, a section head reading References, and the numberline entries flush at their level's indent; the guards fail there",
+      "the corpus and the private decks built by main's binary at 70096387 and by this tree's: every artifact byte-identical"]
     state := .guarded "70096387" .before .author }
 ]
 
