@@ -313,7 +313,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0332 => ("0332", .dropped, "covered fraction outside 0–99 percent")
   | .E0401 => ("0401", .dropped, "no usable font found on the host")
   | .E0402 => ("0402", .dropped, "LEANTEX_FONT is unusable")
-  | .W0403 => ("0403", .degraded, "no installed font family by that name; the slot's default family stands in")
+  | .W0403 => ("0403", .degraded,
+    "no installed font family by that name; the slot's default family stands in")
   | .E0404 => ("0404", .dropped, "a font file could not be used")
   | .E0501 => ("0501", .dropped, "\\input nesting too deep")
   | .N0100 => ("0100", .info, "LaTeX idiom translated to its native declaration")

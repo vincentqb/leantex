@@ -97,19 +97,26 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
-  -- A declared text family no installed face answers is named at its declaration, and its slot
-  -- reads as undeclared.
-  let absent (family : String) : Bool := (FontDb.resolveVariant faces family none {}).isNone
+  -- A declared text family no installed face or declared face file serves is named at its
+  -- declaration, and its slot, faces included, reads as undeclared.
+  let served (slot : Nat) (family : String) : Bool := FontDb.corners.all fun (w, i) =>
+    (FontDb.resolveVariant faces family (spec.faceFor slot w i)
+      { bold := w == 700, italic := i }).isSome
   let mut missing : Array String := #[]
-  for family in [spec.body, spec.sans, spec.mono].filterMap id do
-    if absent family && !missing.contains family then
+  let mut kept := spec
+  for (slot, declared) in [(0, spec.body), (1, spec.sans), (2, spec.mono)] do
+    let some family := declared | continue
+    if served slot family then continue
+    unless missing.contains family do
       missing := missing.push family
-      let all := FontDb.families faces
-      diags := diags.push (DriverDiag.familyMissing family
-        (FontDb.nearest all family).toList all.size (FaceUse.familySite sites doc.fonts family))
-  let installed (family : Option String) : Option String := family.filter (!absent ·)
-  let spec := { spec with body := installed spec.body, sans := installed spec.sans
-                          mono := installed spec.mono }
+      diags := diags.push (FontEnv.familyMissingIn faces family
+        (FaceUse.familySite sites doc.fonts family))
+    let unfaced := kept.faces.filter (·.1.1 != slot)
+    kept := match slot with
+      | 0 => { kept with body := none, faces := unfaced }
+      | 1 => { kept with sans := none, faces := unfaced }
+      | _ => { kept with mono := none, faces := unfaced }
+  let spec := kept
   let resolving := { doc with fonts := spec }
   let spec := if spec.body.isNone && spec.sans.isNone then
       { spec with body := FontDb.defaultFamily faces }
@@ -186,10 +193,8 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       | none =>
         unless missing.contains family do
           missing := missing.push family
-          -- Name only the families resembling the request; a host may hold thousands.
-          let all := FontDb.families faces
-          diags := diags.push (DriverDiag.familyMissing family
-            (FontDb.nearest all family).toList all.size (FaceUse.familySite sites doc.fonts family))
+          diags := diags.push (FontEnv.familyMissingIn faces family
+            (FaceUse.familySite sites doc.fonts family))
       | some (face, sub) =>
         -- premise: monoDefaultChecks — a declared typewriter family names each italic substitution
         let upright := slot == 2 && pick.isSome && italic && !face.italic
@@ -229,7 +234,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   diags := diags ++ math.diags
   let mathIdx := math.index
   if fonts.isEmpty then
-    -- Every named family failed: the caller stops on `diags`, and no empty set may escape.
+    -- No face loaded (an empty scan or unparsable files): the default family's, or a refusal.
     match FontDb.defaultFamily faces |>.bind (FontDb.resolve faces · {}) with
     | none => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
     | some (face, _) =>

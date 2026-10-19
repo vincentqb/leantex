@@ -1391,7 +1391,8 @@ def repeatFoldUnexercised : List (String × String) :=
      "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
      "W0373", "W0387", "W0398", "W0434", "W0442", "W0443", "W0109", "W0449"] ++
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"
-    ["W0006", "W0013", "W0378", "W0382", "W0403", "W0391", "W0393", "W0394", "W0396", "W0601", "W0602",
+    ["W0006", "W0013", "W0378", "W0382", "W0391", "W0393", "W0394", "W0396", "W0403", "W0601",
+     "W0602",
      "W0603", "W0604", "W0605", "W0609", "W0701"] ++
   unexercisedAs "one record per Lean declaration, which a file declares once"
     ["W0414", "W0415"] ++

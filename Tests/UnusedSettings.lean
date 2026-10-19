@@ -645,7 +645,7 @@ def faceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Parse.parse "t" (Lex.lex "t" missingSrc).1).1
   match ← FontAssembly.buildFontSet missingDoc scan cache .settled (sites := missingSpans.faces) with
   | .ok (fs, doc, ds, _) =>
-    t s!"unused faces: a family no installed face answers is named by its refusal alone ({(FaceUse.diags missingSpans.faces fs doc).map (·.subject)})"
+    t s!"unused faces: a family no installed face answers is named by its loss alone ({(FaceUse.diags missingSpans.faces fs doc).map (·.subject)})"
       (ds.any (·.kind == .W0403) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
     t s!"unused faces: a family no installed face answers is named at the entry naming it ({(ds.filter (·.kind == .W0403)).map (·.span.map (·.pos.line))})"
       ((ds.filter (·.kind == .W0403)).map (·.span.map (·.pos.line)) == #[some 2])

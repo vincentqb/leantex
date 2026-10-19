@@ -111,11 +111,14 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
                 (htmlSlotSource css "math" ==
                   fs.mathFont?.map (fun (_, f, _) => (HtmlDoc.fontResource f).uri) &&
                  !htmlDiags.any (·.kind == .W0003))
-  -- A declared family no face answers is named once, and its slot sets as the undeclared document's.
+  -- A declared family no face answers is named once, its slot set as the undeclared document's.
   let (plainDoc, _) := elabStr (fontDefaultSource false {})
   let .ok (plain, _, _, _) ← buildFontSet plainDoc scan cache .settled |
     check ref "font defaults: the undeclared document assembles" false
-  let faceAt (fs : Font.FontSet) (slot : Nat) : String := (fs.get (fs.lookup slot 400 false)).psName
+  let corner (fs : Font.FontSet) (slot w : Nat) (i : Bool) : String :=
+    (fs.get (fs.lookup slot w i)).psName
+  let asPlain (fs : Font.FontSet) : Bool := (List.range 3).all fun k =>
+    FontDb.corners.all fun (w, i) => corner fs k w i == corner plain k w i
   for slot in [0:4] do
     let missing := "MissingFixtureFamily"
     let spec : Ir.FontSpec :=
@@ -133,13 +136,32 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
        diags.any (fun d => d.kind == .W0403 && hasStr d.message missing) &&
        diags.all (·.severity != .error))
     check ref s!"font defaults: missing slot {slot} sets as the undeclared document does"
-      ((List.range 3).all (fun k => faceAt fs k == faceAt plain k) &&
-       (fs.mathFont?.map (·.2.1.psName)) == (plain.mathFont?.map (·.2.1.psName)))
+      (asPlain fs && (fs.mathFont?.map (·.2.1.psName)) == (plain.mathFont?.map (·.2.1.psName)))
     let empty ← buildFontSet doc { scan with faces := #[] } cache .settled
     check ref s!"font defaults: an empty scan stops on no usable font, missing slot {slot}"
       (match empty with
        | .error d => d.kind == .E0401
        | .ok _ => false)
+  -- A label its face files serve is no missing family; a missing one's face reads as undeclared.
+  let .ok bold ← cache.parse (testFonts ++ "/SourceSerifPro-Bold.otf") |
+    check ref "font defaults: the bold fixture parses" false
+  let labelFaces : Array ((Nat × Nat × Bool) × String) :=
+    #[((0, 400, false), "SourceSerifPro-Regular.otf"),
+      ((0, 700, false), "SourceSerifPro-Bold.otf"),
+      ((0, 400, true), "SourceSerifPro-RegularIt.otf"),
+      ((0, 700, true), "SourceSerifPro-BoldIt.otf")]
+  for (what, family, faces, served) in
+      [("a label its four face files serve", "FixtureLabel", labelFaces, true),
+       ("a missing family beside one face file", "MissingFixtureFamily",
+         #[((0, 700, false), "SourceSerifPro-Bold.otf")], false)] do
+    let doc := { plainDoc with fonts := { plainDoc.fonts with body := some family, faces } }
+    match ← buildFontSet doc scan cache .settled with
+    | .ok (fs, _, diags, _) =>
+      check ref s!"font defaults: {what} is named missing {if served then "never" else "once"}"
+        ((diags.filter (·.kind == .W0403)).size == (if served then 0 else 1))
+      check ref s!"font defaults: {what} sets {if served then "its faces" else "as undeclared"}"
+        (if served then corner fs 0 700 false == bold.psName else asPlain fs)
+    | .error _ => check ref s!"font defaults: {what} ships its document" false
 
 /-- Two weights a family lacks, served by one nearest face, are two records in one wording that the
 log folds to one line counting both. -/

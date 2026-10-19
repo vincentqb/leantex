@@ -88,6 +88,13 @@ public def resolveDocDirs (file : String) (dirs : Array String) :
       diags := diags.push (DriverDiag.fontsDirMissing d p.toString)
   return (docDirs, diags)
 
+/-- W0403 for a family no installed face answers, naming the installed families nearest it; a host
+may hold thousands. -/
+public def familyMissingIn (faces : Array FontDb.Face) (family : String) (span : Option Span) :
+    Diag :=
+  let all := FontDb.families faces
+  DriverDiag.familyMissing family (FontDb.nearest all family).toList all.size span
+
 /-- What the math-face decision leaves: the faces and paths it loaded, the set's math
 slot, the families already named, and its diagnostics. -/
 public structure MathFace where
@@ -123,14 +130,12 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
         return (none, fonts, paths, some (DriverDiag.fontFileUnusable path e))
       | .ok f =>
         return (some (fonts.size, f), fonts.push f, paths.push path, none)
-  -- A declared family no installed face answers is named, and the math face is chosen as undeclared.
+  -- A declared family no installed face answers is named, the math face chosen as undeclared.
   let found := declared.bind fun family => (FontDb.resolveVariant faces family none {}).map (·.1)
   if let some family := declared then
     if found.isNone && !missing.contains family then
       missing := missing.push family
-      let all := FontDb.families faces
-      diags := diags.push (DriverDiag.familyMissing family
-        (FontDb.nearest all family).toList all.size declaredAt)
+      diags := diags.push (familyMissingIn faces family declaredAt)
   match found with
   | some face =>
     let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
@@ -162,7 +167,9 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
               | some named => DriverDiag.mathFaceCompanion f.family named
               | none => DriverDiag.mathFaceFirst f.family
             let written := (source.bind (·.pos.command)).bind Diag.Spelling.ofWritten?
-            diags := diags.push { note with span := source, trigger := written }
+            -- A declared family's W0403 already names the stand-in.
+            if declared.isNone then
+              diags := diags.push { note with span := source, trigger := written }
   return { fonts, paths, index := mathIdx, missing, diags }
 
 end LeanTex.Cli.FontEnv
