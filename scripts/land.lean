@@ -3003,11 +3003,19 @@ def addAgent (s : Scratch) (name : String) : IO Unit := do
   hgitOk #["add", s!"{name}.txt"] wt
   hgitOk #["commit", "-qm", s!"Add {name}"] wt
 
+/-- How long the harness waits for an event a run causes before it gives the scenario up as
+inconclusive: a hang guard far past what a loaded host delays a run. -/
+def patienceMs : Nat := 15 * 60 * 1000
+
+/-- Whether a wait in the scenario running now outlasted `patienceMs`, which fails it as
+inconclusive whatever else it found. -/
+initialize waitOutlasted : IO.Ref Bool ← IO.mkRef false
+
 /-- A gate list whose one gate marks `held-<name>` in the scratch root, then holds the lock until
-`release-<name>` appears there, five minutes at most. -/
+`release-<name>` appears there, `patienceMs` at most. -/
 def holdGate (s : Scratch) (name : String) : IO String := do
   writeExe s!"{s.root}/hold-{name}.sh" s!"#!/bin/sh\ntouch {s.root}/held-{name}\ni=0\n\
-while [ ! -e {s.root}/release-{name} ] && [ $i -lt 3000 ]; do sleep 0.1; i=$((i+1)); done\n"
+while [ ! -e {s.root}/release-{name} ] && [ $i -lt {patienceMs / 100} ]; do sleep 0.1; i=$((i+1)); done\n"
   return s!"hold={s.root}/hold-{name}.sh"
 
 def release (s : Scratch) (name : String) : IO Unit :=
@@ -3026,23 +3034,33 @@ def awaitRun (t : Pending) : IO (Nat × String) := do
   | .error ex => pure (255, toString ex)
 
 /-- A retry loop as an agent runs one: `land <name>` again after `pauseMs` while it is
-refused for the lock, `tries` times at most. -/
-def landRetrying (self repo name gates : String) (pauseMs : UInt32) (tries : Nat := 600) :
-    IO Pending :=
+refused for the lock, for `patienceMs` of pauses at most, past which the scenario is inconclusive. -/
+def landRetrying (self repo name gates : String) (pauseMs : UInt32) : IO Pending :=
   IO.asTask (prio := .dedicated) do
     let mut last := (255, "")
-    for _ in [0:tries] do
+    for _ in [0:patienceMs / max 1 pauseMs.toNat] do
       last ← landIn self repo #[name] gates
       unless last.1 == 2 && says last.2 "another landing holds the lock" do return last
       IO.sleep pauseMs
+    waitOutlasted.set true
     return last
 
-/-- Poll for `p`, thirty seconds at most; whether it came to hold. -/
+/-- Poll for `p`, `patienceMs` at most, a wait that outlasts it marking the scenario inconclusive;
+whether it came to hold. -/
 def awaitTrue (p : IO Bool) : IO Bool := do
-  for _ in [0:600] do
+  for _ in [0:patienceMs / 50] do
     if ← p then return true
     IO.sleep 50
+  waitOutlasted.set true
   return false
+
+/-- Poll for `p` until it holds or every run of `runs` has ended, whose ends bound the wait;
+whether it came to hold. -/
+def awaitOrEnded (runs : List Pending) (p : IO Bool) : IO Bool := do
+  while !(← runs.allM fun t => (IO.hasFinished t : BaseIO Bool)) do
+    if ← p then return true
+    IO.sleep 50
+  p
 
 def queueOf (s : Scratch) : IO (List Waiter) := readQueueAt s!"{s.repo}/.git"
 
@@ -3053,6 +3071,33 @@ def awaitQueued (s : Scratch) (name : String) : IO Bool :=
 def awaitHead (s : Scratch) (name : String) : IO Bool := awaitTrue do
   for w in ← queueOf s do
     if ← waiterLiveAt s!"{s.repo}/.git" w then return w.name == name
+  return false
+
+/-- Wait until the waiter `name` has asked `n` more times, by the beats its run writes. -/
+def awaitBeats (s : Scratch) (name : String) (n : Nat) : IO Bool := do
+  let mut seen : Option Nat := none
+  let mut count := 0
+  for _ in [0:patienceMs / 50] do
+    if let some w := (← queueOf s).find? (·.name == name) then
+      if let some b ← beatOf s!"{s.repo}/.git" w.run then
+        if seen != some b then
+          if seen.isSome then count := count + 1
+          seen := some b
+          if count ≥ n then return true
+    IO.sleep 50
+  waitOutlasted.set true
+  return false
+
+/-- Wait until a file written in the scratch root carries a later whole second than `path`, so
+what is written after reads as newer than it. -/
+def awaitLaterSecond (s : Scratch) (path : String) : IO Bool := do
+  let t0 := (← System.FilePath.metadata path).modified.sec
+  let probe := s!"{s.root}/clock-probe"
+  for _ in [0:patienceMs / 50] do
+    IO.FS.writeFile probe ""
+    if (← System.FilePath.metadata probe).modified.sec > t0 then return true
+    IO.sleep 50
+  waitOutlasted.set true
   return false
 
 /-- Wait until every one of `names` waits in the queue under a live run. -/
@@ -3211,11 +3256,11 @@ with no next ask"
 took-ms-after-holder-exit={ms} gated={gated} waiter={cw}" }
 
 /-- A gate list whose one gate, shared by a train's members, counts its runs in `gate-runs`, runs
-`body`, then holds the lock until it takes the `release-<label>` that appears, five minutes at
+`body`, then holds the lock until it takes the `release-<label>` that appears, `patienceMs` at
 most, and passes as `body` did. -/
 def trainGate (s : Scratch) (label : String) (body : String := "true") : IO String := do
   writeExe s!"{s.root}/{label}.sh" s!"#!/bin/sh\necho run >> {s.root}/gate-runs\n({body}); st=$?\n\
-touch {s.root}/held-{label}\ni=0\nwhile [ ! -e {s.root}/release-{label} ] && [ $i -lt 3000 ]; do \
+touch {s.root}/held-{label}\ni=0\nwhile [ ! -e {s.root}/release-{label} ] && [ $i -lt {patienceMs / 100} ]; do \
 sleep 0.1; i=$((i+1)); done\nrm -f {s.root}/held-{label} {s.root}/release-{label}\nexit $st\n"
   return s!"{label}={s.root}/{label}.sh"
 
@@ -3244,7 +3289,7 @@ def runTrain (self : String) (s : Scratch) (names : List String) (gates : String
   release s "holder"
   let label := (gates.splitOn "=").headD ""
   for _ in [0:runs] do
-    unless ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-{label}") do break
+    unless ← awaitOrEnded tasks (System.FilePath.pathExists s!"{s.root}/held-{label}") do break
     release s label
     let _ ← awaitTrue do return !(← System.FilePath.pathExists s!"{s.root}/release-{label}")
   let (ch, _) ← awaitRun th
@@ -3508,7 +3553,7 @@ def scenarioTrainUntouched (self root : String) : IO Outcome := do
   hgitOk #["commit", "-qm", "first tracks local.cfg"] s!"{s.root}/lt-first"
   IO.FS.writeFile s!"{s.root}/lt-rider/local.cfg" "the rider owner's local settings\n"
   -- Rewritten unchanged a second after its commit, a git status that refreshes would write the index.
-  IO.sleep 1100
+  let _ ← awaitLaterSecond s s!"{s.root}/lt-rider/local.cfg"
   IO.FS.writeFile s!"{s.root}/lt-rider/rider.txt" "rider\n"
   let before ← names.mapM (memberState s)
   let (ready, outs) ← runTrain self s names (← trainGate s "train")
@@ -4046,7 +4091,7 @@ def scenarioPreQueueFenced (self root : String) : IO Outcome := do
   -- The old land's ask, made every two milliseconds: the waiter's turn must be under way when it wins.
   let poller : Task (Except IO.Error (Option Bool)) ← IO.asTask (prio := .dedicated) do
     let lock ← IO.FS.Handle.mk s!"{s.repo}/.git/land/landing.lock" .append
-    for _ in [0:60000] do
+    for _ in [0:patienceMs / 2] do
       if ← lock.tryLock then
         let turned ← System.FilePath.pathExists s!"{s.root}/held-waiter"
         lock.unlock
@@ -4082,9 +4127,9 @@ def scenarioQueueStoppedHead (self root : String) : IO Outcome := do
   let passed ← try
       release s "holder"
       let _ ← awaitRun th
-      -- Thirty seconds of missed beats, with room: the second's gate starts within ninety.
+      -- Thirty seconds of missed beats pass before the second's gate starts.
       let mut went := false
-      for _ in [0:900] do
+      for _ in [0:patienceMs / 100] do
         if ← System.FilePath.pathExists s!"{s.root}/held-second" then went := true; break
         IO.sleep 100
       pure went
@@ -4119,12 +4164,9 @@ def scenarioQueueExpired (self root : String) : IO Outcome := do
          , ok := c == 0 && after == ["recent"]
          , detail := s!"exit={c} queue={after}" }
 
-/-- Wait up to a minute for the gate of `name` to start. -/
-def awaitGate (s : Scratch) (name : String) : IO Bool := do
-  for _ in [0:600] do
-    if ← System.FilePath.pathExists s!"{s.root}/held-{name}" then return true
-    IO.sleep 100
-  return false
+/-- Wait, `patienceMs` at most, for the gate of `name` to start. -/
+def awaitGate (s : Scratch) (name : String) : IO Bool :=
+  awaitTrue (System.FilePath.pathExists s!"{s.root}/held-{name}")
 
 /-- An old land holds the lock while a run waits behind a dead place, and a new run of that place
 takes it: the waiter, unfenced, holds no turn lock, so once the old land is done the run ahead takes
@@ -4141,13 +4183,13 @@ def scenarioFencelessTurn (self root : String) : IO Outcome := do
   let tb ← landAsync self s.repo #["behind"] (← holdGate s "behind")
   let queued ← awaitQueued s "behind"
   -- The waiter's turn comes, its fence refused, beat after beat.
-  IO.sleep 2000
+  let _ ← awaitBeats s "behind" 4
   let ta ← landAsync self s.repo #["ahead"] (← holdGate s "ahead")
   let took ← awaitTrue do
     match (← queueOf s).find? (·.name == "ahead") with
     | some w => waiterLiveAt s!"{s.repo}/.git" w
     | none => pure false
-  IO.sleep 2000
+  let _ ← awaitBeats s "ahead" 4
   lock.unlock
   let gated ← awaitGate s "ahead"
   let stuck := (← queueOf s).find? (·.name == "behind")
@@ -4184,7 +4226,7 @@ def scenarioHandOn (self root : String) : IO Outcome := do
   let both ← awaitLive s ["even", "waiter"]
   let poller : Task (Except IO.Error (Option Bool)) ← IO.asTask (prio := .dedicated) do
     let lock ← IO.FS.Handle.mk s!"{s.repo}/.git/land/landing.lock" .append
-    for _ in [0:60000] do
+    for _ in [0:patienceMs / 2] do
       if ← lock.tryLock then
         let turned ← System.FilePath.pathExists s!"{s.root}/held-waiter"
         lock.unlock
@@ -4216,23 +4258,23 @@ def scenarioStoppedUnfenced (self root : String) : IO Outcome := do
   let tf ← landAsync self s.repo #["first"] (← holdGate s "first")
   let entered ← awaitHead s "first"
   -- The waiter asks a few times first in line.
-  IO.sleep 2000
+  let _ ← awaitBeats s "first" 4
   let stopped ← stopWaiter s "first"
   let (won, ts, passed) ← try
       release s "holder"
       let _ ← awaitRun th
       let lock ← IO.FS.Handle.mk s!"{s.repo}/.git/land/landing.lock" .append
       let mut won := false
-      for _ in [0:400] do
+      for _ in [0:patienceMs / 100] do
         if ← lock.tryLock then
           lock.unlock
           won := true
           break
         IO.sleep 100
       let ts ← landAsync self s.repo #["second"] "t=true"
-      -- Thirty seconds of missed beats, with room: the later run lands within ninety.
+      -- Thirty seconds of missed beats pass before the later run lands.
       let mut passed := false
-      for _ in [0:900] do
+      for _ in [0:patienceMs / 100] do
         if (← mainSubjects s.repo).contains "Add second" then
           passed := true
           break
@@ -4283,9 +4325,9 @@ def scenarioStoppedBeforeOld (self root : String) : IO Outcome := do
       let _ ← awaitQueued s "second"
       release s "holder"
       let _ ← awaitRun th
-      -- Thirty seconds of missed beats, with room: the later run lands within ninety.
+      -- Thirty seconds of missed beats pass before the later run lands.
       let mut passed := false
-      for _ in [0:900] do
+      for _ in [0:patienceMs / 100] do
         if (← mainSubjects s.repo).contains "Add second" then
           passed := true
           break
@@ -4464,7 +4506,7 @@ def scenarioTrainStaleBoarding (self root : String) : IO Outcome := do
     | some w => waiterLiveAt s!"{s.repo}/.git" w
     | none => pure false
   -- A few beats of asking behind the keeper.
-  IO.sleep 3000
+  let _ ← awaitBeats s "rider" 6
   release s "keeper"
   let (ck, _) ← awaitRun tk
   let (ca, oa) ← awaitRun ta
@@ -4511,7 +4553,7 @@ def scenarioPushInherited (self root : String) : IO Outcome := do
     | some w => waiterLiveAt s!"{s.repo}/.git" w
     | none => pure false
   -- A few beats of asking behind the keeper.
-  IO.sleep 3000
+  let _ ← awaitBeats s "rider" 6
   release s "keeper"
   let (ck, _) ← awaitRun tk
   let (cp, op) ← awaitRun tp
@@ -4669,8 +4711,13 @@ def scratchSelftest : IO UInt32 := do
   for (key, sc) in scenarios do
     unless only.isEmpty || only.contains key do continue
     -- A fixture that could not be built fails its scenario, named, and the rest still run.
+    waitOutlasted.set false
     let o ← try sc self root
       catch ex => pure { label := key, ok := false, detail := toString ex }
+    -- A wait that outlasted its patience leaves the scenario inconclusive, never passed.
+    let o := if ← waitOutlasted.get then
+        { o with ok := false, detail := s!"inconclusive: a wait outlasted {patienceMs / 60000} minutes; {o.detail}" }
+      else o
     outcomes := outcomes.push o
   let mut bad := 0
   for o in outcomes do

@@ -73,4 +73,26 @@ def batchChecks (ref : IO.Ref (List String)) : IO Unit := do
       seen.keys.isEmpty && seen.finished.size == 3 &&
       !seen.started.contains 3)
 
+  -- A waiter past an attempt with no verdict starts the next one, never meeting the finished one.
+  let mut rejoined := 0
+  for _ in [0:300] do
+    let runs ← IO.mkRef 0
+    let arrived ← IO.mkRef false
+    let ask ← Batch.shared (fun (b : Bool) => b) fun (_ : Nat) => do
+      runs.modify (· + 1)
+      for _ in [0:2000] do
+        if ← arrived.get then break
+        IO.sleep 1
+      return true
+    let owner ← IO.asTask (ask 0) .dedicated
+    for _ in [0:2000] do
+      if (← runs.get) ≥ 1 then break
+      IO.sleep 1
+    let waiter ← IO.asTask (do arrived.set true; ask 0) .dedicated
+    let _ ← IO.ofExcept owner.get
+    let _ ← IO.ofExcept waiter.get
+    if (← runs.get) != 2 then rejoined := rejoined + 1
+  check ref s!"batch: a waiter past an attempt with no verdict asks anew ({rejoined} of 300 rejoined)"
+    (rejoined == 0)
+
 end Tests
