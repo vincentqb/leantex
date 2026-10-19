@@ -12,6 +12,7 @@ public inductive PageKey where
   | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom | tmargin
   | bmargin | vmarginratio | clubpenalty | widowpenalty | brokenpenalty | displaywidowpenalty
   | interlinepenalty | predisplaypenalty | hscale | vscale | lists
+  | textheightUnder
   deriving DecidableEq, Repr, Inhabited
 
 public def PageKey.names : List (String × PageKey) :=
@@ -30,7 +31,7 @@ public def PageKey.names : List (String × PageKey) :=
    ("displaywidowpenalty", .displaywidowpenalty), ("interlinepenalty", .interlinepenalty),
    ("predisplaypenalty", .predisplaypenalty),
    ("hscale", .hscale),
-   ("vscale", .vscale), ("lists", .lists)]
+   ("vscale", .vscale), ("lists", .lists), ("textheight-under", .textheightUnder)]
 
 public def PageKey.name (k : PageKey) : String := ((PageKey.names.find? (·.2 == k)).map (·.1)).getD ""
 
@@ -41,14 +42,14 @@ public def PageKey.listed : PageKey → Bool
   | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .markGap | .markThickness
   | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom | .tmargin
   | .bmargin | .vmarginratio | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty
-  | .interlinepenalty | .predisplaypenalty | .hscale | .vscale | .lists
+  | .interlinepenalty | .predisplaypenalty | .hscale | .vscale | .lists | .textheightUnder
     => false
   | _ => true
 
 /-- Whether the key declares the page's physical extent, and so claims the page as declared. -/
 public def PageKey.claims : PageKey → Bool
   | .size | .width | .height | .margin | .vmargin | .hmargin | .textwidth | .textheight | .bleed
-  | .tmargin | .bmargin | .vmarginratio | .hscale | .vscale => true
+  | .tmargin | .bmargin | .vmarginratio | .hscale | .vscale | .textheightUnder => true
   | _ => false
 
 /-- The keys of `\pdfmeta`. -/

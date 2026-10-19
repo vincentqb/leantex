@@ -7104,7 +7104,8 @@ private def settledPage (page : PageSpec) : PageSpec × Option String :=
   if 0 ≤ placed.vmargin && 0 ≤ placed.bottomMargin && 0 < placed.height - placed.vmargin -
       placed.bottomMargin then (placed, none)
   else ({ page with block := {} }.placed,
-    some (if page.block.height.isSome then "text height" else "vertical margins"))
+    some (if page.block.height.isSome || page.block.under.isSome then "text height"
+      else "vertical margins"))
 
 /-- The class's page for a declared spec and options: every value the
 document declared is kept, the rest take the class's defaults. -/
@@ -15378,7 +15379,7 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .bottom => "'flush' or 'ragged'"
   | .lists => "'parskip' or 'standard'"
   | .rule | .frontRule => "\"x; y; width; height; colour\""
-  | .tmargin | .bmargin | .textheight => "a dimension, or auto"
+  | .tmargin | .bmargin | .textheight | .textheightUnder => "a dimension, or auto"
   | .vmarginratio => "a ratio such as 2:3, or auto"
   | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty | .interlinepenalty
   | .predisplaypenalty =>
@@ -15467,8 +15468,16 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       | .textheight, .ident "auto" => spec := { spec with block := { spec.block with height := none } }
       | .textheight, v =>
         if let some d := asDim v then
-          if 0 < d then spec := { spec with block := { spec.block with height := some d } }
+          if 0 < d then
+            spec := { spec with block := { spec.block with height := some d, under := none } }
           else evs := say evs .E0323 "'textheight' in '\\page' expects a positive dimension"
+        else evs := wrong key v evs
+      | .textheightUnder, .ident "auto" =>
+        spec := { spec with block := { spec.block with under := none } }
+      | .textheightUnder, v =>
+        if let some d := asDim v then
+          if 0 < d then spec := { spec with block := { spec.block with under := some d } }
+          else evs := say evs .E0323 "'textheight-under' in '\\page' expects a positive dimension"
         else evs := wrong key v evs
       | .tmargin, .ident "auto" => spec := { spec with block := { spec.block with top := none } }
       | .tmargin, v =>
@@ -15604,7 +15613,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
   -- A vertical key the declared set leaves without effect is named and set aside, as geometry does.
   let vertical : List Native.PageKey :=
-    [.margin, .vmargin, .tmargin, .bmargin, .textheight, .vmarginratio, .vscale]
+    [.margin, .vmargin, .tmargin, .bmargin, .textheight, .vmarginratio, .vscale, .textheightUnder]
   if entries.any fun e => (Native.PageKey.ofName? e.key).any vertical.contains then
     let lost (key why : String) (evs : Array PEvent) : Array PEvent :=
       (evs.filter fun ev => match ev with
@@ -15621,7 +15630,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         evs := lost "vscale" "the margins place the text block, so a scale sizes nothing" evs
       spec := { spec with block := { b with scale := none } }
     let b := spec.block
-    if b.top.isSome && b.bottom.isSome && b.height.isSome then
+    if b.top.isSome && b.bottom.isSome && (b.height.isSome || b.under.isSome) then
       if declares "bmargin" then
         evs := lost "bmargin" "the text height stands under the top margin, which places the bottom" evs
       else if let some k := ["vmargin", "margin"].find? declares then

@@ -2288,7 +2288,14 @@ def reports : List Report := [
     pins := [check% Tests.Chapters.numberingStateChecks]
     accept := ["lualatex on invented probes: memoir's Figure 0.1 and Table 0.1 and equation (1) before the first chapter, Figure 1.1 in it; scrbook's and scrreprt's Figure 1, Table 1 and equation (0.1) there; after an added chapter Figure 1.1, equation (1.1) and footnote 1 again, the starred forms continuing with 1.2 and 3, an added chapter before any numbered one restarting the floats at 1; memoir's and scrbook's front matter numbering floats and equations alone, scrbook's unstarred front-matter chapters restarting them; an added section restarting its subsections at 1.1; book and report as before; this tree sets each the same",
       "the numbering train's binary at e5f31fb4 on the same probes: memoir's Figure 1, KOMA-Script's equation (1), and Figure 1.2 after the added chapter; the guards fail there"]
-    state := .guarded "e5f31fb4" .before .author }
+    state := .guarded "e5f31fb4" .before .author },
+  { id := "R249", date := "2026-10-19"
+    what := "the kernel's text height after geometry placed the text block by a ratio or a scale moved the block's top, the engine splitting the page's leftover around the new height where LaTeX keeps geometry's top and sets the height under it"
+    pins := [check% Tests.ParamCensus.textBlockChecks]
+    accept := ["lualatex on invented probes on letter paper: geometry's default layout, vmarginratio=1:1 and 2:1, each followed by a kernel text height of 15cm, keep the first word where geometry alone puts it (its top 93.8pt, 117.5pt and 157.1pt from the page's) and end the block 15cm below; a textheight geometry key stands as before; this tree sets each within the faces' 2pt bounding-box offset",
+      "main's binary at 730c0b54 on the same probes: the first word's top at 147.4pt, 184.1pt and 245.3pt, the block centred or split around the new height; the guard fails there",
+      "the corpus built by main's binary at 730c0b54 and by this tree's: every PDF and web page byte-identical, diagnostics identical"]
+    state := .guarded "730c0b54" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

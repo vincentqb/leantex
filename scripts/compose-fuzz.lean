@@ -55,8 +55,8 @@ def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) :
     | "page", "size" => ["width", "height"]
     | "page", "margin" => ["vmargin", "hmargin", "block"]
     | "page", "vmargin" => ["vmargin", "block"]
-    | "page", "tmargin" | "page", "bmargin" | "page", "textheight" | "page", "vmarginratio" =>
-      ["block"]
+    | "page", "tmargin" | "page", "bmargin" | "page", "textheight" | "page", "vmarginratio"
+    | "page", "vscale" | "page", "textheight-under" => ["block"]
     | "fonts", "rm" => ["body"]
     | "fonts", "sf" => ["sans"]
     | "fonts", "tt" => ["mono"]

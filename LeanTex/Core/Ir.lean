@@ -129,6 +129,8 @@ public structure TextBlockDecl where
   ratio : Option (Nat × Nat) := none
   /-- The height as thousandths of the page's, where no height is declared (geometry's `vscale`). -/
   scale : Option Nat := none
+  /-- A height standing under the top the other keys place (the kernel's `\textheight`). -/
+  under : Option Length := none
   deriving Repr, BEq, Inhabited
 
 /-- The declaration with its scaled height fixed on a page `page` tall. -/
@@ -145,25 +147,36 @@ one a height places above a declared bottom or by a ratio, with a declared heigh
     | none, some m, some h, _ => page - m - h
     | none, none, some h, some (a, r) => (page - h) * (a : Int) / ((a + r : Nat) : Int)
     | _, _, _, _ => vm
-  match b.height with
-  | some h => (top, page - top - h)
-  | none => (top, b.bottom.getD bm)
+  (top, match b.under.orElse fun _ => b.height with
+    | some h => page - top - h
+    | none => b.bottom.getD bm)
 
 private theorem place_under (page t h : Length) : page - t - (page - t - h) = h := by length_omega
 
 /-- A declared height is the text block's height. -/
 public theorem TextBlockDecl.place_height (b : TextBlockDecl) (page vm bm h : Length)
-    (hh : b.height = some h) : page - (b.place page vm bm).1 - (b.place page vm bm).2 = h := by
-  simp only [TextBlockDecl.place, hh]
+    (hh : b.height = some h) (hu : b.under = none) :
+    page - (b.place page vm bm).1 - (b.place page vm bm).2 = h := by
+  simp only [TextBlockDecl.place, hh, hu, Option.orElse]
   exact place_under _ _ _
+
+/-- A height standing under the top is the text block's height, and leaves the top where the other
+keys place it. -/
+public theorem TextBlockDecl.place_under_top (b : TextBlockDecl) (page vm bm u : Length)
+    (hu : b.under = some u) :
+    page - (b.place page vm bm).1 - (b.place page vm bm).2 = u ∧
+      (b.place page vm bm).1 = ({ b with under := none }.place page vm bm).1 := by
+  simp only [TextBlockDecl.place, hu, Option.orElse]
+  exact ⟨place_under _ _ _, trivial⟩
 
 private theorem place_over (page m h : Length) : page - (page - m - h) - h = m := by length_omega
 
 /-- A height beside a declared bottom and no declared top stands on that bottom. -/
 public theorem TextBlockDecl.place_bottom (b : TextBlockDecl) (page vm bm h m : Length)
-    (hh : b.height = some h) (hm : b.bottom = some m) (ht : b.top = none) :
+    (hh : b.height = some h) (hm : b.bottom = some m) (ht : b.top = none)
+    (hu : b.under = none) :
     (b.place page vm bm).2 = m := by
-  simp only [TextBlockDecl.place, hh, hm, ht]
+  simp only [TextBlockDecl.place, hh, hm, ht, hu, Option.orElse]
   exact place_over _ _ _
 
 /-- TeX's page-break penalties at a paragraph's lines as latex.ltx sets them (`\clubpenalty`,

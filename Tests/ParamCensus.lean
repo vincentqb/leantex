@@ -940,6 +940,27 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
         (Dim.inch 1) (Dim.inch 1) &&
       tall (art "\\setlength{\\textheight}{500pt}\n\\usepackage[hmargin=1in]{geometry}") ==
         Dim.bp 792 * 7 / 10)
+  t "text block: the kernel's height stands under the top a ratio or a scale placed"
+    (let kernel := "\\setlength{\\textheight}{500pt}"
+     let even := page (calls "vmarginratio=1:1" kernel)
+     let twoToOne := page (calls "vmarginratio=2:1" kernel)
+     let half := page (calls "vscale=0.5" kernel)
+     let dflt := page (art ("\\usepackage{geometry}\n" ++ kernel))
+     let free := even.height - even.height * (700 : Int) / 1000
+     even.vmargin == free * (1 : Int) / (2 : Int) &&
+       tall (calls "vmarginratio=1:1" kernel) == Dim.pt 500 &&
+       twoToOne.vmargin == free * (2 : Int) / (3 : Int) &&
+       half.vmargin == (half.height - half.height * (500 : Int) / 1000) * (2 : Int) / (5 : Int) &&
+       dflt.vmargin == (page (art "\\usepackage{geometry}")).vmargin &&
+       tall (art ("\\usepackage{geometry}\n" ++ kernel)) == Dim.pt 500)
+  t "text block: a later declared height replaces the kernel's, a bottom beside a top and it is named"
+    (tall (art "\\setlength{\\textheight}{500pt}\n\\page{ textheight = 600pt }") == Dim.pt 600 &&
+      tall (art "\\page{ textheight = 300pt, textheight-under = 400pt }") == Dim.pt 400 &&
+      tall (art "\\page{ tmargin = 1in, bmargin = 3in, textheight-under = 400pt }") == Dim.pt 400 &&
+      named (art "\\page{ tmargin = 1in, bmargin = 3in, textheight-under = 400pt }") "bmargin")
+  t "text block: a kernel height leaving no text block is named as a text height"
+    ((elabStr (art "\\usepackage{geometry}\n\\setlength{\\textheight}{30in}")).2.any fun d =>
+      d.code == "W0104" && hasStr d.message "declared text height leaves the page no text block")
   t "text block: a key an earlier call spelled is not named again, nor geometry's own default"
     (quiet (calls "textheight=500pt,vmarginratio=1:1" "\\geometry{top=1in}") &&
       quiet (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}") &&

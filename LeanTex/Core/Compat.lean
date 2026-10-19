@@ -6393,9 +6393,10 @@ the paragraph's gap stands"
         return ← named "is set again by the class from its own page, so the preamble's value \
 reaches no page"
       write fun st => { st with pageVertical :=
-        if st.pageVertical.contains .textheight then st.pageVertical else st.pageVertical ++ [key] }
-      -- The kernel's height stands under the top, whatever placed the bottom before it.
-      return ← emit (.page #[(key, src), (.bmargin, "auto")])
+        if st.pageVertical.contains .textheightUnder then st.pageVertical
+        else st.pageVertical ++ [.textheightUnder] }
+      -- The kernel's height stands under the top the keys before it place.
+      return ← emit (.page #[(.textheightUnder, src)])
     emit (.page #[(key, src)])
   | .token t, _ =>
     unless st.inDef do
@@ -7031,7 +7032,7 @@ so a scale sizes nothing") pos
   let set := (← get).pageVertical
   let vbEmpty := vb.top.isNone && vb.bottom.isNone && vb.height.isNone && vb.ratio.isNone &&
     vb.scale.isNone
-  if !spelledNow.isEmpty || !vbEmpty || set.contains .textheight then
+  if !spelledNow.isEmpty || !vbEmpty || [.textheight, .textheightUnder].any set.contains then
     write fun st => { st with geometryBlock := vb }
     let mine (x : Option (String × String)) : Option String :=
       x.bind fun (k, _) => if spelledNow.contains k then some k else none
@@ -7066,7 +7067,7 @@ block, so a scale sizes nothing") pos
         else [(.tmargin, some t), (.bmargin, some m), (.textheight, spelled height)]
       | t, m => [(.tmargin, t), (.bmargin, m), (.textheight, spelled height)]
     let solved := solved ++ [(.vscale, if placed then scaled.map (·.2) else none),
-      (.vmarginratio, ratio)]
+      (.vmarginratio, ratio), (.textheightUnder, none)]
     -- A key an earlier lowering set and this solve leaves is cleared, the others stand unwritten.
     for (k, v) in solved do
       match v with
