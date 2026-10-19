@@ -119,3 +119,73 @@ def verbatimAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "verbatim ambient: a bare lstlisting inherits the ambient size"
     ((firstListingSpec (dvDoc "" "{\\small\n\\begin{lstlisting}\nx\n\\end{lstlisting}\n}")).map
       (·.fontSize) == some (.size "small"))
+
+/-- A heading inside a text-font command's argument sets as LaTeX sets it, ending the paragraph
+around it, and a listing read through a command's argument is named, both on shipped lines. -/
+def argumentBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some serif ← (do
+      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
+      | .ok f => pure (some f)
+      | .error _ => pure none)
+    | failures ref "argument blocks: the shipped serif face did not load"
+  let fs : Font.FontSet := {
+    fonts := #[serif]
+    index := ((List.range 3).flatMap fun slot =>
+      [((slot, 400, false), 0), ((slot, 700, false), 0),
+       ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray }
+  let lines (src : String) : Array String × Array Diag :=
+    let (doc, ds) := elabStr src
+    ((bodyLines (layoutOf fs doc)).map (lineText ·), ds)
+  for (what, inner) in [("bold", "\\textbf{Alpha \\section{Kqzv} Omega}"),
+      ("nested emphasis", "\\textbf{\\emph{Alpha \\section*{Kqzv} Omega}}"),
+      ("coloured", "\\textcolor{red}{Alpha \\subsection{Kqzv} Omega}")] do
+    let (ls, ds) := lines (dvDoc "" ("Before.\n" ++ inner ++ "\nAfter."))
+    let lineAt (s : String) : Option Nat := ls.findIdx? (hasStr · s)
+    t s!"argument blocks: a heading in {what} text ends its paragraph, the text either side joining \
+the paragraphs around it ({ls}, {ds.map (·.code)})"
+      (!ds.any (·.kind == .E0312) && lineAt "Before." == lineAt "Alpha" && lineAt "Omega" == lineAt "After." &&
+        (match lineAt "Alpha", lineAt "Kqzv", lineAt "Omega" with
+         | some a, some k, some o => a < k && k < o
+         | _, _, _ => false))
+  let listing := "\\begin{verbatim}\nverb words\n\\end{verbatim}"
+  -- Every W0411 a source raises counts, so one site's two accountings would read as two.
+  let sites (ds : Array Diag) : Nat := (ds.filter (·.kind == .W0411)).size
+  let lr := "\\fbox{" ++ listing ++ "}"
+  for (what, src, want) in [
+      ("a box's argument", dvDoc "" ("A \\parbox{6cm}{" ++ listing ++ "} b."), 1),
+      ("a box's argument among words",
+        dvDoc "" ("\\parbox{6cm}{Some words " ++ listing ++ " more words}"), 1),
+      ("a centre in a box's argument",
+        dvDoc "" ("\\parbox{6cm}{\\begin{center}" ++ listing ++ "\\end{center}}"), 1),
+      ("an LR box's argument, named by the inline reading alone", dvDoc "" ("A " ++ lr ++ " b."), 1),
+      ("a macro's argument",
+        dvDoc "\\newcommand{\\wrapper}[1]{#1}\n" ("A\n\\wrapper{" ++ listing ++ "}\nb."), 1),
+      ("a box in a macro's argument", dvDoc "\\newcommand{\\wrapper}[1]{#1}\n"
+        ("\\wrapper{\\parbox{3cm}{" ++ listing ++ "}}"), 1),
+      ("a used definition's text", dvDoc ("\\newcommand{\\cbody}{" ++ listing ++ "}\n") "\\cbody", 1),
+      ("a group after a spacing command", dvDoc "" ("A.\n\\medskip\n{\\small " ++ listing ++ "}"), 0),
+      ("a group after a length", dvDoc "" ("A.\n\\vspace{1em}\n{\\footnotesize " ++ listing ++ "}"),
+        0),
+      ("a group after noindent", dvDoc "" ("\\noindent{" ++ listing ++ "}"), 0),
+      ("an item's group", dvDoc ""
+        ("\\begin{itemize}\n\\item[\\textbf{x}] {\\small " ++ listing ++ "}\n\\end{itemize}"), 0),
+      ("a minipage", dvDoc "" ("\\begin{minipage}{6cm}\n" ++ listing ++ "\n\\end{minipage}"), 0),
+      ("the body", dvDoc "" listing, 0)] do
+    let (ls, ds) := lines src
+    t s!"argument blocks: a listing in {what} draws {want} W0411, its words set ({sites ds})"
+      (sites ds == want && ls.any (hasStr · "verbwords"))
+  let (_, unusedDs) := lines (dvDoc ("\\newcommand{\\unused}{" ++ listing ++ "}\n") "Words.")
+  t "argument blocks: a definition no call runs names nothing" (sites unusedDs == 0)
+  let (_, fileDs) := lines (dvDoc "\\usepackage{listings}\n\\newcommand{\\inc}[1]{\\lstinputlisting{#1}}\n"
+    "\\inc{probe-snippet.txt}")
+  t "argument blocks: a listing a macro reads from a file is no listing scanned as an argument"
+    (sites fileDs == 0)
+  let (cdoc, _) := elabStr (dvDoc "\\usepackage{xcolor}\n" "\\textcolor{red}{\\section{Kqzv}}")
+  let red : Ir.Color := ((default : Ir.Palette).resolve "red").getD Ir.Color.black
+  t "argument blocks: a colour over a heading colours the heading"
+    (let inks := inksOn (layoutOf fs cdoc) (hasStr · "Kqzv"); !inks.isEmpty && inks.all (· == red))
+  let (mdoc, mds) := elabStr (dvDoc "\\usepackage{xcolor}\n"
+    "Before.\n\\textcolor[rgb]{1,0,0}{C \\section{Model} D}\nAfter.")
+  t "argument blocks: a colour with a model argument over a heading sets it"
+    (!mds.any (·.kind == .E0312) && (bodyLines (layoutOf fs mdoc)).any (fun l => hasStr (lineText l) "Model"))

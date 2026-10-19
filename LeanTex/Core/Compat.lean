@@ -9417,6 +9417,44 @@ is skipped" pos
       return some (#[], k)
   | _ => return none
 
+/-- Whether a captured verbatim construct sets inline, never a display listing. -/
+@[expose] public def verbInline (env : String) : Bool :=
+  env == "verb" || env == "mintinline" || env == "lstinline" || Lex.urlCommands.contains env
+
+/-- Whether a capture is one its author wrote, opening on `\begin` or `\mint`, not one read from a
+file or built by a surface reader. -/
+public def writtenCapture (p : Pos) : Bool := p.command == some "\\begin" || p.command == some "\\mint"
+
+mutual
+
+/-- The written display listings a box's content holds at any depth, where each opens and its text. -/
+private def boxListingsList : List Raw → Array (String × Pos × String) →
+    Array (String × Pos × String)
+  | [], acc => acc
+  | r :: rest, acc => boxListingsList rest (boxListingsRaw r acc)
+termination_by structural l => l
+
+private def boxListingsRaw : Raw → Array (String × Pos × String) → Array (String × Pos × String)
+  | .group body _, acc => boxListingsList body.toList acc
+  | .env n body _, acc =>
+    if pictureEnvs.contains n || mathEnvs.contains n then acc else boxListingsList body.toList acc
+  | .verb env v p, acc =>
+    if !verbInline env && writtenCapture p then acc.push (env, p, v.text) else acc
+  | .math .., acc | .word .., acc | .space, acc | .par _, acc | .ctrl .., acc | .sym .., acc => acc
+termination_by structural r => r
+
+end
+
+/-- W0411's words for a written listing TeX reads through an argument scan, by its opener. -/
+public def scannedListingMessage (env : String) : String :=
+  let opener := if env == "mint" then "\\mint" else s!"\\begin\{{env}}"
+  s!"'{opener}' inside a command's argument or a definition's text does not compile under \
+LaTeX; it is set as written"
+
+/-- W0411's help for a written listing TeX reads through an argument scan. -/
+public def scannedListingHelp : String :=
+  "move the listing out of the command, or into \\begin{minipage}{<width>}...\\end{minipage}"
+
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
@@ -9960,6 +9998,10 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
     let (_, j) := takeOpts raws start 3
     let (args, k) := takeGroups raws j 2
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
+    -- A box's content is TeX's argument; a listing an expansion carried there is the elaborator's.
+    for (env, vp, _) in boxListingsList (args[1]?.getD #[]).toList #[] do
+      if vp.origins.isEmpty then
+        say .W0411 (scannedListingMessage env) vp (help := scannedListingHelp)
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
     -- The body group stays in the walk, which rewrites it before it joins the box.
     let body := skipSpaces raws (takeGroups raws j 1).2
@@ -15448,6 +15490,172 @@ termination_by structural r => r
 
 end
 
+/-- The text-font commands, each its declaration set in a group (fntguide §2.2). -/
+private def textFontCommands : List String :=
+  ["textrm", "textsf", "texttt", "textmd", "textbf", "textup", "textit", "textsl", "textsc",
+   "textnormal", "emph"]
+
+/-- The sectioning commands, which end the paragraph they meet. -/
+private def headingCommands : List String :=
+  ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph",
+   "addpart", "addchap", "addsec"]
+
+/-- The index past a heading's star, options and title from `i`, at least one past it. -/
+private def headingEnd (body : Array Raw) (i : Nat) : Nat :=
+  let (_, j) := takeOpts body (skipStar body (skipSpaces body (i + 1))) 1
+  max (takeGroups body j 1).2 (i + 1)
+
+/-- A text-font argument's raws from `i`, each heading whole and marked. -/
+private def cutAtHeadings (body : Array Raw) (i : Nat) (out : Array (Array Raw × Bool)) :
+    Array (Array Raw × Bool) :=
+  if h : i < body.size then
+    match body[i] with
+    | .ctrl n p =>
+      if headingCommands.contains n then
+        let k := headingEnd body i
+        have : i < k := Nat.lt_of_lt_of_le (Nat.lt_succ_self i) (Nat.le_max_right _ _)
+        cutAtHeadings body k (out.push (body.extract i k, true))
+      else cutAtHeadings body (i + 1) (out.push (#[.ctrl n p], false))
+    | r => cutAtHeadings body (i + 1) (out.push (#[r], false))
+  else out
+termination_by body.size - i
+
+/-- Whether a raw is a sectioning command. -/
+private def isHeadingRaw : Raw → Bool
+  | .ctrl n _ => headingCommands.contains n
+  | _ => false
+
+/-- The command `head` over each run beside the headings, edge spaces dropped as TeX's vertical
+mode drops them, and each heading standing whole, in a group opened by `wrap` when it has one. -/
+private def overRuns (head wrap : Array Raw) (gp : Pos) (out run : Array Raw) (after : Bool) :
+    List (Array Raw × Bool) → Array Raw
+  | [] => if run.any (!· matches .space) then (out ++ head).push (.group run gp) else out
+  | (raws, heading) :: rest =>
+    if heading then
+      let run := run.popWhile (· matches .space)
+      let out := if run.any (!· matches .space) then (out ++ head).push (.group run gp) else out
+      -- The heading ends the paragraph before it, so its group is no argument of the run's command.
+      let out := if wrap.isEmpty then out ++ raws
+        else (out.push (.par gp)).push (.group (wrap ++ raws) gp)
+      overRuns head wrap gp out #[] true rest
+    else if after && run.isEmpty && raws.all (· matches .space) then
+      overRuns head wrap gp out run after rest
+    else overRuns head wrap gp out (run ++ raws) after rest
+
+/-- A text-font or colour command over an argument holding a heading, set as LaTeX sets it: the
+command over each run beside the headings, and each heading standing between them, a colour
+standing over it as a declaration. -/
+private def styledHeadings : List Raw → Array Raw → Array Raw
+  | [], out => out
+  | .ctrl "textcolor" p :: .sym '[' q :: .word m mp :: .sym ']' r :: .group c cp ::
+      .group body gp :: rest, out =>
+    let model := #[Raw.sym '[' q, .word m mp, .sym ']' r, .group c cp]
+    if body.any isHeadingRaw then
+      styledHeadings rest (overRuns (#[.ctrl "textcolor" p] ++ model) (#[.ctrl "color" p] ++ model)
+        gp out #[] false (cutAtHeadings body 0 #[]).toList)
+    else styledHeadings (.group body gp :: rest) ((out.push (.ctrl "textcolor" p)) ++ model)
+  | .ctrl "textcolor" p :: .group c cp :: .group body gp :: rest, out =>
+    if body.any isHeadingRaw then
+      styledHeadings rest (overRuns #[.ctrl "textcolor" p, .group c cp]
+        #[.ctrl "color" p, .group c cp] gp out #[] false (cutAtHeadings body 0 #[]).toList)
+    else styledHeadings (.group body gp :: rest) ((out.push (.ctrl "textcolor" p)).push (.group c cp))
+  | .ctrl n p :: .group body gp :: rest, out =>
+    if textFontCommands.contains n && body.any isHeadingRaw then
+      styledHeadings rest (overRuns #[.ctrl n p] #[] gp out #[] false
+        (cutAtHeadings body 0 #[]).toList)
+    else styledHeadings (.group body gp :: rest) (out.push (.ctrl n p))
+  | r :: rest, out => styledHeadings rest (out.push r)
+
+mutual
+
+/-- Every text-font command's argument cut at the headings it holds (`styledHeadings`), inner
+arguments first. -/
+private def headingsLiftedList : List Raw → Array Raw → Array Raw
+  | [], out => styledHeadings out.toList #[]
+  | r :: rest, out => headingsLiftedList rest (out.push (headingsLiftedRaw r))
+termination_by structural l => l
+
+private def headingsLiftedRaw : Raw → Raw
+  | .group body p => .group (headingsLiftedList body.toList #[]) p
+  | .env n body p =>
+    if pictureEnvs.contains n || mathEnvs.contains n then .env n body p
+    else .env n (headingsLiftedList body.toList #[]) p
+  | .math d body p => .math d body p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb e v p => .verb e v p
+termination_by structural r => r
+
+end
+
+/-- The text of a parameterless definition after its name: the group standing next, when no
+`[n]` or `#k` asks for an argument. -/
+private def parameterlessText : List Raw → Option (Array Raw)
+  | .space :: rest => parameterlessText rest
+  | .group body _ :: _ => some body
+  | _ => none
+
+/-- The raws after a definition's name token: past the first group or control word. -/
+private def afterDefinedName : List Raw → List Raw
+  | .space :: rest => afterDefinedName rest
+  | .word "*" _ :: rest => afterDefinedName rest
+  | .ctrl _ _ :: rest | .group _ _ :: rest => rest
+  | _ => []
+
+mutual
+
+/-- Each written listing a parameterless definition's text holds, with the name it defines and its
+text. -/
+private def definedListingsList : List Raw → Array (String × String × Pos × String) →
+    Array (String × String × Pos × String)
+  | [], acc => acc
+  | .ctrl d p :: rest, acc =>
+    let acc := if Definer.nameDefiners.contains d then
+        match definedName rest, parameterlessText (afterDefinedName rest) with
+        | some n, some body => acc ++ (boxListingsList body.toList #[]).map fun (e, q, t) => (n, e, q, t)
+        | _, _ => acc
+      else acc
+    definedListingsList rest (definedListingsRaw (.ctrl d p) acc)
+  | r :: rest, acc => definedListingsList rest (definedListingsRaw r acc)
+termination_by structural l => l
+
+private def definedListingsRaw : Raw → Array (String × String × Pos × String) →
+    Array (String × String × Pos × String)
+  | .group body _, acc | .env _ body _, acc => definedListingsList body.toList acc
+  | .math .., acc | .word .., acc | .space, acc | .par _, acc | .ctrl .., acc | .sym .., acc
+  | .verb .., acc => acc
+termination_by structural r => r
+
+end
+
+mutual
+
+/-- How often a control word is spelled, at any depth. -/
+private def ctrlCountList (n : String) : List Raw → Nat
+  | [] => 0
+  | r :: rest => ctrlCountRaw n r + ctrlCountList n rest
+termination_by structural l => l
+
+private def ctrlCountRaw (n : String) : Raw → Nat
+  | .ctrl m _ => if m == n then 1 else 0
+  | .group body _ | .env _ body _ => ctrlCountList n body.toList
+  | .math .. | .word .. | .space | .par _ | .sym .. | .verb .. => 0
+termination_by structural r => r
+
+end
+
+/-- W0411 at each written listing a parameterless definition's text holds where a call runs it, TeX
+reading that text as tokens before the listing could scan it. -/
+private def nameDefinedListings (raws : Array Raw) : M Unit := do
+  let texts := (boxListingsList raws.toList #[]).map (·.2.2)
+  for (n, env, p, text) in definedListingsList raws.toList #[] do
+    -- A call either stands spelled, or has expanded into a copy of the listing.
+    if ctrlCountList n raws.toList ≥ 2 || (texts.filter (· == text)).size ≥ 2 then
+      say .W0411 (scannedListingMessage env) p (help := scannedListingHelp)
+
 /-- The passes before the compatibility walk: overlay inputs, live groups,
 delimiters, columns, overprints and `\only`'s alternations. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
@@ -15461,6 +15669,8 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     let raws := (splitColumnsList raws.toList).toArray
     let raws := trivlistEnvsList raws.toList #[]
     let raws := (envCodesList #[] false raws #[] raws.toList 0 0).1
+    nameDefinedListings raws
+    let raws := headingsLiftedList raws.toList #[]
     let raws ← overprintList raws.toList #[] 0
     pure (onlyAlternationsIn cx raws)
   let st0 : St :=
@@ -15504,13 +15714,26 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
   have hcodes : (envCodesList #[] false (packageCall command names pos gp np) #[]
       (packageCall command names pos gp np).toList 0 0).1 = packageCall command names pos gp np := by
     rcases hc with rfl | rfl <;> simp [packageCall, envCodesList, envCodesRaw]
+  have hdl : definedListingsList (packageCall command names pos gp np).toList #[] = #[] := by
+    have hn : "usepackage" ∉ Definer.nameDefiners ∧ "RequirePackage" ∉ Definer.nameDefiners := by
+      decide
+    rcases hc with rfl | rfl <;>
+      simp [packageCall, definedListingsList, definedListingsRaw, hn.1, hn.2]
+  have hdefs : nameDefinedListings (packageCall command names pos gp np) = pure () := by
+    simp only [nameDefinedListings, hdl]
+    rfl
+  have hheads : headingsLiftedList (packageCall command names pos gp np).toList #[] =
+      packageCall command names pos gp np := by
+    rcases hc with rfl | rfl <;>
+      simp [packageCall, headingsLiftedList, headingsLiftedRaw, styledHeadings, textFontCommands]
   have hframes : frameCommands (packageCall command names pos gp np) =
       packageCall command names pos gp np := by
     rcases hc with rfl | rfl <;>
       simp [frameCommands, declaresPresentation, packageCall, List.findIdx?_cons]
   simp only [hw, StateT.run, bind, StateT.bind,
     pairGroups_package_exact, hdelim, hframes,
-    hcols, htriv, hcodes, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
+    hcols, htriv, hcodes, hdefs, hheads, overprint_package_exact _ _ _ _ _ hc,
+    onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
     pure, StateT.pure, packageRewriteState]
 
 /-- The gathered declarations and deferred bodies

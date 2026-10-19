@@ -247,7 +247,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0309 => dvE (w := w) "\\documentclass{proseplate}\n\\begin{document}\nx\n\\end{document}"
   | .E0310 => dvE (w := w) (dvDoc "" "\\begin{itemize}\nstray\n\\item x\n\\end{itemize}")
   | .E0311 => dvE (w := w) "a & b"
-  | .E0312 => dvE (w := w) "\\textbf{\\section{x}}"
+  | .E0312 => dvE (w := w) "\\fbox{\\section{x}}"
   | .E0313 => dvE (w := w) "\\documentclass{article}\nstray text\n\\begin{document}\nx\n\\end{document}"
   | .E0316 => dvE (w := w) (dvDoc "\\define \\x(a?: text) {\\a}\n" "\\x[oops")
   | .E0320 => dvE (w := w) (dvDoc "\\page{ oops }\n" "x")
@@ -416,7 +416,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0306 => dvE (w := w) (dvDoc "\\palette[seeds]{ ink = #808080, paper = #FFFFFF, accent = #E85D2A }\n" "x")
   | .W0411 => dvE (w := w) (dvDoc "\\usepackage{minted}\n"
       "Alpha \\begin{minted}{python}x = 1\\end{minted} omega.") ++
-    dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\begin{minted}{python}x = 1\\end{minted}")
+    dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\begin{minted}{python}x = 1\\end{minted}") ++
+    dvE (w := w) (dvDoc "" "A \\fbox{\\begin{verbatim}\nx = 1\n\\end{verbatim}} b.")
   | .W0413 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\textbf{Alpha \\mint{python}{x = 1} omega}")
   | .W0412 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "Alpha \\mintinline{pyhton}{x} omega.")
   -- A mid-grey ink on a mid-grey page: no tone of either reaches 7:1 on the other.
@@ -608,7 +609,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0347 =>
     dvE (w := w) (dvDoc "" "\\runninghead{Chapter One}\n\nx") ++
     dvE (w := w) (dvDoc "" "\\textbf{\\runningfoot{Y} z}")
-  | .E0359 => dvE (w := w) (dvDeck ""
+  | .N0359 => dvE (w := w) (dvDeck ""
       "\\note{\\begin{frame}{Carried}\nspoken \\note{never carried} words\n\\end{frame}}")
   | .W0601 => #[Image.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       Image.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]

@@ -655,7 +655,7 @@ private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
       · simp [bodyIsBlockOne]
       · exact absurd rfl hne
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
-    rcases he with rfl | rfl <;> simp [bodyIsBlockOne, verbAlwaysInline, Lex.urlCommands]
+    rcases he with rfl | rfl <;> simp [bodyIsBlockOne, verbAlwaysInline, Compat.verbInline, Lex.urlCommands]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl <;>
       simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs, Parse.markdownEnv,

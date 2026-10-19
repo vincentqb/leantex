@@ -551,9 +551,9 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
       sstages.all fun n => (labelOf n).all (· == "One") || !hasStr (asideIn n) "Loose words.")
   let (nested, nestedDs) := elabStr (deck169Body
     "\\note{\\begin{frame}{T}\nspoken \\note{inner aside} words\n\\end{frame}}")
-  t "a note inside a note's frame is refused, named"
-    ((nestedDs.map (·.code)) == #["E0359"])
-  t "the refusal keeps the frame's words, dropping only the inner note"
+  t "a note inside a note's frame is dropped as beamer drops it, noted and never an error"
+    ((nestedDs.map (·.code)) == #["N0359"])
+  t "the note keeps the frame's words, dropping only the inner note"
     (match nested.body with
      | #[.note #[.frame _ _ _ _ inner]] =>
        ((Ir.dumpBlocks "" inner).splitOn "spoken words").length == 2 && -- ir tier: note content, not a page claim

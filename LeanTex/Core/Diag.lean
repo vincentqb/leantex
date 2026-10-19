@@ -172,7 +172,7 @@ public inductive DiagCode where
   | W0351 | W0352 | W0353
   | E0347
   | W0601 | W0602
-  | E0359
+  | N0359
   | W0361
   | W0362
   | W0363
@@ -415,7 +415,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("0602", .degraded, "image format unusable; placeholder box placed")
-  | .E0359 => ("0359", .dropped, "a \\note nested inside another note's frame is dropped")
+  | .N0359 => ("0359", .info,
+    "a \\note nested inside another note's frame is dropped, as beamer drops it")
   | .W0361 => ("0361", .config, "a built-in is not replaced by a redefinition the engine cannot run")
   | .W0362 => ("0362", .degraded, "picture entirely outside the rendered subset; a placeholder box marks its place")
   | .W0363 => ("0363", .degraded, "a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place")
@@ -574,7 +575,8 @@ public def DiagCode.renumbered : List (String × String) :=
   [("E0382", "W0382"),
    ("E0002", "W0002"),
    ("E0503", "W0503"),
-   ("E0403", "W0403")]
+   ("E0403", "W0403"),
+   ("E0359", "N0359")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where

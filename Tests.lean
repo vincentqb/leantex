@@ -1149,6 +1149,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.inlineCodeChecks ref
   Tests.inlineCodeRequestChecks ref
   verbatimAmbientChecks ref
+  argumentBlockChecks ref
   ownBibChecks ref
   amsmathChecks ref
   bigDelimChecks ref

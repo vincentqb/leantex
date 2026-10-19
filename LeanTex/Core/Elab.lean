@@ -7286,8 +7286,7 @@ private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.ru
 
 /-- The verbatim captures that always run inline: `\verb`, the inline code commands and url.sty's
 delimited commands. -/
-private def verbAlwaysInline (env : String) : Bool :=
-  env == "verb" || env == "mintinline" || env == "lstinline" || Lex.urlCommands.contains env
+private def verbAlwaysInline (env : String) : Bool := Compat.verbInline env
 
 mutual
 
@@ -10208,6 +10207,9 @@ private def listingBody (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : P
   let (env, v, opener) := if env == "mint" then
       ("minted", { v with text := bindCodeParams ctx (Parse.mintedCode v.text 0) ++ "\n" }, "\\mint")
     else (env, v, "\\begin{" ++ env ++ "}")
+  -- A written listing an expansion carries was read through a macro's argument or its text.
+  if !pos.origins.isEmpty && Compat.writtenCapture pos then
+    diag ctx .W0411 (Compat.scannedListingMessage env) (some pos) (help := Compat.scannedListingHelp)
   if (env == "minted" || env == "lstlisting") && !v.src.contains '\n' then
     let lang := if env == "minted" then (v.lang.map (·.trimAscii.toString)).getD "" else ""
     warnOnce ctx ("listing-oneline:" ++ env) .W0411
@@ -13817,8 +13819,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     setPauses outerPauses
     if hnb : ctx.noteBody then
       unless stash.isEmpty do
-        diag ctx .E0359
-          "a '\\note' inside this note's frame is dropped: one note cannot carry another"
+        diag ctx .N0359
+          "a '\\note' inside this note's frame is dropped: one note carries no other, as in beamer"
           ctx.notePos
           (help := "move the inner '\\note' out of the enclosing '\\note', beside its frame")
     else

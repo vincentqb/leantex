@@ -156,6 +156,7 @@ import Tests.FrameHeadingScope
 import Tests.SectionPages
 import Tests.Contents
 import Tests.Themes
+import Tests.VerbatimAmbient
 import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
@@ -2323,6 +2324,15 @@ def reports : List Report := [
     accept := ["main's binary at 70096387 on invented probes: text before a list's first item, a heading inside bold text and a page profile no registry names each stop the build with no artifact; an open group before the document's end draws three errors, an open list two and a begin naming nothing three with an unknown environment beside them; the text before the document's start is named at no line and the list's stray text at the list's begin. This tree ships each page beside its one error, exiting 1, names the open group, the open list and the nameless begin once each, and names both texts at their own lines; a missing input still ships nothing",
       "lualatex 1.24 on the same probes: the open group and the heading inside bold text build cleanly, and the list's stray text is reported at the first item's line",
       "the corpus built by main's binary at 70096387 and by this tree's: every artifact and diagnostic byte-identical but the theme sketch's, which reports its unreadable paper size as before and now ships its deck, three slides, its declared faces' use judged (three W0449 lines)"]
+    state := .guarded "70096387" .before .author },
+  { id := "R251", date := "2026-10-19"
+    what := "a heading inside a bold, emphasised or coloured run of text stopped the build as a block command used inline (E0312), where LaTeX ends the paragraph, sets the heading and joins the text either side to the paragraphs around it; a note inside a note's frame was an error (E0359) where beamer drops it as quietly; and a listing environment written inside a command's argument or a definition's text, which LaTeX cannot read, was set with nothing said"
+    pins := [check% argumentBlockChecks, check% noteChecks, check% diagVoiceChecks]
+    accept := ["lualatex 1.24 on invented articles: a section inside bold text between two paragraphs sets the first paragraph with the bold words before it, the numbered heading, and the bold words after it joining the next paragraph; an underlined or framed section is refused in LR mode; a verbatim inside a parbox or a one-argument macro stops the run; this tree sets the same heading layout, still refuses the framed one (E0312), and names both listings (W0411) while setting them",
+      "beamer under lualatex 1.24 on an invented deck: a note inside a note's frame is shown nowhere with notes hidden, and with notes shown the outer note's page carries the frame's words without the inner note; this tree drops the same note, now with a note-level record",
+      "main's binary at 70096387 on the same probes: E0312 and no PDF for the bold heading, E0359 for the nested note, and nothing for either listing; the checks fail there",
+      "lualatex 1.24 on invented articles: a red heading under a colour command, an LR box's verbatim and a definition's verbatim refused, and a listing a macro reads from a file set cleanly; this tree colours the heading, names each refused listing once and stays silent on the file's",
+      "the corpus built by main's binary at 70096387 and by this tree's: every artifact and every diagnostic byte-identical"]
     state := .guarded "70096387" .before .author }
 ]
 
