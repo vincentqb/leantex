@@ -13,7 +13,7 @@ def strokedSegs (oneFace : Font.FontSet) (src : String) : Array (Array Ir.Pic.Pa
     | _, _ => none
 
 /-- Two coordinates within the two sp separately rounded offsets can differ by. -/
-def near2 (a b : Dim.Sp) : Bool := decide (a - b ≤ 2 ∧ b - a ≤ 2)
+def near2 (a b : Dim.Length) : Bool := decide (a - b ≤ 2 * Dim.Length.quantum ∧ b - a ≤ 2 * Dim.Length.quantum)
 
 /-- A path's long tail draws what TikZ's path keys say: rounded corners, scopes, arcs, shorten and
 opacity. -/

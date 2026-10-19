@@ -16,11 +16,11 @@ private def flowSource (left right : String) (lead : String := "") : String :=
     (lead ++ "\\begin{paracol}{2}\n" ++ left ++ "\\switchcolumn\n" ++ right ++
       "\\end{paracol}\nAfterflow.")
 
-private def flowPlaces (census : Array CensusPage) (mark : String) : Array (Nat × Sp × Sp) :=
+private def flowPlaces (census : Array CensusPage) (mark : String) : Array (Nat × Length × Length) :=
   census.zipIdx.flatMap fun (p, i) => p.lines.filterMap fun l =>
     if !l.furniture && hasStr l.text mark then some (i, l.x, l.y) else none
 
-private def pageBefore (a b : Nat × Sp × Sp) : Bool :=
+private def pageBefore (a b : Nat × Length × Length) : Bool :=
   a.1 < b.1 || (a.1 == b.1 && a.2.2 < b.2.2)
 
 /-- Each independent flow starts at the row's opening page and baseline, keeps its own pagination

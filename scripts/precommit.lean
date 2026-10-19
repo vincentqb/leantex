@@ -2741,9 +2741,9 @@ def selftest : IO UInt32 := do
     ("  vmargin := Dim.mm 9", true),
     ("  if w > inch 1 then", true),
     ("  let floor := Dim.mm100 140", true),
-    ("  pageW : Sp := pt 612 -- US letter, the class default", false),
+    ("  pageW : Length := pt 612 -- US letter, the class default", false),
     ("  let w := scaledAt size font (font.advance c)", false),
-    ("  let s := v.toPtString", false),
+    ("  let s := v.toBpString", false),
     ("  let g := (a.resolve tok).width", false),
     ("  let mmNames := [\"mm\", \"cm\"]", false)]
 

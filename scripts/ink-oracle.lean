@@ -63,7 +63,7 @@ def popExtent (p : PopPage) : Option (Float × Float × Float × Float) := Id.ru
 /-- The same extent off the engine reader's runs, in the same space. -/
 def artExtent (p : ArtPage) : Option (Float × Float × Float × Float) := Id.run do
   let some r0 := p.runs[0]? | return none
-  let f (v : Dim.Sp) : Float := (Float.ofInt v) / 65536.0
+  let f (v : Dim.Length) : Float := Float.ofInt v.units / Float.ofInt (Dim.bp 1).units
   let mut x0 := f r0.x
   let mut x1 := f r0.x1
   let mut yl := f r0.bottom

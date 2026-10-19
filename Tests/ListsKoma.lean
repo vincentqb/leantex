@@ -6,6 +6,9 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-! KOMA-Script's lists and LaTeX's three quotation environments, at lualatex's positions measured
 on the same invented documents. -/
 
@@ -113,7 +116,7 @@ def gaps (oneFace : Font.FontSet) (src : String) (words : List String) (page : N
   return (ys.zip ys.tail).map fun (a, b) => ((b - a - bs) * 10 + Dim.pt 1 / 2) / Dim.pt 1
 
 /-- A line's first glyph's x: its start past the glyphless runs and gaps before it. -/
-def inkStart (l : Layout.LineOut) : Int := Id.run do
+def inkStart (l : Layout.LineOut) : Dim.Length := Id.run do
   let mut x := l.x
   for s in l.segs do
     match s with
@@ -123,7 +126,7 @@ def inkStart (l : Layout.LineOut) : Int := Id.run do
   return x
 
 /-- The first glyph's x of the first body line holding `word`. -/
-def inkOf (out : Layout.Out) (word : String) : Option Int :=
+def inkOf (out : Layout.Out) (word : String) : Option Dim.Length :=
   (bodyLines out).findSome? fun l =>
     let text := String.join (l.segs.toList.map fun s => match s with
       | .run _ _ _ _ glyphs _ _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2.1))
@@ -167,7 +170,7 @@ def komaListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- lualatex: the class's written options stand over those passed to it before it loads.
   t "koma lists: a class's written option stands over the one passed to it"
     (((elabStr ("\\PassOptionsToClass{parskip=full}{scrartcl}\n" ++
-        doc "[parskip=half]{scrartcl}" "" "Alpha.")).1.page.parskip.map (·.width.sp)) == some 445644)
+        doc "[parskip=half]{scrartcl}" "" "Alpha.")).1.page.parskip.map (·.width.sp)) == some (Dim.pt 68 / 10))
   -- enumitem's keys stand over the level's macro: a declared parsep is the next level's parskip.
   let declared := doc "{scrartcl}" "\\usepackage{enumitem}\n\\setlist[1]{parsep=0pt}" nested
   t "koma lists: a declared level-one parsep of zero leaves the second level's own skips"
@@ -193,7 +196,7 @@ def quoteKindChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     s!"\\begin\{quote}\nBravo plain.\n\\end\{quote}\n\n\\begin\{verse}\n{long}\n\\end\{verse}"
   for (cls, indent) in [("[10pt]{article}", Dim.pt 15), ("[10pt]{scrartcl}", Dim.pt 10)] do
     let out := layoutOf oneFace (elabStr (doc cls "" verse)).1
-    let inkAt (w : String) : Int := (inkOf out w).getD 0
+    let inkAt (w : String) : Dim.Length := (inkOf out w).getD 0
     t s!"quote kinds: {cls}'s quotation indents each paragraph's first line by its class's parindent"
       (inkAt "Echo" - inkAt "Bravo" == indent && inkAt "Foxtrot" - inkAt "Bravo" == indent)
     let lines := (bodyLines out).filter fun l => l.segs.any fun s => match s with
@@ -204,7 +207,7 @@ def quoteKindChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     t s!"quote kinds: {cls}'s verse hangs a wrapped line 1.5em past its lines, and restarts at each"
       (verseLines.size ≥ 3 && verseLines.toList.zipIdx.all fun (l, i) =>
         let want := if i == 0 || i + 1 == verseLines.size then 0 else Dim.pt 15
-        (inkStart l - inkAt "Bravo" - want).natAbs ≤ (Dim.pt 1).toNat)
+        (inkStart l - inkAt "Bravo" - want).abs ≤ Dim.pt 1)
   t "quote kinds: a long verse line wraps as LaTeX's does, naming no declared line"
     (!(elabStr (doc "[10pt]{article}" "" verse)).2.any (·.code == "W0386") &&
       !(layoutOf oneFace (elabStr (doc "[10pt]{article}" "" verse)).1).diags.any (·.code == "W0386"))
@@ -244,7 +247,7 @@ def quoteBoundaryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- lualatex: `\@endpe` leaves no indent on text going on past a display or a list, and text after
   -- a list a quotation opens with keeps its paragraph's, the label ending no paragraph.
   let out := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" goesOn)).1
-  let past (w : String) : Int := (inkOf out w).getD 0 - (inkOf out "Alpha").getD 0
+  let past (w : String) : Dim.Length := (inkOf out w).getD 0 - (inkOf out "Alpha").getD 0
   t "quote kinds: a quotation's paragraph going on past a display or a list takes no indent"
     (past "Bravo" == Dim.pt 15 && past "Charlie" == Dim.pt 15 && past "Delta" == 0 &&
       past "Golf" == 0)
@@ -296,7 +299,7 @@ def quoteBoundaryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- lualatex: no indent past a verbatim, a skip after a list, a heading or a run-in heading, and
   -- the indent on a paragraph `\\par` opens after a display.
   let more := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" goesOnMore)).1
-  let past (w : String) : Int := (inkOf more w).getD 0 - (inkOf more "Alpha").getD 0
+  let past (w : String) : Dim.Length := (inkOf more w).getD 0 - (inkOf more "Alpha").getD 0
   t "quote kinds: a quotation's text past a verbatim, a skip or a heading takes no indent"
     (past "Bravo" == Dim.pt 15 && past "Delta" == 0 && past "Golf" == 0 && past "India" == 0 &&
       past "Juliet" == 0 && past "Mike" == Dim.pt 15)
@@ -485,19 +488,19 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
   let t := check ref
   let size := Dim.pt 10
   let src (len : String) : String := doc "[10pt]{article}" (exSpaced len).1 (exSpaced len).2
-  let drop (len : String) : Option Dim.Sp := do
+  let drop (len : String) : Option Dim.Length := do
     let lines := bodyLines (layoutOf oneFace (elabStr (src len)).1)
     let y (w : String) := (lines.find? fun l => hasStr (lineText l) w).map (·.y)
     pure ((← y "Bravo") - (← y "Alpha"))
   -- the PDF's 10ex: the list's drop with its topsep, less the drop without
-  let pdfEx : Option Dim.Sp := do pure ((← drop "10ex") - (← drop "0pt"))
-  let xhAt (sz : Dim.Sp) : Dim.Sp := oneFace.body.xHeight * sz / oneFace.body.unitsPerEm
+  let pdfEx : Option Dim.Length := do pure ((← drop "10ex") - (← drop "0pt"))
+  let xhAt (sz : Dim.Length) : Dim.Length := oneFace.body.xHeight * sz / oneFace.body.unitsPerEm
   let xh := xhAt size
   let d := (elabStr (src "10ex")).1
   let opening (fonts : Option Font.FontSet) : Option Int := do
     let decls ← screenRuleOf (HtmlDoc.baseCss { fonts := fonts } d) ":where(* + .list-set-1)"
     calcRemMilli (← cssProperty decls "margin-top")
-  let screen (v : Dim.Sp) : Int := (HtmlDoc.screenMilli size v : Int)
+  let screen (v : Dim.Length) : Int := (HtmlDoc.screenMilli size v : Int)
   t "ex lengths: the PDF reads a list's declared 10ex at its body face's x-height"
     (pdfEx == some (10 * xh))
   t "ex lengths: the web page opens that list by the PDF's 10ex where it ships the face"
@@ -530,7 +533,7 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
     let at_ := xhAt exDoc.page.fontSize
     let inSp (m : Nat) : String := s!"{(m : Int) * at_ / 1000}sp"
     (exDoc, (elabStr (doc cls (pre inSp) (body (inSp 2500)))).1)
-  let places (d : Ir.Doc) : List (Nat × Dim.Sp × Dim.Sp) :=
+  let places (d : Ir.Doc) : List (Nat × Dim.Length × Dim.Length) :=
     (layoutOf oneFace d).pages.toList.zipIdx.flatMap fun (p, i) =>
       (p.lines.filter (!·.furniture)).toList.map fun l => (i, l.x, l.y)
   -- A declared length's custom property keeps the author's spelling for the browser.

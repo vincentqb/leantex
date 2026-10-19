@@ -84,14 +84,14 @@ public theorem realize_depth_exact (th : Theme) (h : th.seeds = none) (d d' : Gr
 private def boldFont (size : String) : ElementStyle :=
   { font := some #[.styled (.size size) #[.styled .bold #[]]] }
 
-private def pt1 : Dim.SymGlue := { width := Length.ofSp (Dim.pt 1) }
+private def pt1 : Dim.SymGlue := { width := SymLength.ofLength (Dim.pt 1) }
 
 /-- The moloch lineage's furniture weights and title-page gaps (beamerouterthememoloch.dtx,
 beamerinnerthememoloch.dtx). -/
 private def lineageTokens : Tokens := { entries := #[
   ("progressheight", pt1),
   ("frametitlepadding", Ir.frameTitlePadding),
-  ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),
+  ("separatorheight", { width := SymLength.ofLength (Dim.pt 1 / 2) }),
   ("subtitlegap", { width := { em := 300 } }),
   ("separatorgap", { width := { em := 800 } }),
   ("authorgap", { width := { em := 500 } }),

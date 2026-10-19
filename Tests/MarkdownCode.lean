@@ -12,7 +12,7 @@ a tex listing at listings' units. -/
 namespace Tests.MarkdownCode
 
 /-- Where a shipped line's first non-space glyph stands. -/
-def firstGlyphX (l : Layout.LineOut) : Option Dim.Sp := Id.run do
+def firstGlyphX (l : Layout.LineOut) : Option Dim.Length := Id.run do
   let mut x := l.x
   for s in l.segs do
     match s with
@@ -44,7 +44,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font)
       if k % 7 == 3 then code (codes[(k / 7) % codes.length]!)
       else words[(k * 5) % words.length]!)
   let size := Dim.pt 10
-  let space : Dim.Sp := size * text.spaceAdvance / text.unitsPerEm
+  let space : Dim.Length := size * text.spaceAdvance / text.unitsPerEm
   let md := prose fun c => "`" ++ c ++ "`"
   let doc := (elabMd (md ++ "\n")).1
   let out := layoutOf fonts doc
@@ -156,7 +156,7 @@ def fallbackTokens (s : String) : Array String := Id.run do
 
 /-- A shipped code line overruns the measure only where one fallback token is wider than its
 room. -/
-def overrunExplained (left measure cell : Dim.Sp) (l : Layout.LineOut) : Bool :=
+def overrunExplained (left measure cell : Dim.Length) (l : Layout.LineOut) : Bool :=
   l.x + l.setWidth ≤ left + measure ||
     match firstGlyphX l with
     | some x => (fallbackTokens (lineText l)).any fun t => t.length * cell > left + measure - x

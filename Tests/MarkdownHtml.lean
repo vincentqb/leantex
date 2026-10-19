@@ -246,7 +246,7 @@ def mdHtmlAccountsChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The emitted HTML bytes, every shipped line's position, size and text, and each diagnostic's code
 and subject. -/
 def mdArtifactsOf (fonts : Font.FontSet) (src : String) :
-    String × Array (Dim.Sp × Dim.Sp × Dim.Sp × String) × Array (String × Option String) :=
+    String × Array (Dim.Length × Dim.Length × Dim.Length × String) × Array (String × Option String) :=
   let (doc, ds) := elabMd src
   ((HtmlDoc.emit {} doc).1, shippedLinesOf fonts doc, ds.map fun d => (d.code, d.subject))
 
@@ -315,10 +315,10 @@ def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- Where a shipped line's text stands: the left edge of its first glyph run to the right edge of
 its last. -/
-def inkSpanOf (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) := Id.run do
+def inkSpanOf (l : Layout.LineOut) : Option (Dim.Length × Dim.Length) := Id.run do
   let mut px := l.x
-  let mut first : Option Dim.Sp := none
-  let mut last : Option Dim.Sp := none
+  let mut first : Option Dim.Length := none
+  let mut last : Option Dim.Length := none
   for seg in l.segs do
     match seg with
     | .run _ _ _ w .. =>
@@ -339,7 +339,7 @@ def cellBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fonts ← serifFacesSet
     | t "the cell break faces load" false
       return
-  let spanOf (src word : String) : Option (Dim.Sp × Dim.Sp) :=
+  let spanOf (src word : String) : Option (Dim.Length × Dim.Length) :=
     ((bodyLines (layoutOf fonts (elabMd src).1)).find? (fun l => hasStr (lineText l) word)).bind
       inkSpanOf
   for (side, delim) in [("left", "---"), ("right", "---:"), ("centred", ":---:")] do
@@ -556,11 +556,11 @@ def breakRunAgreeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fonts ← serifFacesSet
     | t "the break-run faces load" false
       return
-  let yOf (doc : Ir.Doc) (w : String) : Option Int :=
+  let yOf (doc : Ir.Doc) (w : String) : Option Dim.Length :=
     ((bodyLines (layoutOf fonts doc)).find? (fun l => hasStr (lineText l) w)).map (·.y)
   let gap (doc : Ir.Doc) : Nat :=
     match yOf doc "Alder", yOf doc "Birch" with
-    | some a, some b => (b - a).natAbs
+    | some a, some b => ((b - a).abs / Dim.Length.quantum).toNat
     | _, _ => 0
   let runs : List (String × Ir.Doc × Ir.Doc) :=
     [("markdown <br><br>", (elabMd "Alder<br><br>Birch\n").1, (elabMd "Alder<br>Birch\n").1),
@@ -579,7 +579,7 @@ def breakRunAgreeChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("tex leading break", (elabStr "\\\\Birch").1, (elabStr "Birch").1)]
   for (label, lead, bare) in leads do
     let pdfEmpty := match yOf lead "Birch", yOf bare "Birch" with
-      | some a, some b => (a - b).natAbs == step
+      | some a, some b => ((a - b).abs / Dim.Length.quantum).toNat == step
       | _, _ => false
     let htmlEmpty := hasStr (docTreeOf lead) "<p><br>Birch"
     t s!"a leading break is measured on the page ({label})"

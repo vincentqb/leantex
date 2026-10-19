@@ -14,31 +14,31 @@ namespace Tests.GlyphBoundsInterface
 example : Repr Measurement := inferInstance
 example : BEq Measurement := inferInstance
 example : Inhabited Measurement := inferInstance
-example (top below : Sp) (unknown : Bool) : Measurement :=
+example (top below : Length) (unknown : Bool) : Measurement :=
   { extent := (top, below), unresolved := unknown }
 example : Measurement → Measurement → Measurement := Measurement.join
 
-example (font : Font) (size raise : Sp) (gid : Nat) (lo hi : Int)
+example (font : Font) (size raise : Length) (gid : Nat) (lo hi : Int)
     (known : font.yExtent gid = some (lo, hi)) :
     glyph font size raise gid =
       { extent := (hi * size / (font.unitsPerEm : Int) + raise,
           (-lo) * size / (font.unitsPerEm : Int) - raise) } :=
   glyph_known_exact font size raise gid lo hi known
 
-example (font : Font) (size raise : Sp) (gid : Nat) :
+example (font : Font) (size raise : Length) (gid : Nat) :
     (glyph font size raise gid).unresolved = true ↔ font.yExtent gid = none :=
   glyph_unresolved_exact font size raise gid
 
 -- Layout's agreement proof unfolds both branches, the nominal fallback included.
-example (font : Font) (size raise : Sp) (gid : Nat) :
+example (font : Font) (size raise : Length) (gid : Nat) :
     (glyph font size raise gid).extent =
       match font.yExtent gid with
       | some (lo, hi) =>
         (hi * size / (font.unitsPerEm : Int) + raise,
           (-lo) * size / (font.unitsPerEm : Int) - raise)
       | none =>
-        ((font.capHeight.toNat * size.toNat) / font.unitsPerEm + raise,
-          ((-font.descent).toNat * size.toNat) / font.unitsPerEm - raise) := by
+        (font.capHeight.toNat * max 0 size / font.unitsPerEm + raise,
+          (-font.descent).toNat * max 0 size / font.unitsPerEm - raise) := by
   unfold glyph
   cases font.yExtent gid <;> rfl
 

@@ -252,7 +252,7 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
     let d := Ir.Design.ofDoc doc
     let ink := d.fg
     let out := layoutOf fonts doc
-    let lastAt (p : Nat) : Option Dim.Sp :=
+    let lastAt (p : Nat) : Option Dim.Length :=
       (out.pages[p]?.bind fun pg => pg.lines.find? fun l => (wordRun #[l] "Last").isSome).map (·.y)
     t s!"hidden, {label}: the second step ships the word in the ink" (wordOn out 1 "Kilo" == some ink)
     t s!"hidden, {label}: the step after it stands where it stands once the word shows"

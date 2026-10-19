@@ -26,11 +26,11 @@ def green : Ir.Color := rgbC 20 150 60
 def black : Ir.Color := rgbC 0 0 0
 def amber : Ir.Color := rgbC 240 170 20
 
-def pt (n : Int) : Sp := Dim.pt n
+def pt (n : Int) : Length := Dim.pt n
 
 def solid (c : Ir.Color) : Fill := { paint := .solid c, rule := .nonzero, alpha := Alpha.opaque }
 
-def stroke (c : Ir.Color) (w : Sp) : Stroke :=
+def stroke (c : Ir.Color) (w : Length) : Stroke :=
   { paint := .solid c, width := w, cap := .butt, join := .miter, miterLimit := 10, dash := #[]
     phase := 0, alpha := Alpha.opaque }
 
@@ -58,7 +58,7 @@ def wedge : Subpath :=
   { start := (0, 0), segs := #[.line (pt 80, 0), .line (pt 40, pt 50)], closed := true }
 
 /-- A rotation by the 3-4-5 angle: exact in rationals. -/
-def turn (dx dy : Int) : Affine := ⟨3 / 5, 4 / 5, -4 / 5, 3 / 5, pt dx, pt dy⟩
+def turn (dx dy : Int) : Affine := ⟨3 / 5, 4 / 5, -4 / 5, 3 / 5, (pt dx).toRat, (pt dy).toRat⟩
 
 def stops2 : Array Stop := #[{ offset := 0, color := red }, { offset := 65536, color := blue }]
 
@@ -137,13 +137,13 @@ def cases : Array (String × Figure Empty) := #[
   ("stamp", figure 120 80 #[.stamp 0 (Affine.translate (pt 20) (pt 15)) (some (solid green))
       (some (stroke black (pt 2)))] (outlines := #[#[wedge]])),
   ("one stamp form in two colours", figure 120 80 #[
-      .stamp 0 ⟨1 / 2, 0, 0, 1 / 2, pt 5, pt 10⟩ (some (solid red)) none,
-      .stamp 0 ⟨1 / 2, 0, 0, 1 / 2, pt 60, pt 40⟩ (some (solid blue)) (some (stroke black (pt 3)))]
+      .stamp 0 ⟨1 / 2, 0, 0, 1 / 2, (pt 5).toRat, (pt 10).toRat⟩ (some (solid red)) none,
+      .stamp 0 ⟨1 / 2, 0, 0, 1 / 2, (pt 60).toRat, (pt 40).toRat⟩ (some (solid blue)) (some (stroke black (pt 3)))]
     (outlines := #[#[wedge]])),
   ("gradient stamp", figure 120 80 #[.stamp 0 (Affine.translate (pt 20) (pt 15))
       (some { solid red with paint := .gradient (.linear (0, 0) (0, pt 50) stops2 Affine.unit) })
       none] (outlines := #[#[wedge]])),
-  ("raster", figure 120 80 #[.image 0 ⟨80, 0, 0, 60, pt 20, pt 10⟩] (rasters := #[checker])),
+  ("raster", figure 120 80 #[.image 0 ⟨80, 0, 0, 60, (pt 20).toRat, (pt 10).toRat⟩] (rasters := #[checker])),
   ("words", figure 120 80 #[.words "recovered text",
     .draw (.rect (pt 10) (pt 10) (pt 100) (pt 60)) none (some (stroke black (pt 3)))])]
 
@@ -179,11 +179,11 @@ def stopsFunction (stops : Array Stop) : String :=
 
 def shadingDict : Gradient → String
   | .linear p0 p1 stops _ =>
-    s!"<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [{p0.1.toPtString} {p0.2.toPtString} \
-{p1.1.toPtString} {p1.2.toPtString}] /Function {stopsFunction stops} /Extend [true true] >>"
+    s!"<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [{p0.1.toBpString} {p0.2.toBpString} \
+{p1.1.toBpString} {p1.2.toBpString}] /Function {stopsFunction stops} /Extend [true true] >>"
   | .radial c0 r0 c1 r1 stops _ =>
-    s!"<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [{c0.1.toPtString} {c0.2.toPtString} \
-{r0.toPtString} {c1.1.toPtString} {c1.2.toPtString} {r1.toPtString}] /Function {stopsFunction stops} \
+    s!"<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [{c0.1.toBpString} {c0.2.toBpString} \
+{r0.toBpString} {c1.1.toBpString} {c1.2.toBpString} {r1.toBpString}] /Function {stopsFunction stops} \
 /Extend [true true] >>"
 
 /-- A form's /BBox: the document writer's (`Pdf.formBBox`). -/
@@ -225,8 +225,8 @@ def figurePdf (fig : Figure Empty) : ByteArray := Id.run do
     if es.isEmpty then "" else s!" /{key} << {" ".intercalate es.toList} >>"
   let resources := "<<" ++ sub "ExtGState" (kindOf "GS") ++ sub "Pattern" (kindOf "P") ++
     sub "Shading" (kindOf "Sh") ++ sub "XObject" ((kindOf "Fm") ++ rasterEntries) ++ " >>"
-  let w := (x1 - x0).toPtString
-  let h := (y1 - y0).toPtString
+  let w := (x1 - x0).toBpString
+  let h := (y1 - y0).toBpString
   objs := objs.push "<< /Type /Catalog /Pages 2 0 R >>"
   objs := objs.push "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
   objs := objs.push s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources 4 0 R \
@@ -354,7 +354,7 @@ gradient alone. -/
 def flipGradients (fig : Figure Empty) : Figure Empty :=
   let ((_, y0), (_, y1)) := fig.box
   let flip (p : Paint) : Paint := match p with
-    | .gradient g => .gradient (g.withXf ((⟨1, 0, 0, -1, 0, y0 + y1⟩ : Affine).compose g.xf))
+    | .gradient g => .gradient (g.withXf ((⟨1, 0, 0, -1, 0, (y0 + y1).toRat⟩ : Affine).compose g.xf))
     | .solid c => .solid c
   mapNodes (fun n => match n with
     | .draw g fl st => .draw g (fl.map fun f => { f with paint := flip f.paint }) st
@@ -363,7 +363,7 @@ def flipGradients (fig : Figure Empty) : Figure Empty :=
 /-- The figure mirrored top to bottom inside its own box. -/
 def flipY (fig : Figure Empty) : Figure Empty :=
   let ((_, y0), (_, y1)) := fig.box
-  { fig with nodes := #[.group ⟨1, 0, 0, -1, 0, y0 + y1⟩ #[] Alpha.opaque fig.nodes] }
+  { fig with nodes := #[.group ⟨1, 0, 0, -1, 0, (y0 + y1).toRat⟩ #[] Alpha.opaque fig.nodes] }
 
 /-- The selftest's figures, each showing its mutant plainly. -/
 def mutants : Array (String × Figure Empty × (Figure Empty → Figure Empty)) := #[
@@ -413,7 +413,7 @@ def chromePng (chrome : String) (dir : System.FilePath) (stem : String) (fig : F
   let file := dir / s!"{stem}.svg"
   IO.FS.writeFile file svg
   let ((x0, y0), (x1, y1)) := fig.box
-  let cssPx (d : Sp) : Nat := ((d.toNat * 96 + 72 * 65536 - 1) / (72 * 65536))
+  let cssPx (d : Length) : Nat := ((max 0 d * (96 : Int) + inch 1 - Length.quantum) / inch 1).toNat
   let out := (dir / s!"{stem}-svg.png").toString
   let _ ← tool chrome #["--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
     s!"--force-device-scale-factor={(rasterDpi.toFloat / 96.0)}",

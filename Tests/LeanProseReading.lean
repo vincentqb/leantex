@@ -488,11 +488,11 @@ def pdfItems (mathIdx : Nat) (l : Layout.LineOut) : List Item :=
 
 /-- The laid-out paragraphs of a page: each from a line opening on a theorem's head to the next, each
 line's depth its indent over the first's in steps of `step`. -/
-def pdfParas (mathIdx : Nat) (step : Int) (lines : Array Layout.LineOut) :
+def pdfParas (mathIdx : Nat) (step : Dim.Length) (lines : Array Layout.LineOut) :
     Array (List (Nat × List Item)) := Id.run do
   let mut out : Array (List (Nat × List Item)) := #[]
   let mut cur : Array (Nat × List Item) := #[]
-  let mut x0 : Int := 0
+  let mut x0 : Dim.Length := 0
   for l in lines do
     if (lineText l).startsWith "Theorem (" then
       unless cur.isEmpty do out := out.push cur.toList

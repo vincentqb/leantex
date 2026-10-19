@@ -53,13 +53,13 @@ public theorem agree_probe (m₁ m₂ : Ir.Pic.LabelMetric) (ps : Array Probe)
   exact of_decide_eq_true (h i hi)
 
 public theorem extent_agree (m₁ m₂ : Ir.Pic.LabelMetric) (content : Array Ir.Inline)
-    (scale : Nat) (align : Ir.Pic.LabelAlign) (declA declB : Dim.Sp)
+    (scale : Nat) (align : Ir.Pic.LabelAlign) (declA declB : Dim.Length)
     (h : m₁ content scale = m₂ content scale) :
     Ir.Pic.nodeExtent m₁ content scale align declA declB
       = Ir.Pic.nodeExtent m₂ content scale align declA declB := by
   simp [Ir.Pic.nodeExtent, h]
 
-public theorem probesOfPic_covers (p : Ir.Pic.Picture) (x y : Dim.Sp)
+public theorem probesOfPic_covers (p : Ir.Pic.Picture) (x y : Dim.Length)
     (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign)
     (h : Ir.Pic.Shape.label x y content color scale align ∈ p.shapes) :

@@ -44,8 +44,8 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "shade: the left colour on the box's left edge, the right on its right"
     (match (figDraws oneFace axial).toList with
      | [(.rect x y w h, some { paint := .gradient (.linear _ _ _ xf), .. }, _)] =>
-       xf.apply (0, (Dim.pt 25 : Rat)) == ((x : Rat), (y : Rat) + (h : Rat) / 2) &&
-         xf.apply (0, -(Dim.pt 25 : Rat)) == ((x : Rat) + (w : Rat), (y : Rat) + (h : Rat) / 2)
+       xf.apply (0, (Dim.pt 25).toRat) == (x.toRat, y.toRat + h.toRat / 2) &&
+         xf.apply (0, -(Dim.pt 25).toRat) == (x.toRat + w.toRat, y.toRat + h.toRat / 2)
      | _ => false)
   let radial := picDoc "" "\\shade[inner color=white, outer color=grid] (0,0) circle (1);"
   t "shade: radial from the box's centre, inner to outer at half its radius"
@@ -53,7 +53,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | [(.ellipse ex ey _ _, some { paint := .gradient (.radial c0 r0 c1 r1 stops xf), .. }, _)] =>
        c0 == (0, 0) && r0 == 0 && c1 == (0, 0) && r1 == Dim.pt 50 &&
          stops.map (·.color) == #[Ir.Color.white, grid, grid] &&
-         stops.map (·.offset.val) == #[0, 32768, 65536] && xf.apply (0, 0) == ((ex : Rat), (ey : Rat))
+         stops.map (·.offset.val) == #[0, 32768, 65536] && xf.apply (0, 0) == (ex.toRat, ey.toRat)
      | _ => false)
   let ball := picDoc "" "\\shade[ball color=grid] (0,0) circle (1);"
   t "shade: a ball's highlight starts 10 bp up-left of centre, stops mixed from its colour"
@@ -152,7 +152,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
             (tagged "path" #[g]).size) == 1)
   | _ => t "html: a clip ships one clipPath" false
   -- An ellipse's radii are the rectangle's half extents × 1.4142136; a diamond's half diagonals their sum.
-  let boxesOf (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let boxesOf (src : String) : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     ((censusOf #[] (layoutOf oneFace (elabMeasured oneFace src).1))[0]?.map (·.pathBoxes)).getD #[]
   let rectB := boxesOf (picDoc "" "\\node[draw] at (0,0) {aa};")
   let ellB := boxesOf (picDoc "" "\\node[ellipse, draw] at (0,0) {aa};")
@@ -190,22 +190,24 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | _ => false)
   let stealth := picDoc "" "\\draw[-Stealth] (0,0) -- (1,0);"
   t "Stealth: no loss is named" (lossesOf stealth).isEmpty
-  let lw : Float := (Ir.Pic.thinWidth.toNat.toFloat) / 65536
+  let perPt : Float := Float.ofInt (Dim.pt 1).units
+  let lw : Float := Float.ofInt Ir.Pic.thinWidth.units / perPt
   let len := 3 + 4.5 * lw
   let wid := 0.75 * len
   let ins := 0.325 * len
   let alw := min lw ((len - ins) / 4)
   let front := alw / 2 * Float.sqrt (1 + 4 * (len / wid) * (len / wid))
   let insetMiter := alw / 2 * Float.sqrt (1 + 4 * (ins / wid) * (ins / wid))
-  let sp (x : Float) : Dim.Sp := (x * 65536).round.toInt64.toInt
+  let sp (x : Float) : Dim.Length := .ofUnits (x * perPt).round.toInt64.toInt
   t "Stealth: a closed, filled, stroked dart, its front a miter short of the end"
     (match (drawsOf oneFace stealth).toList with
      | [(.path shaft, none, some _), (.path #[dart], some _, some _)] =>
        match (subpathSegs shaft).toList with
        | [.line x0 _ x1 _] =>
          let tipEnd := x0 + Dim.mm 10
-         dart.closed && dart.segs.size == 3 && decide ((dart.start.1 - (tipEnd - sp front)).natAbs ≤ 3) &&
-           decide ((x1 - (tipEnd - sp len + sp (ins + insetMiter - alw / 4))).natAbs ≤ 3)
+         dart.closed && dart.segs.size == 3 && decide ((dart.start.1 - (tipEnd - sp front)).abs ≤ 3 * Dim.Length.quantum) &&
+           decide ((x1 - (tipEnd - sp len + sp (ins + insetMiter - alw / 4))).abs ≤
+             3 * Dim.Length.quantum)
        | _ => false
      | _ => false)
   let linesOf (src : String) : Array CensusLine :=
@@ -257,20 +259,21 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        | _ => false
      | _ => false)
   -- A translucent fill composites over what it covers, so it is no opaque ground.
+  let q (n : Int) : Dim.Length := n * Dim.Length.quantum
   let blue : Ir.Color := { r := 0, g := 0, b := 255 }
-  let wash : Ir.Pic.Shape := .ink (.draw (.rect 0 0 100 100)
+  let wash : Ir.Pic.Shape := .ink (.draw (.rect 0 0 (q 100) (q 100))
     (some { paint := .solid blue, rule := .nonzero, alpha := ⟨200, by decide⟩ }) none)
-  let solid : Ir.Pic.Shape := .ink (.draw (.rect 0 0 100 100) (some (Ir.Pic.solidFill blue)) none)
+  let solid : Ir.Pic.Shape := .ink (.draw (.rect 0 0 (q 100) (q 100)) (some (Ir.Pic.solidFill blue)) none)
   t "ground: a translucent fill blends over the picture's ground"
-    (Ir.Pic.fillUnder (some Ir.Color.white) #[wash] 50 50 == some { r := 204, g := 204, b := 255 })
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[wash] (q 50) (q 50) == some { r := 204, g := 204, b := 255 })
   t "ground: an opaque fill is its own colour, over a translucent one too"
-    (Ir.Pic.fillUnder (some Ir.Color.white) #[solid] 50 50 == some blue &&
-      Ir.Pic.fillUnder (some Ir.Color.white) #[wash, solid] 50 50 == some blue)
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[solid] (q 50) (q 50) == some blue &&
+      Ir.Pic.fillUnder (some Ir.Color.white) #[wash, solid] (q 50) (q 50) == some blue)
   t "ground: a fill that misses the anchor leaves the picture's ground"
-    (Ir.Pic.fillUnder (some Ir.Color.white) #[wash] 500 50 == some Ir.Color.white)
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[wash] (q 500) (q 50) == some Ir.Color.white)
   t "ground: a translucent fill over a ground the walk cannot name names none"
-    (Ir.Pic.fillUnder none #[wash] 50 50 == none)
+    (Ir.Pic.fillUnder none #[wash] (q 50) (q 50) == none)
   let faded : Ir.Pic.Shape := .ink (.group Gfx.Affine.unit #[] ⟨500, by decide⟩
-    #[.draw (.rect 0 0 100 100) (some (Ir.Pic.solidFill blue)) none])
+    #[.draw (.rect 0 0 (q 100) (q 100)) (some (Ir.Pic.solidFill blue)) none])
   t "ground: a group faded to half its kids paints them half over the ground"
-    (Ir.Pic.fillUnder (some Ir.Color.white) #[faded] 50 50 == some { r := 128, g := 128, b := 255 })
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[faded] (q 50) (q 50) == some { r := 128, g := 128, b := 255 })

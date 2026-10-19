@@ -28,7 +28,7 @@ def roundF (x : Float) : Int :=
 def toF (i : Int) : Float := if i < 0 then -((-i).toNat.toFloat) else i.toNat.toFloat
 
 /-- The largest distance an endpoint arc's piece may stand off its exact ellipse, scaled
-by the larger radius `r`: a quarter-turn cubic's 2.73·10⁻⁴ (Goldapp 1991) plus 8 `Sp` of
+by the larger radius `r`: a quarter-turn cubic's 2.73·10⁻⁴ (Goldapp 1991) plus 8 `Length` of
 integer rounding scaled by the eccentricity `r / s`. -/
 def arcBound (r s : Float) : Float := 2.73e-4 * r + 8.0 * (r / s)
 
@@ -155,25 +155,27 @@ def main : IO UInt32 := do
        Float.sin φ * rx * Float.cos θ + Float.cos φ * ry * Float.sin θ)
     let p1f := onE θ0
     let p2f := onE (θ0 + Δ)
-    let p1 : Gfx.Pt := (roundF p1f.1, roundF p1f.2)
-    let p2 : Gfx.Pt := (roundF p2f.1, roundF p2f.2)
-    let segs := Gfx.Kit.arcEndpoint p1 (roundF rx) (roundF ry) (roundF (φ * unitF))
+    let len (x : Float) : Dim.Length := .ofUnits (roundF x)
+    let p1 : Gfx.Pt := (len p1f.1, len p1f.2)
+    let p2 : Gfx.Pt := (len p2f.1, len p2f.2)
+    let segs := Gfx.Kit.arcEndpoint p1 (len rx) (len ry) (roundF (φ * unitF))
       (Float.abs Δ > piF) (Δ > 0) p2
     if p1 == p2 then continue
     arcCount := arcCount + 1
     unless (segs.back?.map Gfx.Seg.endPt) == some p2 do
-      failures := failures.push s!"arc from {p1} to {p2} ends at {segs.back?.map Gfx.Seg.endPt}"
-    let (centre, erx, ery) := arcCentre (toF p1.1, toF p1.2) (toF p2.1, toF p2.2)
+      failures := failures.push
+        s!"arc from {reprStr p1} to {reprStr p2} ends at {reprStr (segs.back?.map Gfx.Seg.endPt)}"
+    let (centre, erx, ery) := arcCentre (toF p1.1.units, toF p1.2.units) (toF p2.1.units, toF p2.2.units)
       (toF (roundF rx)) (toF (roundF ry)) φ (Float.abs Δ > piF) (Δ > 0)
     let big := if erx > ery then erx else ery
     let small := if erx > ery then ery else erx
-    let mut cur : Float × Float := (toF p1.1, toF p1.2)
+    let mut cur : Float × Float := (toF p1.1.units, toF p1.2.units)
     for sg in segs do
       match sg with
       | .cubic c1 c2 q =>
-        let fc1 := (toF c1.1, toF c1.2)
-        let fc2 := (toF c2.1, toF c2.2)
-        let fq := (toF q.1, toF q.2)
+        let fc1 := (toF c1.1.units, toF c1.2.units)
+        let fc2 := (toF c2.1.units, toF c2.2.units)
+        let fq := (toF q.1.units, toF q.2.units)
         for t in [0.25, 0.5, 0.75, 1.0] do
           let off := ellipseOff centre erx ery φ (cubicAtF cur fc1 fc2 fq t)
           if off > arcBound big small then
@@ -181,7 +183,7 @@ def main : IO UInt32 := do
           let rel := off / arcBound big small
           if rel > worstArc then worstArc := rel
         cur := fq
-      | .line q => cur := (toF q.1, toF q.2)
+      | .line q => cur := (toF q.1.units, toF q.2.units)
   -- The zero vector and the axes, exactly.
   unless Gfx.Trig.atan2 0 0 == 0 && Gfx.Trig.atan2 1 0 == Gfx.Trig.pi / 2 &&
       Gfx.Trig.atan2 (-1) 0 == -(Gfx.Trig.pi / 2) do

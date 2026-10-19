@@ -74,7 +74,7 @@ private def selectedInk (oneBased : Nat) : ByteArray :=
   | 2 => middleInkA ++ "\n" ++ middleInkB ++ "\n"
   | _ => lastInk ++ "\n").toUTF8
 
-private def selectedBox (cropped : Bool) (oneBased : Nat) : Array Sp :=
+private def selectedBox (cropped : Bool) (oneBased : Nat) : Array Length :=
   let coords : Array Int := if cropped then
     match oneBased with
     | 1 => #[5, 7, 105, 67]

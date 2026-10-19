@@ -52,8 +52,8 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   return (items, g)
 
-private def seqCost (items : Array Item) (target : Dim.Sp)
-    (protrude expand fil : Bool) (breaks : List Nat) (runt : Bool := false) (bg : Dim.Sp := 0) :
+private def seqCost (items : Array Item) (target : Dim.Length)
+    (protrude expand fil : Bool) (breaks : List Nat) (runt : Bool := false) (bg : Dim.Length := 0) :
     Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
@@ -84,8 +84,8 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
 
 /-- The brute-force minimum over every legal break sequence and, among its ties, the one
 TeX keeps: each break's predecessor the latest of equal demerits (tex.web §855). -/
-private def bruteBest (items : Array Item) (target : Dim.Sp)
-    (protrude expand fil : Bool) (runt : Bool := false) (bg : Dim.Sp := 0) :
+private def bruteBest (items : Array Item) (target : Dim.Length)
+    (protrude expand fil : Bool) (runt : Bool := false) (bg : Dim.Length := 0) :
     Option (Int × List Nat) := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
@@ -142,19 +142,19 @@ def main (args : List String) : IO UInt32 := do
     for (shape, fil, runt) in [(items, false, false), (raggedItems items, false, false),
         (items, true, false), (items, true, true)] do
       for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do
-        for bg in [(0 : Dim.Sp), Dim.pt 2, Dim.pt 20] do
+        for bg in [(0 : Dim.Length), Dim.pt 2, Dim.pt 20] do
           let kpBreaks := (kp shape target protrude expand bg fil runt).toList
           let kpCost := seqCost shape target protrude expand fil kpBreaks runt bg
           let brute := bruteBest shape target protrude expand fil runt bg
           unless kpCost.isSome && kpCost == brute.map (·.1) do
             failures := failures + 1
             IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, fil={fil}, \
-runt={runt}, bg={bg}): target={target} kp={kpCost} brute={brute.map (·.1)}"
+runt={runt}, bg={reprStr bg}): target={reprStr target} kp={kpCost} brute={brute.map (·.1)}"
             IO.eprintln s!"  breaks={kpBreaks}"
             IO.eprintln s!"  items={shape.size}"
           if fil && kpCost == brute.map (·.1) && some kpBreaks != brute.map (·.2) then
             failures := failures + 1
-            IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, bg={bg}): \
+            IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, bg={reprStr bg}): \
 the fil tie keeps {kpBreaks}, TeX keeps {brute.map (·.2)}"
     unless measuresAgree items do
       failures := failures + 1

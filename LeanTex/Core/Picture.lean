@@ -119,7 +119,7 @@ public def ofSetting (setting : Span × Array Parse.Raw) : Array Tok :=
 it, or text (a pgfmath string or a list item's raw text). -/
 public inductive Val where
   | num (m : Int) (text : String)
-  | len (sp : Sp) (text : String)
+  | len (sp : Length) (text : String)
   | str (s : String)
   deriving Repr, BEq, Inhabited
 
@@ -137,16 +137,16 @@ public def milliString (m : Int) : String :=
     s!"{sign}{ip}.{(frs.dropEndWhile (· == '0')).toString}"
 
 /-- A dimension's points as TeX's `\the` prints them, the unit dropped. -/
-public def texPoints (s : Sp) : String :=
-  let (whole, digits) := Decl.texScaledParts s.natAbs
+public def texPoints (s : Length) : String :=
+  let (whole, digits) := Decl.texScaledParts s.toSp.natAbs
   (if s < 0 then "-" else "") ++ toString whole ++ "." ++ String.join (digits.map toString)
 
 /-- The scaled points TeX reads from a decimal given in thousandths. -/
-private def milliSp (m : Int) : Sp :=
+private def milliSp (m : Int) : Length :=
   let n := m.natAbs
   let fr := n % 1000
   let s : Int := (n / 1000 * 65536 + Decl.roundDecimals [fr / 100, fr / 10 % 10, fr % 10] : Nat)
-  if m < 0 then -s else s
+  Length.ofSp (if m < 0 then -s else s)
 
 /-- A number pgfmath computed, as it prints one: TeX's points of the dimension holding it. -/
 public def Val.computed (m : Int) : Val := .num m (texPoints (milliSp m))
@@ -157,10 +157,10 @@ private def rangeItem (m : Int) : Val :=
   .num m (if t.endsWith ".0" then (t.dropEnd 2).toString else t)
 
 /-- A length as pgf prints a length macro: its points as TeX prints them, then `pt`. -/
-public def lenString (sp : Sp) : String := texPoints sp ++ "pt"
+public def lenString (sp : Length) : String := texPoints sp ++ "pt"
 
 /-- A length pgfmath computed, as a length macro prints it. -/
-public def Val.length (sp : Sp) : Val := .len sp (lenString sp)
+public def Val.length (sp : Length) : Val := .len sp (lenString sp)
 
 public def Val.text : Val → String
   | .num _ t => t
@@ -168,18 +168,18 @@ public def Val.text : Val → String
   | .str s => s
 
 /-- A literal like `0.5cm` as a length, or `none` for a font-relative or unknown unit. -/
-public def unitLen? (m : Int) (u : String) : Option Sp :=
+public def unitLen? (m : Int) (u : String) : Option Length :=
   (Decl.parseLength (milliString m ++ u)).bind fun l =>
     if l.em == 0 && l.ex == 0 then some l.sp else none
 
 /-- A unitless milli value read as points where units are declared beside it, as pgfmath reads it. -/
-public def milliPt (m : Int) : Sp :=
-  let n := m * Dim.spPerPt
-  if n < 0 then -((-n + 500) / 1000) else (n + 500) / 1000
+public def milliPt (m : Int) : Length :=
+  let n := m * 65536
+  Length.ofSp (if n < 0 then -((-n + 500) / 1000) else (n + 500) / 1000)
 
 /-- A length's points in milli, what a length means where a plain number is asked. -/
-public def spMilliPt (sp : Sp) : Int :=
-  let n := sp * 1000
+public def spMilliPt (sp : Length) : Int :=
+  let n := sp.toSp * 1000
   if n < 0 then -((-n + 32768) / 65536) else (n + 32768) / 65536
 
 private def tokText : Tok → String
@@ -343,14 +343,14 @@ private def evalTokens (env : List (String × Val)) (toks : Array Tok) :
   let q (v : Val) : Except String (Int × Bool) :=
     match v with
     | .num m _ => .ok (m, false)
-    | .len sp _ => .ok (sp, true)
+    | .len sp _ => .ok (sp.toSp, true)
     | .str s => .error s!"'{s}' where a number is needed"
   -- Where either operand is a length both are, a unitless one read as points (pgfmath).
   let common (a b : Int × Bool) : Int × Int × Bool :=
     if a.2 || b.2 then
-      ((if a.2 then a.1 else milliPt a.1), (if b.2 then b.1 else milliPt b.1), true)
+      ((if a.2 then a.1 else (milliPt a.1).toSp), (if b.2 then b.1 else (milliPt b.1).toSp), true)
     else (a.1, b.1, false)
-  let mk (v : Int) (isLen : Bool) : Val := if isLen then .length v else .computed v
+  let mk (v : Int) (isLen : Bool) : Val := if isLen then .length (Length.ofSp v) else .computed v
   for r in out do
     match r with
     | .push v => stack := stack.push v
@@ -391,7 +391,7 @@ private def evalTokens (env : List (String × Val)) (toks : Array Tok) :
             | .gt => stack := stack'.push (if x > y then .num 1000 "1" else .num 0 "0")
             | .div =>
               if b.1 == 0 then return .error "division by zero"
-              else if a.2 && !b.2 then stack := stack'.push (.length (a.1 * 1000 / b.1))
+              else if a.2 && !b.2 then stack := stack'.push (.length (Length.ofSp (a.1 * 1000 / b.1)))
               else stack := stack'.push (.computed (x * 1000 / y))
             | _ => return .error "malformed expression"
           | .error e, _ | _, .error e => return .error e
@@ -449,7 +449,7 @@ private def evalComp (env : List (String × Val)) (toks : Array Tok) :
     Except String (Int × Bool) :=
   match evalExpr env toks with
   | .ok (.num m _) => .ok (m, false)
-  | .ok (.len sp _) => .ok (sp, true)
+  | .ok (.len sp _) => .ok (sp.toSp, true)
   | .ok (.str s) => .error s!"'{s}' where a number is needed"
   | .error e => .error e
 
@@ -960,7 +960,7 @@ public structure Cx where
   everyText : Array (Array Tok) := #[]
   /-- `node distance` between relatively placed nodes' facing borders, vertical then horizontal; pgf's
   default 1 cm. -/
-  dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
+  dist : Length × Length := (Dim.mm 10, Dim.mm 10)
   /-- Whether the parse named a construct outside the subset, to which an unresolved name then traces. -/
   parseGap : Bool := false
   /-- How a math span in a node body elaborates, provided by the elaborator. -/
@@ -972,7 +972,7 @@ public structure Cx where
   /-- The font declarations and the style each names, the elaborator's own table. -/
   declStyles : List (String × Ir.Style) := []
   /-- The document's body size. -/
-  bodySize : Sp := Ir.baseFontSize
+  bodySize : Length := Ir.baseFontSize
   /-- How a label's content measures at a per-mille size, provided by the driver through the elaborator. -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
   /-- The current colour (pgf's `.`), black ink until a colour option, `\color` or `\textcolor` sets it. -/
@@ -985,8 +985,8 @@ public structure Cx where
   metaArrows : Bool := false
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared scale. -/
-public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
-  m * cx.scale * Dim.mm 10 / 1000000
+public def Cx.toSp (cx : Cx) (m : Int) : Length :=
+  (m * cx.scale) * Dim.mm 10 / (1000000 : Int)
 
 /-- The size the declarations in force set a node's text at, per mille of the body, under the
 node's own factor. -/
@@ -995,26 +995,26 @@ public def Cx.declScale (cx : Cx) (factor : Nat) : Nat :=
     cx.decls.foldl (fun z n => (cx.ladder.lookup n).orElse fun _ => z) none
   (declSize.map fun k => k * factor / 1000).getD factor
 
-private def roundRat (q : Rat) : Sp := (q + 1 / 2).floor
+private def roundRat (q : Rat) : Length := .ofRatFloor (q + 1 / 2)
 
 /-- A point a statement spells, in sp, on the canvas (`Cx.xf`). -/
-public def Cx.place (cx : Cx) (x y : Sp) : Sp × Sp :=
-  let (u, v) := cx.xf.apply ((x : Rat), (y : Rat))
+public def Cx.place (cx : Cx) (x y : Length) : Length × Length :=
+  let (u, v) := cx.xf.apply (x.toRat, y.toRat)
   (roundRat u, roundRat v)
 
 /-- A displacement on the canvas: the transformation's linear part alone, as
 pgf moves a relative coordinate. -/
-public def Cx.placeVec (cx : Cx) (x y : Sp) : Sp × Sp :=
+public def Cx.placeVec (cx : Cx) (x y : Length) : Length × Length :=
   let m := cx.xf
-  (roundRat (m.a * x + m.c * y), roundRat (m.b * x + m.d * y))
+  (roundRat (m.a * x.toRat + m.c * y.toRat), roundRat (m.b * x.toRat + m.d * y.toRat))
 
 /-- Does the transformation keep the axes — no turn and no shear — so a
 rectangle stays a rectangle and an ellipse an axis-aligned one? -/
 public def Cx.axisAligned (cx : Cx) : Bool := cx.xf.b == 0 && cx.xf.c == 0
 
 /-- A coordinate component in sp: a number of the 1 cm unit vector or a length, both through the scale. -/
-public def Cx.compSp (cx : Cx) (v : Int × Bool) : Sp :=
-  if v.2 then v.1 * cx.scale / 1000 else cx.toSp v.1
+public def Cx.compSp (cx : Cx) (v : Int × Bool) : Length :=
+  if v.2 then Length.ofSp v.1 * cx.scale / (1000 : Int) else cx.toSp v.1
 
 private def splitTop (toks : Array Tok) (sep : Char) : Array (Array Tok) :=
   KeyVal.splitTopAt (· matches .sym '(') (· matches .sym ')')
@@ -1619,7 +1619,7 @@ public theorem diamondBorder_axis_exact (cx cy a b d : Int) (hb : 0 < b) (hd : 0
 private def innerSepDefault : Int := 3333
 
 /-- One inner sep at this em. -/
-public def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
+public def innerSep (em : Length) : Length := em * innerSepDefault / 10000
 
 /-- A node's shape: pgf's `rectangle` and `circle`, and `shapes.geometric`'s `ellipse` and
 default-aspect `diamond`. -/
@@ -1632,15 +1632,15 @@ public inductive NodeShape where
 
 /-- A drawn node's outline as pgf draws it, centred on the text box: its shape circumscribing the
 text box padded by the inner seps, or the minimum size where larger. -/
-public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
-    Sp × Sp × Sp :=
+public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX sepY : Length) :
+    Length × Length × Length :=
   let mid := sy + (lo + hi) / 2
   let tx := textHalfW + sepX
   let ty := (hi - lo) / 2 + sepY
   match shape with
   | .rectangle => (mid, max minW (2 * tx), max minH (2 * ty))
   | .circle =>
-    let d := max (max minW minH) (2 * isqrt (tx * tx + ty * ty))
+    let d := max (max minW minH) (2 * Length.ofUnits (isqrt (tx * tx + ty * ty)))
     (mid, d, d)
   -- An ellipse's radii: the half extents one inner sep out, times pgf's 1.4142136 (`\radius`).
   | .ellipse =>
@@ -1648,50 +1648,50 @@ public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX se
   -- A default-aspect diamond reaches the sum of the half extents on both axes (`\outernortheast`).
   | .diamond => (mid, max minW (2 * (tx + ty)), max minH (2 * (tx + ty)))
 
-public theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
+public theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Length) :
     (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).1 = sy + (lo + hi) / 2 ∧
       2 * (textHalfW + sepX) ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
       2 * ((hi - lo) / 2 + sepY) ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.2 ∧
       minW ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
       minH ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.2 := by
   simp only [nodeOutline, true_and]
-  have step : ∀ mW mH t u : Int, 2 * t ≤ max mW (2 * t) ∧ 2 * u ≤ max mH (2 * u) ∧
+  have step : ∀ mW mH t u : Length, 2 * t ≤ max mW (2 * t) ∧ 2 * u ≤ max mH (2 * u) ∧
       mW ≤ max mW (2 * t) ∧ mH ≤ max mH (2 * u) := by
-    intros; omega
+    intros; length_omega
   exact step minW minH (textHalfW + sepX) ((hi - lo) / 2 + sepY)
 
 /-- Where pgf seats a node's text box, centred on the node: its baseline and lower and upper
 edges, relative to the node. -/
-public def textSeat (ht dp : Sp) : Sp × Sp × Sp :=
+public def textSeat (ht dp : Length) : Length × Length × Length :=
   let b := -((ht - dp) / 2)
   (b, b - dp, b + ht)
 
-public theorem nodeOutline_seat_exact (shape : NodeShape) (minW minH sy textHalfW ht dp sepX sepY : Int) :
+public theorem nodeOutline_seat_exact (shape : NodeShape) (minW minH sy textHalfW ht dp sepX sepY : Length) :
     (nodeOutline shape minW minH sy textHalfW (textSeat ht dp).2.1 (textSeat ht dp).2.2
       sepX sepY).1 = sy := by
-  have step : ∀ s h d : Int, s + ((-((h - d) / 2) - d) + (-((h - d) / 2) + h)) / 2 = s := by
-    intro s h d; omega
+  have step : ∀ s h d : Length, s + ((-((h - d) / 2) - d) + (-((h - d) / 2) + h)) / 2 = s := by
+    intro s h d; length_omega
   cases shape <;> exact step sy ht dp
 
 /-- A node's border half-extent: its text plus one inner sep, or the declared minimum where larger
 (TikZ manual §17.2.2). -/
-public def borderHalf (decl ink sep : Sp) : Sp := max decl (ink + sep)
+public def borderHalf (decl ink sep : Length) : Length := max decl (ink + sep)
 
-public theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
+public theorem borderHalf_between (decl ink sep : Length) (hd : decl ≤ ink + sep)
     (hs : 0 < sep) : ink < borderHalf decl ink sep ∧ borderHalf decl ink sep ≤ ink + sep := by
-  have step : ∀ d i s : Int, d ≤ i + s → 0 < s → i < max d (i + s) ∧ max d (i + s) ≤ i + s := by
-    intro d i s h1 h2; omega
+  have step : ∀ d i s : Length, d ≤ i + s → 0 < s → i < max d (i + s) ∧ max d (i + s) ≤ i + s := by
+    intro d i s h1 h2; length_omega
   exact step decl ink sep hd hs
 
 /-- A named node's anchoring geometry: centre, border half-extents and shape. -/
 public structure NodeGeom where
-  x : Sp
-  y : Sp
-  a : Sp := 0
-  b : Sp := 0
+  x : Length
+  y : Length
+  a : Length := 0
+  b : Length := 0
   shape : NodeShape := .rectangle
   /-- Where the node's own text baseline stands, which the `base` anchors read. -/
-  base : Sp := 0
+  base : Length := 0
   deriving Repr, BEq, Inhabited
 
 /-- A named anchor on a node's border: the `rectangle` shape's own `\anchor` declarations, the
@@ -1723,25 +1723,25 @@ private def diag45 : Int := 707
 
 /-- The horizontal reach of a corner anchor: a rectangle's border, 0.707 of a circle's or
 ellipse's radius, a diamond's mid-side. -/
-public def NodeGeom.cornerA (g : NodeGeom) : Sp :=
+public def NodeGeom.cornerA (g : NodeGeom) : Length :=
   match g.shape with
   | .rectangle => g.a
   | .circle | .ellipse => g.a * diag45 / 1000
   | .diamond => g.a / 2
 
 /-- The vertical reach of a corner anchor. -/
-public def NodeGeom.cornerB (g : NodeGeom) : Sp :=
+public def NodeGeom.cornerB (g : NodeGeom) : Length :=
   match g.shape with
   | .rectangle => g.b
   | .circle | .ellipse => g.b * diag45 / 1000
   | .diamond => g.b / 2
 
 /-- The baseline the `base` anchors stand on, held inside the node's own extent. -/
-public def NodeGeom.baseY (g : NodeGeom) : Sp :=
+public def NodeGeom.baseY (g : NodeGeom) : Length :=
   max (g.y - g.b) (min (g.y + g.b) g.base)
 
 /-- Where a named anchor stands, from the centre and the half-extents the node registered. -/
-public def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
+public def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Length × Length
   | .center => (g.x, g.y)
   | .north => (g.x, g.y + g.b)
   | .south => (g.x, g.y - g.b)
@@ -1768,41 +1768,41 @@ public theorem anchorPoint_opposite_exact (g : NodeGeom) :
     (g.anchorPoint .east).1 - g.x = g.x - (g.anchorPoint .west).1 ∧
     (g.anchorPoint .north).2 - g.y = g.y - (g.anchorPoint .south).2 ∧
     (g.anchorPoint .center) = (g.x, g.y) := by
-  have flip : ∀ v d : Int, v + d - v = v - (v - d) := by intro v d; omega
+  have flip : ∀ v d : Length, v + d - v = v - (v - d) := by intro v d; length_omega
   exact ⟨flip g.x g.a, flip g.y g.b, rfl⟩
 
 public theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
     (an : NodeAnchor) :
     Gfx.Box.le (g.anchorPoint an, g.anchorPoint an)
       (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) := by
-  have key : ∀ p : Sp × Sp, g.x - g.a ≤ p.1 → p.1 ≤ g.x + g.a →
+  have key : ∀ p : Length × Length, g.x - g.a ≤ p.1 → p.1 ≤ g.x + g.a →
       g.y - g.b ≤ p.2 → p.2 ≤ g.y + g.b →
       Gfx.Box.le ((p, p)) (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) :=
     fun _ h1 h2 h3 h4 => ⟨h1, h3, h2, h4⟩
-  have mid : ∀ v d : Int, 0 ≤ d → v - d ≤ v ∧ v ≤ v + d := by intro v d h; omega
-  have hi : ∀ v d : Int, 0 ≤ d → v - d ≤ v + d ∧ v + d ≤ v + d := by intro v d h; omega
-  have lo : ∀ v d : Int, 0 ≤ d → v - d ≤ v - d ∧ v - d ≤ v + d := by intro v d h; omega
-  have cn : ∀ v d c : Int, 0 ≤ c → c ≤ d →
+  have mid : ∀ v d : Length, 0 ≤ d → v - d ≤ v ∧ v ≤ v + d := by intro v d h; length_omega
+  have hi : ∀ v d : Length, 0 ≤ d → v - d ≤ v + d ∧ v + d ≤ v + d := by intro v d h; length_omega
+  have lo : ∀ v d : Length, 0 ≤ d → v - d ≤ v - d ∧ v - d ≤ v + d := by intro v d h; length_omega
+  have cn : ∀ v d c : Length, 0 ≤ c → c ≤ d →
       (v - d ≤ v + c ∧ v + c ≤ v + d) ∧ (v - d ≤ v - c ∧ v - c ≤ v + d) := by
-    intro v d c h1 h2; omega
-  have dg : ∀ d : Int, 0 ≤ d → 0 ≤ d * 707 / 1000 ∧ d * 707 / 1000 ≤ d := by
-    intro d h; omega
-  have clamp : ∀ v d p : Int, 0 ≤ d →
+    intro v d c h1 h2; length_omega
+  have dg : ∀ d : Length, 0 ≤ d → 0 ≤ d * 707 / 1000 ∧ d * 707 / 1000 ≤ d := by
+    intro d h; length_omega
+  have clamp : ∀ v d p : Length, 0 ≤ d →
       v - d ≤ max (v - d) (min (v + d) p) ∧ max (v - d) (min (v + d) p) ≤ v + d := by
-    intro v d p h; omega
-  have hf : ∀ d : Int, 0 ≤ d → 0 ≤ d / 2 ∧ d / 2 ≤ d := by
-    intro d h; omega
+    intro v d p h; length_omega
+  have hf : ∀ d : Length, 0 ≤ d → 0 ≤ d / 2 ∧ d / 2 ≤ d := by
+    intro d h; length_omega
   have hca : 0 ≤ g.cornerA ∧ g.cornerA ≤ g.a := by
     unfold NodeGeom.cornerA diag45
     cases g.shape with
-    | rectangle => exact ⟨ha, Int.le_refl _⟩
+    | rectangle => exact ⟨ha, Length.le_refl _⟩
     | circle => exact dg g.a ha
     | ellipse => exact dg g.a ha
     | diamond => exact hf g.a ha
   have hcb : 0 ≤ g.cornerB ∧ g.cornerB ≤ g.b := by
     unfold NodeGeom.cornerB diag45
     cases g.shape with
-    | rectangle => exact ⟨hb, Int.le_refl _⟩
+    | rectangle => exact ⟨hb, Length.le_refl _⟩
     | circle => exact dg g.b hb
     | ellipse => exact dg g.b hb
     | diamond => exact hf g.b hb
@@ -1834,7 +1834,7 @@ public structure After where
   main : NodeGeom
   pin : Bool
   spec : List Tok
-  dist : Option Sp
+  dist : Option Length
   deriving Repr, Inhabited
 
 /-- Shapes and named losses accumulated across the unrolled walk, each diagnostic once. -/
@@ -1863,7 +1863,7 @@ private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
 
 /-- The evaluated marks and authored bounds both backends read. -/
-public def Ev.toPicture (ev : Ev) (baseline : Option Sp := none) : Ir.Pic.Picture :=
+public def Ev.toPicture (ev : Ev) (baseline : Option Length := none) : Ir.Pic.Picture :=
   { shapes := ev.shapes, declared := ev.declared, borders := ev.borders, baseline }
 
 /-- A placed node's name into the table and, unless it is a coordinate, its border into the
@@ -1873,8 +1873,8 @@ public def Ev.place (ev : Ev) (coordinate : Bool) (border : Ir.Pic.Box)
   if coordinate then { ev with nodes } else { ev with borders := ev.borders.push border, nodes }
 
 public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
-    (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color)
+    (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Length)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ ev.shapes)
     (hd : ev.declared = none) :
     Gfx.Box.le (Ir.Pic.labelTextBox x y align (m content scale))
@@ -1884,7 +1884,7 @@ public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
   exact ⟨Int.le_refl _, Int.min_le_right _ _, Int.le_refl _, Int.le_max_right _ _⟩
 
 private def readRect (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i0 : Nat)
-    (what cost : String) : Except PDiag (Sp × Sp × Sp × Sp) := Id.run do
+    (what cost : String) : Except PDiag (Length × Length × Length × Length) := Id.run do
   let mut i := i0
   let c1 ← match readCoord ts i with
     | .ok v => pure v
@@ -1913,7 +1913,7 @@ rendered picture subset; {cost}")
       return .error (.E0333, s!"in {what}, {e}; {cost}")
   let (x1c, y1c, x2c, y2c) := vals
   -- A relative corner adds in the unit it was written in, so two unitless components round once.
-  let addComp (a b : Int × Bool) : Sp :=
+  let addComp (a b : Int × Bool) : Length :=
     if !a.2 && !b.2 then cx.toSp (a.1 + b.1) else cx.compSp a + cx.compSp b
   let (x1, y1) := (cx.compSp x1c, cx.compSp y1c)
   let (x2, y2) := if relative then (addComp x1c x2c, addComp y1c y2c)
@@ -1967,7 +1967,7 @@ private def evalBBox (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
 /-- One line of a node label: its content and its size per mille of the node's own. -/
 public abbrev LabelLine := Array Ir.Inline × Nat
 
-private def nodeLineLead (bodySize : Sp) (scale : Nat) : Sp :=
+private def nodeLineLead (bodySize : Length) (scale : Nat) : Length :=
   Ir.leadingFor (bodySize * (scale : Int) / 1000)
 
 /-- The placeholder a label sets when its salvage kept nothing and a loss was named. -/
@@ -2752,12 +2752,12 @@ public theorem nodeLabel_source_mem (cx : Cx) (env : List (String × Val)) (toks
 
 /-- A label's lines as shapes, one per line, `nodeLineLead` apart and centred on the anchor; an
 empty line ships none. -/
-public def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Color)
+public def stackLabels (x y : Length) (bodySize : Length) (scale : Nat) (color : Ir.Color)
     (align : Ir.Pic.LabelAlign) (lines : Array LabelLine)
     (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape := Id.run do
   -- Each gap is the leading of the line below it, so a smaller second line sits closer.
-  let mut tops : Array Sp := #[]
-  let mut acc0 : Sp := 0
+  let mut tops : Array Length := #[]
+  let mut acc0 : Length := 0
   for k in [0:lines.size] do
     if let some (_, rel) := lines[k]? then
       if k > 0 then acc0 := acc0 - nodeLineLead bodySize (scale * rel / 1000)
@@ -2771,7 +2771,7 @@ public def stackLabels (x y : Sp) (bodySize : Sp) (scale : Nat) (color : Ir.Colo
         out := out.push (.label x (y + dy) content color (scale * rel / 1000) align)
   return out
 
-private def readDim (toks : List Tok) : Except String Sp :=
+private def readDim (toks : List Tok) : Except String Length :=
   match toks with
   | [.num m _, .ident u] =>
     match u with
@@ -2782,19 +2782,19 @@ private def readDim (toks : List Tok) : Except String Sp :=
     | u => .error s!"the unit '{u}' is outside the rendered picture subset"
   | _ => .error "a length like '8mm' is needed"
 
-private def readNodeDim (em ex : Sp) (toks : List Tok) : Except String Sp :=
+private def readNodeDim (em ex : Length) (toks : List Tok) : Except String Length :=
   match toks with
   | [.num m _, .ident "em"] => .ok (m * em / 1000)
   | [.num m _, .ident "ex"] => .ok (m * ex / 1000)
   | ts => readDim ts
 
-private def lineWidthStyles : List (String × Sp) :=
+private def lineWidthStyles : List (String × Length) :=
   [("ultra thin", Dim.pt 1 / 10), ("very thin", Dim.pt 1 / 5),
    ("thin", Ir.Pic.thinWidth), ("semithick", Dim.pt 3 / 5),
    ("thick", Ir.Pic.thickWidth), ("very thick", Dim.pt 6 / 5),
    ("ultra thick", Dim.pt 8 / 5)]
 
-private def readLineWidth (opt : List Tok) : Option (Except String Sp) :=
+private def readLineWidth (opt : List Tok) : Option (Except String Length) :=
   match opt with
   | .ident "line" :: .ident "width" :: .sym '=' :: rest => some (readDim rest)
   | ts => ((keyName ts).bind fun n => lineWidthStyles.lookup n).map .ok
@@ -2833,7 +2833,7 @@ private def alignLabels (m : Ir.Pic.LabelMetric) (al : Ir.Pic.LabelAlign)
     (ls : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
   let w := ls.foldl (fun w s => match s with
     | .label _ _ content _ sz a => if a == .center then max w (m content sz).w else w
-    | .ink _ => w) 0
+    | .ink _ => w) (0 : Length)
   ls.map fun s => match s with
     | .label x y c col sz a =>
       if a != .center then s
@@ -2860,7 +2860,7 @@ private def dirOf : String → Option Dir
   | _ => none
 
 /-- The centre-to-centre offset a direction puts between the placed node and the one it names. -/
-public def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
+public def Dir.offset (d : Dir) (sep : Length × Length) : Length × Length :=
   match d with
   | .left => (-sep.2, 0)
   | .right => (sep.2, 0)
@@ -2873,7 +2873,7 @@ public def Dir.offset (d : Dir) (sep : Sp × Sp) : Sp × Sp :=
 
 /-- The anchor a bare direction key stands on the coordinate, and the shift a length after it
 gives (TikZ manual §17.5.2). -/
-public def dirAnchor (d : Dir) (len : Sp) : NodeAnchor × (Sp × Sp) :=
+public def dirAnchor (d : Dir) (len : Length) : NodeAnchor × (Length × Length) :=
   match d with
   | .above => (.south, (0, len))
   | .below => (.north, (0, -len))
@@ -2886,8 +2886,8 @@ public def dirAnchor (d : Dir) (len : Sp) : NodeAnchor × (Sp × Sp) :=
 
 /-- A node's placement once its coordinates and options are read: absolute, or relative to one named geometry. -/
 public inductive NodePlacement where
-  | absolute (x y : Sp)
-  | relative (dir : Dir) (target : String) (sep : Sp × Sp)
+  | absolute (x y : Length)
+  | relative (dir : Dir) (target : String) (sep : Length × Length)
   deriving Repr, Inhabited
 
 public def NodePlacement.target : NodePlacement → Option String
@@ -2895,8 +2895,8 @@ public def NodePlacement.target : NodePlacement → Option String
   | .relative _ name _ => some name
 
 /-- The centre from the declared gap and both nodes' extents; a failure carries the missing name. -/
-public def NodePlacement.position (p : NodePlacement) (a b : Sp)
-    (nodes : List (String × NodeGeom)) : Except String (Sp × Sp) :=
+public def NodePlacement.position (p : NodePlacement) (a b : Length)
+    (nodes : List (String × NodeGeom)) : Except String (Length × Length) :=
   match p with
   | .absolute x y => .ok (x, y)
   | .relative dir target sep =>
@@ -2982,7 +2982,7 @@ public theorem NodePlan.place_order_agree (p q : NodePlan) (nodes : List (String
   exact (NodePlan.register_order _ _ _ _ _ h.1 name).symm
 
 public theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
-    (px py qx qy : Sp) (pg qg : NodeGeom) :
+    (px py qx qy : Length) (pg qg : NodeGeom) :
     Independent ⟨some pn, .absolute px py, pg⟩ ⟨some qn, .absolute qx qy, qg⟩ := by
   refine ⟨?_, ?_, ?_⟩
   · intro n hn hq
@@ -2991,10 +2991,10 @@ public theorem NodePlan.absolute_independent (pn qn : String) (hne : pn ≠ qn)
   · intro n hn; cases hn
 
 /-- TikZ's `auto` anchor direction, ignoring tangent components within ±.05 (tikz.code.tex). -/
-public def autoDir (left : Bool) (dx dy : Sp) : Dir :=
+public def autoDir (left : Bool) (dx dy : Length) : Dir :=
   let x := if left then dx else -dx
   let y := if left then dy else -dy
-  let n := isqrt (x * x + y * y)
+  let n := Length.ofUnits (isqrt (x * x + y * y))
   if 20 * x > n then
     if 20 * y > n then .aboveLeft
     else if 20 * y < -n then .aboveRight else .above
@@ -3003,16 +3003,16 @@ public def autoDir (left : Bool) (dx dy : Sp) : Dir :=
     else if 20 * y < -n then .belowRight else .below
   else if y > 0 then .left else .right
 
-public theorem autoDir_swap_exact (left : Bool) (dx dy : Sp) :
+public theorem autoDir_swap_exact (left : Bool) (dx dy : Length) :
     autoDir (!left) dx dy = autoDir left (-dx) (-dy) := by
   cases left <;> simp [autoDir]
 
-public theorem offset_opposite_exact (s : Sp × Sp) :
+public theorem offset_opposite_exact (s : Length × Length) :
     Dir.left.offset s = (-(Dir.right.offset s).1, (Dir.right.offset s).2) ∧
       Dir.above.offset s = ((Dir.below.offset s).1, -(Dir.below.offset s).2) := by
   simp [Dir.offset]
 
-public theorem offset_corners_exact (s : Sp × Sp) :
+public theorem offset_corners_exact (s : Length × Length) :
     Dir.aboveLeft.offset s = ((Dir.left.offset s).1, (Dir.above.offset s).2) ∧
       Dir.aboveRight.offset s = ((Dir.right.offset s).1, (Dir.above.offset s).2) ∧
       Dir.belowLeft.offset s = ((Dir.left.offset s).1, (Dir.below.offset s).2) ∧
@@ -3027,8 +3027,8 @@ private def nameOfToks (ts : List Tok) : Option String :=
     | _ => "")) ""
   if s.isEmpty then none else some s
 
-private def readPlace (dist : Sp × Sp) (toks : List Tok) :
-    Option (Dir × String × (Sp × Sp)) := do
+private def readPlace (dist : Length × Length) (toks : List Tok) :
+    Option (Dir × String × (Length × Length)) := do
   let path := keyPath toks
   let rest := (toks.dropWhile (· != .sym '=')).drop 1
   let words := path.splitOn " "
@@ -3045,7 +3045,7 @@ private def readPlace (dist : Sp × Sp) (toks : List Tok) :
     some (dir, nm, (own, own))
   | _ => none
 
-private def readNodeDistance (toks : List Tok) : Option (Sp × Sp) := do
+private def readNodeDistance (toks : List Tok) : Option (Length × Length) := do
   guard (keyPath toks == "node distance")
   let rest := (toks.dropWhile (· != .sym '=')).drop 1
   let parts := rest.splitOn (.ident "and")
@@ -3281,9 +3281,9 @@ public theorem unreachedName_accounts (gapped : Bool) (what site cost : String)
 
 private inductive Anchor where
   | node (g : NodeGeom)
-  | point (x y : Sp)
+  | point (x y : Length)
 
-private def Anchor.center : Anchor → Sp × Sp
+private def Anchor.center : Anchor → Length × Length
   | .node g => (g.x, g.y)
   | .point x y => (x, y)
 
@@ -3295,8 +3295,8 @@ public inductive CoordMode where
 
 /-- A relative coordinate step (TikZ §13.4.3): `+` keeps the reference, `++` moves it; the
 endpoint, then the reference. -/
-public def coordStep (mode : CoordMode) (base p : Int × Int) :
-    (Int × Int) × (Int × Int) :=
+public def coordStep (mode : CoordMode) (base p : Length × Length) :
+    (Length × Length) × (Length × Length) :=
   match mode with
   | .absolute => (p, p)
   | .offset => ((base.1 + p.1, base.2 + p.2), base)
@@ -3304,21 +3304,21 @@ public def coordStep (mode : CoordMode) (base p : Int × Int) :
     let q := (base.1 + p.1, base.2 + p.2)
     (q, q)
 
-public theorem coordStep_offset_exact (base p : Int × Int) :
+public theorem coordStep_offset_exact (base p : Length × Length) :
     (coordStep .offset base p).1 = (base.1 + p.1, base.2 + p.2) ∧
     (coordStep .offset base p).2 = base := by
   simp [coordStep]
 
-public theorem coordStep_advance_exact (base p q : Int × Int) :
+public theorem coordStep_advance_exact (base p q : Length × Length) :
     coordStep .advance (coordStep .advance base p).2 q =
       coordStep .advance base (p.1 + q.1, p.2 + q.2) := by
-  simp [coordStep, Int.add_assoc]
+  simp [coordStep, Length.add_assoc]
 
 /-- The corner of `|-` (x from the start, y from the end) or `-|` (TikZ §14.2). -/
-public def orthogonalCorner (verticalFirst : Bool) (p q : Int × Int) : Int × Int :=
+public def orthogonalCorner (verticalFirst : Bool) (p q : Length × Length) : Length × Length :=
   if verticalFirst then (p.1, q.2) else (q.1, p.2)
 
-public theorem orthogonalCorner_exact (verticalFirst : Bool) (p q : Int × Int) :
+public theorem orthogonalCorner_exact (verticalFirst : Bool) (p q : Length × Length) :
     let c := orthogonalCorner verticalFirst p q
     if verticalFirst then c.1 = p.1 ∧ c.2 = q.2
     else c.1 = q.1 ∧ c.2 = p.2 := by
@@ -3392,7 +3392,7 @@ private def calcAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
     Except PDiag Anchor := do
   let ts := (ofRaws raw.toArray).filter (· != .space)
   let mut i := 0
-  let mut point : Int × Int := (0, 0)
+  let mut point : Length × Length := (0, 0)
   let mut subtract := false
   let unsupported : PDiag := (.W0334, "this calc coordinate is outside the \
 rendered picture subset; use sums, differences, factors and '!t!' steps of \
@@ -3421,12 +3421,13 @@ rendered picture subset; use sums, differences, factors and '!t!' steps of \
       let dx := q.1 - p.1
       let dy := q.2 - p.2
       match ← (evalComp env step).mapError calcErr with
-      | (t, false) => p := (p.1 + dx * t / 1000, p.2 + dy * t / 1000)
+      | (t, false) => p := (p.1 + dx * t / (1000 : Int), p.2 + dy * t / (1000 : Int))
       | (d, true) =>
-        let n := isqrt (dx * dx + dy * dy)
-        let d := d * cx.scale / 1000
-        if n != 0 then p := (p.1 + dx * d / n, p.2 + dy * d / n)
-    let scaled := if factor == 1000 then p else (p.1 * factor / 1000, p.2 * factor / 1000)
+        let n := Length.ofUnits (isqrt (dx * dx + dy * dy))
+        let d := Length.ofSp d * cx.scale / (1000 : Int)
+        if n != 0 then p := (p.1 + dx.mulDiv d n, p.2 + dy.mulDiv d n)
+    let scaled := if factor == 1000 then p
+      else (p.1 * factor / (1000 : Int), p.2 * factor / (1000 : Int))
     point := (coordStep .advance point
       (if subtract then (-scaled.1, -scaled.2) else scaled)).1
     if i == ts.size then return .point point.1 point.2
@@ -3438,8 +3439,8 @@ rendered picture subset; use sums, differences, factors and '!t!' steps of \
   throw unsupported
 
 private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
-    (ts : Array Tok) (start : Nat) (base : Int × Int) :
-    Except PDiag (Anchor × Nat × (Int × Int)) := do
+    (ts : Array Tok) (start : Nat) (base : Length × Length) :
+    Except PDiag (Anchor × Nat × (Length × Length)) := do
   let mut i := start
   let mut mode := CoordMode.absolute
   if ts[i]? == some (.sym '+') then
@@ -3470,25 +3471,25 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut ev := ev
   let mut nodeShape : NodeShape := .rectangle
   let mut extras : Array (Bool × List Tok) := #[]
-  let mut labelDist : Sp := 0
-  let mut pinDist : Option Sp := none
+  let mut labelDist : Length := 0
+  let mut pinDist : Option Length := none
   let mut fitTo : Option (List Tok) := none
   let mut draw : Option (Option Ir.Color) := none
   let mut fillCol : Option Ir.Color := none
   let mut dash : Ir.Pic.Dash := .solid
-  let mut width : Sp := Ir.Pic.thinWidth
+  let mut width : Length := Ir.Pic.thinWidth
   let mut fontStyles : Array Ir.Style := #[]
   let mut textHt : Option (List Tok) := none
   let mut textDp : Option (List Tok) := none
   let mut textAlign : Ir.Pic.LabelAlign := .center
-  let mut minW : Sp := 0
-  let mut minH : Sp := 0
-  let mut xsep : Option Sp := none
-  let mut ysep : Option Sp := none
-  let mut oxsep : Option Sp := none
-  let mut oysep : Option Sp := none
+  let mut minW : Length := 0
+  let mut minH : Length := 0
+  let mut xsep : Option Length := none
+  let mut ysep : Option Length := none
+  let mut oxsep : Option Length := none
+  let mut oysep : Option Length := none
   let mut own : Array (Array Tok) := #[]
-  let mut anchorAt : Option (NodeAnchor × (Sp × Sp)) := none
+  let mut anchorAt : Option (NodeAnchor × (Length × Length)) := none
   let (pro, i1, bad) := readPrologue ts i
   i := i1
   if let some d := bad then return ev.diag d
@@ -3496,8 +3497,8 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     own := own ++ expandOpts cx.styles inner
   let nodeName : Option String := pro.name.orElse fun _ => defaultName
   ev := { ev with readOpts := true }
-  let dsc : Sp × Sp := (cx.dist.1 * cx.scale / 1000, cx.dist.2 * cx.scale / 1000)
-  let mut place : Option (Dir × String × (Sp × Sp)) := none
+  let dsc : Length × Length := (cx.dist.1 * cx.scale / 1000, cx.dist.2 * cx.scale / 1000)
+  let mut place : Option (Dir × String × (Length × Length)) := none
   let mut contents : Option (Array LabelLine) := none
   let (gOuter, pOuter) := outerRead readsNodeOpt cx.global cx.opts
   for opt in mergeOpts gOuter pOuter (cx.everyNode ++ cx.everyText) own do
@@ -3638,10 +3639,10 @@ node is placed by its anchor alone")
       | none =>
         ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
 picture subset; the option is dropped")
-  let mut fitBox : Option (Sp × Sp × Sp × Sp) := none
+  let mut fitBox : Option (Length × Length × Length × Length) := none
   if let some ft := fitTo then
     let fts := (ft.filter (· != .space)).toArray
-    let mut pts : Array (Sp × Sp) := #[]
+    let mut pts : Array (Length × Length) := #[]
     let mut j := 0
     for _ in [0:fts.size + 1] do
       if j ≥ fts.size then break
@@ -3675,7 +3676,7 @@ fits the rest")
     (atAnchor.isNone && (match place with
       | some (_, target, _) => (ev.nodes.lookup target).isNone
       | none => false))
-  let dimF (d : Sp) : Sp :=
+  let dimF (d : Length) : Length :=
     if cx.transformShape then d * cx.scale / 1000 else d
   let bodyOf : Except PDiag (Array LabelLine × Array PDiag) :=
     if coordinate then .ok (#[], #[]) else
@@ -3696,7 +3697,7 @@ outside the rendered picture subset; the label is not drawn")
     match bodyOf with
     | .ok (lines, _) => stackLabels 0 0 cx.bodySize scale color .center lines #[]
     | .error _ => #[]
-  let inkHalf : Sp × Sp :=
+  let inkHalf : Length × Length :=
     let bands := shapes0.filterMap fun s => match s with
       | .label lx ly content _ sz al => some (Ir.Pic.labelInkBox lx ly al (cx.metric content sz))
       | .ink _ => none
@@ -3705,20 +3706,20 @@ outside the rendered picture subset; the label is not drawn")
     | some (_, _, fw, _) => (fw / 2, max (-by0) by1)
     | none => (max (-bx0) bx1, max (-by0) by1)
   -- The label's first line is the node's baseline, as for any TeX box.
-  let lineInks : Array (Sp × Ir.Pic.LabelInk) := shapes0.filterMap fun s =>
+  let lineInks : Array (Length × Ir.Pic.LabelInk) := shapes0.filterMap fun s =>
     match s with
     | .label _ ly content _ sz al =>
       let m := cx.metric content sz
       some (Ir.Pic.labelBaseline ly al m, m)
     | .ink _ => none
-  let baseOff : Sp := (lineInks[0]?.map (·.1)).getD 0
-  let em : Sp := cx.bodySize * (scale : Int) / 1000
-  let ex : Sp := (lineInks[0]?.map (·.2.ex)).getD 0
-  let sepX : Sp := if coordinate then 0 else xsep.getD (innerSep em)
-  let sepY : Sp := if coordinate then 0 else ysep.getD (innerSep em)
-  let glyphs : Sp × Sp := lineInks.foldl (fun (lo, hi) (b, m) =>
+  let baseOff : Length := (lineInks[0]?.map (·.1)).getD 0
+  let em : Length := cx.bodySize * (scale : Int) / 1000
+  let ex : Length := (lineInks[0]?.map (·.2.ex)).getD 0
+  let sepX : Length := if coordinate then 0 else xsep.getD (innerSep em)
+  let sepY : Length := if coordinate then 0 else ysep.getD (innerSep em)
+  let glyphs : Length × Length := lineInks.foldl (fun (lo, hi) (b, m) =>
     (min lo (b - m.boxDepth), max hi (b + m.boxHeight))) (baseOff, baseOff)
-  let dimOf (ts : Option (List Tok)) : Option Sp :=
+  let dimOf (ts : Option (List Tok)) : Option Length :=
     ts.bind fun ts => (readNodeDim em ex ts).toOption
   let declHt := match fitBox with
     | some (_, _, _, fh) => some (fh / 2)
@@ -3737,37 +3738,37 @@ outside the rendered picture subset; the label is not drawn")
   let outlined : Bool :=
     (draw.isSome || fillCol.isSome || nodeShape == .ellipse || nodeShape == .diamond) &&
       !declaredExtent
-  let (base, boxLo, boxHi, halfB) : Sp × Sp × Sp × Sp :=
+  let (base, boxLo, boxHi, halfB) : Length × Length × Length × Length :=
     if declHt.isNone && declDp.isNone && !outlined then (baseOff, glyphs.1, glyphs.2, inkHalf.2)
     else
       let ht := declHt.getD (glyphs.2 - baseOff)
       let dp := declDp.getD (baseOff - glyphs.1)
       let (b0, lo, hi) := textSeat ht dp
       (b0, lo, hi, (ht + dp) / 2)
-  let outline? : Option (Sp × Sp) :=
+  let outline? : Option (Length × Length) :=
     if outlined then
       let (_, w, h) := nodeOutline nodeShape (dimF minW) (dimF minH) 0 inkHalf.1 boxLo boxHi sepX sepY
       some (w, h)
     else none
-  let declA : Sp := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minW / 2
-  let declB : Sp := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minH / 2
-  let ownA : Sp := match outline? with
+  let declA : Length := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minW / 2
+  let declB : Length := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minH / 2
+  let ownA : Length := match outline? with
     | some (w, _) => w / 2
     | none => borderHalf declA inkHalf.1 sepX
-  let ownB : Sp := match outline? with
+  let ownB : Length := match outline? with
     | some (_, h) => h / 2
     | none => borderHalf declB halfB sepY
   -- A drawn or filled node's anchors stand one outer sep past its border, any other node's on it.
   let pgfBorder : Bool := draw.isSome || fillCol.isSome
-  let (outA, outB) : Sp × Sp :=
+  let (outA, outB) : Length × Length :=
     if !pgfBorder then (0, 0)
     else
       let ox := oxsep.getD (width / 2)
       let oy := oysep.getD (width / 2)
       if nodeShape == .circle then (max ox oy, max ox oy) else (ox, oy)
-  let anchA : Sp := ownA + outA
-  let anchB : Sp := ownB + outB
-  let anchorShift : Sp × Sp := match anchorAt with
+  let anchA : Length := ownA + outA
+  let anchB : Length := ownB + outB
+  let anchorShift : Length × Length := match anchorAt with
     | some (an, (dx, dy)) =>
       let p := ({ x := 0, y := 0, a := anchA, b := anchB, shape := nodeShape, base } :
         NodeGeom).anchorPoint an
@@ -3820,7 +3821,7 @@ this one against; the node is not drawn")
             { color := c.getD cx.ink
               width := width
               dash := dash }
-          let paintOf (w h : Sp) : Ir.Pic.Shape := match nodeShape with
+          let paintOf (w h : Length) : Ir.Pic.Shape := match nodeShape with
             | .rectangle => .frame (sx - w / 2) (sy - h / 2) w h stroke fillCol
             | .circle => .circle sx sy (w / 2) stroke fillCol
             | .ellipse =>
@@ -3869,43 +3870,51 @@ private def sinDeg (d : Int) : Int :=
 
 private def cosDeg (d : Int) : Int := sinDeg (d + 90)
 
-private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
+/-- A point of the integer border geometry, back in lengths. -/
+private def lenPair (p : Int × Int) : Length × Length := (.ofUnits p.1, .ofUnits p.2)
+
+private def Anchor.toward (a : Anchor) (q : Length × Length) : Length × Length :=
   match a with
   | .point x y => (x, y)
   | .node g =>
     if g.a ≤ 0 || g.b ≤ 0 then (g.x, g.y)
     else match g.shape with
-      | .rectangle => rectBorder g.x g.y g.a g.b q.1 q.2
-      | .circle => circleBorder g.x g.y g.a q.1 q.2
-      | .ellipse => ellipseBorder g.x g.y g.a g.b q.1 q.2
-      | .diamond => diamondBorder g.x g.y g.a g.b q.1 q.2
+      | .rectangle => lenPair (rectBorder g.x.units g.y.units g.a.units g.b.units q.1.units q.2.units)
+      | .circle => lenPair (circleBorder g.x.units g.y.units g.a.units q.1.units q.2.units)
+      | .ellipse => lenPair (ellipseBorder g.x.units g.y.units g.a.units g.b.units q.1.units q.2.units)
+      | .diamond => lenPair (diamondBorder g.x.units g.y.units g.a.units g.b.units q.1.units q.2.units)
 
 private inductive TipInk where
   | tri (t : Ir.Pic.Tip)
   | node (n : Gfx.Node Empty)
 
-private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Color) :
-    Option (TipInk × Sp × Sp) :=
+private def tipAlong (k : TipKind) (q : Length × Length) (dx dy lw : Length) (color : Ir.Color) :
+    Option (TipInk × Length × Length) :=
   let n := isqrt (dx * dx + dy * dy)
   if n == 0 then none else
-  let frame (tipEnd s t : Int) : Sp × Sp :=
-    (q.1 + ((s - tipEnd) * dx - t * dy) / n, q.2 + ((s - tipEnd) * dy + t * dx) / n)
-  let a : Int := Dim.pt 28 / 100 + lw * 3 / 10 -- 0.28pt + .3\pgflinewidth (pgfcorearrows.code.tex)
+  let lwL := lw
+  let dx := dx.units
+  let dy := dy.units
+  let lw := lw.units
+  let frame (tipEnd s t : Int) : Length × Length :=
+    (q.1 + .ofUnits (((s - tipEnd) * dx - t * dy) / n),
+     q.2 + .ofUnits (((s - tipEnd) * dy + t * dx) / n))
+  let a : Int := (Dim.pt 28 / 100).units + lw * 3 / 10 -- 0.28pt + .3\pgflinewidth (pgfcorearrows.code.tex)
   let filled (sub : Gfx.Subpath) : Gfx.Node Empty :=
     .draw (.path #[sub]) (some (Ir.Pic.solidFill color)) none
   match k with
   | .to =>
-    let tipEnd : Int := Dim.pt 21 / 100 + lw * 625 / 1000 -- \pgfarrowsrightextend (pgfcorearrows.code.tex)
+    let tipEnd : Int := (Dim.pt 21 / 100).units + lw * 625 / 1000 -- \pgfarrowsrightextend (pgfcorearrows.code.tex)
     let f := frame tipEnd
     let sub : Gfx.Subpath :=
       { start := f (-3 * a) (4 * a), closed := false
         segs := #[.cubic (f (-275 * a / 100) (25 * a / 10)) (f 0 (a / 4)) (f (75 * a / 100) 0),
           .cubic (f 0 (-(a / 4))) (f (-275 * a / 100) (-(25 * a / 10))) (f (-3 * a) (-4 * a))] }
     let st : Gfx.Stroke :=
-      { Ir.Pic.strokeOf { color, width := lw * 8 / 10 } with cap := .round, join := .round }
+      { Ir.Pic.strokeOf { color, width := lwL * 8 / 10 } with cap := .round, join := .round }
     some (.node (.draw (.path #[sub]) none (some st)), f 0 0)
   | .cmRightarrow =>
-    let len : Int := Dim.pt 16 / 10 + lw * 22 / 10 -- length = +1.6pt 2.2 (pgflibraryarrows.meta.code.tex)
+    let len : Int := (Dim.pt 16 / 10).units + lw * 22 / 10 -- length = +1.6pt 2.2 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 2096774 / 1000000
     let ia := len - lw
     let ib := wid - lw
@@ -3917,7 +3926,7 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
           .cubic (f (-(41019 * ia / 100000)) (-(5833333 * ib / 100000000)))
             (f (-(81731 * ia / 100000)) (-(ib / 5))) (f (-ia) (-(ib / 2)))] }
     let st : Gfx.Stroke :=
-      { Ir.Pic.strokeOf { color, width := lw } with cap := .round, join := .round }
+      { Ir.Pic.strokeOf { color, width := lwL } with cap := .round, join := .round }
     some (.node (.draw (.path #[sub]) none (some st)), f (-(lw / 2)) 0)
   | .latex =>
     let f := frame (9 * a)
@@ -3932,7 +3941,7 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
       { start := f (5 * a) 0, closed := true
         segs := #[.line (f (-3 * a) (4 * a)), .line (f 0 0), .line (f (-3 * a) (-4 * a))] }), f 0 0)
   | .latexMeta =>
-    let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
+    let len : Int := (Dim.pt 3).units + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 75 / 100
     let alw : Int := min lw (len / 5)
     if wid ≤ 0 then none else
@@ -3951,9 +3960,9 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
           .cubic (f (337381 * inner / 1000000) (-(519480 * hb / 1000000)))
             (f (877192 * inner / 1000000) (-(77922 * hb / 1000000))) (f inner 0)] }
     some (.node (.draw (.path #[sub]) (some (Ir.Pic.solidFill color))
-      (some (Ir.Pic.strokeOf { color, width := alw }))), f 0 0)
+      (some (Ir.Pic.strokeOf { color, width := .ofUnits alw }))), f 0 0)
   | .stealth =>
-    let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
+    let len : Int := (Dim.pt 3).units + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
     let wid : Int := len * 75 / 100
     let ins : Int := len * 325 / 1000
     let alw : Int := min lw ((len - ins) / 4)
@@ -3974,21 +3983,21 @@ private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Co
       { start := f (len - front) 0, closed := true
         segs := #[.line (f back hw), .line (f (ins + insetMiter) 0), .line (f back (-hw))] }
     some (.node (.draw (.path #[dart]) (some (Ir.Pic.solidFill color))
-      (some (Ir.Pic.strokeOf { color, width := alw }))), f (ins + insetMiter - alw / 4) 0)
+      (some (Ir.Pic.strokeOf { color, width := .ofUnits alw }))), f (ins + insetMiter - alw / 4) 0)
 
-private def tipArrival (k : TipKind) (p q : Sp × Sp) (lw : Sp) (color : Ir.Color) :
-    Option (TipInk × Sp × Sp) :=
+private def tipArrival (k : TipKind) (p q : Length × Length) (lw : Length) (color : Ir.Color) :
+    Option (TipInk × Length × Length) :=
   tipAlong k q (q.1 - p.1) (q.2 - p.2) lw color
 
 private def segReverse : Ir.Pic.PathSeg → Ir.Pic.PathSeg
   | .line x1 y1 x2 y2 => .line x2 y2 x1 y1
   | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => .cubic x2 y2 c2x c2y c1x c1y x1 y1
 
-private def sideShaft (startT endT : Option TipKind) (corner : Option (Sp × Sp))
-    (p1 p2 : Sp × Sp) (lw : Sp) (color : Ir.Color) :
-    Array Ir.Pic.PathSeg × Option TipInk × Option TipInk × (Sp × Sp) :=
+private def sideShaft (startT endT : Option TipKind) (corner : Option (Length × Length))
+    (p1 p2 : Length × Length) (lw : Length) (color : Ir.Color) :
+    Array Ir.Pic.PathSeg × Option TipInk × Option TipInk × (Length × Length) :=
   let startHit := startT.bind fun k => tipArrival k (corner.getD p2) p1 lw color
-  let q1 : Sp × Sp := match startHit with
+  let q1 : Length × Length := match startHit with
     | some (_, bx, byy) => (bx, byy)
     | none => p1
   let departure := corner.getD q1
@@ -3996,12 +4005,12 @@ private def sideShaft (startT endT : Option TipKind) (corner : Option (Sp × Sp)
     | some q => #[.line q1.1 q1.2 q.1 q.2]
     | none => #[]
   let endHit := endT.bind fun k => tipArrival k departure p2 lw color
-  let q2 : Sp × Sp := match endHit with
+  let q2 : Length × Length := match endHit with
     | some (_, bx, byy) => (bx, byy)
     | none => p2
   (elbow.push (.line departure.1 departure.2 q2.1 q2.2), startHit.map (·.1), endHit.map (·.1), q1)
 
-private theorem reversedTip_exact (k : TipKind) (p q : Sp × Sp) (w : Sp) (c : Ir.Color) :
+private theorem reversedTip_exact (k : TipKind) (p q : Length × Length) (w : Length) (c : Ir.Color) :
     (sideShaft (some k) none none p q w c).1 =
         (sideShaft none (some k) none q p w c).1.map segReverse ∧
       (sideShaft (some k) none none p q w c).2.1 = (sideShaft none (some k) none q p w c).2.2.1 ∧
@@ -4013,21 +4022,22 @@ private theorem reversedTip_exact (k : TipKind) (p q : Sp × Sp) (w : Sp) (c : I
     obtain ⟨t, bx, byy⟩ := hit
     simp [segReverse]
 
-private def Anchor.towardDir (a : Anchor) (deg : Int) : Sp × Sp :=
+private def Anchor.towardDir (a : Anchor) (deg : Int) : Length × Length :=
   let c := a.center
-  a.toward (c.1 + cosDeg deg, c.2 + sinDeg deg)
+  a.toward (c.1 + .ofUnits (cosDeg deg), c.2 + .ofUnits (sinDeg deg))
 
-private def curveControl (px py dist deg : Int) : Int × Int :=
-  (px + dist * cosDeg deg / 1000, py + dist * sinDeg deg / 1000)
+private def curveControl (px py dist : Length) (deg : Int) : Length × Length :=
+  (px + dist * cosDeg deg / (1000 : Int), py + dist * sinDeg deg / (1000 : Int))
 
-private theorem curveControl_tangent (px py dist deg : Int) :
+private theorem curveControl_tangent (px py dist : Length) (deg : Int) :
     1000 * ((curveControl px py dist deg).1 - px) ≤ dist * cosDeg deg ∧
-    dist * cosDeg deg < 1000 * ((curveControl px py dist deg).1 - px) + 1000 ∧
+    dist * cosDeg deg < 1000 * ((curveControl px py dist deg).1 - px) + 1000 * Length.quantum ∧
     1000 * ((curveControl px py dist deg).2 - py) ≤ dist * sinDeg deg ∧
-    dist * sinDeg deg < 1000 * ((curveControl px py dist deg).2 - py) + 1000 := by
+    dist * sinDeg deg < 1000 * ((curveControl px py dist deg).2 - py) + 1000 * Length.quantum := by
   simp only [curveControl]
-  generalize dist * cosDeg deg = d
-  generalize dist * sinDeg deg = e
+  length_units
+  generalize dist.units * cosDeg deg = d
+  generalize dist.units * sinDeg deg = e
   omega
 
 private structure ToSpec where
@@ -4067,28 +4077,29 @@ private def ToSpec.read (s : ToSpec) (env : List (String × Val)) (opt : Array T
     num rest fun m => { s with inL := m, curved := true }
   | _ => none
 
-private def turnAbout (c p : Sp × Sp) (deg : Int) : Sp × Sp :=
+private def turnAbout (c p : Length × Length) (deg : Int) : Length × Length :=
   let dx := p.1 - c.1
   let dy := p.2 - c.2
   (c.1 + (dx * cosDeg deg - dy * sinDeg deg) / 1000,
    c.2 + (dx * sinDeg deg + dy * cosDeg deg) / 1000)
 
-private def turnedControl (px py vx vy deg loose : Int) : Int × Int :=
-  (px + (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose / 10000000000,
-   py + (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose / 10000000000)
+private def turnedControl (px py vx vy : Length) (deg loose : Int) : Length × Length :=
+  (px + (vx * cosDeg deg - vy * sinDeg deg) * (3915 : Int) * loose / (10000000000 : Int),
+   py + (vx * sinDeg deg + vy * cosDeg deg) * (3915 : Int) * loose / (10000000000 : Int))
 
-private theorem turnedControl_between (px py vx vy deg loose : Int) :
-    10000000000 * ((turnedControl px py vx vy deg loose).1 - px) ≤
-      (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose ∧
-    (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose <
-      10000000000 * ((turnedControl px py vx vy deg loose).1 - px) + 10000000000 ∧
-    10000000000 * ((turnedControl px py vx vy deg loose).2 - py) ≤
-      (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose ∧
-    (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose <
-      10000000000 * ((turnedControl px py vx vy deg loose).2 - py) + 10000000000 := by
+private theorem turnedControl_between (px py vx vy : Length) (deg loose : Int) :
+    (10000000000 : Int) * ((turnedControl px py vx vy deg loose).1 - px) ≤
+      (vx * cosDeg deg - vy * sinDeg deg) * (3915 : Int) * loose ∧
+    (vx * cosDeg deg - vy * sinDeg deg) * (3915 : Int) * loose <
+      (10000000000 : Int) * ((turnedControl px py vx vy deg loose).1 - px + Length.quantum) ∧
+    (10000000000 : Int) * ((turnedControl px py vx vy deg loose).2 - py) ≤
+      (vx * sinDeg deg + vy * cosDeg deg) * (3915 : Int) * loose ∧
+    (vx * sinDeg deg + vy * cosDeg deg) * (3915 : Int) * loose <
+      (10000000000 : Int) * ((turnedControl px py vx vy deg loose).2 - py + Length.quantum) := by
   simp only [turnedControl]
-  generalize (vx * cosDeg deg - vy * sinDeg deg) * 3915 * loose = d
-  generalize (vx * sinDeg deg + vy * cosDeg deg) * 3915 * loose = e
+  length_units
+  generalize (vx.units * cosDeg deg - vy.units * sinDeg deg) * 3915 * loose = d
+  generalize (vx.units * sinDeg deg + vy.units * cosDeg deg) * 3915 * loose = e
   omega
 
 private inductive DrawOp where
@@ -4097,8 +4108,8 @@ private inductive DrawOp where
   | curve (spec : ToSpec)
   | rect
   | cycle
-  | ellipse (rx ry : Sp)
-  | arc (s e : Int) (rx ry : Sp)
+  | ellipse (rx ry : Length)
+  | arc (s e : Int) (rx ry : Length)
 
 private inductive PathMode where
   | draw
@@ -4110,12 +4121,12 @@ private inductive PathMode where
   | clip
   deriving BEq
 
-private def optLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Sp :=
+private def optLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Length :=
   match readNodeDim cx.bodySize (cx.metric #[.text "x"] 1000).ex toks with
   | .ok d => .ok d
   | .error _ =>
     match evalComp env toks.toArray with
-    | .ok (v, true) => .ok v
+    | .ok (v, true) => .ok (Length.ofSp v)
     | .ok (m, false) => .ok (milliPt m)
     | .error e => .error e
 
@@ -4126,22 +4137,22 @@ private def optAlpha (env : List (String × Val)) (toks : List Tok) : Except Str
     .ok ⟨min n 1000, by omega⟩
   | .error e => .error e
 
-private def towardBy (p q : Sp × Sp) (d : Sp) : Sp × Sp :=
+private def towardBy (p q : Length × Length) (d : Length) : Length × Length :=
   let dx := q.1 - p.1
   let dy := q.2 - p.2
   let n := isqrt (dx * dx + dy * dy)
-  if n == 0 then p else (p.1 + dx * d / n, p.2 + dy * d / n)
+  if n == 0 then p else (p.1 + .ofUnits (dx * d / n), p.2 + .ofUnits (dy * d / n))
 
 /-- A rounded corner's control coordinate, 0.5522847 of the way from the curve's end `s` to the
 corner `b` (pgf's `\pgfprocess@@specialround`). -/
-@[expose] public def cornerControl (s b : Int) : Int := s + (b - s) * 5522847 / 10000000
+@[expose] public def cornerControl (s b : Length) : Length := s + (b - s) * 5522847 / 10000000
 
-public theorem roundedCorners_between (s b : Int) :
+public theorem roundedCorners_between (s b : Length) :
     min s b ≤ cornerControl s b ∧ cornerControl s b ≤ max s b := by
   unfold cornerControl
-  constructor <;> omega
+  constructor <;> length_omega
 
-private def roundJoints (r : Sp) (segs : Array Ir.Pic.PathSeg) : Array Ir.Pic.PathSeg := Id.run do
+private def roundJoints (r : Length) (segs : Array Ir.Pic.PathSeg) : Array Ir.Pic.PathSeg := Id.run do
   let mut out : Array Ir.Pic.PathSeg := #[]
   let mut held : Option Ir.Pic.PathSeg := none
   for sg in segs do
@@ -4164,10 +4175,10 @@ private def roundJoints (r : Sp) (segs : Array Ir.Pic.PathSeg) : Array Ir.Pic.Pa
   return out
 
 private def readArc (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
-    Except PDiag (Int × Int × Sp × Sp × Nat) := do
+    Except PDiag (Int × Int × Length × Length × Nat) := do
   let err (e : String) : PDiag := (.E0333, s!"in an 'arc', {e}; the path is not drawn")
   let num (t : Array Tok) : Except PDiag Int := (evalNum env t).mapError err
-  let len (t : Array Tok) : Except PDiag Sp := do
+  let len (t : Array Tok) : Except PDiag Length := do
     let v ← (evalComp env t).mapError err
     return cx.compSp v
   if let some (inner, close) := bracketAt ts i then
@@ -4175,8 +4186,8 @@ private def readArc (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i :
     let mut sa : Option Int := none
     let mut ea : Option Int := none
     let mut da : Option Int := none
-    let mut rx : Option Sp := none
-    let mut ry : Option Sp := none
+    let mut rx : Option Length := none
+    let mut ry : Option Length := none
     for opt in splitTop inner ',' do
       let key := keyPath opt.toList
       let rest := ((opt.toList.dropWhile (· != .sym '=')).drop 1).toArray
@@ -4213,8 +4224,8 @@ the path is not drawn")
 
 private def cosSinMilli (m : Int) : Int × Int := Gfx.Trig.cosSin (m * Gfx.Trig.pi / 180000)
 
-private def arcStep (onCanvas : Sp × Sp → Sp × Sp) (acc : Array Ir.Pic.PathSeg × (Sp × Sp)) :
-    Gfx.Seg → Array Ir.Pic.PathSeg × (Sp × Sp)
+private def arcStep (onCanvas : Length × Length → Length × Length) (acc : Array Ir.Pic.PathSeg × (Length × Length)) :
+    Gfx.Seg → Array Ir.Pic.PathSeg × (Length × Length)
   | .line q =>
     let q' := onCanvas q
     (acc.1.push (.line acc.2.1 acc.2.2 q'.1 q'.2), q')
@@ -4224,8 +4235,8 @@ private def arcStep (onCanvas : Sp × Sp → Sp × Sp) (acc : Array Ir.Pic.PathS
     let q' := onCanvas q
     (acc.1.push (.cubic acc.2.1 acc.2.2 c1'.1 c1'.2 c2'.1 c2'.2 q'.1 q'.2), q')
 
-private theorem arcStep_end (onCanvas : Sp × Sp → Sp × Sp) :
-    ∀ (segs : List Gfx.Seg) (acc : Array Ir.Pic.PathSeg × (Sp × Sp)),
+private theorem arcStep_end (onCanvas : Length × Length → Length × Length) :
+    ∀ (segs : List Gfx.Seg) (acc : Array Ir.Pic.PathSeg × (Length × Length)),
       (segs.foldl (arcStep onCanvas) acc).2 =
         ((segs.getLast?.map fun sg => onCanvas sg.endPt).getD acc.2)
   | [], _ => rfl
@@ -4237,20 +4248,20 @@ private theorem arcStep_end (onCanvas : Sp × Sp → Sp × Sp) :
     | none => simp at h
     | some l => rfl
 
-private def arcPieces (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
-    Array Ir.Pic.PathSeg × (Sp × Sp) :=
+private def arcPieces (cx : Cx) (p : Length × Length) (s e : Int) (rx ry : Length) :
+    Array Ir.Pic.PathSeg × (Length × Length) :=
   let u := Gfx.Trig.unit
-  let start : Sp × Sp := (rx * (cosSinMilli s).1 / u, ry * (cosSinMilli s).2 / u)
-  let last : Sp × Sp := (rx * (cosSinMilli e).1 / u, ry * (cosSinMilli e).2 / u)
+  let start : Length × Length := (rx * (cosSinMilli s).1 / u, ry * (cosSinMilli s).2 / u)
+  let last : Length × Length := (rx * (cosSinMilli e).1 / u, ry * (cosSinMilli e).2 / u)
   let θ0 := s * Gfx.Trig.pi / 180000
   let Δ := (e - s) * Gfx.Trig.pi / 180000
   let pieces := Gfx.Kit.arcCubics 0 0 rx ry 0 θ0 Δ last
-  let onCanvas (q : Sp × Sp) : Sp × Sp :=
+  let onCanvas (q : Length × Length) : Length × Length :=
     let d := cx.placeVec (q.1 - start.1) (q.2 - start.2)
     (p.1 + d.1, p.2 + d.2)
   pieces.foldl (arcStep onCanvas) (#[], p)
 
-private theorem arc_end_exact (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
+private theorem arc_end_exact (cx : Cx) (p : Length × Length) (s e : Int) (rx ry : Length) :
     (arcPieces cx p s e rx ry).2 =
       let u := Gfx.Trig.unit
       let d := cx.placeVec (rx * (cosSinMilli e).1 / u - rx * (cosSinMilli s).1 / u)
@@ -4273,15 +4284,15 @@ private theorem arc_end_exact (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
     simp only [Option.map_some, Option.some.injEq] at hl
     simp only [Option.map_some, Option.getD_some, hl]
 
-private def ellipseOnCanvas (cx : Cx) (c : Sp × Sp) (rx ry : Sp) :
-    Sum (Sp × Sp × Sp × Sp) Gfx.Subpath :=
+private def ellipseOnCanvas (cx : Cx) (c : Length × Length) (rx ry : Length) :
+    Sum (Length × Length × Length × Length) Gfx.Subpath :=
   if cx.axisAligned then
     let (ax, _) := cx.placeVec rx 0
     let (_, dy) := cx.placeVec 0 ry
-    .inl (c.1, c.2, ax.natAbs, dy.natAbs)
+    .inl (c.1, c.2, ax.abs, dy.abs)
   else
     let base := (Gfx.Kit.ellipse 0 0 rx ry)[0]?.getD { start := (rx, 0), segs := #[], closed := true }
-    let on (q : Sp × Sp) : Sp × Sp :=
+    let on (q : Length × Length) : Length × Length :=
       let d := cx.placeVec q.1 q.2
       (c.1 + d.1, c.2 + d.2)
     .inr { start := on base.start, closed := true
@@ -4289,13 +4300,13 @@ private def ellipseOnCanvas (cx : Cx) (c : Sp × Sp) (rx ry : Sp) :
              | .line q => .line (on q)
              | .cubic c1 c2 q => .cubic (on c1) (on c2) (on q) }
 
-private def rectLoop (cx : Cx) (a c : Sp × Sp) : Array Ir.Pic.PathSeg :=
+private def rectLoop (cx : Cx) (a c : Length × Length) : Array Ir.Pic.PathSeg :=
   let m := cx.xf
   let det := m.a * m.d - m.b * m.c
-  let (b, d) : (Sp × Sp) × (Sp × Sp) :=
+  let (b, d) : (Length × Length) × (Length × Length) :=
     if det == 0 then ((c.1, a.2), (a.1, c.2)) else
-    let ux : Rat := (m.d * (c.1 - a.1) - m.c * (c.2 - a.2)) / det
-    let uy : Rat := (-m.b * (c.1 - a.1) + m.a * (c.2 - a.2)) / det
+    let ux : Rat := (m.d * (c.1 - a.1).toRat - m.c * (c.2 - a.2).toRat) / det
+    let uy : Rat := (-m.b * (c.1 - a.1).toRat + m.a * (c.2 - a.2).toRat) / det
     ((a.1 + roundRat (m.a * ux), a.2 + roundRat (m.b * ux)),
      (a.1 + roundRat (m.c * uy), a.2 + roundRat (m.d * uy)))
   let mx := (a.1 + b.1) / 2
@@ -4304,12 +4315,12 @@ private def rectLoop (cx : Cx) (a c : Sp × Sp) : Array Ir.Pic.PathSeg :=
     .line a.1 a.2 mx my]
 
 private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
-    Except PDiag (Sp × Sp × Nat) := do
+    Except PDiag (Length × Length × Nat) := do
   let err (e : String) : PDiag := (.E0333, s!"in a 'circle' radius, {e}; the path is not drawn")
   if let some (inner, close) := bracketAt ts i then
     let some past := close | throw (err "the options miss their ']'")
-    let mut rx : Option Sp := none
-    let mut ry : Option Sp := none
+    let mut rx : Option Length := none
+    let mut ry : Option Length := none
     for opt in splitTop inner ',' do
       let key := keyPath opt.toList
       let rest := ((opt.toList.dropWhile (· != .sym '=')).drop 1).toArray
@@ -4371,7 +4382,7 @@ end
 
 /-- The one geometry a filled path, or one holding an ellipse, paints as, filled by the nonzero rule. -/
 @[expose] public def paintedGeom (segs : Array Ir.Pic.PathSeg)
-    (rects ellipses : Array (Sp × Sp × Sp × Sp)) (extra : Array Gfx.Subpath := #[]) :
+    (rects ellipses : Array (Length × Length × Length × Length)) (extra : Array Gfx.Subpath := #[]) :
     Gfx.Geom :=
   match segs.isEmpty && extra.isEmpty, rects.toList, ellipses.toList with
   | true, [(x, y, w, h)], [] => .rect x y w h
@@ -4449,12 +4460,12 @@ private def shadeFrame (angle : Int) (box : Gfx.Box) : Option Gfx.Affine :=
   let s : Rat := si / u
   let ac : Rat := if c < 0 then -c else c
   let as : Rat := if s < 0 then -s else s
-  let w : Rat := x1 - x0
-  let h : Rat := y1 - y0
-  let half : Rat := Dim.pt 50 -- the shading's middle 50 bp (pgfcoreshade.code.tex)
+  let w : Rat := (x1 - x0).toRat
+  let h : Rat := (y1 - y0).toRat
+  let half : Rat := (Dim.pt 50).toRat -- the shading's middle 50 bp (pgfcoreshade.code.tex)
   let sx := (w * ac + h * as) / ((ac + as) * half)
   let sy := (w * as + h * ac) / ((ac + as) * half)
-  some ⟨c * sx, s * sx, -s * sy, c * sy, ((x0 : Rat) + x1) / 2, ((y0 : Rat) + y1) / 2⟩
+  some ⟨c * sx, s * sx, -s * sy, c * sy, (x0.toRat + x1.toRat) / 2, (y0.toRat + y1.toRat) / 2⟩
 
 private def shadeFill (s : ShadeSpec) (box : Gfx.Box) : Option Gfx.Fill :=
   (shadeFrame s.angle box).map fun xf =>
@@ -4466,10 +4477,10 @@ private def shadeFill (s : ShadeSpec) (box : Gfx.Box) : Option Gfx.Fill :=
     { paint := .gradient g, rule := .nonzero, alpha := Gfx.Alpha.opaque }
 
 private structure BraceSpec where
-  amplitude : Sp := Dim.pt 25 / 10 -- \pgfdecorationsegmentamplitude2.5pt (pgfmoduledecorations.code.tex)
+  amplitude : Length := Dim.pt 25 / 10 -- \pgfdecorationsegmentamplitude2.5pt (pgfmoduledecorations.code.tex)
   aspect : Int := 500
   mirror : Bool := false
-  raise : Sp := 0
+  raise : Length := 0
 
 private def readBrace (cx : Cx) (env : List (String × Val)) (rest : List Tok) :
     Except String BraceSpec := do
@@ -4494,21 +4505,21 @@ picture subset"
   unless named do throw "a decoration other than the brace is outside the rendered picture subset"
   return b
 
-private def braceSegs (b : BraceSpec) (x0 y0 x1 y1 : Sp) : Array Ir.Pic.PathSeg :=
-  let dx := x1 - x0
-  let dy := y1 - y0
-  let d := isqrt (dx * dx + dy * dy)
+private def braceSegs (b : BraceSpec) (x0 y0 x1 y1 : Length) : Array Ir.Pic.PathSeg :=
+  let d := isqrt ((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0))
   if d == 0 then #[.line x0 y0 x1 y1] else
-  let a := b.amplitude
+  let dx := (x1 - x0).units
+  let dy := (y1 - y0).units
+  let a := b.amplitude.units
   let sd := b.aspect * d / 1000
   let yc := if 2 * a > sd then sd / 2 else a
   let xc := if -2 * a < sd - d then (d - sd) / 2 else a
-  let at_ (s t : Int) : Sp × Sp :=
-    let t := t + b.raise
+  let at_ (s t : Int) : Length × Length :=
+    let t := t + b.raise.units
     let t := if b.mirror then -t else t
-    (x0 + (s * dx - t * dy) / d, y0 + (s * dy + t * dx) / d)
-  let cub (p c1 c2 q : Sp × Sp) : Ir.Pic.PathSeg := .cubic p.1 p.2 c1.1 c1.2 c2.1 c2.2 q.1 q.2
-  let ln (p q : Sp × Sp) : Ir.Pic.PathSeg := .line p.1 p.2 q.1 q.2
+    (x0 + .ofUnits ((s * dx - t * dy) / d), y0 + .ofUnits ((s * dy + t * dx) / d))
+  let cub (p c1 c2 q : Length × Length) : Ir.Pic.PathSeg := .cubic p.1 p.2 c1.1 c1.2 c2.1 c2.2 q.1 q.2
+  let ln (p q : Length × Length) : Ir.Pic.PathSeg := .line p.1 p.2 q.1 q.2
   let p0 := at_ 0 0
   let p1 := at_ yc (a / 2)
   let p2 := at_ (sd - yc) (a / 2)
@@ -4523,14 +4534,14 @@ private def braceSegs (b : BraceSpec) (x0 y0 x1 y1 : Sp) : Array Ir.Pic.PathSeg 
     ln p3 p4,
     cub p4 (at_ (d - xc / 2) (a / 2)) (at_ (d - 15 * xc / 100) (3 * a / 10)) p5]
 
-public theorem circleOp_exact (x y r : Sp) :
+public theorem circleOp_exact (x y r : Length) :
     paintedGeom #[] #[] #[(x, y, r, r)] = .ellipse x y r r := rfl
 
-public theorem circlePath_box_exact (x y r : Int) (h : 0 ≤ r) :
+public theorem circlePath_box_exact (x y r : Length) (h : 0 ≤ r) :
     (paintedGeom #[] #[] #[(x, y, r, r)]).hull = some ((x - r, y - r), (x + r, y + r)) := by
   simp only [circleOp_exact, Gfx.Geom.hull, Option.some.injEq, Prod.mk.injEq]
-  exact ⟨⟨Int.min_eq_left (by omega), Int.min_eq_left (by omega)⟩,
-    Int.max_eq_right (by omega), Int.max_eq_right (by omega)⟩
+  exact ⟨⟨Length.min_eq_left (by length_omega), Length.min_eq_left (by length_omega)⟩,
+    Length.max_eq_right (by length_omega), Length.max_eq_right (by length_omega)⟩
 
 private structure EdgeLabel where
   lines : Array LabelLine
@@ -4539,17 +4550,17 @@ private structure EdgeLabel where
   placement : Option Dir
   autoLeft : Option Bool
   align : Ir.Pic.LabelAlign
-  inner : Sp × Sp
-  outer : Option Sp × Option Sp
+  inner : Length × Length
+  outer : Option Length × Option Length
   atEnd : Bool
 
 /-- Moves a measured label without changing its text or baseline rule; other shapes are unchanged. -/
-public def translateLabel (offset : Sp × Sp) : Ir.Pic.Shape → Ir.Pic.Shape
+public def translateLabel (offset : Length × Length) : Ir.Pic.Shape → Ir.Pic.Shape
   | .label x y content color size align =>
     .label (x + offset.1) (y + offset.2) content color size align
   | s@(.ink _) => s
 
-public theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
+public theorem translateLabel_box_projects (offset : Length × Length) (x y : Length)
     (content : Array Ir.Inline) (color : Ir.Color) (size : Nat)
     (align : Ir.Pic.LabelAlign) (metric : Ir.Pic.LabelMetric) :
     match translateLabel offset (.label x y content color size align) with
@@ -4561,8 +4572,8 @@ public theorem translateLabel_box_projects (offset : Sp × Sp) (x y : Sp)
     | .ink _ => False :=
   Ir.Pic.labelTextBox_translate_exact x y align (metric content size) offset
 
-private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
-    (anchor tangent : Sp × Sp) : Array Ir.Pic.Shape :=
+private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Length)
+    (anchor tangent : Length × Length) : Array Ir.Pic.Shape :=
   let lines := alignLabels cx.metric label.align
     (stackLabels 0 0 cx.bodySize label.scale label.color .center label.lines #[])
   let direction := label.placement.orElse fun _ =>
@@ -4576,7 +4587,7 @@ private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
         | .ink _ => none)
       let gap := (label.inner.1 + label.outer.1.getD (width / 2),
                   label.inner.2 + label.outer.2.getD (width / 2))
-      Ir.Pic.Box.attachOffset box anchor (dir.offset (1, 1)) gap
+      Ir.Pic.Box.attachOffset box anchor (dir.offset (Length.quantum, Length.quantum)) gap
   lines.map (translateLabel offset)
 
 private def readEdgeLabel (cx : Cx) (env : List (String × Val))
@@ -4663,7 +4674,7 @@ the rendered picture subset; the option is dropped")
       let em := cx.bodySize * (factor : Int) / 1000
       let ex := (cx.metric #[.text "x"] factor).ex
       let mut inner := (innerSep em, innerSep em)
-      let mut outer : Option Sp × Option Sp := (none, none)
+      let mut outer : Option Length × Option Length := (none, none)
       for (key, value) in mseps do
         match readNodeDim em ex value with
         | .error e =>
@@ -4692,7 +4703,7 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut ev := ev
   let mut color := cx.ink
   let mut dash : Ir.Pic.Dash := .solid
-  let mut width : Sp := Ir.Pic.thinWidth
+  let mut width : Length := Ir.Pic.thinWidth
   let mut startArrow := false
   let mut endArrow := false
   -- `\path` paints nothing of itself; an `edge` or a `draw` key makes it stroke.
@@ -4707,9 +4718,9 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut startName : Option String := none
   let mut endName : Option String := none
   let mut shorthand : Option String := none
-  let mut shortenStart : Sp := 0
-  let mut shortenEnd : Sp := 0
-  let mut rounded : Option Sp := none
+  let mut shortenStart : Length := 0
+  let mut shortenEnd : Length := 0
+  let mut rounded : Option Length := none
   let mut fillAlpha : Gfx.Alpha := Gfx.Alpha.opaque
   let mut strokeAlpha : Gfx.Alpha := Gfx.Alpha.opaque
   let mut opStroke := false
@@ -4849,7 +4860,7 @@ the edge is not drawn")
 rendered picture subset; the option is dropped")
   let mut pts : Array Anchor := #[]
   let mut ops : Array (DrawOp × Option EdgeLabel) := #[]
-  let mut reference : Sp × Sp := (0, 0)
+  let mut reference : Length × Length := (0, 0)
   match readAnchor cx env ev ts i reference with
   | .error d => return ev.diag d
   | .ok (a, i2, base) =>
@@ -5004,18 +5015,18 @@ the rendered picture subset; the edge is not drawn")
     | none => shorthandKind
   let startKind := kindOf startName
   let endKind := kindOf endName
-  let tipFor (kind : TipKind) (p q : Sp × Sp) : Option (TipInk × Sp × Sp) :=
+  let tipFor (kind : TipKind) (p q : Length × Length) : Option (TipInk × Length × Length) :=
     tipArrival kind p q stroke.width stroke.color
   let mut segs : Array Ir.Pic.PathSeg := #[]
   let mut tip : Option TipInk := none
   let mut startTip : Option TipInk := none
   let mut labels : Array Ir.Pic.Shape := #[]
   let mut frames : Array Ir.Pic.Shape := #[]
-  let mut rects : Array (Sp × Sp × Sp × Sp) := #[]
-  let mut ellipses : Array (Sp × Sp × Sp × Sp) := #[]
+  let mut rects : Array (Length × Length × Length × Length) := #[]
+  let mut ellipses : Array (Length × Length × Length × Length) := #[]
   let mut extraSubs : Array Gfx.Subpath := #[]
-  let mut subStart : Option (Nat × Sp × Sp) := none
-  let mut cur : Option (Sp × Sp) := none
+  let mut subStart : Option (Nat × Length × Length) := none
+  let mut cur : Option (Length × Length) := none
   for k in [0:ops.size] do
     match pts[k]?, pts[k+1]?, ops[k]? with
     | some a, some c, some (op, mid) =>
@@ -5114,9 +5125,9 @@ the rendered picture subset; the edge is not drawn")
              turnedControl p2.1 p2.2 ddx ddy spec.inA spec.inL)
           else
             -- control distance 0.3915·‖d‖·looseness: the To-Path library's factor
-            let len := isqrt (ddx * ddx + ddy * ddy)
-            (curveControl p1.1 p1.2 (len * 3915 * spec.outL / 10000000) spec.outA,
-             curveControl p2.1 p2.2 (len * 3915 * spec.inL / 10000000) spec.inA)
+            let len := Length.ofUnits (isqrt (ddx * ddx + ddy * ddy))
+            (curveControl p1.1 p1.2 (len * (3915 : Int) * spec.outL / (10000000 : Int)) spec.outA,
+             curveControl p2.1 p2.2 (len * (3915 : Int) * spec.inL / (10000000 : Int)) spec.inA)
         segs := segs.push (.cubic p1.1 p1.2 c1.1 c1.2 c2.1 c2.2 p2.1 p2.2)
         if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
         cur := some p2
@@ -5332,8 +5343,8 @@ private structure TreeCfg where
   grow : Int := -90
   swap : Bool := false
   special : Int := -1
-  levelDist : Sp := Dim.mm 15  -- tikz.code.tex: \tikzleveldistance=15mm
-  siblingDist : Sp := Dim.mm 15  -- tikz.code.tex: \tikzsiblingdistance=15mm
+  levelDist : Length := Dim.mm 15  -- tikz.code.tex: \tikzleveldistance=15mm
+  siblingDist : Length := Dim.mm 15  -- tikz.code.tex: \tikzsiblingdistance=15mm
   parentAnchor : Option String := none
   childAnchor : Option String := none
   scope : Array (Array Tok) := #[]
@@ -5354,7 +5365,7 @@ private def growAngle (env : List (String × Val)) (toks : List Tok) : Option In
     | .ok m => some (if m < 0 then -((-m) / 1000) else m / 1000)
     | .error _ => none
 
-private def treeLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Sp :=
+private def treeLen (cx : Cx) (env : List (String × Val)) (toks : List Tok) : Except String Length :=
   optLen cx env toks
 
 private def treeKey (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg : TreeCfg)
@@ -5403,22 +5414,23 @@ private def applyTree (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg 
   return (cfg, ev)
 
 /-- The `k`-th of `n` siblings' signed distance across the growth direction, `(2k − n − 1)·sd / 2`. -/
-@[expose] public def siblingSpread (sd : Sp) (n k : Nat) : Sp :=
+@[expose] public def siblingSpread (sd : Length) (n k : Nat) : Length :=
   (2 * (k : Int) - ((n : Int) + 1)) * sd / 2
 
 /-- A child's offset from its parent's centre, pgf's `\tikz@grow@direction`: level distance along
 the growth and, where `spread` holds, siblings spread across it. -/
-public def growthOffset (grow : Int) (swap spread : Bool) (ld sd : Sp) (n k : Nat) : Sp × Sp :=
-  let along : Sp × Sp := (cosDeg grow * ld / 1000, sinDeg grow * ld / 1000)
+public def growthOffset (grow : Int) (swap spread : Bool) (ld sd : Length) (n k : Nat) : Length × Length :=
+  let along : Length × Length := (cosDeg grow * ld / 1000, sinDeg grow * ld / 1000)
   if !spread then along else
   let across := if swap then grow - 90 else grow + 90
   let t := siblingSpread sd n k
   (along.1 + cosDeg across * t / 1000, along.2 + sinDeg across * t / 1000)
 
-public theorem Tree.children_between (sd : Int) (n k : Nat) (hsd : 0 ≤ sd) (hk : 1 ≤ k)
+public theorem Tree.children_between (sd : Length) (n k : Nat) (hsd : 0 ≤ sd) (hk : 1 ≤ k)
     (hn : k ≤ n) :
     siblingSpread sd n 1 ≤ siblingSpread sd n k ∧ siblingSpread sd n k ≤ siblingSpread sd n n := by
   unfold siblingSpread
+  length_units
   constructor
   · apply Int.ediv_le_ediv (by decide)
     apply Int.mul_le_mul_of_nonneg_right _ hsd
@@ -5511,7 +5523,7 @@ private def evalTree (cx : Cx) (env : List (String × Val)) (items : Array TreeI
             c2.siblingDist n it.index
           let off := cx.placeVec off.1 off.2
           let cxN := { cx with opts := inheritOpts cx.opts c2.scope,
-                               xf := { cx.xf with e := g.x + off.1, f := g.y + off.2 } }
+                               xf := { cx.xf with e := (g.x + off.1).toRat, f := (g.y + off.2).toRat } }
           ev := evalNode cxN env (childNode ++ it.node) ev (coordinate := it.coordinate)
             (defaultName := some name)
           if (ev.nodes.lookup name).isSome then
@@ -5965,12 +5977,12 @@ private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := 
     | .error e => ev := ev.diag (.E0333, s!"in a node's '{what}', {e}; it is not drawn")
     | .ok (opts, angle, text) =>
       let g := x.main
-      let dist : Sp := x.dist.getD (3 * ex)
-      let (pt, an) : (Sp × Sp) × NodeAnchor := match angle with
+      let dist : Length := x.dist.getD (3 * ex)
+      let (pt, an) : (Length × Length) × NodeAnchor := match angle with
         | none => ((g.x, g.y), .center)
         | some m =>
           let (c, s) := cosSinMilli m
-          let border := (Anchor.node g).toward (g.x + c / 1024, g.y + s / 1024)
+          let border := (Anchor.node g).toward (g.x + .ofUnits (c / 1024), g.y + .ofUnits (s / 1024))
           let dx := border.1 - g.x
           let dy := border.2 - g.y
           let n := isqrt (dx * dx + dy * dy)
@@ -5978,8 +5990,9 @@ private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := 
             let u := Gfx.Trig.unit
             ((g.x + dist * c / u, g.y + dist * s / u), sectorAnchor m)
           else
-            ((border.1 + dist * dx / n, border.2 + dist * dy / n),
-             labelAutoAnchor (dy * 1000 / n) (-(dx * 1000 / n)) false)
+            ((border.1 + .ofUnits (dist * dx / n), border.2 + .ofUnits (dist * dy / n)),
+             labelAutoAnchor (dy * (1000 : Int) / Length.ofUnits n)
+               (-(dx * (1000 : Int) / Length.ofUnits n)) false)
       let mut toks : Array Tok := #[.sym '[', .ident "anchor", .sym '=']
       for w in anchorSpelling an do toks := toks.push (.ident w)
       unless opts.isEmpty do
@@ -6229,8 +6242,8 @@ public def evalFixed (cx : Cx) (sts : List Stmt) : Ev := Id.run do
   return prev
 
 public theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
-    (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color)
+    (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Length)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ (evalFixed cx sts).shapes)
     (hd : (evalFixed cx sts).declared = none) :
     Gfx.Box.le (Ir.Pic.labelTextBox x y align (cx.metric content scale))
@@ -6429,7 +6442,7 @@ private def macroTable (ladder : List (String × Nat)) (declStyles : List (Strin
   return out
 
 private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : List Tok) :
-    Except String Sp :=
+    Except String Length :=
   let toks := if let [.group body] := toks then body.filter (· != Tok.space) else toks
   match toks with
   | [] => .ok 0
@@ -6466,7 +6479,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (macros : Array (String × String) := #[])
     (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat))
-    (declStyles : List (String × Ir.Style)) (bodySize : Sp)
+    (declStyles : List (String × Ir.Style)) (bodySize : Length)
     (locate : Pos → Option Span := fun _ => none) (metaArrows : Bool := false)
     (outerDecls : Array String := #[]) :
     Ir.Pic.Picture × Array PDiag := Id.run do
@@ -6474,7 +6487,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map ofSetting)
-  let mut dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
+  let mut dist : Length × Length := (Dim.mm 10, Dim.mm 10)
   for setting in sets do
     for entry in splitTop (ofSetting setting) ',' do
       if let some d := readNodeDistance (entry.toList.filter (· != .space)) then
@@ -6562,7 +6575,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    parseGap := st.bad.any fun d => d.1 == .W0334 }
   let ev := evalFixed cx st.out.toList
   let mut unread : Array PDiag := #[]
-  let mut baseline : Option Sp := none
+  let mut baseline : Option Length := none
   if let some spec := baselineSpec then
     match readBaseline cx ev.nodes spec with
     | .ok y => baseline := some y
@@ -6844,13 +6857,14 @@ public theorem arrow_border_exact (x y a up down qx qy : Int) (ha : 0 < a) (hu :
   simp only [cellBorder]
   exact rectBorder_exact x y a b qx qy ha hb
 
-private def cmTo (end_ : Sp × Sp) (dx dy : Int) (lw : Sp) : Gfx.Subpath :=
-  let a := 52 * lw / 10
-  let b := 12 * lw
+private def cmTo (end_ : Length × Length) (dx dy : Int) (lw : Length) : Gfx.Subpath :=
+  let a : Length := 52 * lw / 10
+  let b : Length := 12 * lw
   -- The tip's origin stands half a line width behind the end (its tip end).
   let ox := end_.1 - dx * lw / 2000
   let oy := end_.2 - dy * lw / 2000
-  let at_ (u v : Int) : Sp × Sp := (ox + (dx * u - dy * v) / 1000, oy + (dy * u + dx * v) / 1000)
+  let at_ (u v : Length) : Length × Length :=
+    (ox + (dx * u - dy * v) / (1000 : Int), oy + (dy * u + dx * v) / (1000 : Int))
   { start := at_ (-a) (b / 2)
     segs := #[.cubic (at_ (-a * 81731 / 100000) (b * 2 / 10)) (at_ (-a * 41019 / 100000)
         (b * 5833333 / 100000000)) (at_ 0 0),
@@ -6858,20 +6872,22 @@ private def cmTo (end_ : Sp × Sp) (dx dy : Int) (lw : Sp) : Gfx.Subpath :=
         (at_ (-a * 81731 / 100000) (-b * 2 / 10)) (at_ (-a) (-b / 2))]
     closed := false }
 
-private def unitOf (dx dy : Int) : Int × Int :=
+private def unitOf (dx dy : Length) : Int × Int :=
   let n := isqrt (dx * dx + dy * dy)
-  if n == 0 then (1000, 0) else (dx * 1000 / n, dy * 1000 / n)
+  if n == 0 then (1000, 0)
+  else (dx * (1000 : Int) / Length.ofUnits n, dy * (1000 : Int) / Length.ofUnits n)
 
-private def cubicAtMilli (p0 c1 c2 p1 : Sp × Sp) (t : Int) : (Sp × Sp) × (Sp × Sp) :=
+private def cubicAtMilli (p0 c1 c2 p1 : Length × Length) (t : Int) : (Length × Length) × (Length × Length) :=
   let s := 1000 - t
-  let pt (a b c d : Int) : Int :=
-    (a * s * s * s + 3 * b * s * s * t + 3 * c * s * t * t + d * t * t * t) / 1000000000
-  let dv (a b c d : Int) : Int :=
-    (3 * (b - a) * s * s + 6 * (c - b) * s * t + 3 * (d - c) * t * t) / 1000000
+  let pt (a b c d : Length) : Length :=
+    (a * (s * s * s) + b * (3 * s * s * t) + c * (3 * s * t * t) + d * (t * t * t)) /
+      (1000000000 : Int)
+  let dv (a b c d : Length) : Length :=
+    ((b - a) * (3 * s * s) + (c - b) * (6 * s * t) + (d - c) * (3 * t * t)) / (1000000 : Int)
   ((pt p0.1 c1.1 c2.1 p1.1, pt p0.2 c1.2 c2.2 p1.2),
    (dv p0.1 c1.1 c2.1 p1.1, dv p0.2 c1.2 c2.2 p1.2))
 
-private def centreFor (p : Sp × Sp) (a b : Sp) : NodeAnchor → Sp × Sp
+private def centreFor (p : Length × Length) (a b : Length) : NodeAnchor → Length × Length
   | .center | .base | .baseEast | .baseWest => p
   | .north => (p.1, p.2 - b)
   | .south => (p.1, p.2 + b)
@@ -6882,7 +6898,7 @@ private def centreFor (p : Sp × Sp) (a b : Sp) : NodeAnchor → Sp × Sp
   | .southEast => (p.1 - a, p.2 + b)
   | .southWest => (p.1 + a, p.2 + b)
 
-private def labelAt (x0 b : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+private def labelAt (x0 b : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (m : Ir.Pic.LabelInk) : Ir.Pic.Shape :=
   let tall := m.height + m.depth
   .label x0 (b + m.height - tall + tall / 2) content color scale .west
@@ -6904,8 +6920,8 @@ private def cellOptions (raws : Array Parse.Raw) : Option (Array Parse.Raw × Ar
       | _ => none
   | _ => none
 
-private def sepValue (names : List (String × Int)) (em ex : Sp) (toks : List Tok) :
-    Except String Sp :=
+private def sepValue (names : List (String × Int)) (em ex : Length) (toks : List Tok) :
+    Except String Length :=
   match (keyName toks).bind (fun n => List.lookup n names) with
   | some m => .ok (m * em / 1000)
   | none => readNodeDim em ex toks
@@ -6914,19 +6930,19 @@ private def sepValue (names : List (String × Int)) (em ex : Sp) (toks : List To
 lays them, arrows between their borders. -/
 public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag)
-    (metric : Ir.Pic.LabelMetric) (bodySize : Sp) (ground : Ir.Color) (size : Nat := 1000) :
+    (metric : Ir.Pic.LabelMetric) (bodySize : Length) (ground : Ir.Color) (size : Nat := 1000) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let mut diags : Array PDiag := #[]
   let note (d : PDiag) (ds : Array PDiag) : Array PDiag :=
     if ds.any (·.2 == d.2) then ds else ds.push d
   let cx : Cx := { pal := pal, math := math, metric := metric, bodySize := bodySize }
   let probe := metric #[.text "x"] size
-  let em : Sp := bodySize * (size : Int) / 1000
-  let ex : Sp := probe.ex
+  let em : Length := bodySize * (size : Int) / 1000
+  let ex : Length := probe.ex
   let mut i := skipSp raws 0
   let mut amp := false
-  let mut rowSep : Sp := 1800 * em / 1000
-  let mut colSep : Sp := 2400 * em / 1000
+  let mut rowSep : Length := 1800 * em / 1000
+  let mut colSep : Length := 2400 * em / 1000
   if let some (inner, next) := readBracket raws i then
     i := next
     for e in keyEntries inner do
@@ -6963,29 +6979,29 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         row := row.push (some (inl, metric #[inl] size))
     cells := cells.push row
   let width := (cells[0]?.map (·.size)).getD 0
-  let xsep : Sp := ex
-  let ysep : Sp := 85 * ex / 100
-  let axisOf (m : Ir.Pic.LabelInk) : Sp := m.axis
-  let halfOf (m : Ir.Pic.LabelInk) : Sp := m.w / 2 + xsep
-  let upOf (m : Ir.Pic.LabelInk) : Sp := m.boxHeight + ysep - axisOf m
-  let downOf (m : Ir.Pic.LabelInk) : Sp := m.boxDepth + ysep + axisOf m
-  let colHalf : Array Sp := (Array.range width).map fun c =>
+  let xsep : Length := ex
+  let ysep : Length := 85 * ex / 100
+  let axisOf (m : Ir.Pic.LabelInk) : Length := m.axis
+  let halfOf (m : Ir.Pic.LabelInk) : Length := m.w / 2 + xsep
+  let upOf (m : Ir.Pic.LabelInk) : Length := m.boxHeight + ysep - axisOf m
+  let downOf (m : Ir.Pic.LabelInk) : Length := m.boxDepth + ysep + axisOf m
+  let colHalf : Array Length := (Array.range width).map fun c =>
     cells.foldl (fun w row => match row[c]? with
       | some (some (_, m)) => max w (halfOf m)
       | _ => w) 0
-  let rowUp : Array Sp := cells.map fun row => row.foldl (fun w cell => match cell with
+  let rowUp : Array Length := cells.map fun row => row.foldl (fun w cell => match cell with
       | some (_, m) => max w (upOf m)
       | none => w) 0
-  let rowDown : Array Sp := cells.map fun row => row.foldl (fun w cell => match cell with
+  let rowDown : Array Length := cells.map fun row => row.foldl (fun w cell => match cell with
       | some (_, m) => max w (downOf m)
       | none => w) 0
-  let mut xs : Array Sp := #[]
-  let mut x : Sp := 0
+  let mut xs : Array Length := #[]
+  let mut x : Length := 0
   for c in [0:width] do
     if c > 0 then x := x + colHalf.getD (c - 1) 0 + colSep + colHalf.getD c 0
     xs := xs.push x
-  let mut ys : Array Sp := #[]
-  let mut y : Sp := 0
+  let mut ys : Array Length := #[]
+  let mut y : Length := 0
   for r in [0:cells.size] do
     if r > 0 then y := y - rowDown.getD (r - 1) 0 - rowSep - rowUp.getD r 0
     ys := ys.push y
@@ -6999,7 +7015,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         shapes := shapes.push (labelAt (cx0 - m.w / 2) base #[inl] cx.ink size m)
         borders := borders.push ((cx0 - halfOf m, base - m.boxDepth - ysep),
           (cx0 + halfOf m, base + m.boxHeight + ysep))
-  let geomOf (r c : Nat) : Option (Sp × Sp × Sp × Sp × Sp) :=
+  let geomOf (r c : Nat) : Option (Length × Length × Length × Length × Length) :=
     match cells[r]?.bind (·[c]?) with
     | some (some (_, m)) => some (xs.getD c 0, ys.getD r 0, halfOf m, upOf m, downOf m)
     | _ => none
@@ -7010,8 +7026,8 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     match geomOf r c, target with
     | some (sx, sy, sa, su, sd), some (tx, ty, ta, tu, td) =>
       let mut color := cx.ink
-      let mut lw : Sp := if probe.rule > 0 then probe.rule else Ir.Pic.thinWidth
-      let mut dash : Array Sp := #[]
+      let mut lw : Length := if probe.rule > 0 then probe.rule else Ir.Pic.thinWidth
+      let mut dash : Array Length := #[]
       let mut spec : ToSpec := {}
       let mut draws := true
       let mut swapAll := false
@@ -7036,7 +7052,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           match evalColor cx [] e with
           | .ok col => color := col
           | .error _ => diags := note (outside s!"arrow option {optName e.toList}") diags
-      let anchorOf (x y a up down : Sp) : NodeAnchor → Sp × Sp
+      let anchorOf (x y a up down : Length) : NodeAnchor → Length × Length
         | .center => (x, y)
         | .north => (x, y + up)
         | .south => (x, y - down)
@@ -7047,8 +7063,8 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         | .southEast => (x + a, y - down)
         | .southWest => (x - a, y - down)
         | .base | .baseEast | .baseWest => (x, y)
-      let toward (x y a up down : Sp) (q : Sp × Sp) : Sp × Sp :=
-        cellBorder x y a up down q.1 q.2
+      let toward (x y a up down : Length) (q : Length × Length) : Length × Length :=
+        lenPair (cellBorder x.units y.units a.units up.units down.units q.1.units q.2.units)
       let (p1, p2) :=
         if spec.curved then
           (match startAt with
@@ -7064,7 +7080,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
            match endAt with
             | some an => anchorOf tx ty ta tu td an
             | none => toward tx ty ta tu td (sx, sy))
-      let (c1, c2) : (Sp × Sp) × (Sp × Sp) :=
+      let (c1, c2) : (Length × Length) × (Length × Length) :=
         if spec.curved then
           let vx := p2.1 - p1.1
           let vy := p2.2 - p1.2
@@ -7074,7 +7090,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
       -- The tip follows the arrival tangent; the shaft stops one line width short.
       let (dx, dy) := if spec.curved then unitOf (p2.1 - c2.1) (p2.2 - c2.2)
         else unitOf (p2.1 - p1.1) (p2.2 - p1.2)
-      let shaftEnd : Sp × Sp := (p2.1 - dx * lw / 1000, p2.2 - dy * lw / 1000)
+      let shaftEnd : Length × Length := (p2.1 - dx * lw / 1000, p2.2 - dy * lw / 1000)
       let stroke : Gfx.Stroke :=
         { Ir.Pic.strokeOf { color, width := lw } with dash, cap := .butt }
       if draws then
@@ -7116,7 +7132,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
       diags := note (.E0333, s!"an arrow from row {r + 1}, column {c + 1} reaches no cell; \
 it is not drawn") diags
   -- tikz-cd's `every diagram` runs the baseline through the matrix's centre, `1-row diagram` on its row's base.
-  let baseline : Option Sp :=
+  let baseline : Option Length :=
     if ys.isEmpty then none
     else if cells.size == 1 then
       let axis := ((cells.getD 0 #[]).findSome? fun cell => cell.map (·.2.axis)).getD probe.axis

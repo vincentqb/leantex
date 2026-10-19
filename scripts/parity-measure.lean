@@ -10,18 +10,18 @@ open LeanTex.Core LeanTex.Cli Parity
 
 /-- One line of a page as the file paints it: a baseline and the scalars on it. -/
 structure ArtLine where
-  y : Dim.Sp
+  y : Dim.Length
   text : String
-  width : Dim.Sp
+  width : Dim.Length
   deriving Repr, Inhabited
 
 /-- A page's lines with their baseline and extent, in painting order, for the report's
 advance and measure numbers. -/
 def lineBoxesOf (p : ArtPage) : Array ArtLine := Id.run do
-  let mut ys : Array Dim.Sp := #[]
+  let mut ys : Array Dim.Length := #[]
   let mut texts : Array String := #[]
-  let mut x0 : Array Dim.Sp := #[]
-  let mut x1 : Array Dim.Sp := #[]
+  let mut x0 : Array Dim.Length := #[]
+  let mut x1 : Array Dim.Length := #[]
   for r in p.runs do
     match ys.findIdx? (· == r.y) with
     | some i =>
@@ -57,8 +57,8 @@ def scalarCount (pages : Array ArtPage) : Nat :=
 
 /-- The widest run both sides paint with identical text, and each side's painted advance
 for it, horizontal scale included. -/
-def sharedRunDelta (e r : Array ArtPage) : Option (String × Dim.Sp × Dim.Sp) := Id.run do
-  let mut best : Option (String × Dim.Sp × Dim.Sp) := none
+def sharedRunDelta (e r : Array ArtPage) : Option (String × Dim.Length × Dim.Length) := Id.run do
+  let mut best : Option (String × Dim.Length × Dim.Length) := none
   for pi in [0:min e.size r.size] do
     for a in e[pi]!.runs do
       let key := String.ofList (inked a.text)
@@ -146,18 +146,17 @@ def placeReport (e r : Array ArtPage) : IO Unit := do
     -- The page's own baseline offset: the median Δy, constant under an origin offset.
     let dys := pairs.map fun (a, b) => a.2 - b.2
     let shift := atPercentile dys 50
-    let dxs := pairs.map fun (a, b) => (a.1 - b.1).natAbs
-    let raw := pairs.map fun (a, b) => (a.2 - b.2).natAbs
-    let corrected := pairs.map fun (a, b) => (a.2 - b.2 - shift).natAbs
-    let dist (label : String) (xs : Array Nat) : String :=
-      let ys : Array Dim.Sp := xs.map (fun n => Int.ofNat n)
-      s!"{label} p50 {Dim.Sp.toPtString (atPercentile ys 50)}, \
-p95 {Dim.Sp.toPtString (atPercentile ys 95)}, \
-max {Dim.Sp.toPtString (atPercentile ys 100)}"
+    let dxs := pairs.map fun (a, b) => (a.1 - b.1).abs
+    let raw := pairs.map fun (a, b) => (a.2 - b.2).abs
+    let corrected := pairs.map fun (a, b) => (a.2 - b.2 - shift).abs
+    let dist (label : String) (ys : Array Dim.Length) : String :=
+      s!"{label} p50 {Dim.Length.toBpString (atPercentile ys 50)}, \
+p95 {Dim.Length.toBpString (atPercentile ys 95)}, \
+max {Dim.Length.toBpString (atPercentile ys 100)}"
     IO.println s!"  place p{pi + 1}: {pairs.size} glyph(s) paired, {unmatched} skipped"
     IO.println s!"    {dist "|dx|" dxs}"
     IO.println s!"    {dist "|dy| raw" raw}"
-    IO.println s!"    {dist s!"|dy| less the page shift {Dim.Sp.toPtString shift}" corrected}"
+    IO.println s!"    {dist s!"|dy| less the page shift {Dim.Length.toBpString shift}" corrected}"
 
 def main : IO UInt32 := do
   let pats := Hyphen.english.get
@@ -189,7 +188,7 @@ engine {eu} of {scalarCount ePages}"
     match sharedRunDelta ePages rPages with
     | some (t, ew, rw) =>
       IO.println s!"  advances (painted, horizontal scale included): {repr t} ({t.length} scalars) — \
-engine {Dim.Sp.toPtString ew}, reference {Dim.Sp.toPtString rw}, delta {Dim.Sp.toPtString (ew - rw)}"
+engine {Dim.Length.toBpString ew}, reference {Dim.Length.toBpString rw}, delta {Dim.Length.toBpString (ew - rw)}"
     | none => IO.println "  advances: the two sides share no run of four scalars or more"
     for (label, bytes) in [("engine", driverPdf fs geom doc out {}), ("reference", refBytes)] do
       match widthMapSizes bytes with

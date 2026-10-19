@@ -14,12 +14,12 @@ private def ladder (large tiny : String) : String :=
     s!"\\renewcommand\{\\Large}\{\\@setfontsize\\Large\{{large}}\{19.8}}\n" ++
     s!"\\renewcommand\{\\tiny}\{\\@setfontsize\\tiny\{{tiny}}\{7.92}}\n" ++ "\\makeatother\n"
 
-private def sizesOf (out : Layout.Out) (text : String) : Array Dim.Sp :=
+private def sizesOf (out : Layout.Out) (text : String) : Array Dim.Length :=
   (out.pages.flatMap (·.lines)).filterMap fun l =>
     if hasStr (lineText l) text then some l.size else none
 
 /-- The sizes of the runs whose glyphs spell `word`. -/
-private def runSizesOf (out : Layout.Out) (word : String) : Array Dim.Sp :=
+private def runSizesOf (out : Layout.Out) (word : String) : Array Dim.Length :=
   (out.pages.flatMap (·.lines)).flatMap fun l => l.segs.filterMap fun s =>
     match s with
     | .run _ _ _ _ glyphs size _ _ _ _ _ =>
@@ -50,7 +50,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     "\\begin{frame}[standout]\nStandout words.\n\\end{frame}\n\\end{document}\n"
   let (ddoc, _) := elabStr (deck "")
   let dout := layoutOf oneFace ddoc
-  let large : Dim.Sp := Dim.pt 33 / 2
+  let large : Dim.Length := Dim.pt 33 / 2
   t "declared ladder: a plain frame title sets at the declared \\Large, 16.5 pt"
     (sizesOf dout "Kilo title" == #[large])
   t "declared ladder: a standout frame sets at the declared \\Large"

@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Diag
+public import LeanTex.Core.Dim
 
 namespace LeanTex.Core.Layout.LabelAudit
 
@@ -18,8 +19,8 @@ public structure Stamp where
   origin : Nat × Nat
   key : String
   source : Option Span
-  above : Int
-  below : Int
+  above : Dim.Length
+  below : Dim.Length
   lineCount : Nat
   deriving Repr, DecidableEq
 

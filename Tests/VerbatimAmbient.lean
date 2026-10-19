@@ -18,7 +18,7 @@ private def firstListingSpec (src : String) : Option Ir.ListingSpec :=
 /-- The first glyph-setting run of a shipped body line holding `needle`: its face index, size and
 leading. -/
 private def runOf (out : Layout.Out) (needle : String) :
-    Option (Nat × Dim.Sp × Option Dim.Sp) :=
+    Option (Nat × Dim.Length × Option Dim.Length) :=
   (bodyLines out).findSome? fun l =>
     if hasStr (lineText l) needle then
       l.segs.findSome? fun s => match s with

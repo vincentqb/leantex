@@ -232,14 +232,14 @@ public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet)
 
 /-- What a quotation opening here keeps over its level's: what its level keeps of the lists around
 it, under what its level's macro sets from the `\parskip` in force. -/
-public def ListNest.quoteSet (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Sp)
+public def ListNest.quoteSet (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Length)
     (outer : Dim.SymGlue) : Ir.ListSet :=
   let depth := nest.depth + 1
   (Ir.ListSet.within l size depth nest.set).over (extra.over size depth (nest.parskip.getD outer))
 
 /-- One quotation deeper: a level whose own macro sets the skips again over what the `\parskip` in
 force asks of it, under what its environment sets (`own`), its `\parsep` TeX's `\parskip` inside. -/
-public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Sp)
+public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Length)
     (tokens : Ir.Tokens) (outer : Dim.SymGlue) (own : Ir.ListSet) : ListNest :=
   let depth := nest.depth + 1
   let set := (nest.quoteSet l extra size outer).over own
@@ -1182,7 +1182,7 @@ private def fontKeys : List String :=
 
 /-- The slides stage beamer's `aspectratio=` option selects, else beamer's
 default 4:3. -/
-private def slidesStageOf (opts : List String) : Sp × Sp :=
+private def slidesStageOf (opts : List String) : Length × Length :=
   (opts.findSome? fun o => match KeyVal.entry o with
     | ("aspectratio", some v) => Ir.slidesStageNamed v
     | _ => none).getD Ir.slidesStage43
@@ -2993,7 +2993,7 @@ end
 private def readBreakLen (ctx : Ctx) (src : String) (pos : Pos) : EM SymGlue := do
   match Decl.parseValue src ctx.tokens.entries with
   | some (.glue g) => pure g
-  | some (.dim d) => pure { width := Dim.Length.ofSp d }
+  | some (.dim d) => pure { width := Dim.SymLength.ofLength d }
   | _ =>
     diag ctx .E0331 s!"cannot read a length from '{src}'" pos
       (help := "lengths look like 10pt or 1.5ex, or name a token")
@@ -4310,7 +4310,7 @@ private def boxParamArm (ctx : Ctx) (which : String) (value : Array Raw) (pos : 
   let read : Option Dim.SymGlue :=
     match Decl.parseValue src (ctx.tokens.entries ++ ctx.engineTokens) with
     | some (.glue g) => some g
-    | some (.dim d) => some { width := Dim.Length.ofSp d }
+    | some (.dim d) => some { width := Dim.SymLength.ofLength d }
     | _ => none
   match read with
   | some g => modify fun st => { st with scope :=
@@ -4506,7 +4506,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
         noteDeclared ctx "tokens" key
         noteAuthorToken ctx key pos
       | some (.dim d) =>
-        acc := acc.declare key { width := Dim.Length.ofSp d }
+        acc := acc.declare key { width := Dim.SymLength.ofLength d }
         noteDeclared ctx "tokens" key
         noteAuthorToken ctx key pos
       | some v =>
@@ -4704,7 +4704,8 @@ private def cdReading (ctx : Ctx) (b : Array Raw) :
   let (src, id) ← cdSource b
   let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
     ctx.page.fontSize Ir.Color.white
-    ((src.size.map fun n => (Ir.scaleStepIn ctx.page.scale 1000 n).toNat).getD 1000)
+    ((src.size.map fun n =>
+      (Ir.scaleStepIn ctx.page.scale (1000 * Length.quantum) n / Length.quantum).toNat).getD 1000)
   let pdiags := if (ctx.pic.preamble.splitOn "\\tikzcdset").length > 1 then
       pdiags.push (.W0334, "the document's '\\tikzcdset' settings are outside the native \
 diagram reader; the diagram is drawn without them")
@@ -6833,10 +6834,10 @@ public def ignoredDefNames : List String :=
   structuralNames ++ (builtinEnvNames.filter fun e =>
     e != "abstract" && !Compat.floatRedefEnvs.contains e).map Tcolorbox.bindingName
 
-private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
+private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Length :=
   p.width - 2 * p.hmargin
 
-private def _root_.LeanTex.Core.Ir.PageSpec.textHeight (p : PageSpec) : Sp :=
+private def _root_.LeanTex.Core.Ir.PageSpec.textHeight (p : PageSpec) : Length :=
   p.height - p.vmargin - p.bottomMargin
 
 /-- The page with its declared text block placed, or with the block set aside and what of it was
@@ -7909,7 +7910,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       let c := (nm.bind ctx.palette.lookup).getD c
       -- beamerinnerthememoloch.dtx: titleseparator linewidth=0.5pt
       let th := (ctx.tokens.findSourced? "separatorheight").getD
-        (Ir.Sourced.bare { width := Dim.Length.ofSp (Dim.pt 1 / 2) })
+        (Ir.Sourced.bare { width := Dim.SymLength.ofLength (Dim.pt 1 / 2) })
       inner := push inner (ctx.tokens.findSourced? "separatorgap") (.rule c nm th)
       pending := ctx.tokens.findSourced? "separatorgap"
   if let some xs := part st.author then
@@ -7947,12 +7948,12 @@ private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlu
 
 private def engineLengthTokensOfPage (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
-  #[("paperwidth", { width := Dim.Length.ofSp page.width }),
-    ("paperheight", { width := Dim.Length.ofSp page.height }),
-    ("textwidth", { width := Dim.Length.ofSp page.textWidth }),
-    ("textheight", { width := Dim.Length.ofSp page.textHeight }),
+  #[("paperwidth", { width := Dim.SymLength.ofLength page.width }),
+    ("paperheight", { width := Dim.SymLength.ofLength page.height }),
+    ("textwidth", { width := Dim.SymLength.ofLength page.textWidth }),
+    ("textheight", { width := Dim.SymLength.ofLength page.textHeight }),
     ("columnsep", { width := Ir.columnSep }),
-    ("baselineskip", { width := Dim.Length.ofSp (Ir.baselineSkipOf page) }),
+    ("baselineskip", { width := Dim.SymLength.ofLength (Ir.baselineSkipOf page) }),
     ("parskip", Ir.texParskipOf page),
     -- Every class here sets its paragraphs flush.
     ("parindent", {})]
@@ -7968,7 +7969,7 @@ private def abstractFormUnder (form : Ir.AbstractForm) (opts : List String) : Ir
 /-- The engine length tokens the preamble may read: those whose value the
 declared page or the class already fixes. -/
 private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
-    (page : PageSpec) (undeclared : Option Sp := none) : Array (String × Dim.SymGlue) :=
+    (page : PageSpec) (undeclared : Option Length := none) : Array (String × Dim.SymGlue) :=
   let record := docClass.record
   let dflt : PageSpec := {}
   let opts := (KeyVal.items classOptions).toList
@@ -8578,13 +8579,13 @@ private def barLength (l : List Raw) : BarLen :=
     | _ => .unread
   | .word w _ :: rest =>
     match Decl.parseValue w with
-    | some (.dim d) => .len { width := Dim.Length.ofSp d }
+    | some (.dim d) => .len { width := Dim.SymLength.ofLength d }
     | some (.glue g) => .len g
     | _ =>
       match barSkipSp rest with
       | .ctrl "p@" _ :: _ =>
         match Decl.parseValue (w ++ "pt") with
-        | some (.dim d) => .len { width := Dim.Length.ofSp d }
+        | some (.dim d) => .len { width := Dim.SymLength.ofLength d }
         | _ => .unread
       | _ => .unread
   | _ => .unread
@@ -8597,7 +8598,7 @@ private def barRuleWeight (l : List Raw) : Option Dim.SymGlue :=
     match barLength rest with
     | .len g => some g
     | _ => none
-  | _ => some { width := Dim.Length.ofSp (Dim.pt 2 / 5) }
+  | _ => some { width := Dim.SymLength.ofLength (Dim.pt 2 / 5) }
 
 /-- A word that is a construct's operand rather than ink: a length, a
 number, a sign or a dimension keyword. -/
@@ -11182,7 +11183,7 @@ private def wrapScopedEnv (n : String) (spacing : Ir.ListSet) (blocks inner : Ar
 
 /-- What a scoped environment's own list setting declares at `\@listdepth` `level`: a quotation's, or
 an abstract's, which is a quotation. -/
-private def scopedEnvOwn (l : Ir.ListLineage) (size : Sp) (level : Nat) (n : String) : Ir.ListSet :=
+private def scopedEnvOwn (l : Ir.ListLineage) (size : Length) (level : Nat) (n : String) : Ir.ListSet :=
   (((Ir.QuoteKind.ofName? n).orElse fun _ => if n == "abstract" then some .quotation else none).map
     (·.ownAt l size level)).getD {}
 
@@ -12457,7 +12458,7 @@ private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String
 private def listOptionLength (ctx : Ctx) (src : String) : Option SymGlue :=
   match Decl.parseValue src ctx.tokens.entries with
   | some (.glue g) => some g
-  | some (.dim d) => some { width := Dim.Length.ofSp d }
+  | some (.dim d) => some { width := Dim.SymLength.ofLength d }
   | _ =>
     match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
         (String.join (src.splitOn "\\")) with
@@ -12569,7 +12570,7 @@ private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymG
   for e in opts do
     match e.key, e.value with
     | "before", .glue g => before := g
-    | "before", .dim d => before := { width := Dim.Length.ofSp d }
+    | "before", .dim d => before := { width := Dim.SymLength.ofLength d }
     | "kind", .ident "vskip" => primitive := true
     | "kind", .ident "vspace" => primitive := false
     | "stretch", .glue g =>
@@ -14655,7 +14656,7 @@ private theorem referent_recovered_para (keys : Ir.ReferentKeys) (lang : Option 
 /-- A declared value as its author would write it. -/
 private def renderValue : Decl.Value → String
   | .str s => s
-  | .dim sp => s!"{sp.toPtString}pt"
+  | .dim sp => s!"{sp.toBpString}pt"
   | .int n => toString n
   | .ident s => s
   | .block src => "{" ++ src ++ "}"
@@ -14678,15 +14679,15 @@ private def composeLeading (spec : PageSpec) : PageSpec :=
 
 /-- A page box from four numbers in PDF points, its lower-left corner first however written. -/
 private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Option PageBox := do
-  let toSp (m : Int) (sc : Nat) : Int :=
-    let v := ((m.natAbs * 65536 * 2 + sc) / (2 * max 1 sc) : Nat)
-    if m < 0 then -(v : Int) else v
+  let toSp (m : Int) (sc : Nat) : Length :=
+    let v := Length.bpRound m.natAbs (max 1 sc)
+    if m < 0 then -v else v
   let nums ← ((s.splitOn " ").filter (!·.isEmpty)).mapM Decl.parseDecimal
   let [a, b, c, d] := nums.map fun (m, sc) => toSp m sc | none
   some { kind, x0 := min a c, y0 := min b d, x1 := max a c, y1 := max b d, span }
 
 /-- The page field a dimension key sets. -/
-private def pageDim : Native.PageKey → Option (Sp → PageSpec → PageSpec)
+private def pageDim : Native.PageKey → Option (Length → PageSpec → PageSpec)
   | .width => some fun d s => { s with width := d, widthSized := true }
   | .height => some fun d s => { s with height := d, heightSized := true }
   | .margin => some fun d s => { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none }
@@ -14739,7 +14740,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
     (entries : Array Decl.Entry) (pos : Pos) (tokens : Array (String × SymGlue) := #[]) :
     PageSpec × Array PEvent := Id.run do
   -- A page dimension may be glue over tokens, its em and ex fixed as the preamble's font fixes them.
-  let asDim : Decl.Value → Option Sp
+  let asDim : Decl.Value → Option Length
     | .dim d => some d
     | .glue g => if g.fil then none else some (face.resolve g.width)
     | _ => none
@@ -14860,7 +14861,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
             evs := say evs .E0323 "'baselineskip' in '\\page' expects a positive dimension"
         else evs := wrong key v evs
       | .parskip, .glue g => spec := { spec with parskip := some g }
-      | .parskip, .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
+      | .parskip, .dim d => spec := { spec with parskip := some { width := Dim.SymLength.ofLength d } }
       | .fontsize, .dim d =>
         -- From 1pt the default ladder's headings stand in order (`Layout.heading_hierarchy`).
         if d ≥ Dim.pt 1 then
@@ -15144,7 +15145,7 @@ private def styleLength (ctx : Ctx) (key src : String) (pos : Pos) (what : Strin
     | .error _ => none
   match Decl.parseValue src ctx.tokens.entries with
   | some (.glue g) => return some g
-  | some (.dim d) => return some { width := Dim.Length.ofSp d }
+  | some (.dim d) => return some { width := Dim.SymLength.ofLength d }
   | _ =>
     if let some g := expr () then return some g
     diag ctx .E0321 s!"cannot read length for '{key}' in {what}: {src.quote}" pos
@@ -16383,7 +16384,7 @@ so this accepts nothing"
   return (allow, evs)
 
 /-- The text block a flow page takes where no `\page` declares it, on the document's surface. -/
-private def undeclaredBlock (s : PreState) : Option Sp :=
+private def undeclaredBlock (s : PreState) : Option Length :=
   if s.sawPage then none else some (Ir.Surface.ofPath s.ctx.file).textBlock
 
 /-- Emits a pure step's reporting events and returns its state. -/

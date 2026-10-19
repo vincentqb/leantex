@@ -83,7 +83,7 @@ def setlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : 
   let lvl3 := if (font.gid '∗').isSome then "∗" else "*"
   let defaults := #["•", "–", lvl3, "·", "1.", "(a)", "i.", "A."]
   -- An item's text stands past its marker run and the gaps after it.
-  let textX (l : Layout.LineOut) : Int := Id.run do
+  let textX (l : Layout.LineOut) : Dim.Length := Id.run do
     let mut x := l.x
     for h : i in [0:l.segs.size] do
       match l.segs[i] with
@@ -91,11 +91,11 @@ def setlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : 
       | Layout.Seg.gap w _ => x := x + w
       | _ => return x
     return x
-  let steps (ls : Array Layout.LineOut) : Array Int :=
+  let steps (ls : Array Layout.LineOut) : Array Dim.Length :=
     (List.range 3).toArray.map fun i =>
-      ((ls[i + 1]?.map textX).getD 0 - (ls[i]?.map textX).getD 0 : Int)
-  let pt (n : Int) : Int := n * 65536
-  let near (a b : Int) : Bool := (a - b).natAbs ≤ 65536 / 10
+      ((ls[i + 1]?.map textX).getD 0 - (ls[i]?.map textX).getD 0 : Dim.Length)
+  let pt (n : Int) : Dim.Length := Dim.pt n
+  let near (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.pt 1 / 10
   let (base, baseDs, basePdf) := run (listDoc "")
   t "setlist: the nested lists draw the class markers" (base.map markerOf == defaults)
   t "setlist: the nested lists raise nothing" (baseDs.all (·.severity != .warning))
@@ -154,12 +154,12 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let doc (cls pre body : String) : String :=
     s!"\\documentclass{cls}\n\\usepackage\{enumitem}\n{pre}\n\\begin\{document}\n{body}\n" ++
       "\\end{document}\n"
-  let steps (src : String) (words : List String) : List Dim.Sp :=
+  let steps (src : String) (words : List String) : List Dim.Length :=
     let c := censusOfSrc oneFace src
     let v := words.filterMap (lineYOf c 0 ·)
     (v.zip v.tail).map fun (a, b) => b - a
   -- Every step a 12pt baselineskip over the space lualatex sets between the two lines.
-  let over (xs : List Int) : List Dim.Sp := xs.map fun x => Dim.pt 12 + Dim.pt x
+  let over (xs : List Int) : List Dim.Length := xs.map fun x => Dim.pt 12 + Dim.pt x
   let basic := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo entry.\n\\item Charlie entry.\n" ++
     "\\end{itemize}\n\nDelta after."
   let inline := "Alpha paragraph\n\\begin{itemize}\n\\item Bravo entry.\n\\item Charlie entry.\n" ++
@@ -254,7 +254,7 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- lualatex: an article's abstract is a quotation, so its list is the second level.
   let abstr := "\\begin{abstract}\nAlpha abstract.\n\\begin{itemize}\n\\item Bravo one.\n" ++
     "\\item Charlie two.\n\\end{itemize}\n\\end{abstract}\nDelta after."
-  let abstractStep (pre : String) : Option Dim.Sp :=
+  let abstractStep (pre : String) : Option Dim.Length :=
     (steps (doc "[10pt]{article}" pre abstr) ["Bravo", "Charlie"]).head?
   t "list spacing: an abstract's list takes the second level's scope and not the first's"
     (abstractStep "\\setlist[1]{itemsep=9pt}" == abstractStep "" &&

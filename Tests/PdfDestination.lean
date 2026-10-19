@@ -47,13 +47,13 @@ private def pageGeometry (out : Layout.Out) :=
 zoom kept; PDF coordinates round to a millipoint. -/
 private def opensAt (fs : Font.FontSet) (geom : Layout.Geom) (ds : Array Obj)
     (line : Layout.LineOut) : Bool :=
-  let tolerance := (spPerPt + 999) / 1000
+  let tolerance := Length.ofBpMilli 1
   ds[1]? == some (.name "XYZ") && ds[4]? == some .null &&
     (match ds[2]?.bind Obj.sp?, ds[3]?.bind Obj.sp? with
      | some x, some y =>
-       (x - (line.x + geom.bleed)).natAbs ≤ tolerance.toNat &&
+       (x - (line.x + geom.bleed)).abs ≤ tolerance &&
          (y - (geom.pageH + geom.bleed - line.y +
-           (Layout.segsInk fs line.segs).1)).natAbs ≤ tolerance.toNat
+           (Layout.segsInk fs line.segs).1)).abs ≤ tolerance
      | _, _ => false)
 
 /-- The in-page fragments a document's HTML links to, one per anchor element, sorted; a note's mark
@@ -226,7 +226,7 @@ def deckDestinationChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO 
   let atTop (i : Nat) : Option (Nat × Array Obj) → Bool
     | some (j, ds) => j == i && ds[1]? == some (.name "XYZ") &&
         (ds[3]?.bind Obj.sp?).any fun y =>
-          (y - (egeom.pageH + 2 * egeom.bleed)).natAbs ≤ ((spPerPt + 999) / 1000).toNat
+          (y - (egeom.pageH + 2 * egeom.bleed)).abs ≤ Length.ofBpMilli 1
     | none => false
   t s!"an empty frame ships a page of its own, its ink furniture alone ({eout.pages.size} pages)"
     (eout.pages.size == 4 && [1, 3].all fun i =>
@@ -598,12 +598,12 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   t "a picture standing first: its float's label opens at the picture's top"
     (match fdests, ink with
      | .ok ds, some k =>
-       let tolerance := ((spPerPt + 999) / 1000).toNat
+       let tolerance := Length.ofBpMilli 1
        ds[1]?.any fun (_, d) => d[1]? == some (.name "XYZ") &&
          (match d[2]?.bind Obj.sp?, d[3]?.bind Obj.sp? with
           | some x, some y =>
-            (x - (k.topLeft.1 + fgeom.bleed)).natAbs ≤ tolerance &&
-              (y - (fgeom.pageH + fgeom.bleed - k.topLeft.2)).natAbs ≤ tolerance
+            (x - (k.topLeft.1 + fgeom.bleed)).abs ≤ tolerance &&
+              (y - (fgeom.pageH + fgeom.bleed - k.topLeft.2)).abs ≤ tolerance
           | _, _ => false)
      | _, _ => false)
   -- A deck's stages answer to the names its web deck's do: frames, steps, routes, section pages.

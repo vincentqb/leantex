@@ -186,7 +186,7 @@ public inductive Ext where
 /-- A dimension as a template writes it: a linear form over a length, the measure, box extents,
 `\parskip`, the leading and the cap height; `font` is the font its terms were read in. -/
 public structure Dimen where
-  len : Length := {}
+  len : SymLength := {}
   line : Int := 0
   ext : List (Nat × Ext × Int) := []
   parskip : Int := 0
@@ -236,12 +236,13 @@ private def Dimen.scale? (d : Dimen) (num : Int) (den : Nat) : Option Dimen :=
   else
     let f (v : Int) : Int := roundDiv (v * num) den
     some (Dimen.norm
-      { len := { sp := f d.len.sp, em := f d.len.em, ex := f d.len.ex }, line := f d.line
+      { len := { sp := .ofUnits (f d.len.sp.units), em := f d.len.em, ex := f d.len.ex }
+        line := f d.line
         ext := mergeExt (d.ext.map fun (b, e, k) => (b, e, k * num / (den : Int)))
         parskip := f d.parskip, lead := f d.lead, cap := f d.cap, font := d.font })
 
 /-- The length alone, when the dimension is one. -/
-public def Dimen.length? (d : Dimen) : Option Length :=
+public def Dimen.length? (d : Dimen) : Option SymLength :=
   if d.line == 0 && d.ext.isEmpty && d.parskip == 0 && d.lead == 0 && d.cap == 0
   then some d.len else none
 
@@ -290,7 +291,7 @@ private def priorId : Nat := 0
 
 /-- TeX's `\prevdepth` that suppresses the next interline glue, `-1000pt`
 (`\nointerlineskip`, a fresh box's list, a rule). -/
-private def ignoreDepth : Dimen := { len := { sp := -1000 * Dim.spPerPt } }
+private def ignoreDepth : Dimen := { len := { sp := -1000 * Dim.pt 1 } }
 
 /-- What a `\last…` register holds: the body's trailing item, a skip or penalty the template
 set, or TeX's zero. -/
@@ -619,7 +620,7 @@ private def St.internalAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat)
   | .cs n =>
     if measureRegs.contains n then some ({ line := 1000 }, k + 1)
     else if n == "z@" then some ({}, k + 1)
-    else if n == "p@" then some ({ len := { sp := Dim.spPerPt } }, k + 1)
+    else if n == "p@" then some ({ len := { sp := Dim.pt 1 } }, k + 1)
     else if n == "parskip" then some ({ parskip := 1000 }, k + 1)
     -- `\prevdepth` reads only in a vertical list, as TeX's does.
     else if n == "prevdepth" then
@@ -1316,7 +1317,7 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
       | "vrule" =>
         match s.readRuleSpec s.chars (i + 1) with
         | some ((w, h, d), k) =>
-          let w := w.orElse fun _ => some { len := { sp := Dim.spPerPt * 4 / 10 } }
+          let w := w.orElse fun _ => some { len := { sp := Dim.pt 4 / 10 } }
           s := s.pushH (.rule w h d s.scope.paint s.scope.font)
           i := k
         | none => s := s.miss "\\vrule with a dimension it cannot read"; i := i + 1
@@ -1590,8 +1591,8 @@ private def run (defs : String → Option Macro) (toks : Array Tok) (titled : Bo
 public structure EdgeRead where
   span : Ir.BlockSpan
   side : Ir.FlushSide
-  width : Length
-  sep : Length
+  width : SymLength
+  sep : SymLength
   hang : Bool
   paint : Option Paint
   reach : Ir.BlockReach := .box
@@ -1699,7 +1700,7 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool ×
       | some (font, parskip, strut, strutFont) =>
         let metric (x : Dimen) : Option Ir.BlockMetric :=
           if x.line == 0 && x.len.em == 0 && x.len.ex == 0 && (!x.fonted || x.font == some font)
-          then some { lead := x.lead, cap := x.cap, sp := x.len.sp } else none
+          then some { lead := x.lead, cap := x.cap, sp := x.len.sp.units } else none
         let lines := h.ext.length == 2 && h.ext.contains (id, .ht, 1) && h.ext.contains (id, .dp, 1)
         match metric h, metric d with
         | some mh, some md =>
@@ -1721,13 +1722,13 @@ private def edgesOf (span : Ir.BlockSpan) (id : Nat)
     (title : Option (Option String × Bool × Bool × Bool))
     (hsize : Dimen) (lineHsize : Dimen) (before after : List Node) :
     Except String (Array EdgeRead) := Id.run do
-  let lenOf (d : Dimen) : Except String Length :=
+  let lenOf (d : Dimen) : Except String SymLength :=
     match d.length? with
     | some l =>
       if (l.em == 0 && l.ex == 0) || d.font == some none then .ok l
       else .error "a rule measured in a font of its own"
     | none => .error "a rule or space measured against a box"
-  let side (onRight : Bool) (nodes : List Node) : Except String (Option EdgeRead × Length) := do
+  let side (onRight : Bool) (nodes : List Node) : Except String (Option EdgeRead × SymLength) := do
     let sideName : Ir.FlushSide := if onRight then .right else .left
     let ns := nodes.filter (· != .whatsit)
     match ns with
@@ -1802,7 +1803,7 @@ private def Dimen.same (a b : Dimen) : Bool := match a.add? b.neg with
 
 /-- A title metric as the length it reads in the title's font. -/
 private def metricDimen (m : Ir.BlockMetric) (font : Option String) : Dimen :=
-  Dimen.norm { len := { sp := m.sp }, lead := m.lead, cap := m.cap, font := some font }
+  Dimen.norm { len := { sp := .ofUnits m.sp }, lead := m.lead, cap := m.cap, font := some font }
 
 /-- The rule a box of no size sets on its baseline: its shift, the rule's lift, size and paint. -/
 private def overlayRule (n : Node) :
@@ -1902,7 +1903,7 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
               let depth := metricDimen md arm.titleFont
               let stands := (lift.add? depth).map (Dimen.same · e) == some true
               let reaches := Dimen.same h { ext := [(tl, .dp, 1), (bid, .ht, 1)] }
-              let bodyLen (l : Length) : Dimen := Dimen.norm { len := l, font := some none }
+              let bodyLen (l : SymLength) : Dimen := Dimen.norm { len := l, font := some none }
               let placed := Dimen.same shift.neg (bodyLen (te.width.add te.sep)) &&
                 Dimen.same w (bodyLen te.width)
               if !d.zero? then return .error "a rule beside the body reaching below its baseline"

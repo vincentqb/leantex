@@ -22,8 +22,8 @@ private def firstRun (l : Layout.LineOut) : Option (Ir.Color × Option String ×
     | _ => none
 
 /-- The right edge of a line's last glyph run, from the line's origin. -/
-private def inkEnd (l : Layout.LineOut) : Dim.Sp :=
-  (l.segs.foldl (fun (acc : Dim.Sp × Dim.Sp) s =>
+private def inkEnd (l : Layout.LineOut) : Dim.Length :=
+  (l.segs.foldl (fun (acc : Dim.Length × Dim.Length) s =>
     let x := acc.1 + s.advance
     match s with
     | .run .. => (x, x)
@@ -97,11 +97,11 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   t s!"the hook's outline stands before each unstarred section, none before the starred one \
 ({out.pages.size} pages)" (out.pages.size == 9)
   let words := ["Kettles", "Spouts", "Teapots", "Trays"]
-  let ys (i : Nat) : List (Option Dim.Sp) := words.map fun w => (lineWith out i w).map (·.y)
+  let ys (i : Nat) : List (Option Dim.Length) := words.map fun w => (lineWith out i w).map (·.y)
   t "the contents list the unstarred sections and subsections in order, not the starred one"
     ((ys 0).all Option.isSome && (lineWith out 0 "Saucers").isNone &&
       (ys 0).filterMap id == ((ys 0).filterMap id).mergeSort (· ≤ ·))
-  let x (w : String) : Option Dim.Sp := (lineWith out 0 w).map (·.x)
+  let x (w : String) : Option Dim.Length := (lineWith out 0 w).map (·.x)
   let size := ((lineWith out 0 "Kettles").map (·.size)).getD 0
   t "a subsection's entry stands 1.5em in from its section's, the default inner theme's leftskip"
     (((x "Spouts").bind fun s => (x "Kettles").map fun k => s - k == size * 3 / 2) == some true)
@@ -109,7 +109,7 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   match ys 0 with
   | [some k, some s, some te, some tr] =>
     let pitch := s - k
-    t s!"the sections' groups share the frame's leftover equally ({te - s - pitch}, {tr - te - pitch})"
+    t s!"the sections' groups share the frame's leftover equally ({reprStr (te - s - pitch)}, {reprStr (tr - te - pitch)})"
       (te - s - pitch == tr - te - pitch && te - s - pitch > 0)
   | _ => t "the overview's four entries ship" false
   -- beamer's links: a section's entry opens the page set after it, a subsection's its frame.
@@ -130,7 +130,7 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   -- `hideallsubsections`: no subsection entry, and a section's entry after `\vskip1.5em`.
   let (tight, _) := elabStr (deckSrc "\\tableofcontents[hideallsubsections]")
   let tout := (fittedOf fonts tight).out
-  let ty (w : String) : Option Dim.Sp := (lineWith tout 0 w).map (·.y)
+  let ty (w : String) : Option Dim.Length := (lineWith tout 0 w).map (·.y)
   t "hidden subsections leave their sections a 1.5em skip apart"
     ((lineWith tout 0 "Spouts").isNone &&
       ((ty "Kettles").bind fun k => (ty "Teapots").bind fun te => (ty "Trays").map fun tr =>
@@ -167,7 +167,7 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
       (fl "Lids").map (·.x) == some (left + em * 38 / 10))
   t "each entry ends on its heading's folio, right-aligned at the measure's end"
     (["Kettles", "Spouts", "Teapots", "Lids"].all fun w => match fl w with
-      | some l => inkEnd l == left + geom.textWidth || inkEnd l + 1 ≥ left + geom.textWidth
+      | some l => inkEnd l == left + geom.textWidth || inkEnd l + Dim.Length.quantum ≥ left + geom.textWidth
       | none => false)
   t "the folios are the pages the headings land on"
     (((fl "Kettles").map lineText).any (·.trimAscii.toString.endsWith "1") &&
@@ -233,21 +233,21 @@ private def outlineDeck (hook : String) : String :=
      "\\section{Teapots}\n\\begin{frame}{Steeping}Leaves steep.\\end{frame}\n")
 
 /-- Where each leader dot's box opens on a line's rider, from the line's origin. -/
-private def dotStarts (rider : Layout.LineOut) : Array Dim.Sp :=
-  (rider.segs.foldl (fun (acc : Dim.Sp × Array Dim.Sp) s => match s with
+private def dotStarts (rider : Layout.LineOut) : Array Dim.Length :=
+  (rider.segs.foldl (fun (acc : Dim.Length × Array Dim.Length) s => match s with
     | .gap w _ => (acc.1 + w, acc.2)
     | .poly .. => (acc.1, acc.2.push acc.1)
     | _ => (acc.1 + s.advance, acc.2)) (0, #[])).2
 
 /-- Where a line's leader gap opens, from its origin. -/
-private def leaderGapAt (l : Layout.LineOut) : Option Dim.Sp :=
-  (l.segs.foldl (fun (acc : Dim.Sp × Option Dim.Sp) s => match s with
+private def leaderGapAt (l : Layout.LineOut) : Option Dim.Length :=
+  (l.segs.foldl (fun (acc : Dim.Length × Option Dim.Length) s => match s with
     | .decoratedGap _ _ d => (acc.1 + s.advance, acc.2.orElse fun _ =>
         if d.leaders.isSome then some acc.1 else none)
     | _ => (acc.1 + s.advance, acc.2)) (0, none)).2
 
 /-- The size of the run on a line whose glyphs spell `word`. -/
-private def runSize (l : Layout.LineOut) (word : String) : Option Dim.Sp :=
+private def runSize (l : Layout.LineOut) (word : String) : Option Dim.Length :=
   l.segs.findSome? fun s => match s with
     | .run _ _ _ _ glyphs size .. =>
       if String.ofList (glyphs.toList.map (·.2.1)) == word then some size else none
@@ -564,11 +564,11 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let (sp, _) := elabStr (paged.replace "\\begin{document}\n"
     "\\AtBeginSubsection[]{\\begin{frame}\\subsectionpage\\end{frame}}\n\\begin{document}\n\\section*{Lead}\n")
   let sout := (fittedOf fonts sp).out
-  let mid (l : Layout.LineOut) : Dim.Sp := l.x + (l.segs.foldl (fun w s => w + s.advance) 0) / 2
+  let mid (l : Layout.LineOut) : Dim.Length := l.x + (l.segs.foldl (fun w s => w + s.advance) 0) / 2
   t "the default section page sets 'Section 3' over the third section's title, both centred"
     (match lineWith sout 2 "Section", lineWith sout 2 "Teapots" with
       | some n, some ti => n.y < ti.y && (hasStr (lineText n) "3") &&
-        (mid n - mid ti).natAbs * 50 < (Layout.Geom.ofPage sp.page).textWidth.natAbs
+        (mid n - mid ti).abs * 50 < (Layout.Geom.ofPage sp.page).textWidth.abs
       | _, _ => false)
   -- A hook calls a command the preamble defines after it, a shaded entry mixes its declared colour,
   -- and beamer's hyperref option is hypersetup's keys.

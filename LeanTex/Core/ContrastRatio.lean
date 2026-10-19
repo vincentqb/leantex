@@ -98,10 +98,10 @@ public theorem aaLargeText_le_aaText : aaLargeText ≤ aaText := by
   decide
 
 /-- WCAG 2.2's large-scale text boundary (≥ 18pt, or ≥ 14pt bold), in layout's units. -/
-public def largeText (size : Dim.Sp) (bold : Bool) : Bool :=
+public def largeText (size : Dim.Length) (bold : Bool) : Bool :=
   size ≥ Dim.pt 18 || (bold && size ≥ Dim.pt 14)
 
-public def textRequired (size : Dim.Sp) (bold : Bool) : Nat :=
+public def textRequired (size : Dim.Length) (bold : Bool) : Nat :=
   if largeText size bold then aaLargeText else aaText
 
 end LeanTex.Core.Contrast

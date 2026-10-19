@@ -90,7 +90,7 @@ def fontSizeAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
 
 /-- The face index, size, colour, link and underline of the shipped run whose glyphs spell `w`. -/
 private def runLook (out : Layout.Out) (w : String) :
-    Option (Nat × Dim.Sp × Ir.Color × Option String × Bool) :=
+    Option (Nat × Dim.Length × Ir.Color × Option String × Bool) :=
   (bodyLines out).findSome? fun l => l.segs.findSome? fun s => match s with
     | .run idx c link _ gs size _ d _ _ _ =>
       if String.ofList (gs.toList.map (·.2.1)) == w then some (idx, size, c, link, d.underline)
@@ -107,7 +107,7 @@ def normalFontChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\textcolor{red}{Ee \\textnormal{Ff}} \\textit{Gg {\\normalfont Hh}} " ++
       "\\href{https://example.org}{Ii \\textnormal{Jj}} \\underline{Kk \\textnormal{Ll}}"))).1
   let look := runLook out
-  let same (a b : String) (f : Nat × Dim.Sp × Ir.Color × Option String × Bool → String) : Bool :=
+  let same (a b : String) (f : Nat × Dim.Length × Ir.Color × Option String × Bool → String) : Bool :=
     match look a, look b with
     | some x, some y => f x == f y
     | _, _ => false

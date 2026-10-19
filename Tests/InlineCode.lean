@@ -35,10 +35,10 @@ and whether its line is furniture (a footer's, say). -/
 structure Glyph where
   c : Char
   face : Nat
-  size : Dim.Sp
+  size : Dim.Length
   color : Ir.Color
   furniture : Bool
-  y : Dim.Sp
+  y : Dim.Length
   deriving BEq, Repr
 
 def glyphs (out : Layout.Out) : Array Glyph := Id.run do
@@ -71,7 +71,7 @@ def word? (gs : Array Glyph) (w : String) (p : Glyph → Bool := fun _ => true)
   return none
 
 /-- One look shared by every glyph of `gs`: its face, size and ink. -/
-def look (gs : Array Glyph) : Option (Nat × Dim.Sp × Ir.Color) :=
+def look (gs : Array Glyph) : Option (Nat × Dim.Length × Ir.Color) :=
   match gs[0]? with
   | some g =>
     if gs.all (fun h => h.face == g.face && h.size == g.size && h.color == g.color) then
@@ -146,7 +146,7 @@ def sizesAround (body : Array Html.Node) : Array String :=
     | _ => none
 
 /-- The size the first mono `probe` ships at. -/
-def probeSize (gs : Array Glyph) : Option Dim.Sp :=
+def probeSize (gs : Array Glyph) : Option Dim.Length :=
   ((word? gs "probe" mono).bind look).map (·.2.1)
 
 def deckSrc (pre body : String) : String :=
@@ -267,7 +267,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
       fun c => nodeTextOne "" c == "show_all")
   -- minted's layers: `\setminted`, then `\setmintedinline`, then the command's own options.
   let sizes := "{\\footnotesize Foot} {\\large Large} {\\tiny Tiny} {\\Huge Huge} "
-  let sizeOf (gs : Array Glyph) (w : String) : Option Dim.Sp :=
+  let sizeOf (gs : Array Glyph) (w : String) : Option Dim.Length :=
     (word? gs w).bind fun r => (look r).map (·.2.1)
   for (label, pre, code, want) in [
       ("\\setminted reaches inline code", "", "\\mintinline{python}{probe}", "Foot"),

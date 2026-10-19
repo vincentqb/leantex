@@ -16,8 +16,8 @@ namespace LeanTex.Core.Svg
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 
-/-- One user unit, the CSS pixel, in `Sp`: 0.75 pt. -/
-@[expose] public def pxSp : Int := 49152
+/-- One user unit, the CSS pixel: 0.75 pt. -/
+@[expose] public def pxSp : Length := px 1
 
 /-- A length's unit (CSS Values 4 §5–§6): a bare number is in user units. -/
 public inductive LenUnit where
@@ -73,7 +73,7 @@ public inductive LenUnit where
   | _ => none
 
 /-- A length as spelled: a decimal and its unit. -/
-public structure Length where
+public structure SvgLength where
   value : Rat
   unit : LenUnit
   deriving Repr, BEq, Inhabited
@@ -84,7 +84,7 @@ public def num? (s : String) : Option Rat :=
     if (PathData.skipWs rest).isEmpty then some d.toRat else none
 
 /-- A length: a decimal, then a unit suffix, white space around it. -/
-@[expose] public def length? (s : String) : Option Length :=
+@[expose] public def length? (s : String) : Option SvgLength :=
   (PathData.number (PathData.skipWs s.toList)).bind fun (d, rest) =>
     let suffix := String.ofList (rest.takeWhile (!PathData.isWsp ·))
     if (PathData.skipWs (rest.dropWhile (!PathData.isWsp ·))).isEmpty then
@@ -92,19 +92,19 @@ public def num? (s : String) : Option Rat :=
     else none
 
 /-- A length in CSS pixels against the font size `em` and the percentage basis `base`; `1ex` is half an em. -/
-@[expose] public def Length.toPx (l : Length) (em base : Rat) : Rat :=
+@[expose] public def SvgLength.toPx (l : SvgLength) (em base : Rat) : Rat :=
   match l.unit with
   | .em => l.value * em
   | .ex => l.value * em / 2
   | .pct => l.value * base / 100
   | u => l.value * u.factor
 
-/-- Pixels as `Sp` of user space, rounded once, half away from zero. -/
-@[expose] public def spOf (px : Rat) : Sp :=
-  let v := px * (pxSp : Rat)
-  let n := v.num
-  let d := (v.den : Int)
-  if n < 0 then -((-n * 2 + d) / (2 * d)) else (n * 2 + d) / (2 * d)
+/-- Pixels as `Length` of user space, rounded once, half away from zero. -/
+@[expose] public def spOf (px : Rat) : Length := Length.ofRatRound (px * pxSp.toRat)
+
+/-- The fixed-point factor a bounding-box frame carries: one big point, the side of a raster's
+unit square. -/
+private def bboxScale : Rat := (bp 1).toRat
 
 /-- Numbers separated by white space and commas. -/
 public def numList? (s : String) : Option (Array Rat) := Id.run do
@@ -120,7 +120,7 @@ public def numList? (s : String) : Option (Array Rat) := Id.run do
   return none
 
 /-- Lengths separated by white space and commas. -/
-public def lengthList? (s : String) : Option (Array Length) :=
+public def lengthList? (s : String) : Option (Array SvgLength) :=
   let parts := (s.replace "," " ").splitOn " " |>.filter (!·.trimAscii.isEmpty)
   parts.toArray.mapM length?
 
@@ -138,12 +138,12 @@ public def tangentOf (deg : Rat) : Rat :=
   if c == 0 then 0 else (s : Rat) / (c : Rat)
 
 /-- A translation by user units. -/
-@[expose] public def shift (x y : Rat) : Affine := ⟨1, 0, 0, 1, x * (pxSp : Rat), y * (pxSp : Rat)⟩
+@[expose] public def shift (x y : Rat) : Affine := ⟨1, 0, 0, 1, x * pxSp.toRat, y * pxSp.toRat⟩
 
 /-- One transform function (SVG 2 §8.5), its arguments in user units. -/
 public def transformFn (name : String) (args : Array Rat) : Option Affine :=
   match name, args.toList with
-  | "matrix", [a, b, c, d, e, f] => some ⟨a, b, c, d, e * (pxSp : Rat), f * (pxSp : Rat)⟩
+  | "matrix", [a, b, c, d, e, f] => some ⟨a, b, c, d, e * pxSp.toRat, f * pxSp.toRat⟩
   | "translate", [x] => some (shift x 0)
   | "translate", [x, y] => some (shift x y)
   | "scale", [s] => some (Affine.scale s s)
@@ -257,7 +257,7 @@ public def par? (s : String) : Par :=
   let (ox, oy) : Rat × Rat := match p.align with
     | none => (0, 0)
     | some (ax, ay) => (ax.offset vw (vb.w * sx), ay.offset vh (vb.h * sy))
-  ⟨sx, 0, 0, sy, (vx + ox - vb.x * sx) * (pxSp : Rat), (vy + oy - vb.y * sy) * (pxSp : Rat)⟩
+  ⟨sx, 0, 0, sy, (vx + ox - vb.x * sx) * pxSp.toRat, (vy + oy - vb.y * sy) * pxSp.toRat⟩
 
 /-- The viewport a percentage reads: its width and height in pixels. -/
 public structure Viewport where
@@ -290,12 +290,12 @@ public structure Style where
   fillRule : Rule
   stroke : PaintSpec
   strokeOpacity : Nat
-  strokeWidth : Sp
+  strokeWidth : Length
   cap : Cap
   join : Join
   miter : Rat
-  dash : Array Sp
-  dashOffset : Sp
+  dash : Array Length
+  dashOffset : Length
   color : Ir.Color × Nat
   visible : Bool
   families : Array String
@@ -706,10 +706,10 @@ back (CSS Transforms 1 §6.1); the identity stays the identity. -/
 /-- One element's computed style: its declarations over its parent's style, in the viewport `vp`. -/
 public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Array Xml.Attr) : Read :=
   let fontSize := pick d "font-size" true parent.fontSize Style.initial.fontSize (fontSize? parent.fontSize)
-  let len (base : Rat) (s : String) : Option Sp :=
+  let len (base : Rat) (s : String) : Option Length :=
     (length? s).bind fun l => let v := l.toPx fontSize base; if v < 0 then none else some (spOf v)
   let color := pick d "color" true parent.color Style.initial.color (colorValue? parent.color)
-  let dash? (s : String) : Option (Array Sp) :=
+  let dash? (s : String) : Option (Array Length) :=
     if s.trimAscii.toString.toLower == "none" then some #[] else
     (lengthList? s).bind fun ls =>
       let vs := ls.map fun l => spOf (l.toPx fontSize vp.diag)
@@ -782,7 +782,7 @@ public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Ar
   { style := style, opacity := opacity, clipPath := clipPath, display := display
     overflowVisible := overflowVisible, origin := origin, losses := losses }
 
-/-- A point of user space, in `Sp`. -/
+/-- A point of user space, in `Length`. -/
 @[expose] public def pt (x y : Rat) : Pt := (spOf x, spOf y)
 
 /-- Path commands as absolute subpaths of user space, quadratics elevated and arcs as cubics. -/
@@ -860,7 +860,7 @@ public def subpathsOf (cmds : Array PathData.Cmd) : Array Subpath := Id.run do
           let (bx, by_) := base rel
           let p := (bx + x.toRat, by_ + y.toRat)
           let φ := Trig.divRound (rot.toRat.num * Trig.pi) (180 * (rot.toRat.den : Int))
-          (Kit.arcEndpoint (pt px py) (spOf rx.toRat).natAbs (spOf ry.toRat).natAbs φ large sweep
+          (Kit.arcEndpoint (pt px py) (spOf rx.toRat).abs (spOf ry.toRat).abs φ large sweep
             (pt p.1 p.2), p, none, none)
         | .move _ _ _ | .close => (#[], (px, py), none, none)
       cur := some { s with segs := s.segs ++ segs }
@@ -1160,18 +1160,18 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
     if bboxUnits then
       bbox.bind fun ((x0, y0), (x1, y1)) =>
         if x1 ≤ x0 || y1 ≤ y0 then none
-        else some (⟨((x1 - x0 : Int) : Rat) / 65536, 0, 0, ((y1 - y0 : Int) : Rat) / 65536,
-          (x0 : Rat), (y0 : Rat)⟩, (65536 : Rat), (1 : Rat), (1 : Rat))
-    else some (Affine.unit, (pxSp : Rat), cx.vp.w, cx.vp.h)
+        else some (⟨(x1 - x0).toRat / bboxScale, 0, 0, (y1 - y0).toRat / bboxScale,
+          x0.toRat, y0.toRat⟩, bboxScale, (1 : Rat), (1 : Rat))
+    else some (Affine.unit, pxSp.toRat, cx.vp.w, cx.vp.h)
   let some (frame, scale, bw, bh) := frameOpt | return none
-  let coord (n : String) (dflt : Rat) (base : Rat) : Sp :=
+  let coord (n : String) (dflt : Rat) (base : Rat) : Length :=
     let v : Rat := match (attr n).bind length? with
       | some l => if bboxUnits then (if l.unit == .pct then l.value / 100 else l.value)
         else l.toPx cx.parent.fontSize base
       | none => dflt * (if bboxUnits then 1 else base)
     let s := v * scale
-    (s + 1 / 2).floor
-  let gxf := if bboxUnits then { gxf with e := gxf.e / (pxSp : Rat) * 65536, f := gxf.f / (pxSp : Rat) * 65536 }
+    Length.ofRatFloor (s + 1 / 2)
+  let gxf := if bboxUnits then { gxf with e := gxf.e / pxSp.toRat * bboxScale, f := gxf.f / pxSp.toRat * bboxScale }
     else gxf
   let xf := frame.compose gxf
   if name == "linearGradient" then
@@ -1193,7 +1193,8 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
     -- The focal circle must lie inside the end circle, the one geometry both formats draw alike.
     let dx := fx - c1.1
     let dy := fy - c1.2
-    if (Nat.sqrt (dx * dx + dy * dy).toNat : Int) + r0 ≥ r1 then throw (.attribute "fx")
+    if Length.ofUnits (Nat.sqrt (dx * dx + dy * dy).toNat : Int) + r0 ≥ r1 then
+      throw (.attribute "fx")
     return some (.gradient (.radial (fx, fy) r0 c1 r1 stops xf), alpha)
 
 /-- A paint spec as a model paint and its alpha; a failing server falls back as SVG 2 §13.2.3 says. -/
@@ -1246,8 +1247,8 @@ public def clipOf (env : Env) (cx : Ctx) (id : String) (bbox : Unit → Except G
     if units == "objectBoundingBox" then do
       let b ← bbox ()
       pure (b.map fun ((x0, y0), (x1, y1)) =>
-        ⟨((x1 - x0 : Int) : Rat) / (pxSp : Rat), 0, 0, ((y1 - y0 : Int) : Rat) / (pxSp : Rat),
-          (x0 : Rat), (y0 : Rat)⟩)
+        ⟨(x1 - x0).toRat / pxSp.toRat, 0, 0, (y1 - y0).toRat / pxSp.toRat,
+          x0.toRat, y0.toRat⟩)
     else pure (some Affine.unit)
   let some unitFrame := unitOpt | return none
   let shapes := kids.filter fun k => match k with
@@ -1425,8 +1426,8 @@ public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array T
     st := st'
     let follows := absX.isNone
     let xf : Affine := match absX with
-      | some ax => ⟨1, 0, 0, -1, (ax + c.dx) * (pxSp : Rat), yy * (pxSp : Rat)⟩
-      | none => ⟨1, 0, 0, -1, c.dx * (pxSp : Rat), yy * (pxSp : Rat)⟩
+      | some ax => ⟨1, 0, 0, -1, (ax + c.dx) * pxSp.toRat, yy * pxSp.toRat⟩
+      | none => ⟨1, 0, 0, -1, c.dx * pxSp.toRat, yy * pxSp.toRat⟩
     -- A transparent fill paints nothing; the run still advances what follows.
     let fill := p.fill.filter (·.alpha.val != 0)
     if text.any needsShaping then st := st.lose shapingLoss
@@ -1705,8 +1706,8 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         if w ≤ 0 || h ≤ 0 || ras.pxW == 0 || ras.pxH == 0 || !s.visible then (st, out) else
         let par := ((Xml.Attr.get? attrs "" "preserveAspectRatio").map par?).getD Par.default
         let m := viewMap { x := 0, y := 0, w := ras.pxW, h := ras.pxH } par x y w h
-        let unitToPx : Affine := ⟨(pxSp : Rat) * ras.pxW / 65536, 0, 0, -(pxSp : Rat) * ras.pxH / 65536,
-          0, (pxSp : Rat) * ras.pxH⟩
+        let unitToPx : Affine := ⟨pxSp.toRat * ras.pxW / bboxScale, 0, 0, -pxSp.toRat * ras.pxH / bboxScale,
+          0, pxSp.toRat * ras.pxH⟩
         let k := st.rasters.size
         let st := { st with rasters := st.rasters.push ras }
         let clip : Array Clip := if par.slice && par.align.isSome
@@ -1913,7 +1914,7 @@ cascade. -/
   let (d, _) := declsOf rules (subjectOf "svg" attrs) [] attrs
   rootSize attrs (computeStyle d Style.initial { w := 300, h := 150 } attrs).style.fontSize
 
-/-- The figure box an SVG tree reserves: its root viewport from the origin, in `Sp`. -/
+/-- The figure box an SVG tree reserves: its root viewport from the origin, in `Length`. -/
 @[expose] public def rootBox (t : Xml.Item) : Box :=
   let px := rootPx (Css.RuleIndex.ofRules (sheetsOf t).1) (rootParts t).1
   ((0, 0), (spOf px.1, spOf px.2))
@@ -2031,7 +2032,7 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
     | none => Affine.unit
   let wsp := spOf w
   let hsp := spOf h
-  let flip : Affine := ⟨1, 0, 0, -1, 0, (hsp : Rat)⟩
+  let flip : Affine := ⟨1, 0, 0, -1, 0, hsp.toRat⟩
   let rootXf := flip.compose m
   let clip := r.clipPath.isSome
   let st := if clip then st.lose (.property "clip-path on the root") else st

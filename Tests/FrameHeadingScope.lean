@@ -92,8 +92,8 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
     for footer in [false, true] do
       for levels in [#[1], #[2], #[3], #[1, 2, 3]] do
         let marks := #["Before"] ++ levels.map (fun n => s!"Heading {n}") ++ #["After"]
-        let mut positions : Array (Array Dim.Sp) := #[]
-        let mut titleYs : Array (Option Dim.Sp) := #[]
+        let mut positions : Array (Array Dim.Length) := #[]
+        let mut titleYs : Array (Option Dim.Length) := #[]
         for valign in [Ir.VAlign.top, .center, .bottom] do
           let label := s!"frame heading scope {progress}/{footer}/{levels}/{repr valign}"
           let doc := FrameHeadingScope.doc progress footer valign levels

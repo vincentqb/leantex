@@ -49,7 +49,7 @@ one declaration and fails an owed name once it resolves.
 
 | Area | Guarantee | Proofs |
 |---|---|---|
-| Arithmetic | Points, literals and local references evaluate exactly; badness is capped at 10000; a length and a ratio print, character by character, as their digits. | `toPtString_chars_exact`, `ratString_chars_exact`; by unfolding: `pt_exact`, `resolve_lit_exact`, `Affine.resolveWidth_ref_exact`, `badness_le`; owed (U42): `GlueSet.width_sum_exact`, `scaleRound_between` |
+| Arithmetic | Points, literals and local references evaluate exactly; badness is capped at 10000; a length and a ratio print, character by character, as their digits. | `toBpString_chars_exact`, `ratString_chars_exact`; by unfolding: `pt_exact`, `resolve_lit_exact`, `Affine.resolveWidth_ref_exact`, `badness_le`; owed (U42): `GlueSet.width_sum_exact`, `scaleRound_between` |
 | Validity | Chosen breaks form a valid chain over the box characters, and a box's width is the exact sum of its advances and kerns. | `kpScan_valid`, `kpBack_chain`, `kp_boxChars`, `kern_measure_exact` |
 | Optimality | Owed: the pruned breaker equals the reference dynamic program, which is optimal. | owed (U73): `kpRef_optimal`, `kp_eq_kpRef` |
 | Setting | A code line wraps only after a unit that is no space, never inside a token, whitespace first where a space fits, each line filled to its last wrap that fits; inline code ships its source scalar for scalar. Owed: set lines stay within the measure; listing wraps conserve text. | `codeWraps_breaks_mem`, `CodeUnit.rank_mem`, `codeCut_space_mem`, `codeCut_between`, `inlineCode_source_exact`; owed (U39): `setLine_within_measure`; owed (U02): `listing_wrap_text` |

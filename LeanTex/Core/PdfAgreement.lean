@@ -43,7 +43,7 @@ public theorem table_cell_side_agree (cols : Array Ir.ColSpec) (spans : Array Ir
 public theorem table_length_agree (doc : Ir.Doc) (name : String) :
     HtmlDoc.tableLengthFallback doc name =
       HtmlDoc.tableLengthCss (HtmlDoc.lengthBasisOf doc)
-        (Dim.Length.ofSp (Layout.tableLength none doc.preambleFace name)) := rfl
+        (Dim.SymLength.ofLength (Layout.tableLength none doc.preambleFace name)) := rfl
 
 public theorem picture_box_agree (geom : Layout.Geom) (fs : FontSet) (pic : Ir.Pic.Picture) :
     Layout.pictureBox geom fs {} (fs.xHeightAt geom.fontSize) pic =

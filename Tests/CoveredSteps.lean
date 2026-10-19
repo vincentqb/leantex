@@ -19,7 +19,7 @@ def runColors (out : Layout.Out) (page : Nat) (text : String) : Array Ir.Color :
     | _ => none).getD #[]
 
 /-- The runs of the line setting `word` on a page: text and left edge. -/
-def lineOf (out : Layout.Out) (page : Nat) (word : String) : Array (String × Dim.Sp) :=
+def lineOf (out : Layout.Out) (page : Nat) (word : String) : Array (String × Dim.Length) :=
   ((out.pages[page]?.bind fun p => p.lines.find? fun l => (wordRun #[l] word).isSome).map fun l =>
     (lineRuns l).map fun (_, s, x, _) => (s, x)).getD #[]
 

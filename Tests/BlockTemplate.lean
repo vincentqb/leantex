@@ -10,6 +10,8 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests.BlockTemplate
 
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-! A block template's rule stands beside its box: beamer's `block begin` and `block end` pair is
 read into `Ir.BlockShape` and held to lualatex's distances on invented probes. -/
 
@@ -1167,7 +1169,7 @@ private def ruleOf (page : Layout.PageOut) (c : Ir.Color) (n : Nat) : Option Lay
 private def lineOf (page : Layout.PageOut) (text : String) : Option Layout.LineOut :=
   page.lines.find? fun l => !l.furniture && lineText l false == letters text
 
-private def markAt (geom : Layout.Geom) (page : Layout.PageOut) : Mark → Option Dim.Sp
+private def markAt (geom : Layout.Geom) (page : Layout.PageOut) : Mark → Option Dim.Length
   | .base t => (lineOf page t).map (·.y)
   | .lineX t => (lineOf page t).map (·.x)
   | .top c n => (ruleOf page c n).map (·.y)
@@ -1449,7 +1451,7 @@ private def chainChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       (rules == want)
 
 /-- A shipped line's first glyph run: the face and size it sets in. -/
-private def firstRun (fs : Font.FontSet) (l : Layout.LineOut) : Option (Font × Dim.Sp) :=
+private def firstRun (fs : Font.FontSet) (l : Layout.LineOut) : Option (Font × Dim.Length) :=
   l.segs.findSome? fun s => match s with
     | .run idx _ _ _ gs size _ _ _ _ _ =>
       if gs.isEmpty then none else some (fs.get idx, if size == 0 then l.size else size)
@@ -1457,13 +1459,13 @@ private def firstRun (fs : Font.FontSet) (l : Layout.LineOut) : Option (Font × 
 
 /-- How far a shipped line's ink stands above its baseline: its tallest
 glyph's, in the face and at the size its run sets in. -/
-private def inkTop (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Sp :=
+private def inkTop (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Length :=
   l.segs.foldl (init := 0) fun acc s => match s with
     | .run idx _ _ _ gs size _ _ raise _ _ =>
       let face := fs.get idx
       let size := if size == 0 then l.size else size
       gs.foldl (init := acc) fun acc (g, _, _) => match face.bounds g with
-        | some b => max acc (((b.top.toNat * size.toNat / face.unitsPerEm : Nat) : Int) + raise)
+        | some b => max acc (b.top.toNat * max 0 size / face.unitsPerEm + raise)
         | none => acc
     | _ => acc
 
@@ -1483,18 +1485,18 @@ private def capitalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       let title := linesBeside p bar
       match title[0]?, title.back?, title[0]?.bind (firstRun fonts) with
       | some first, some last, some (face, size) =>
-        let cap : Dim.Sp := (((face.charHeight 'H').toNat * size.toNat / face.unitsPerEm : Nat) : Int)
+        let cap : Dim.Length := (face.charHeight 'H').toNat * max 0 size / face.unitsPerEm
         let excess := max 0 (inkTop fonts first - lead * 7 / 10)
         check ref (s!"capitals page {page}: the {title.size}-line title's rule is centred on its capitals " ++
           s!"less its ink past the strut ({2 * bar.y + bar.h} against {first.y - cap + last.y - excess})")
-          ((2 * bar.y + bar.h - (first.y - cap + last.y - excess)).natAbs ≤ 2)
+          ((2 * bar.y + bar.h - (first.y - cap + last.y - excess)).abs ≤ 2 * Dim.Length.quantum)
         check ref s!"capitals page {page}: the {title.size}-line title's rule reaches its lines and a leading ({bar.h})"
-          ((bar.h - (last.y - first.y + lead + excess)).natAbs ≤ 2)
+          ((bar.h - (last.y - first.y + lead + excess)).abs ≤ 2 * Dim.Length.quantum)
       | _, _, _ => check ref s!"capitals page {page}: the title beside a rule ships" false
 
 /-- The term a stylesheet length adds last, `calc(… + <term>)`, as a length
 on a stage `height` tall: thousandths of `vh`, or a zero. -/
-private def lastStageTerm (rule key : String) (height : Dim.Sp) : Option Dim.Sp := do
+private def lastStageTerm (rule key : String) (height : Dim.Length) : Option Dim.Length := do
   let decl ← (rule.splitOn ";").find? fun d => (d.splitOn ":")[0]?.map (·.trimAscii.toString) == some key
   let value := ((decl.splitOn ":").drop 1 |> String.intercalate ":").trimAscii.toString
   let term := ((value.splitOn " + ").getLast?.getD value).trimAscii.toString
@@ -1507,7 +1509,7 @@ private def lastStageTerm (rule key : String) (height : Dim.Sp) : Option Dim.Sp 
 /-- The rules beside a page's titles in one colour, each with its title's
 first and last lines and the face and size its first run sets in. -/
 private def titleBars (fonts : Font.FontSet) (p : Layout.PageOut) (c : Ir.Color) :
-    Array (Layout.Fill × Layout.LineOut × Layout.LineOut × Font × Dim.Sp) :=
+    Array (Layout.Fill × Layout.LineOut × Layout.LineOut × Font × Dim.Length) :=
   ((p.fills.filter (·.color == c)).qsort (·.y < ·.y)).filterMap fun bar =>
     let title := linesBeside p bar
     match title[0]?, title.back?, title[0]?.bind (firstRun fonts) with
@@ -1536,15 +1538,15 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   let sheet := treeCssList "" (head.toList ++ body.toList)
   let (_, out, _) := layout fonts name src
   let (_, plain, _) := layout fonts s!"{name}-boxed" (boxedRules src)
-  let tol : Nat := (2 * doc.page.height / 100000 + 2).toNat
+  let tol : Dim.Length := 2 * doc.page.height / 100000 + 2 * Dim.Length.quantum
   let strut := fonts.get (fonts.lookup 0 700 false)
-  let leaded (f : Font) (size : Dim.Sp) : Dim.Sp × Dim.Sp :=
-    let sc (u : Int) : Dim.Sp := ((u.toNat * size.toNat / f.unitsPerEm : Nat) : Int)
+  let leaded (f : Font) (size : Dim.Length) : Dim.Length × Dim.Length :=
+    let sc (u : Int) : Dim.Length := u.toNat * max 0 size / f.unitsPerEm
     Layout.leadedBox (sc f.ascent) (sc (-f.descent)) (Ir.leadingFor size doc.page.leading)
-  let distance (out : Layout.Out) (page : Nat) (a b : String) : Option Dim.Sp :=
+  let distance (out : Layout.Out) (page : Nat) (a b : String) : Option Dim.Length :=
     out.pages[page]?.bind fun p => (lineOf p a).bind fun x => (lineOf p b).map (·.y - x.y)
   -- The rise a header's padding adds past its skips: the term it ends on.
-  let riseOf (rule : String) : Dim.Sp := (lastStageTerm rule "padding-top" doc.page.height).getD 0
+  let riseOf (rule : String) : Dim.Length := (lastStageTerm rule "padding-top" doc.page.height).getD 0
   for (kind, pseudo, page, color, lead, title, next) in kinds do
     let sel := s!"section.block-shaped.block-{kind.name} > header"
     let rule := (screenRuleOf sheet s!"{sel}::{pseudo}").getD ""
@@ -1559,10 +1561,10 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
       match lastStageTerm rule "top" doc.page.height, lastStageTerm rule "bottom" doc.page.height with
       | some top, some bottom =>
         check ref (s!"{name} HTML {kind.name}: the rule's top stands above the first baseline as the page's " ++
-          s!"({b - top} against {first.y - bar.y})") (((b - top) - (first.y - bar.y)).natAbs ≤ tol)
+          s!"({b - top} against {first.y - bar.y})") (((b - top) - (first.y - bar.y)).abs ≤ tol)
         check ref (s!"{name} HTML {kind.name}: the rule's bottom stands below the last baseline as the page's " ++
           s!"({box - b - bottom} against {bar.y + bar.h - last.y})")
-          (((box - b - bottom) - (bar.y + bar.h - last.y)).natAbs ≤ tol)
+          (((box - b - bottom) - (bar.y + bar.h - last.y)).abs ≤ tol)
       | _, _ => check ref s!"{name} HTML {kind.name}: the rule's offsets read ({rule})" false
     let pad := ((screenRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
     let room := (lastStageTerm pad "padding-bottom" doc.page.height).getD 0
@@ -1570,9 +1572,9 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
         distance out page title next, distance plain page title next with
     | some a, some a', some d, some d' =>
       check ref s!"{name} HTML {kind.name}: the header rises as the page's title ({riseOf pad} against {a - a'})"
-        ((riseOf pad - (a - a')).natAbs ≤ tol)
+        ((riseOf pad - (a - a')).abs ≤ tol)
       check ref s!"{name} HTML {kind.name}: the header keeps the page's room below ({room} against {d - d'})"
-        ((room - (d - d')).natAbs ≤ tol)
+        ((room - (d - d')).abs ≤ tol)
     | _, _, _, _ => check ref s!"{name} HTML {kind.name}: the boxed probe's lines ship" false
   for (kind, page, prev, title) in broken do
     let sel := s!"section.block-shaped.block-{kind.name} > header"
@@ -1581,7 +1583,7 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     match distance out page prev title, distance plain page prev title with
     | some a, some a' =>
       check ref s!"{name} HTML {kind.name}: a broken title's header rises as the page's ({riseOf pad} against {a - a'})"
-        ((riseOf pad - (a - a')).natAbs ≤ tol)
+        ((riseOf pad - (a - a')).abs ≤ tol)
     | _, _ => check ref s!"{name} HTML {kind.name}: the broken titles ship" false
 
 /-- The web page stands each rule reaching by its title's lines where the page stands it. -/
@@ -1617,7 +1619,7 @@ private def capitalHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
   match lastStageTerm pad "padding-top" doc.page.height, lastStageTerm boxRule "top" doc.page.height with
   | some rise, some top =>
     check ref s!"capitals HTML: the box's rule stands from the box's top, the rise above it ({top} against {rise})"
-      (rise > 0 && (top - rise).natAbs ≤ (2 * doc.page.height / 100000 + 2).toNat)
+      (rise > 0 && (top - rise).abs ≤ 2 * doc.page.height / 100000 + 2 * Dim.Length.quantum)
   | _, _ => check ref s!"capitals HTML: the box rule's place reads ({pad} / {boxRule})" false
 
 /-- A page's ink, as a comparison reads it: every line's place and letters,
@@ -1681,7 +1683,7 @@ private def htmlSkipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-template-armed.tex" armedSource
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let sheet := treeCssList "" (head.toList ++ body.toList)
-  let len (pt : Nat) : String := HtmlDoc.blockShapeLength doc { width := .ofSp (Dim.pt pt) }
+  let len (pt : Nat) : String := HtmlDoc.blockShapeLength doc { width := .ofLength (Dim.pt pt) }
   let peer := "var(--parskip, 0.725rem)"
   let plain := screenRuleOf sheet "section.block-shaped.block-block"
   check ref s!"block skips HTML: the section stands the template's skips above and below ({plain})"
@@ -1743,7 +1745,7 @@ private def emptyBoxHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr struts "padding-top: var(--parskip, 0.725rem);")
 
 /-- A shipped line's runs as the faces and sizes they set in. -/
-private def lineFaces (fs : Font.FontSet) (l : Layout.LineOut) : Array (String × Dim.Sp) :=
+private def lineFaces (fs : Font.FontSet) (l : Layout.LineOut) : Array (String × Dim.Length) :=
   l.segs.filterMap fun s => match s with
     | .run idx _ _ _ gs size _ _ _ _ _ => if gs.isEmpty then none else some ((fs.get idx).psName, size)
     | _ => none
@@ -1767,7 +1769,7 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{alertblock}{Beta title words}Third body words.\\end{alertblock}\n" ++
     "\\begin{exampleblock}{Gamma title words}Fourth body words.\\end{exampleblock}\n" ++
     "\\end{frame}\n\\end{document}\n"
-  let probes : List (String × String × List (String × String × Dim.Sp)) :=
+  let probes : List (String × String × List (String × String × Dim.Length)) :=
     [("family", head ++ "\\newfontfamily\\probeserif{Source Serif Pro}\n" ++
         "\\setbeamerfont{block title}{family=\\probeserif}\n" ++
         "\\setbeamerfont{block title alerted}{size=\\small}\n" ++ blocks,
@@ -2080,7 +2082,7 @@ private def titleBarOf (src : String) : String :=
 
 /-- A line's run whose letters are `text`: its baseline on the page, the
 line's lifted by the run's own. -/
-private def runBase (p : Layout.PageOut) (text : String) : Option Dim.Sp :=
+private def runBase (p : Layout.PageOut) (text : String) : Option Dim.Length :=
   p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ raise _ _ =>
       if String.ofList (glyphs.toList.map (·.2.1)) == text then some (l.y - raise) else none
@@ -2108,7 +2110,7 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   check ref s!"whole bar: one rule per titled block, none beside the untitled one ({rules})"
     (rules == #[2, 2, 3, 1])
   -- The display alignment's rule ends its depth below the last row, a line of its own.
-  let half : Dim.Sp := 2431
+  let half : Int := 2431
   match out.pages[1]?, out.pages[1]?.bind fun p => runBase p "𝑑" with
   | some p, some row =>
     match ruleOf p edgeColor 1 with
@@ -2176,8 +2178,8 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     | some bar, some last =>
       let pdf := bar.y + bar.h - last.y
       check ref s!"whole bar HTML: the section's rule ends the page's depth below the last baseline ({p.depth} against {pdf})"
-        ((p.depth - pdf).natAbs ≤ 2 * Dim.spPerPt / 1000)
-      let stage (v : Int) := HtmlDoc.blockShapeLength doc { width := .ofSp v }
+        ((Dim.Length.ofUnits p.depth - pdf).abs ≤ 2 * Dim.pt 1 / 1000)
+      let stage (v : Int) := HtmlDoc.blockShapeLength doc { width := .ofLength (.ofUnits v) }
       check ref s!"whole bar HTML: a paragraph's line box ends the rule by default ({rule})"
         (hasStr rule s!"var(--block-last-below, {stage p.bodyBelow}) - {stage p.depth})")
     | _, _ => check ref "whole bar HTML: the page's rule and its last line ship" false
@@ -2191,7 +2193,7 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   check ref s!"whole bar HTML: one block ends on a listing ({listings.size})" (listings.size == 1)
   match listings[0]?.bind below with
   | some v =>
-    let said := s!"--block-last-below: {HtmlDoc.blockShapeLength doc { width := .ofSp v }};"
+    let said := s!"--block-last-below: {HtmlDoc.blockShapeLength doc { width := .ofLength v }};"
     let holding := (elemNodesList (· == "section") #[] body.toList).filterMap fun n => match n with
       | .elem _ attrs kids =>
         if kids.any (fun k => k matches .elem "pre" _ _) then (attrs.find? (·.1 == "style")).map (·.2)
@@ -2374,7 +2376,7 @@ private def skipSumChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let close := "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}\n"
   let closing (skip : String) : String :=
     hanging.replace close ("\\newcommand{\\probe@close}{\\par\\vskip " ++ skip ++ "}\n")
-  let below (name skip : String) : Option Dim.Sp := do
+  let below (name skip : String) : Option Dim.Length := do
     let (_, out, _) := layout fonts name (closing skip)
     let page ← out.pages[0]?
     let body ← lineOf page "Second body paragraph."
@@ -2396,7 +2398,7 @@ entry spells, is named unread once, and its blocks stand where the default pair 
 private def unreadTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let untemplated (src : String) : String :=
     "\n".intercalate ((src.splitOn "\n").filter (!·.startsWith "\\defbeamertemplate"))
-  let bodyAt (name src : String) : Option Dim.Sp := do
+  let bodyAt (name src : String) : Option Dim.Length := do
     let (_, out, _) := layout fonts name src
     let page ← out.pages[0]?
     return (← lineOf page "Body words here.").y

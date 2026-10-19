@@ -21,7 +21,7 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     "\\documentclass{article}\\renewenvironment{abstract}{" ++ begin ++
       "}{\\par\\end{quote}\\vskip 2ex}" ++ body
   let heading := "\\vskip 0.1in\\centerline{\\large\\bf Abstract}\\vspace{1ex}"
-  let sizes (src : String) : Option Dim.Sp × Option Dim.Sp :=
+  let sizes (src : String) : Option Dim.Length × Option Dim.Length :=
     let c := censusOfSrc fonts src
     (lineSizeOf c 0 "Placeholder summary", lineSizeOf c 0 "Plain body words")
   let (redef, text) := sizes (venue (heading ++ "\\begin{quote}"))
@@ -94,7 +94,7 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
 
 
 /-- The baseline distance on page 0 from the first line holding `a` to the first holding `b`. -/
-private def gapBetween (c : Array CensusPage) (a b : String) : Option Dim.Sp :=
+private def gapBetween (c : Array CensusPage) (a b : String) : Option Dim.Length :=
   match lineYOf c 0 a, lineYOf c 0 b with
   | some ya, some yb => some (yb - ya)
   | _, _ => none
@@ -105,7 +105,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let body := "Opening words.\n\n\\begin{table}\\caption{Table words.}" ++
     "\\begin{tabular}{ll}Alpha & Beta\\\\\\end{tabular}\\end{table}\n\n" ++
     "\\begin{figure}Figure body words.\\caption{Figure words.}\\end{figure}\n\nClosing words."
-  let gaps (pre : String) : Option Dim.Sp × Option Dim.Sp :=
+  let gaps (pre : String) : Option Dim.Length × Option Dim.Length :=
     let c := censusOfSrc fonts (dvDoc pre body)
     (gapBetween c "Table words" "Alpha", gapBetween c "Figure body" "Figure words")
   let (tDef, fDef) := gaps ""
@@ -133,7 +133,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     (shippedLines fonts (dvDoc packaged body) ==
       shippedLines fonts (dvDoc ("\\tokens{ captionsep = 8pt, tablecaptionsep = 0pt, " ++
         "tablebelowcaptionskip = 8pt }\n") body))
-  let capTop (c : Array CensusPage) : Option Dim.Sp := lineYOf c 0 "Table words"
+  let capTop (c : Array CensusPage) : Option Dim.Length := lineYOf c 0 "Table words"
   let (kernelGap, _) := gaps venue
   let (pkgGap, _) := gaps packaged
   t "the kernel's caption-table gap exceeds the package's by the swapped 8pt"
@@ -223,7 +223,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       hasStr html "figure.table-float { --ltx-capsep: var(--tablecaptionsep, var(--captionsep,")
   let subBody := "\\begin{figure}\\begin{subfigure}{0.4\\textwidth}Sub body words." ++
     "\\caption{Sub words.}\\end{subfigure}\\caption{Figure words.}\\end{figure}"
-  let subPage (scope : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+  let subPage (scope : String) : Array (Dim.Length × Dim.Length × Dim.Length × String) :=
     shippedLines fonts (dvDoc ("\\usepackage{subcaption}\n\\captionsetup[" ++ scope ++
       "]{skip=2pt}\n") subBody)
   t "a sub scope sets every sub-caption as the subfigure scope does"
@@ -255,7 +255,7 @@ def environScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let t := check ref
   let doc (pre body : String) : String := dvDoc ("\\usepackage{environ}\n" ++ pre) body
   let sets (src line : String) : Bool := hasStr (pageTextOf fonts src) line
-  let shipped (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp × String) × String :=
+  let shipped (src : String) : Array (Dim.Length × Dim.Length × Dim.Length × String) × String :=
     let (_, _, _, html) := sourceArtifacts fonts src
     (shippedLines fonts src, html)
   let para (definer : String → String) : String :=
@@ -550,7 +550,7 @@ def abstractSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
 glues. -/
 def seamChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let width (pre body : String) : Option Dim.Sp :=
+  let width (pre body : String) : Option Dim.Length :=
     ((censusOfSrc fonts (dvDoc pre body))[0]?.bind (·.lines.find? (!·.furniture))).map (·.width)
   let same (pre body spelled : String) : Bool :=
     (width pre body).isSome && width pre body == width "" spelled

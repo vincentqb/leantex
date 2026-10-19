@@ -12,11 +12,11 @@ open LeanTex.Core LeanTex.Core.Dim
 
 /-- Path construction operators, ISO 32000-2 §8.5.2 (Table 58). -/
 public inductive PathOp where
-  | moveTo (x y : Sp)
-  | lineTo (x y : Sp)
-  | curveTo (x1 y1 x2 y2 x3 y3 : Sp)
+  | moveTo (x y : Length)
+  | lineTo (x y : Length)
+  | curveTo (x1 y1 x2 y2 x3 y3 : Length)
   | close
-  | rect (x y w h : Sp)
+  | rect (x y w h : Length)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- One element of a `TJ` array (ISO 32000-2 §9.4.3): glyphs, glyphs with their pair kerns,
@@ -44,8 +44,8 @@ public inductive MarkTag where
 /-- Text-object operators (§9.3–9.4), with marked content nested as a balanced pair. -/
 public inductive TextOp where
   | scale (permille : Int)
-  | move (x y : Sp)
-  | font (res : Nat) (size : Sp)
+  | move (x y : Length)
+  | font (res : Nat) (size : Length)
   | color (c : Ir.Color)
   | show (items : Array TextItem)
   | marked (tag : MarkTag) (body : Array TextOp)
@@ -65,11 +65,11 @@ public structure PaintFill where
 /-- A path's stroke; an absent field keeps PDF's initial graphics state (§8.4.1, Table 51). -/
 public structure PaintStroke where
   paint : PdfPaint
-  width : Sp
+  width : Length
   cap : Option Gfx.Cap
   join : Option Gfx.Join
   miter : Option Rat
-  dash : Option (Array Sp × Sp)
+  dash : Option (Array Length × Length)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- An ExtGState resource (§8.4.5) and the constant alphas it sets for fills and strokes. -/
@@ -92,20 +92,20 @@ public inductive XKind where
 public inductive FormKind where
   | symbol
   | group
-  | stamp (reach : Sp)
+  | stamp (reach : Length)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- One page-level painting operation, in PDF user space. -/
 public inductive ContentOp where
-  | fill (color : Ir.Color) (x y w h : Sp)
+  | fill (color : Ir.Color) (x y w h : Length)
   /-- A path with its own paints inside `q … Q`; the paints present decide the painting operator. -/
   | paint (fill : Option PaintFill) (stroke : Option PaintStroke) (gs : Option ExtG)
       (segs : Array PathOp)
   /-- The page's one text object, `BT … ET`. -/
   | text (ops : Array TextOp)
-  | image (x y w h : Sp) (res : Nat)
+  | image (x y w h : Length) (res : Nat)
   /-- The outlined box drawn in place of an image that did not load. -/
-  | imageMissing (x y w h : Sp)
+  | imageMissing (x y w h : Length)
   | marked (tag : MarkTag) (body : Array ContentOp)
   /-- A saved graphics state, `q [cm] [/GS gs] [clip W n]… body Q`. -/
   | group (m : Option Gfx.Affine) (gs : Option ExtG) (clips : Array (Array PathOp × Gfx.Rule))

@@ -94,10 +94,11 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   conversion, face or check: a degraded artifact, never refused, its loss named once, nothing cached
   but a refusal, replayed as that loss (`machineLossChecks`, `boundaryUnfinishedChecks`,
   `record?_some_exact`, `inconclusive_retried_exact`, `envelope_replay_exact`).
-- A design constant: a token, or its source where it stands (`dimLiteral`); a token: one resolving
-  site, held over every bundle (`builtin_palettes_contract`); a colour role: a `Role.row` arm read
-  only through its resolver (`roleReads`, `roleRowWildcards`), the stylesheet its projection
-  (`role_css_projects`, `htmlRoleClosureChecks`); a code role through `CodeColor.resolve`.
+- A design constant: a token, or its source where it stands (`dimLiteral`, `baseLiteral`); a token:
+  one resolving site, held over every bundle (`builtin_palettes_contract`); a colour role: a
+  `Role.row` arm read only through its resolver (`roleReads`, `roleRowWildcards`), the stylesheet
+  its projection (`role_css_projects`, `htmlRoleClosureChecks`); a code role through
+  `CodeColor.resolve`.
 - A page-opening path: a declared vertical distribution and ground (`artStageGroundChecks`), never a
   default; a furniture element: a declared alignment, never a hard-coded centre (review).
 - A PageOut field shipping ink: its place in `PageOut.blank`, every emptiness test's one reading,
@@ -162,8 +163,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   corollary a statement reads (`floorMask_id`, `LeanTex/Core/Loop.lean`).
 - A large value a check block's loop closes over is read at run time first (`pdfBoundsChecks`).
 - A generated module is only data, its contracts hand-owned (`LeanTex/Core/LocaleContract.lean`).
-- Omega reads Int binders, not Sp; a deep decide is decide +kernel, one over shipped constants in a
-  leaf module off Elab's import chain; a def theorems unfold projects a call's result, never
+- Omega reads Int binders, not lengths; a deep decide is decide +kernel, one over shipped constants
+  in a leaf module off Elab's import chain; a def theorems unfold projects a call's result, never
   destructures it; a measure fact's value is a subtype pattern, never a let; a zero-argument def
   runs at module start, so takes Unit; deletion and rebuild judge dead proof structure (review).
 

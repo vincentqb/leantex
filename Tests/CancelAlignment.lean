@@ -10,21 +10,28 @@ namespace CancelAlignment
 
 open ShippedInk
 
+/-- `n` base units: the synthetic witnesses' rounding scale. -/
+private def q (n : Int) : Dim.Length := n * Dim.Length.quantum
+
+private def qp (p : Int × Int) : Dim.Length × Dim.Length := (q p.1, q p.2)
+
+private def qb (l b r t : Int) : InkBounds := ⟨q l, q b, q r, q t⟩
+
 /-- The emitted tip of a probe's one northeast cancellation arrow: its head's first vertex. -/
-def arrowTip (polys : Array (Array (Dim.Sp × Dim.Sp))) :
-    Except String (Dim.Sp × Dim.Sp) := do
+def arrowTip (polys : Array (Array (Dim.Length × Dim.Length))) :
+    Except String (Dim.Length × Dim.Length) := do
   let heads := polys.filter (·.size == 3)
   let #[head] := heads | throw "expected one triangular arrowhead"
   let some tip := head[0]? | throw "arrowhead has no vertices"
   let area := head.zipIdx.foldl (fun acc (a, i) =>
     let b := head[(i + 1) % head.size]!
-    acc + a.1 * b.2 - a.2 * b.1) 0
+    acc + a.1 * b.2 - a.2 * b.1) (0 : Int)
   if area == 0 then throw "arrowhead has no painted area"
   return tip
 
 /-- The lower-left endpoint present in the shipped shaft; a head-only arrow reports none. -/
-def shaftTail (polys : Array (Array (Dim.Sp × Dim.Sp))) :
-    Option (Dim.Sp × Dim.Sp) := do
+def shaftTail (polys : Array (Array (Dim.Length × Dim.Length))) :
+    Option (Dim.Length × Dim.Length) := do
   let #[shaft] := polys.filter (·.size > 3) | none
   let p ← shaft[0]?
   let tail := shaft.foldl (fun (x, y) q => (min x q.1, min y q.2)) p
@@ -32,15 +39,17 @@ def shaftTail (polys : Array (Array (Dim.Sp × Dim.Sp))) :
 
 /-- A triangular head keeps both wings about the shipped shaft's ray, three font rules wide,
 symmetric across and along the ray within the division error. -/
-def headHasWings (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool :=
+def headHasWings (polys : Array (Array (Dim.Length × Dim.Length))) (ruleLen : Dim.Length) : Bool :=
   match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
   | .ok tip, some tail, some head =>
-    let dx := tip.1 - tail.1
-    let dy := tip.2 - tail.2
-    let cross := fun p : Int × Int => dx * (p.2 - tip.2) - dy * (p.1 - tip.1)
+    let rule := ruleLen.units
+    let dx := (tip.1 - tail.1).units
+    let dy := (tip.2 - tail.2).units
+    let cross := fun p : Dim.Length × Dim.Length =>
+      dx * (p.2 - tip.2).units - dy * (p.1 - tip.1).units
     let a := cross head[1]!
     let b := cross head[2]!
-    let along := dx * (head[1]!.1 - head[2]!.1) + dy * (head[1]!.2 - head[2]!.2)
+    let along := dx * (head[1]!.1 - head[2]!.1).units + dy * (head[1]!.2 - head[2]!.2).units
     let length := (Nat.sqrt (dx.natAbs ^ 2 + dy.natAbs ^ 2) : Int)
     let rounding := 2 * (dx.natAbs + dy.natAbs)
     a > 0 && b < 0 && (a + b).natAbs ≤ rounding && along.natAbs ≤ rounding &&
@@ -49,38 +58,39 @@ def headHasWings (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool 
 
 /-- The head's aspect measured from the shipped shaft and triangle: four font rules deep and three
 wide, within the rounding bound. -/
-def headHasShape (polys : Array (Array (Dim.Sp × Dim.Sp))) (rule : Int) : Bool :=
+def headHasShape (polys : Array (Array (Dim.Length × Dim.Length))) (ruleLen : Dim.Length) : Bool :=
   match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
   | .ok tip, some tail, some head =>
-    let dx := tip.1 - tail.1
-    let dy := tip.2 - tail.2
+    let rule := ruleLen.units
+    let dx := (tip.1 - tail.1).units
+    let dy := (tip.2 - tail.2).units
     let a := head[1]!
     let b := head[2]!
     let length := (Nat.sqrt (dx.natAbs ^ 2 + dy.natAbs ^ 2) : Int)
     let norm2 := dx * dx + dy * dy
-    let depth2 := dx * (2 * tip.1 - a.1 - b.1) + dy * (2 * tip.2 - a.2 - b.2)
-    let width := dx * (a.2 - b.2) - dy * (a.1 - b.1)
+    let depth2 := dx * (2 * tip.1 - a.1 - b.1).units + dy * (2 * tip.2 - a.2 - b.2).units
+    let width := dx * (a.2 - b.2).units - dy * (a.1 - b.1).units
     let rounding := 2 * length * (dx.natAbs + dy.natAbs)
-    rule > 0 && dx ≥ 0 && dy ≥ 0 && length > 0 && headHasWings polys rule &&
+    rule > 0 && dx ≥ 0 && dy ≥ 0 && length > 0 && headHasWings polys ruleLen &&
       (depth2 * length - 8 * rule * norm2).natAbs ≤ rounding &&
       (width * length - 3 * rule * norm2).natAbs ≤ rounding
   | _, _, _ => false
 
 structure Witness where
-  tip : Dim.Sp × Dim.Sp
-  tail : Option (Dim.Sp × Dim.Sp)
+  tip : Dim.Length × Dim.Length
+  tail : Option (Dim.Length × Dim.Length)
   ink : InkBounds
-  fontGap : Dim.Sp
+  fontGap : Dim.Length
   glyphs : Array ShippedGlyph
   deriving Repr
 
-def Witness.direction (w : Witness) : Option (Dim.Sp × Dim.Sp) := do
+def Witness.direction (w : Witness) : Option (Dim.Length × Dim.Length) := do
   let tail ← w.tail
   let dx := w.tip.1 - tail.1
   let dy := w.tip.2 - tail.2
   if dx ≥ 0 && dy ≥ 0 && dx + dy > 0 then some (dx, dy) else none
 
-def Witness.centreFromTip2 (w : Witness) : Dim.Sp × Dim.Sp :=
+def Witness.centreFromTip2 (w : Witness) : Dim.Length × Dim.Length :=
   (w.ink.left + w.ink.right - 2 * w.tip.1,
    w.ink.bottom + w.ink.top - 2 * w.tip.2)
 
@@ -96,8 +106,8 @@ def Witness.alongRay (w : Witness) : Bool :=
   | none => false
   | some (dx, dy) =>
     let (cx, cy) := w.centreFromTip2
-    dx * cx + dy * cy > 0 &&
-      (dx * cy - dy * cx).natAbs ≤ (max dx dy).natAbs
+    dx * cx + dy * cy > (0 : Int) &&
+      (dx * cy - dy * cx).natAbs ≤ (max dx dy).units.natAbs
 
 /-- One near ink edge meets the positive font gap exactly, the other is no farther, and its far edge
 reaches the tip, on either attachment axis. -/
@@ -109,7 +119,7 @@ def Witness.clearsTip (w : Witness) : Bool :=
 
 /-- Positive separation between the target's outline ink and every shipped mark hull, head wings
 included. -/
-def Witness.clearsMarks (w : Witness) (polys : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
+def Witness.clearsMarks (w : Witness) (polys : Array (Array (Dim.Length × Dim.Length))) : Bool :=
   !polys.isEmpty && polys.all fun pts =>
     (polygonHull pts).any fun mark =>
       mark.right < w.ink.left || w.ink.right < mark.left ||
@@ -223,7 +233,7 @@ def nonpaintingProbes : Array NonpaintingProbe := Id.run do
   return result
 
 /-- The distance between the two source neighbours, free of display centring and page placement. -/
-def neighbourSpan (out : Layout.Out) : Except String Dim.Sp := do
+def neighbourSpan (out : Layout.Out) : Except String Dim.Length := do
   let all := shippedBodyGlyphs out
   let #[before] := all.filter (·.scalar == '𝑢') | throw "left neighbour is missing"
   let #[after] := all.filter (·.scalar == '𝑣') | throw "right neighbour is missing"
@@ -232,7 +242,7 @@ def neighbourSpan (out : Layout.Out) : Except String Dim.Sp := do
   return after.x - before.x
 
 /-- The construct's horizontal endpoints, from the adjacent ordinary source glyphs. -/
-def constructEndpoints (out : Layout.Out) : Except String (Dim.Sp × Dim.Sp) := do
+def constructEndpoints (out : Layout.Out) : Except String (Dim.Length × Dim.Length) := do
   let all := shippedBodyGlyphs out
   let #[before] := all.filter (·.scalar == '𝑢') | throw "left neighbour is missing"
   let #[after] := all.filter (·.scalar == '𝑣') | throw "right neighbour is missing"
@@ -257,8 +267,8 @@ def rulesAt (line : Layout.LineOut) : Array InkBounds := Id.run do
   return result
 
 structure RoomWitness where
-  left : Dim.Sp
-  right : Dim.Sp
+  left : Dim.Length
+  right : Dim.Length
   assembly : Array InkBounds
   before : Array InkBounds
   after : Array InkBounds
@@ -334,7 +344,7 @@ def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
 
 /-- Source geometry up to translation, nonpainting glyphs and shipped advances included. -/
 def relativeSource (glyphs : Array ShippedGlyph) :
-    Array (Nat × Nat × Char × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+    Array (Nat × Nat × Char × Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
   let x := (glyphs[0]?).map (·.x) |>.getD 0
   let y := (glyphs[0]?).map (·.y) |>.getD 0
   glyphs.map fun g => (g.face, g.glyph, g.scalar, g.size, g.advance, g.x - x, g.y - y)
@@ -349,7 +359,7 @@ def sourceAndRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (w.clearsMarks ((bodyLines out).flatMap polygonsAt))
   check ref s!"{name} ordinary control needs no recovery"
     (!(ds ++ ordinary.diags).any fun d => d.code == "W0012" || d.code == "W0389")
-  let readings : Except String (Array ShippedGlyph × Dim.Sp × Dim.Sp) := do
+  let readings : Except String (Array ShippedGlyph × Dim.Length × Dim.Length) := do
     let all := shippedBodyGlyphs ordinary
     let glyphs := all.filter fun g => p.target.toList.contains g.scalar
     unless String.ofList (glyphs.toList.map (·.scalar)) == p.target do
@@ -388,7 +398,7 @@ def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     check ref s!"{name} needs no recovery"
       (!(ds ++ out.diags ++ cds ++ control.diags).any fun d =>
         d.code == "W0012" || d.code == "W0389")
-    let readings : Except String (Witness × Witness × Dim.Sp × ShippedGlyph × ShippedGlyph) := do
+    let readings : Except String (Witness × Witness × Dim.Length × ShippedGlyph × ShippedGlyph) := do
       let w ← measure fonts out p.probe.target
       let c ← measure fonts control p.reference.target
       let span ← neighbourSpan out
@@ -435,7 +445,7 @@ def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       | .emptyRule => pure ()
 
 /-- Whether every triangle from these vertices has zero area, which no opposite windings can hide. -/
-def collinear (points : Array (Dim.Sp × Dim.Sp)) : Bool :=
+def collinear (points : Array (Dim.Length × Dim.Length)) : Bool :=
   points.all fun a => points.all fun b => points.all fun c =>
     (b.1 - a.1) * (c.2 - a.2) == (b.2 - a.2) * (c.1 - a.1)
 
@@ -499,7 +509,7 @@ def nestedMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         d.code == "W0012" || d.code == "W0389" || d.severity == .error)
     let polys := (bodyLines out).flatMap polygonsAt
     let controls := (bodyLines control).flatMap polygonsAt
-    let diagonal (ps : Array (Dim.Sp × Dim.Sp)) : Bool :=
+    let diagonal (ps : Array (Dim.Length × Dim.Length)) : Bool :=
       (polygonHull ps).any fun b => b.left < b.right && b.bottom < b.top
     check ref s!"{name} adds exactly one nonpainting diagonal with a nonempty hull"
       (controls.size == 2 && polys.size == 3 &&
@@ -524,7 +534,7 @@ def nestedMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       | .error e, _ | _, .error e => check ref s!"{name}: {e}" false
 
 /-- Translate only the target's runs on a shipped page, to test the measurement. -/
-private def shiftTarget (out : Layout.Out) (target : String) (dx dy : Dim.Sp) : Layout.Out :=
+private def shiftTarget (out : Layout.Out) (target : String) (dx dy : Dim.Length) : Layout.Out :=
   { out with pages := out.pages.map fun page =>
       { page with lines := page.lines.map fun line =>
           { line with segs := line.segs.flatMap fun seg =>
@@ -548,8 +558,8 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     match measure fonts out p.target with
     | .error e => check ref s!"cancel alignment judge: {p.label}: {e}" false
     | .ok w =>
-      for (dx, dy) in [(1 - w.ink.left, 1 - w.ink.bottom),
-          (-1 - w.ink.right, -1 - w.ink.top)] do
+      for (dx, dy) in [(q 1 - w.ink.left, q 1 - w.ink.bottom),
+          (q (-1) - w.ink.right, q (-1) - w.ink.top)] do
         let moved := w.glyphs.map fun g => { g with x := g.x + dx, y := g.y - dy }
         check ref s!"cancel alignment judge: {p.label} translates all four outline bounds"
           (targetInk fonts moved == .ok (w.ink.shift dx dy))
@@ -558,88 +568,89 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
             | .error _ => false
             | .ok m => m.ink == w.ink.shift dx dy && m.tip == w.tip && m.tail == w.tail)
   let sample : Witness := {
-    tip := (0, 0), tail := some (-4, -3), ink := ⟨2, 2, 6, 5⟩
-    fontGap := 2, glyphs := #[] }
-  for b in [⟨2, 2, 6, 5⟩, ⟨2, 2, 6, 3⟩] do
+    tip := (0, 0), tail := some (qp (-4, -3)), ink := qb 2 2 6 5
+    fontGap := q 2, glyphs := #[] }
+  for b in [qb 2 2 6 5, qb 2 2 6 3] do
     let w := { sample with ink := b }
     check ref "cancel alignment judge: accepts either tight half-sp rounding boundary"
       (w.alongRay && w.clearsTip && w.rayError2.map Int.natAbs == some 4)
-  for (dx, dy) in [(-1, 0), (0, 1)] do
+  for (dx, dy) in [((-1 : Int), (0 : Int)), (0, 1)] do
     check ref "cancel alignment judge: rejects a one-sp move beyond the rounding boundary"
-      (!({ sample with ink := sample.ink.shift dx dy } : Witness).alongRay)
+      (!({ sample with ink := sample.ink.shift (q dx) (q dy) } : Witness).alongRay)
   check ref "cancel alignment judge: rejects the looser sum-of-axes error bound"
-    (!({ sample with ink := ⟨2, 2, 4, 4⟩ } : Witness).alongRay)
+    (!({ sample with ink := qb 2 2 4 4 } : Witness).alongRay)
   check ref "cancel alignment judge: a backwards centre is not on the forward ray"
-    (!({ sample with ink := ⟨-5, -4, -3, -2⟩ } : Witness).alongRay)
-  for tail in [none, some (0, 0), some (4, 3)] do
+    (!({ sample with ink := qb (-5) (-4) (-3) (-2) } : Witness).alongRay)
+  for tail in [none, some (qp (0, 0)), some (qp (4, 3))] do
     check ref "cancel alignment judge: missing, zero and reversed directions cannot pass"
       (!({ sample with tail } : Witness).alongRay)
-  for (tail, ink) in [(some (-4, 0), ⟨2, -1, 6, 1⟩),
-      (some (0, -4), ⟨-1, 2, 1, 6⟩)] do
+  for (tail, ink) in [(some (qp (-4, 0)), qb 2 (-1) 6 1),
+      (some (qp (0, -4)), qb (-1) 2 1 6)] do
     let w := { sample with tail, ink }
     check ref "cancel alignment judge: axis-aligned forward rays remain defined"
       (w.alongRay && w.clearsTip)
-  for gap in [0, 1, 3] do
+  for gap in [(0 : Int), 1, 3] do
     check ref "cancel alignment judge: rejects zero, insufficient and excessive clearance"
-      (!({ sample with fontGap := gap } : Witness).clearsTip)
+      (!({ sample with fontGap := q gap } : Witness).clearsTip)
   check ref "cancel alignment judge: the other edge may not exceed the gap by even one sp"
-    (({ sample with ink := sample.ink.shift 0 (-1) } : Witness).clearsTip &&
-      !({ sample with ink := sample.ink.shift 0 1 } : Witness).clearsTip)
-  for ink in [⟨2, -3, 6, -1⟩, ⟨-3, 2, -1, 6⟩] do
+    (({ sample with ink := sample.ink.shift 0 (q (-1)) } : Witness).clearsTip &&
+      !({ sample with ink := sample.ink.shift 0 (q 1) } : Witness).clearsTip)
+  for ink in [qb 2 (-3) 6 (-1), qb (-3) 2 (-1) 6] do
     check ref "cancel alignment judge: a near-edge gap cannot hide a far edge behind the tip"
       (!({ sample with ink } : Witness).clearsTip)
   let room : RoomWitness := {
-    left := 0, right := 10, assembly := #[⟨0, 2, 10, 5⟩]
-    before := #[⟨-2, 1, 0, 6⟩], after := #[⟨10, 1, 12, 6⟩] }
+    left := 0, right := q 10, assembly := #[qb 0 2 10 5]
+    before := #[qb (-2) 1 0 6], after := #[qb 10 1 12 6] }
   check ref "cancel room judge: touching hull boundaries do not overlap interiors"
     (room.containsInk && room.clearsBefore && room.clearsAfter)
-  for (dx, before) in [(-1, true), (1, false)] do
-    let moved : RoomWitness := { room with assembly := room.assembly.map (fun b => b.shift dx 0) }
+  for (dx, before) in [((-1 : Int), true), (1, false)] do
+    let moved : RoomWitness := { room with assembly := room.assembly.map (fun b => b.shift (q dx) 0) }
     check ref "cancel room judge: one-sp overhang and neighbouring intersection are detected"
       (!moved.containsInk && if before then !moved.clearsBefore else !moved.clearsAfter)
-    let high : RoomWitness := { moved with assembly := moved.assembly.map (fun b => b.shift 0 4) }
+    let high : RoomWitness := { moved with assembly := moved.assembly.map (fun b => b.shift 0 (q 4)) }
     check ref "cancel room judge: vertical separation clears neighbours but not overhang"
       (!high.containsInk && high.clearsBefore && high.clearsAfter)
-  let shaft : Array (Int × Int) := #[(0, 0), (3, 0), (371, 272), (365, 280), (0, 4)]
-  let head : Array (Int × Int) := #[(400, 300), (359, 288), (377, 264)]
+  let shaft : Array (Dim.Length × Dim.Length) :=
+    #[(0, 0), (3, 0), (371, 272), (365, 280), (0, 4)].map qp
+  let head : Array (Dim.Length × Dim.Length) := #[(400, 300), (359, 288), (377, 264)].map qp
   check ref "cancel wing judge: accepts a symmetric head at full rule width"
-    (headHasWings #[shaft, head] 10)
+    (headHasWings #[shaft, head] (q 10))
   for wing in [1, 2] do
-    for (dx, dy) in [(-40, -30), (40, 30)] do
-      let slipped := head.modify wing (fun (x, y) => (x + dx, y + dy))
+    for (dx, dy) in [((-40 : Int), (-30 : Int)), (40, 30)] do
+      let slipped := head.modify wing (fun (x, y) => (x + q dx, y + q dy))
       check ref "cancel wing judge: rejects a wing sliding along the shaft"
-        (!headHasWings #[shaft, slipped] 10)
+        (!headHasWings #[shaft, slipped] (q 10))
   check ref "cancel head judge: accepts the sourced four-rule by three-rule triangle"
-    (headHasShape #[shaft, head] 10)
+    (headHasShape #[shaft, head] (q 10))
   check ref "cancel clearance judge: accepts a separated target and rejects missing marks"
-    (({ sample with ink := ⟨425, 315, 435, 325⟩ } : Witness).clearsMarks #[shaft, head] &&
+    (({ sample with ink := qb 425 315 435 325 } : Witness).clearsMarks #[shaft, head] &&
       !sample.clearsMarks #[])
-  for ink in [⟨400, 300, 410, 310⟩, ⟨377, 283, 380, 286⟩] do
+  for ink in [qb 400 300 410 310, qb 377 283 380 286] do
     check ref "cancel clearance judge: rejects touching or overlapping target and head hulls"
       (!({ sample with ink } : Witness).clearsMarks #[shaft, head])
-  for (dx, dy) in [(-40, -30), (4, 3)] do
-    let stretched := head.modify 1 (fun (x, y) => (x + dx, y + dy))
-      |>.modify 2 (fun (x, y) => (x + dx, y + dy))
+  for (dx, dy) in [((-40 : Int), (-30 : Int)), (4, 3)] do
+    let stretched := head.modify 1 (fun (x, y) => (x + q dx, y + q dy))
+      |>.modify 2 (fun (x, y) => (x + q dx, y + q dy))
     check ref "cancel head judge: symmetric wings cannot hide stretched or shortened depth"
-      (headHasWings #[shaft, stretched] 10 && !headHasShape #[shaft, stretched] 10)
-  let widened := head.modify 1 (fun (x, y) => (x - 9, y + 12))
-    |>.modify 2 (fun (x, y) => (x + 9, y - 12))
+      (headHasWings #[shaft, stretched] (q 10) && !headHasShape #[shaft, stretched] (q 10))
+  let widened := head.modify 1 (fun (x, y) => (x - q 9, y + q 12))
+    |>.modify 2 (fun (x, y) => (x + q 9, y - q 12))
   check ref "cancel head judge: a minimum width cannot certify excessive width"
-    (headHasWings #[shaft, widened] 10 && !headHasShape #[shaft, widened] 10)
-  for rule in [0, -10] do
+    (headHasWings #[shaft, widened] (q 10) && !headHasShape #[shaft, widened] (q 10))
+  for rule in [(0 : Int), -10] do
     check ref "cancel head judge: a nonpositive rule cannot certify painted shape"
-      (!headHasShape #[shaft, head] rule)
+      (!headHasShape #[shaft, head] (q rule))
   check ref "cancel alignment judge: an absent head cannot certify alignment"
     (match arrowTip #[] with | .error _ => true | .ok _ => false)
   check ref "cancel alignment judge: a zero-area head cannot certify alignment"
-    (match arrowTip #[#[(0, 0), (1, 1), (2, 2)]] with | .error _ => true | .ok _ => false)
+    (match arrowTip #[#[(0, 0), (1, 1), (2, 2)].map qp] with | .error _ => true | .ok _ => false)
   check ref "cancel alignment judge: an absent target cannot certify alignment"
     (match targetInk fonts #[] with | .error _ => true | .ok _ => false)
   check ref "cancel polygon judge: a diagonal can have a hull but no filled area"
-    (collinear #[(0, 0), (0, 0), (3, 4), (6, 8), (0, 0)] &&
-      polygonHull #[(0, 0), (3, 4), (6, 8)] == some ⟨0, 0, 6, 8⟩)
+    (collinear (#[(0, 0), (0, 0), (3, 4), (6, 8), (0, 0)].map qp) &&
+      polygonHull (#[(0, 0), (3, 4), (6, 8)].map qp) == some (qb 0 0 6 8))
   check ref "cancel polygon judge: duplicate vertices cannot hide a painted triangle"
-    (!collinear #[(0, 0), (0, 0), (3, 4), (6, 7)])
+    (!collinear (#[(0, 0), (0, 0), (3, 4), (6, 7)].map qp))
 
 end CancelAlignment
 

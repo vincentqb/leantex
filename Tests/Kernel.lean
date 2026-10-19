@@ -76,14 +76,14 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "proof: the QED is a math glyph at the measure's right edge"
     ((lineWith pls "Larch").any fun l => (lineRuns l).any fun r =>
       r.1 == 4 && hasStr r.2.1 "□" &&
-        decide (((r.2.2.1 + r.2.2.2) - (geom.hmargin + geom.textWidth)).natAbs ≤ (Dim.pt 1).natAbs))
+        decide (((r.2.2.1 + r.2.2.2) - (geom.hmargin + geom.textWidth)).abs ≤ Dim.pt 1))
   -- After a display or a list the QED opens a line of its own at the measure's right edge.
   let qedLine (body : String) : Option Layout.LineOut :=
     let d := (elabStr (dvDoc "\\usepackage{amsthm}\n" body)).1
     let g := Layout.Geom.ofPage d.page
     (bodyLines (layoutOf fs d)).find? fun l => (lineRuns l).any fun r =>
       r.1 == 4 && hasStr r.2.1 "□" &&
-        decide (((r.2.2.1 + r.2.2.2) - (g.hmargin + g.textWidth)).natAbs ≤ (Dim.pt 1).natAbs)
+        decide (((r.2.2.1 + r.2.2.2) - (g.hmargin + g.textWidth)).abs ≤ Dim.pt 1)
   let alone (l : Layout.LineOut) : Bool :=
     !hasStr (lineText l) "Larch" && !hasStr (lineText l) "Maple"
   t "proof: after a display the QED stands alone at the measure's right edge"
@@ -115,11 +115,11 @@ def kernelThmChecks (ref : IO.Ref (List String)) : IO Unit := do
 baseline against lualatex's lengths. -/
 def kernelThmSpaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let steps (src : String) (words : List String) : List Dim.Sp :=
+  let steps (src : String) (words : List String) : List Dim.Length :=
     let c := censusOfSrc oneFace src
     let v := words.filterMap (lineYOf c 0 ·)
     (v.zip v.tail).map fun (a, b) => b - a
-  let leadOf (src : String) : Dim.Sp :=
+  let leadOf (src : String) : Dim.Length :=
     let g := Layout.Geom.ofPage (elabStr src).1.page
     Ir.leadingFor g.fontSize g.leading
   let abc := ["Alpha.", "Bravo.", "Charlie."]
@@ -132,7 +132,7 @@ def kernelThmSpaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\begin{document}\nAlpha.\n\n" ++ env e ++ "\n\nCharlie.\n\\end{document}"
   let inline (cls pre e : String) : String := s!"\\documentclass{cls}\n" ++ pre ++
     "\\begin{document}\nAlpha.\n" ++ env e ++ "\nCharlie.\n\\end{document}"
-  let both (src : String) (g : Dim.Sp) : Bool := steps src abc == [leadOf src + g, leadOf src + g]
+  let both (src : String) (g : Dim.Length) : Bool := steps src abc == [leadOf src + g, leadOf src + g]
   t "kernel theorem after a blank line: topsep and partopsep above and below"
     (both (blank "{article}" kern "thm") (Dim.pt 10))
   t "kernel theorem in an open paragraph: topsep alone"
@@ -182,7 +182,7 @@ def kernelQedHereChecks (ref : IO.Ref (List String)) : IO Unit := do
     ls.toList.filter fun l => (lineRuns l).any fun r => r.1 == 4 && hasStr r.2.1 "□"
   let atRight (g : Layout.Geom) (l : Layout.LineOut) : Bool :=
     (lineRuns l).any fun r => r.1 == 4 && hasStr r.2.1 "□" &&
-      decide (((r.2.2.1 + r.2.2.2) - (g.hmargin + g.textWidth)).natAbs ≤ (Dim.pt 1).natAbs)
+      decide (((r.2.2.1 + r.2.2.2) - (g.hmargin + g.textWidth)).abs ≤ Dim.pt 1)
   let codes (ds : Array Diag) : List String := ds.toList.map (·.code)
   let (ls, ds, g) := run
     "\\begin{proof}\nAlder opens.\n\\begin{itemize}\n\\item Birch.\n\\item Cedar ends. \\qedhere\n\
@@ -278,7 +278,7 @@ def kernelDescChecks (ref : IO.Ref (List String)) : IO Unit := do
       (((lineRuns l).find? (hasStr ·.2.1 "plain")).map (·.2.2.1)) == some (l.x + Dim.pt 5))
   let short (env pre : String) : String := dvDoc "" ("Alder opens.\n\\begin{" ++ env ++
     "}\n\\item" ++ pre ++ " Birch.\n\\item" ++ pre ++ " Cedar.\n\\end{" ++ env ++ "}\nDogwood closes.\n")
-  let ys (s : String) : List Dim.Sp :=
+  let ys (s : String) : List Dim.Length :=
     let xs := bodyLines (layoutOf fs (elabStr s).1 geom)
     ["Alder", "Birch", "Cedar", "Dogwood"].filterMap fun w =>
       (xs.find? fun l => hasStr (lineText l) w).map (·.y)

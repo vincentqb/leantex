@@ -57,11 +57,11 @@ example (a : Spacing.Pending) (r : Spacing.Context) (g : Dim.Glue)
 
 example (geom : Geom) (fs : FontSet) (before after : Ir.Doc)
     (h : Spacing.twoParagraphIncreasing geom fs before after = true) :
-    ((Spacing.inkBaselines (run geom fs none before)).getLast?.getD 0 : Int) ≤
+    ((Spacing.inkBaselines (run geom fs none before)).getLast?.getD 0 : Dim.Length) ≤
       (Spacing.inkBaselines (run geom fs none after)).getLast?.getD 0 :=
   Spacing.twoParagraphIncreasing_contract geom fs before after h
 
-example : LineOut → FontSet → Dim.Sp → Dim.Sp → Prop := LineOut.OutlinesIn
+example : LineOut → FontSet → Dim.Length → Dim.Length → Prop := LineOut.OutlinesIn
 example : Out → FontSet → LabelAudit.Request → Prop := Out.LabelInkCovered
 example : Out → LabelAudit.Request → Prop := Out.LabelLossNamed
 

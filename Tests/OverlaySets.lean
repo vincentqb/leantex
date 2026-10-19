@@ -425,7 +425,7 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
          "Before.\n\n\\[ x \\]\nAfter.")] do
     let out := layoutOf fonts (elabStr (deck169Frame body)).1
     let rout := layoutOf fonts (elabStr (deck169Frame reading)).1
-    let place (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × String) :=
+    let place (p : Layout.PageOut) : Array (Dim.Length × Dim.Length × String) :=
       p.lines.map fun l => (l.x, l.y, lineText l)
     t s!"nested overlays, {label}: the uncovered step's page is the flat frame's"
       (out.pages.size == 2 && (out.pages[1]?.map pageMarks) == (rout.pages[0]?.map pageMarks))
@@ -452,8 +452,8 @@ private def lineIdxOf (p : Layout.PageOut) (w : String) : Option Nat :=
   p.lines.findIdx? fun l => hasStr (lineText l) w
 
 /-- Each segment's pen x on its line. -/
-private def segPens (l : Layout.LineOut) : Array Dim.Sp :=
-  (l.segs.foldl (fun (acc : Array Dim.Sp × Dim.Sp) sg => (acc.1.push acc.2, acc.2 + sg.advance))
+private def segPens (l : Layout.LineOut) : Array Dim.Length :=
+  (l.segs.foldl (fun (acc : Array Dim.Length × Dim.Length) sg => (acc.1.push acc.2, acc.2 + sg.advance))
     (#[], l.x)).1
 
 /-- Per line, which of the page's segments stand in the argument's region. -/
@@ -478,21 +478,21 @@ private def regionMask (p : Layout.PageOut) : ArgRegion → Array (Array Bool)
   | .images => p.lines.map fun l => l.segs.map fun s => s matches .image ..
 
 /-- The baselines a `.lines` region stands between. -/
-private def regionBand (p : Layout.PageOut) : ArgRegion → Option (Dim.Sp × Dim.Sp)
+private def regionBand (p : Layout.PageOut) : ArgRegion → Option (Dim.Length × Dim.Length)
   | .lines above below => do
     let a ← p.lines[← lineIdxOf p above]?
     let b ← p.lines[← lineIdxOf p below]?
     pure (a.y, b.y)
   | .segs .. | .images => none
 
-private def fillIn (band : Option (Dim.Sp × Dim.Sp)) (f : Layout.Fill) : Bool :=
+private def fillIn (band : Option (Dim.Length × Dim.Length)) (f : Layout.Fill) : Bool :=
   band.any fun (top, bot) => top ≤ f.y && f.y + f.h ≤ bot
 
-private def inkIn (band : Option (Dim.Sp × Dim.Sp)) (k : Layout.InkOut) : Bool :=
+private def inkIn (band : Option (Dim.Length × Dim.Length)) (k : Layout.InkOut) : Bool :=
   band.any fun (top, bot) =>
     top ≤ k.place.dy && k.place.dy ≤ bot && k.claims.all fun b => top ≤ b.1.2 && b.2.2 ≤ bot
 
-private def linkIn (band : Option (Dim.Sp × Dim.Sp)) (r : Layout.LinkRect) : Bool :=
+private def linkIn (band : Option (Dim.Length × Dim.Length)) (r : Layout.LinkRect) : Bool :=
   band.any fun (top, bot) => top ≤ r.y && r.y + r.h ≤ bot
 
 private def segInks : Layout.Seg → Bool

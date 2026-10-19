@@ -5,14 +5,14 @@ public import LeanTex.Core.Color
 public import LeanTex.Core.Trig
 
 /-! The vector model pictures, SVG images and PDF figures share: a painter's-algorithm tree in a
-y-up `Sp` frame, with exact rational matrices. -/
+y-up `Length` frame, with exact rational matrices. -/
 
 namespace LeanTex.Core.Gfx
 
 open LeanTex.Core LeanTex.Core.Dim
 
-/-- A point in a figure frame: `Sp` at 2⁻¹⁶ of the frame unit, y up. -/
-public abbrev Pt := Sp × Sp
+/-- A point in a figure frame, y up. -/
+public abbrev Pt := Length × Length
 
 /-- A box: min corner, then max corner. -/
 public abbrev Box := Pt × Pt
@@ -29,31 +29,29 @@ public instance (a b : Box) : Decidable (Box.le a b) := by
   unfold Box.le
   infer_instance
 
--- These proofs bind `Int`, not `Sp`: omega does not see through the abbreviation.
-
 public theorem Box.le_refl (a : Box) : Box.le a a := by
-  have h : ∀ x : Int, x ≤ x := fun _ => Int.le_refl _
+  have h : ∀ x : Length, x ≤ x := by intro x; length_omega
   exact ⟨h _, h _, h _, h _⟩
 
 public theorem Box.le_join_left (a b : Box) : Box.le a (Box.join a b) := by
-  have hmin : ∀ x y : Int, min x y ≤ x := by intro x y; omega
-  have hmax : ∀ x y : Int, x ≤ max x y := by intro x y; omega
+  have hmin : ∀ x y : Length, min x y ≤ x := by intro x y; length_omega
+  have hmax : ∀ x y : Length, x ≤ max x y := by intro x y; length_omega
   exact ⟨hmin _ _, hmin _ _, hmax _ _, hmax _ _⟩
 
 public theorem Box.le_join_right (a b : Box) : Box.le b (Box.join a b) := by
-  have hmin : ∀ x y : Int, min x y ≤ y := by intro x y; omega
-  have hmax : ∀ x y : Int, y ≤ max x y := by intro x y; omega
+  have hmin : ∀ x y : Length, min x y ≤ y := by intro x y; length_omega
+  have hmax : ∀ x y : Length, y ≤ max x y := by intro x y; length_omega
   exact ⟨hmin _ _, hmin _ _, hmax _ _, hmax _ _⟩
 
 public theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : Box.le a c := by
-  have h : ∀ x y z : Int, x ≤ y → y ≤ z → x ≤ z := fun _ _ _ => Int.le_trans
+  have h : ∀ x y z : Length, x ≤ y → y ≤ z → x ≤ z := by intro x y z; length_omega
   exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
          h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
 
 public theorem Box.join_le {a b c : Box} (ha : Box.le a c) (hb : Box.le b c) :
     Box.le (Box.join a b) c := by
-  have hmin : ∀ x y z : Int, z ≤ x → z ≤ y → z ≤ min x y := by intro x y z; omega
-  have hmax : ∀ x y z : Int, x ≤ z → y ≤ z → max x y ≤ z := by intro x y z; omega
+  have hmin : ∀ x y z : Length, z ≤ x → z ≤ y → z ≤ min x y := by intro x y z; length_omega
+  have hmax : ∀ x y z : Length, x ≤ z → y ≤ z → max x y ≤ z := by intro x y z; length_omega
   exact ⟨hmin _ _ _ ha.1 hb.1, hmin _ _ _ ha.2.1 hb.2.1,
     hmax _ _ _ ha.2.2.1 hb.2.2.1, hmax _ _ _ ha.2.2.2 hb.2.2.2⟩
 
@@ -105,7 +103,7 @@ geometry folds. -/
   | some a, some b => some (Box.join a b)
 
 /-- A box grown by `d` on every side. -/
-@[expose] public def Box.dilate (b : Box) (d : Sp) : Box :=
+@[expose] public def Box.dilate (b : Box) (d : Length) : Box :=
   ((b.1.1 - d, b.1.2 - d), (b.2.1 + d, b.2.2 + d))
 
 @[expose] public def Box.point (p : Pt) : Box := (p, p)
@@ -118,7 +116,7 @@ and something is never inside nothing. -/
   | some a, some b => Box.le a b
 
 /-- An affine map `(x, y) ↦ (a·x + c·y + e, b·x + d·y + f)` (ISO 32000-2 §8.3.3), exact, its
-translation in `Sp`. -/
+translation in base units. -/
 public structure Affine where
   a : Rat
   b : Rat
@@ -140,22 +138,22 @@ public structure Affine where
 @[expose] public def Affine.apply (m : Affine) (p : Rat × Rat) : Rat × Rat :=
   (m.a * p.1 + m.c * p.2 + m.e, m.b * p.1 + m.d * p.2 + m.f)
 
-/-- A translation by whole `Sp`. -/
-@[expose] public def Affine.translate (dx dy : Sp) : Affine := ⟨1, 0, 0, 1, dx, dy⟩
+/-- A translation by whole lengths. -/
+@[expose] public def Affine.translate (dx dy : Length) : Affine := ⟨1, 0, 0, 1, dx.toRat, dy.toRat⟩
 
 /-- A scaling about the origin. -/
 @[expose] public def Affine.scale (sx sy : Rat) : Affine := ⟨sx, 0, 0, sy, 0, 0⟩
 
-/-- The six matrix operands both formats spell, the translation from `Sp` to points. -/
+/-- The six matrix operands both formats spell, the translation in big points. -/
 public def Affine.operands (m : Affine) : String :=
   s!"{ratDecimal m.a} {ratDecimal m.b} {ratDecimal m.c} {ratDecimal m.d} \
-{ratString m.e.num ((m.e.den : Int) * spPerPt)} {ratString m.f.num ((m.f.den : Int) * spPerPt)}"
+{unitsRatBpString m.e} {unitsRatBpString m.f}"
 
 /-- An integer isometry: `(x, y) ↦ (x + dx, dy − y)` when it flips, else `(x + dx, y + dy)`. -/
 public structure Iso where
   flipY : Bool
-  dx : Sp
-  dy : Sp
+  dx : Length
+  dy : Length
   deriving Repr, BEq, DecidableEq, Inhabited
 
 @[expose] public def Iso.apply (t : Iso) (p : Pt) : Pt :=
@@ -172,13 +170,13 @@ public structure Iso where
 
 /-- The isometry as an exact matrix. -/
 @[expose] public def Iso.toAffine (t : Iso) : Affine :=
-  ⟨1, 0, 0, if t.flipY then -1 else 1, t.dx, t.dy⟩
+  ⟨1, 0, 0, if t.flipY then -1 else 1, t.dx.toRat, t.dy.toRat⟩
 
 public theorem Iso.inv_apply_id (t : Iso) (p : Pt) : t.inv.apply (t.apply p) = p := by
   obtain ⟨fl, dx, dy⟩ := t
   obtain ⟨x, y⟩ := p
-  have hx : ∀ a b : Int, a + b + -b = a := by intro a b; omega
-  have hy : ∀ a b : Int, b - (b - a) = a := by intro a b; omega
+  have hx : ∀ a b : Length, a + b + -b = a := by intro a b; length_omega
+  have hy : ∀ a b : Length, b - (b - a) = a := by intro a b; length_omega
   cases fl
   · simp only [Iso.inv, Iso.apply, Bool.false_eq_true, ↓reduceIte, Prod.mk.injEq]
     exact ⟨hx x dx, hx y dy⟩
@@ -187,15 +185,15 @@ public theorem Iso.inv_apply_id (t : Iso) (p : Pt) : t.inv.apply (t.apply p) = p
 public theorem Iso.apply_inv_id (t : Iso) (p : Pt) : t.apply (t.inv.apply p) = p := by
   obtain ⟨fl, dx, dy⟩ := t
   obtain ⟨x, y⟩ := p
-  have hx : ∀ a b : Int, a + -b + b = a := by intro a b; omega
-  have hy : ∀ a b : Int, b - (b - a) = a := by intro a b; omega
+  have hx : ∀ a b : Length, a + -b + b = a := by intro a b; length_omega
+  have hy : ∀ a b : Length, b - (b - a) = a := by intro a b; length_omega
   cases fl
   · simp only [Iso.inv, Iso.apply, Bool.false_eq_true, ↓reduceIte, Prod.mk.injEq]
     exact ⟨hx x dx, hx y dy⟩
   · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq]; exact ⟨hx x dx, hy y dy⟩
 
 /-- An axis-aligned rectangle (min corner, extents) carried by the isometry. -/
-@[expose] public def Iso.rect (t : Iso) (x y w h : Sp) : Sp × Sp × Sp × Sp :=
+@[expose] public def Iso.rect (t : Iso) (x y w h : Length) : Length × Length × Length × Length :=
   (x + t.dx, if t.flipY then t.dy - (y + h) else y + t.dy, w, h)
 
 /-- A box carried by the isometry: its image's min and max corners. -/
@@ -228,8 +226,8 @@ public structure Subpath where
 /-- A draw's geometry: an axis-aligned rectangle (min corner, extents), an
 axis-aligned ellipse (centre, radii), or a path. -/
 public inductive Geom where
-  | rect (x y w h : Sp)
-  | ellipse (cx cy rx ry : Sp)
+  | rect (x y w h : Length)
+  | ellipse (cx cy rx ry : Length)
   | path (subs : Array Subpath)
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -269,7 +267,7 @@ public instance : BEq Stop where
 the node's. -/
 public inductive Gradient where
   | linear (p0 p1 : Pt) (stops : Array Stop) (xf : Affine)
-  | radial (c0 : Pt) (r0 : Sp) (c1 : Pt) (r1 : Sp) (stops : Array Stop) (xf : Affine)
+  | radial (c0 : Pt) (r0 : Length) (c1 : Pt) (r1 : Length) (stops : Array Stop) (xf : Affine)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The map from a gradient's own frame into the frame of what it paints. -/
@@ -304,12 +302,12 @@ public structure Fill where
 /-- How a draw strokes, every field stated, since PDF's and SVG's defaults differ. -/
 public structure Stroke where
   paint : Paint
-  width : Sp
+  width : Length
   cap : Cap
   join : Join
   miterLimit : Rat
-  dash : Array Sp
-  phase : Sp
+  dash : Array Length
+  phase : Length
   alpha : Alpha
   deriving Repr, BEq, Inhabited
 
@@ -350,7 +348,7 @@ public inductive Anchor where
 public structure Run where
   xf : Affine
   follows : Bool
-  size : Sp
+  size : Length
   text : String
   face : FaceReq
   anchor : Anchor
@@ -362,9 +360,9 @@ public structure Run where
 /-- A run after shaping: each glyph's face, glyph id, scalar and pen x, with the role, weight and
 slant the shaping resolved. -/
 public structure Shaped where
-  size : Sp
+  size : Length
   xf : Affine
-  glyphs : Array (Nat × Nat × Char × Sp)
+  glyphs : Array (Nat × Nat × Char × Length)
   text : String
   fill : Option Fill
   stroke : Option Stroke
@@ -431,7 +429,7 @@ public def kappaNum : Int := 5523
 public def kappaDen : Int := 10000
 
 /-- An axis-aligned ellipse as four cubic quarter arcs, counter-clockwise from angle 0, closed. -/
-@[expose] public def ellipse (cx cy rx ry : Sp) : Array Subpath :=
+@[expose] public def ellipse (cx cy rx ry : Length) : Array Subpath :=
   let kx := rx * kappaNum / kappaDen
   let ky := ry * kappaNum / kappaDen
   #[{ start := (cx + rx, cy)
@@ -442,21 +440,17 @@ public def kappaDen : Int := 10000
       closed := true }]
 
 /-- A rectangle's outline as ISO 32000-2 §8.5.2.1's `re` draws it. -/
-@[expose] public def rectPath (x y w h : Sp) : Subpath :=
+@[expose] public def rectPath (x y w h : Length) : Subpath :=
   { start := (x, y), segs := #[.line (x + w, y), .line (x + w, y + h), .line (x, y + h)]
     closed := true }
 
-private def mulRound (p num den : Int) : Int :=
-  let n := p * num
-  if n < 0 then -((-n + den / 2) / den) else (n + den / 2) / den
-
 /-- A rounded rectangle (SVG 2 §10.2), its radii clamped to half the extents. -/
-public def roundedRect (x y w h rx ry : Sp) : Subpath :=
+public def roundedRect (x y w h rx ry : Length) : Subpath :=
   let rx := max 0 (min rx (w / 2))
   let ry := max 0 (min ry (h / 2))
   if rx == 0 || ry == 0 then rectPath x y w h else
-  let kx := mulRound rx kappaNum kappaDen
-  let ky := mulRound ry kappaNum kappaDen
+  let kx := Length.scaleRound rx kappaNum kappaDen
+  let ky := Length.scaleRound ry kappaNum kappaDen
   let r := x + w
   let t := y + h
   { start := (x + rx, y)
@@ -472,12 +466,12 @@ public def roundedRect (x y w h rx ry : Sp) : Subpath :=
 
 /-- A quadratic Bézier elevated to the cubic that draws it, within one unit of the exact elevation. -/
 public def quadToCubic (p0 q p1 : Pt) : Seg :=
-  .cubic (p0.1 + mulRound (q.1 - p0.1) 2 3, p0.2 + mulRound (q.2 - p0.2) 2 3)
-    (p1.1 + mulRound (q.1 - p1.1) 2 3, p1.2 + mulRound (q.2 - p1.2) 2 3) p1
+  .cubic (p0.1 + Length.scaleRound (q.1 - p0.1) 2 3, p0.2 + Length.scaleRound (q.2 - p0.2) 2 3)
+    (p1.1 + Length.scaleRound (q.1 - p1.1) 2 3, p1.2 + Length.scaleRound (q.2 - p1.2) 2 3) p1
 
 /-- A dash array as both formats read it: an odd SVG list is doubled, and a
 list with no positive entry or a negative one draws solid. -/
-@[expose] public def normDash (d : Array Sp) : Array Sp :=
+@[expose] public def normDash (d : Array Length) : Array Length :=
   if d.any (· < 0) || !d.any (0 < ·) then #[]
   else if d.size % 2 == 1 then d ++ (d) else d
 
@@ -486,15 +480,16 @@ private def onEllipse (cx cy sc rx ry cφ sφ θ : Int) : Pt :=
   let u := rx * c
   let v := ry * s
   let uu := Trig.unit * Trig.unit
-  (Trig.divRound (cx * uu + (u * cφ - v * sφ)) (uu * sc),
-   Trig.divRound (cy * uu + (u * sφ + v * cφ)) (uu * sc))
+  (.ofUnits (Trig.divRound (cx * uu + (u * cφ - v * sφ)) (uu * sc)),
+   .ofUnits (Trig.divRound (cy * uu + (u * sφ + v * cφ)) (uu * sc)))
 
-private def tangent (sc rx ry cφ sφ θ k : Int) : Int × Int :=
+private def tangent (sc rx ry cφ sφ θ k : Int) : Pt :=
   let (c, s) := Trig.cosSin θ
   let u := -(rx * s)
   let v := ry * c
   let u3 := Trig.unit * Trig.unit * Trig.unit * sc
-  (Trig.divRound ((u * cφ - v * sφ) * k) u3, Trig.divRound ((u * sφ + v * cφ) * k) u3)
+  (.ofUnits (Trig.divRound ((u * cφ - v * sφ) * k) u3),
+   .ofUnits (Trig.divRound ((u * sφ + v * cφ) * k) u3))
 
 private def pieceK (δ : Int) : Int :=
   let cs := Trig.cosSin (δ / 4)
@@ -528,10 +523,10 @@ private def arcCubicsAt (cx cy sc rx ry φ θ0 Δ : Int) (last : Pt) : Array Seg
   head.1.push (arcLast cx cy sc rx ry csφ.1 csφ.2 θ0 Δ head.2 last)
 
 /-- The cubic pieces of an elliptic arc from `θ0` through `Δ` (2⁻³⁰ rad), the last ending exactly on `last`. -/
-public def arcCubics (cx cy rx ry φ θ0 Δ : Int) (last : Pt) : Array Seg :=
-  arcCubicsAt cx cy 1 rx ry φ θ0 Δ last
+public def arcCubics (cx cy rx ry : Length) (φ θ0 Δ : Int) (last : Pt) : Array Seg :=
+  arcCubicsAt cx.units cy.units 1 rx.units ry.units φ θ0 Δ last
 
-public theorem arcCubics_exact (cx cy rx ry φ θ0 Δ : Int) (last : Pt) :
+public theorem arcCubics_exact (cx cy rx ry : Length) (φ θ0 Δ : Int) (last : Pt) :
     (arcCubics cx cy rx ry φ θ0 Δ last).back?.map Seg.endPt = some last := by
   simp only [arcCubics, arcCubicsAt, Array.back?_push, Option.map_some]
   rfl
@@ -539,14 +534,17 @@ public theorem arcCubics_exact (cx cy rx ry φ θ0 Δ : Int) (last : Pt) :
 private def arcScale : Int := 65536
 
 /-- An arc in SVG's endpoint parameterization (SVG 2 §9.5, Appendix B.2.4) as cubic pieces. -/
-public def arcEndpoint (p1 : Pt) (rx ry φ : Int) (large sweep : Bool) (p2 : Pt) : Array Seg :=
+public def arcEndpoint (p1 : Pt) (rx ry : Length) (φ : Int) (large sweep : Bool) (p2 : Pt) :
+    Array Seg :=
   if p1 == p2 then #[] else
   if rx == 0 || ry == 0 then #[.line p2] else
+  let rx := rx.units
+  let ry := ry.units
   let u := Trig.unit
   let sc := arcScale
   let (cφ, sφ) := Trig.cosSin φ
-  let dx := p1.1 - p2.1
-  let dy := p1.2 - p2.2
+  let dx := (p1.1 - p2.1).units
+  let dy := (p1.2 - p2.2).units
   let x1 := Trig.divRound ((cφ * dx + sφ * dy) * sc) (2 * u)
   let y1 := Trig.divRound ((cφ * dy - sφ * dx) * sc) (2 * u)
   let rx0 : Int := (rx.natAbs : Int) * sc
@@ -567,8 +565,8 @@ public def arcEndpoint (p1 : Pt) (rx ry φ : Int) (large sweep : Bool) (p2 : Pt)
   let coef := if large == sweep then -coef else coef
   let cx1 := Trig.divRound (coef * rx * y1) (ry * u)
   let cy1 := -(Trig.divRound (coef * ry * x1) (rx * u))
-  let cx := Trig.divRound (cφ * cx1 - sφ * cy1) u + (p1.1 + p2.1) * sc / 2
-  let cy := Trig.divRound (sφ * cx1 + cφ * cy1) u + (p1.2 + p2.2) * sc / 2
+  let cx := Trig.divRound (cφ * cx1 - sφ * cy1) u + (p1.1 + p2.1).units * sc / 2
+  let cy := Trig.divRound (sφ * cx1 + cφ * cy1) u + (p1.2 + p2.2).units * sc / 2
   let θ1 := Trig.atan2 ((y1 - cy1) * rx) ((x1 - cx1) * ry)
   let θ2 := Trig.atan2 ((-y1 - cy1) * rx) ((-x1 - cx1) * ry)
   let Δ := θ2 - θ1
@@ -577,11 +575,12 @@ public def arcEndpoint (p1 : Pt) (rx ry φ : Int) (large sweep : Bool) (p2 : Pt)
   arcCubicsAt cx cy sc rx ry φ θ1 Δ p2
 
 /-- A regular polygon's vertices, the first at angle `θ0` (2⁻³⁰ rad). -/
-public def regularPolygon (cx cy r : Sp) (n : Nat) (θ0 : Int) : Subpath :=
+public def regularPolygon (cx cy r : Length) (n : Nat) (θ0 : Int) : Subpath :=
   let n := max 3 n
   let vertex (k : Nat) : Pt :=
     let (c, s) := Trig.cosSin (θ0 + 2 * Trig.pi * (k : Int) / (n : Int))
-    (cx + Trig.divRound (r * c) Trig.unit, cy + Trig.divRound (r * s) Trig.unit)
+    (cx + .ofUnits (Trig.divRound (r.units * c) Trig.unit),
+      cy + .ofUnits (Trig.divRound (r.units * s) Trig.unit))
   { start := vertex 0, segs := (Array.range (n - 1)).map fun k => .line (vertex (k + 1))
     closed := true }
 
@@ -733,18 +732,18 @@ end
 @[expose] public def Figure.marks {L : Type} (fig : Figure L) : Array Mark :=
   Node.marksList fig.outlines Ctx.root #[] fig.expanded.toList
 
-/-- The least whole-`Sp` box holding an affine image of a box, rounded outward. -/
+/-- The least whole-`Length` box holding an affine image of a box, rounded outward. -/
 @[expose] public def Box.image (m : Affine) (b : Box) : Box :=
-  let x0 : Rat := b.1.1
-  let y0 : Rat := b.1.2
-  let x1 : Rat := b.2.1
-  let y1 : Rat := b.2.2
+  let x0 : Rat := b.1.1.toRat
+  let y0 : Rat := b.1.2.toRat
+  let x1 : Rat := b.2.1.toRat
+  let y1 : Rat := b.2.2.toRat
   let fx (x y : Rat) : Rat := m.a * x + m.c * y + m.e
   let fy (x y : Rat) : Rat := m.b * x + m.d * y + m.f
-  ((Rat.floor (min (min (fx x0 y0) (fx x1 y0)) (min (fx x0 y1) (fx x1 y1))),
-    Rat.floor (min (min (fy x0 y0) (fy x1 y0)) (min (fy x0 y1) (fy x1 y1)))),
-   (Rat.ceil (max (max (fx x0 y0) (fx x1 y0)) (max (fx x0 y1) (fx x1 y1))),
-    Rat.ceil (max (max (fy x0 y0) (fy x1 y0)) (max (fy x0 y1) (fy x1 y1)))))
+  ((.ofRatFloor (min (min (fx x0 y0) (fx x1 y0)) (min (fx x0 y1) (fx x1 y1))),
+    .ofRatFloor (min (min (fy x0 y0) (fy x1 y0)) (min (fy x0 y1) (fy x1 y1)))),
+   (.ofRatCeil (max (max (fx x0 y0) (fx x1 y0)) (max (fx x0 y1) (fx x1 y1))),
+    .ofRatCeil (max (max (fy x0 y0) (fy x1 y0)) (max (fy x0 y1) (fy x1 y1)))))
 
 /-- The hull of a list of points onto `acc`. -/
 @[expose] public def ptsHull (acc : Option Box) : List Pt → Option Box
@@ -775,19 +774,20 @@ end
   let w1 := 3 * s * s * t
   let w2 := 3 * s * t * t
   let w3 := t * t * t
-  (w0 * p0.1 + w1 * c1.1 + w2 * c2.1 + w3 * p1.1, w0 * p0.2 + w1 * c1.2 + w2 * c2.2 + w3 * p1.2)
+  (w0 * p0.1.toRat + w1 * c1.1.toRat + w2 * c2.1.toRat + w3 * p1.1.toRat,
+   w0 * p0.2.toRat + w1 * c1.2.toRat + w2 * c2.2.toRat + w3 * p1.2.toRat)
 
 /-- How far a stroke's paint reaches past its path: half the width, times the miter limit for miter
 joins and 3/2 for square caps. -/
-@[expose] public def Stroke.reach (s : Stroke) : Sp :=
+@[expose] public def Stroke.reach (s : Stroke) : Length :=
   let half := s.width / 2
-  let byJoin : Sp := match s.join with
+  let byJoin : Length := match s.join with
     | .miter => if s.miterLimit ≤ 1 then half else
-        Rat.ceil ((half : Rat) * s.miterLimit)
+        .ofRatCeil (half.toRat * s.miterLimit)
     | .round => half
     | .bevel => half
-  let byCap : Sp := match s.cap with
-    | .square => half + half / 2 + 1
+  let byCap : Length := match s.cap with
+    | .square => half + half / 2 + Length.quantum
     | .butt => half
     | .round => half
   max 0 (max half (max byJoin byCap))
@@ -806,8 +806,8 @@ stroke's reach in the mark's frame, then imaged. -/
   | .raster ctm _ _ _ => some (Box.image ctm rasterBox)
   | .shading _ _ _ => none
 
-/-- The unit square a raster's image maps, 2¹⁶ `Sp` on a side in both formats. -/
-@[expose] public def rasterUnit : Box := ((0, 0), (65536, 65536))
+/-- The unit square a raster's image maps, one big point on a side in both formats. -/
+@[expose] public def rasterUnit : Box := ((0, 0), (bp 1, bp 1))
 
 /-- The hull of a box-valued reading over an array. -/
 @[expose] public def hullOf {α : Type} (f : α → Option Box) (xs : Array α) : Option Box :=
@@ -1013,9 +1013,7 @@ public theorem Node.recolor_geomBox_id {L : Type} (f : Ir.Color → Ir.Color) (f
              symbols := fig.symbols.map fun s => Node.recolorList f fl #[] s.toList }
 
 /-- A length on the milli-point grid both emitters print to. -/
-@[expose] public def qSp (x : Sp) : Sp :=
-  let m := x.toPtMilli
-  if m < 0 then -(((-m) * 65536 + 500) / 1000) else (m * 65536 + 500) / 1000
+@[expose] public def qSp (x : Length) : Length := .ofBpMilli x.toBpMilli
 
 /-- A matrix entry on the nine-decimal grid of `Dim.ratString`. -/
 @[expose] public def qRat (r : Rat) : Rat :=

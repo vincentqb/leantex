@@ -13,7 +13,7 @@ def hspaceAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     match (elabStr (metricDoc body)).1.body with
     | #[.para xs] => some xs
     | _ => none
-  let ptGlue (n : Int) : Dim.SymGlue := { width := .ofSp (Dim.pt n) }
+  let ptGlue (n : Int) : Dim.SymGlue := { width := .ofLength (Dim.pt n) }
   t "hspace carries one affine value instead of its source text"
     (para "Alpha\\hspace{6pt}Bravo" ==
       some #[.text "Alpha", .hspace (.lit (ptGlue 6)) false, .text "Bravo"] &&
@@ -31,14 +31,14 @@ def hspaceAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\begin{minipage}{100pt}A\\hspace{0.5\\linewidth + 3pt}B\\end{minipage}")
   let localOut := layoutOf oneFace localElab.1
   let localGaps := (bodyLines localOut).flatMap metricInnerGaps
-  t s!"hspace resolves linewidth at its minipage, not the outer page ({localGaps})"
+  t s!"hspace resolves linewidth at its minipage, not the outer page ({reprStr localGaps})"
     (localGaps == #[Dim.pt 53])
   let negative := metricOut oneFace "Alpha\\hspace{-2pt}Bravo"
   t "a negative hspace pulls the following ink back"
     ((bodyLines negative).flatMap metricInnerGaps == #[Dim.pt (-2)])
   let starred := bodyLines (metricOut oneFace "Alpha\\\\\\hspace*{1cm}Bravo")
   let plain := bodyLines (metricOut oneFace "Alpha\\\\\\hspace{1cm}Bravo")
-  let firstInk (l : Layout.LineOut) : Option Dim.Sp := ((metricRunsAt l)[0]?).map (·.2)
+  let firstInk (l : Layout.LineOut) : Option Dim.Length := ((metricRunsAt l)[0]?).map (·.2)
   t "the star keeps hspace after a line break; plain glue is discarded"
     (starred.size == 2 && plain.size == 2 &&
       (starred[1]?.bind firstInk) == (starred[1]?.map (·.x + Dim.mm 10)) &&
@@ -78,4 +78,4 @@ def inlineRuleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "register rule arithmetic is refused by name"
     (register.any fun d => d.code == "E0331" && hasStr d.message "register")
 where
-  ptGlue (n : Int) : Dim.SymGlue := { width := .ofSp (Dim.pt n) }
+  ptGlue (n : Int) : Dim.SymGlue := { width := .ofLength (Dim.pt n) }

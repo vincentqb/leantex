@@ -78,7 +78,7 @@ def condBranchRow (kept hidden : List String) :
   hidden.map (fun h => (s!"the branch TeX skips does not: {h}", !hasStr (censusText c) h))
 
 /-- The size of the first line on page 0 holding `needle`, or 0. -/
-def mdSizeOf (c : Array CensusPage) (needle : String) : Dim.Sp :=
+def mdSizeOf (c : Array CensusPage) (needle : String) : Dim.Length :=
   (lineSizeOf c 0 needle).getD 0
 
 /-- The pages' text as prose, every run of spaces one space. -/
@@ -91,7 +91,7 @@ def censusInk (c : Array CensusPage) : String :=
 
 /-- Three rules in line order bracket a table as booktabs does: a heavy rule above the header, a
 lighter one below it, and one as heavy as the first under the last row. -/
-def booktabsBrackets (c : Array CensusPage) (rules : List (Dim.Sp × Dim.Sp))
+def booktabsBrackets (c : Array CensusPage) (rules : List (Dim.Length × Dim.Length))
     (header firstRow lastRow : String) : Bool :=
   match rules, lineYOf c 0 header, lineYOf c 0 firstRow, lineYOf c 0 lastRow with
   | [(top, heavy), (mid, light), (bottom, heavy')], some h, some f, some l =>
@@ -382,7 +382,7 @@ def censusRows0 :
       -- to the sp integer division owes the fil pair, as pad_center does
       (lineRightOf c 0 "(1)").any fun r =>
         decide (r ≤ geom.hmargin + geom.textWidth ∧
-          geom.hmargin + geom.textWidth - r ≤ 2)),
+          geom.hmargin + geom.textWidth - r ≤ 2 * Dim.Length.quantum)),
     ("eqref resolves to the parenthesised number",
       hasStr (censusText c) "Equation(1)")]),
   ("crossref", fun _ c => [
@@ -539,7 +539,7 @@ def censusRows1 :
     ("the title matter centres on the declared alignment",
       ((c[0]?.bind fun p => p.lines.find? fun l =>
         hasStr l.text "An Invented Band Title").map fun l =>
-          decide ((2 * l.x + l.width - geom.pageW).natAbs ≤ 1)).getD false),
+          decide ((2 * l.x + l.width - geom.pageW).abs ≤ Dim.Length.quantum)).getD false),
     ("the body columns start below the band",
       (((c[0]?.bind fun p => p.lines.find? fun l =>
           hasStr l.text "An Invented Band Title").map (·.y)).bind fun ty =>
@@ -563,7 +563,7 @@ def censusRows1 :
         pageHas c 0 "example.org"),
     ("the title page's ground covers the page and is painted first",
       (c[0]?.bind fun p => p.fillRects[0]?).map
-        (fun r => decide (r.1 == (0 : Dim.Sp) ∧ r.2.1 == (0 : Dim.Sp) ∧
+        (fun r => decide (r.1 == (0 : Dim.Length) ∧ r.2.1 == (0 : Dim.Length) ∧
           r.2.2.1 == geom.pageW ∧ r.2.2.2 == geom.pageH)) == some true),
     ("the frame after it ships its own page",
       pageHas c 1 "On the document" &&
@@ -1112,7 +1112,7 @@ def censusRows5 :
       ((lineXOf c 0 "left box").bind fun xl => (lineXOf c 0 "right box").map
         fun xr => decide (xl < xr)).getD false)]),
   ("box-sides", fun geom c =>
-    let near (a b : Dim.Sp) : Bool := decide ((a - b).natAbs ≤ (Dim.pt 1).natAbs)
+    let near (a b : Dim.Length) : Bool := decide ((a - b).abs ≤ Dim.pt 1)
     let right := geom.hmargin + geom.textWidth
     [("one page", c.size == 1),
      ("the document title stands centred in the measure",
@@ -1362,7 +1362,7 @@ def censusRows7 :
     ("no mark ink within the declared gap of a trim corner",
       c.all fun p => p.fillRects.all fun r =>
         ([(0, 0), (geom.pageW, 0), (0, geom.pageH), (geom.pageW, geom.pageH)] :
-            List (Dim.Sp × Dim.Sp)).all fun cc =>
+            List (Dim.Length × Dim.Length)).all fun cc =>
           decide ¬(r.1 < cc.1 + geom.markGap ∧ cc.1 - geom.markGap < r.1 + r.2.2.1 ∧
             r.2.1 < cc.2 + geom.markGap ∧ cc.2 - geom.markGap < r.2.1 + r.2.2.2)),
     ("the marks are duplex-symmetric: the horizontal flip maps each onto a mark",
@@ -1450,7 +1450,7 @@ def linesFrom (c : Array CensusPage) (a : String) : Array CensusLine :=
   | none => #[]
 
 /-- Whether the `i`-th of `ls` holds `text` and stands `steps` laid-out steps in from the first. -/
-def linesStepAt (step : Dim.Sp) (ls : Array CensusLine) (i : Nat) (text : String) (steps : Nat) :
+def linesStepAt (step : Dim.Length) (ls : Array CensusLine) (i : Nat) (text : String) (steps : Nat) :
     Bool :=
   match ls[0]?, ls[i]? with
   | some l0, some li => hasStr li.text text && li.x == l0.x + steps * step

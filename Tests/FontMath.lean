@@ -376,13 +376,13 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let set (f : Font) : Font.FontSet := {
     fonts := #[f]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
-  let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char × Dim.Sp) × Dim.Sp) :=
+  let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char × Dim.Length) × Dim.Length) :=
     (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
       (·.segs.filterMap fun s =>
         match s with
         | .run _ _ _ _ glyphs size _ _ _ _ _ => some (glyphs, size)
         | _ => none)
-  let ink (rs : Array (Array (Nat × Char × Dim.Sp) × Dim.Sp)) : Array (Nat × Dim.Sp) :=
+  let ink (rs : Array (Array (Nat × Char × Dim.Length) × Dim.Length)) : Array (Nat × Dim.Length) :=
     rs.flatMap fun (glyphs, size) => glyphs.map fun (g, _) => (g, size)
   let scSerif := drawn (set serif) "{\\scshape NaCl}"
   t "gsub small caps draw the same ink for NaCl, nacl, and NACL"
@@ -611,7 +611,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match taRun with
      | some (w, glyphs) =>
        let geom : Layout.Geom := {}
-       let want : Dim.Sp :=
+       let want : Dim.Length :=
          ((ssp.widths[sspT]! : Int) * geom.fontSize / 1000
            + (-41 : Int) * geom.fontSize / 1000)
            + (ssp.widths[sspA]! : Int) * geom.fontSize / 1000
@@ -634,20 +634,20 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => none
   t "space kern: each interword gap is the space plus its neighbours' pairs"
     (let fsz := ({} : Layout.Geom).fontSize
-     let u (n : Int) : Dim.Sp := n * fsz / 1000
+     let u (n : Int) : Dim.Length := n * fsz / 1000
      let sp := u ssp.spaceAdvance
      skGaps == #[sp + u (-19), sp + u (-30), sp + u (-39) + u (-30), sp + u (-39), sp])
   -- A text-font command's edges stop a space kern, as ltfntcmd's `\/` does; a declaration does not.
   let some sfs ← serifFacesSet | t "font edge: the serif faces load" false
-  let edgeRun (src : String) : Array Dim.Sp × Array Diag :=
+  let edgeRun (src : String) : Array Dim.Length × Array Diag :=
     let (d, ds) := Elab.run "t" src
     let gaps := ((layoutOf sfs d ({} : Layout.Geom)).pages.flatMap (·.lines)).flatMap (·.segs)
       |>.filterMap fun s => match s with
         | .gap w true => some w
         | _ => none
     (gaps, ds)
-  let edgeGap (src : String) : Array Dim.Sp := (edgeRun src).1
-  let edgeU (n : Int) : Dim.Sp := n * ({} : Layout.Geom).fontSize / 1000
+  let edgeGap (src : String) : Array Dim.Length := (edgeRun src).1
+  let edgeU (n : Int) : Dim.Length := n * ({} : Layout.Geom).fontSize / 1000
   let edgeSp := edgeU ssp.spaceAdvance
   -- Two edges at one space give its pair back once (lualatex: 8.44 bp in each spelling).
   let boldSp := edgeU (sfs.get (sfs.lookup 0 700 false)).spaceAdvance
@@ -1306,20 +1306,20 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     mathAlphabets := alphaCoverage }
   let geom : Layout.Geom := {}
   let base := geom.fontSize
-  let mbase : Dim.Sp := (Math.mathSize base.toNat serif.xHeightOptical
-    serif.unitsPerEm fira.xHeightOptical fira.unitsPerEm : Nat)
+  let mbase : Dim.Length := .ofUnits (Math.mathSize base.units.toNat serif.xHeightOptical
+    serif.unitsPerEm fira.xHeightOptical fira.unitsPerEm)
   let bodyXh := (serif.xHeightOptical : Int) * base / serif.unitsPerEm
-  let mathXhAt (sz : Dim.Sp) := (fira.xHeightOptical : Int) * sz / fira.unitsPerEm
+  let mathXhAt (sz : Dim.Length) := (fira.xHeightOptical : Int) * sz / fira.unitsPerEm
   t "x-heights disagree before scaling" (mathXhAt base != bodyXh)
   t "x-heights agree after scaling, within one sp"
-    (mathXhAt mbase ≤ bodyXh && bodyXh ≤ mathXhAt mbase + 1)
+    (mathXhAt mbase ≤ bodyXh && bodyXh ≤ mathXhAt mbase + Dim.Length.quantum)
   let upem : Int := fira.unitsPerEm
-  let adv (size : Dim.Sp) (c : Char) : Dim.Sp := (fira.advance c : Int) * size / upem
+  let adv (size : Dim.Length) (c : Char) : Dim.Length := (fira.advance c : Int) * size / upem
   let serifUpem : Int := serif.unitsPerEm
-  let serifAdv (size : Dim.Sp) (c : Char) : Dim.Sp :=
+  let serifAdv (size : Dim.Length) (c : Char) : Dim.Length :=
     (serif.advance c : Int) * size / serifUpem
-  let mu (size : Dim.Sp) (n : Int) : Dim.Sp := size * n / 18
-  let konst (size : Dim.Sp) (v : Int) : Dim.Sp := v * size / upem
+  let mu (size : Dim.Length) (n : Int) : Dim.Length := size * n / 18
+  let konst (size : Dim.Length) (v : Int) : Dim.Length := v * size / upem
 
   -- Fira has no script range and the synthetic host does, so resolution must keep the host out.
   let scriptO := UInt32.ofNat '𝒪'.toNat
@@ -1602,7 +1602,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lineOf (src : String) : Layout.LineOut :=
     let (d, _) := Elab.run "t" src
     (((layoutOf mfs d geom).pages.flatMap (·.lines))[0]?).getD default
-  let widthOf (src : String) : Dim.Sp := (lineOf src).setWidth
+  let widthOf (src : String) : Dim.Length := (lineOf src).setWidth
   t "box is a box: a+b is two medium spaces"
     (widthOf "$a+b$" ==
       adv mbase '𝑎' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝑏')
@@ -1614,7 +1614,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "superscript: script size, spaceAfterScript, shifted by the constant"
     (widthOf "$x^2$" ==
       adv mbase '𝑥' + adv scriptSize '2' + konst mbase 41)
-  let supRuns (src : String) : Array (Dim.Sp × Dim.Sp) :=
+  let supRuns (src : String) : Array (Dim.Length × Dim.Length) :=
     (lineOf src).segs.filterMap fun s => match s with
       | .run _ _ _ _ glyphs sz _ _ raise _ _ =>
         if raise != 0 && !glyphs.isEmpty then some (sz, raise) else none
@@ -1759,9 +1759,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "literal Greek never ships as body-face source text"
     (glyphChars "$λ θ φ$" == #['𝜆', '𝜃', '𝜑'])
   -- Accents: TeXbook Appendix G rule 12 over MathTopAccentAttachment, in sp.
-  let runXOf (src : String) (pick : Array (Nat × Char × Dim.Sp) → Bool) : Option Dim.Sp := Id.run do
+  let runXOf (src : String) (pick : Array (Nat × Char × Dim.Length) → Bool) : Option Dim.Length := Id.run do
     let l := lineOf src
-    let mut x : Dim.Sp := 0
+    let mut x : Dim.Length := 0
     for s in l.segs do
       match s with
       | .run _ _ _ w glyphs _ _ _ _ _ _ =>
@@ -1923,9 +1923,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes ("\\begin{align*}a &= b \\\\ z\\end{align*}\n\n" ++
       "$\\begin{pmatrix}a & b \\\\ c\\end{pmatrix}$") == ["W0014", "W0014"])
   -- Per-glyph positions: (char, gid, x, raise, advance) over every line.
-  let glyphInfo (src : String) : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+  let glyphInfo (src : String) : Array (Char × Nat × Dim.Length × Dim.Length × Dim.Length) := Id.run do
     let (d, _) := Elab.run "t" src
-    let mut out : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+    let mut out : Array (Char × Nat × Dim.Length × Dim.Length × Dim.Length) := #[]
     for page in (layoutOf mfs d geom).pages do
       for l in page.lines.filter (!·.furniture) do
         let mut x := l.x
@@ -1943,9 +1943,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
               gx := gx + a
             x := x + w
     return out
-  let rules (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+  let rules (src : String) : Array (Dim.Length × Dim.Length × Dim.Length) := Id.run do
     let (d, _) := Elab.run "t" src
-    let mut out : Array (Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+    let mut out : Array (Dim.Length × Dim.Length × Dim.Length) := #[]
     for page in (layoutOf mfs d geom).pages do
       for l in page.lines.filter (!·.furniture) do
         for s in l.segs do
@@ -1985,7 +1985,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       let gs := glyphInfo "\\[\\sum_{j=2}^{m} j\\]"
       let some (_, _, sx, _, sa) := gs.find? (fun g => g.1 == '\u2211') | return false
       let some (_, _, mx, mraise, ma) := gs.find? (fun g => g.1 == '𝑚') | return false
-      return mraise > 0 && ((2 * mx + ma) - (2 * sx + sa)).natAbs ≤ 2)
+      return mraise > 0 && ((2 * mx + ma) - (2 * sx + sa)).abs ≤ 2 * Dim.Length.quantum)
   t "the lower limit sits below the operator"
     ((glyphInfo "\\[\\sum_{j=2}^{m} j\\]").any fun g => g.1 == '2' && g.2.2.2.1 < 0)
   t "align columns share their alignment point"
@@ -2007,7 +2007,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       let some (_, _, ax, _, _) := gs.find? (fun g => g.1 == '𝑎') | return false
       let some (_, _, bx, _, ba) := gs.find? (fun g => g.1 == '𝑏') | return false
       let w1 := 4 * adv mbase '𝑎'
-      return ((2 * bx + ba) - (2 * ax + w1)).natAbs ≤ 2)
+      return ((2 * bx + ba) - (2 * ax + w1)).abs ≤ 2 * Dim.Length.quantum)
   t "a prime is a raised superscript prime"
     ((glyphInfo "$x'$").any fun g => g.1 == '\u2032' && g.2.2.2.1 == konst mbase 400)
   t "text inside math keeps its letters and spaces upright"

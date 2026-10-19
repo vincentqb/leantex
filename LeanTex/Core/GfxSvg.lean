@@ -22,7 +22,7 @@ public inductive SPaint where
 
 /-- A stroke width as spelled: a length in the viewBox's units, or the non-scaling one-pixel hairline. -/
 public inductive SWidth where
-  | len (w : Sp)
+  | len (w : Length)
   | hairline
   deriving Repr, BEq, Inhabited
 
@@ -37,8 +37,8 @@ public structure ShapeAttrs where
   cap : Option Cap
   join : Option Join
   miter : Option Rat
-  dash : Option (Array Sp)
-  dashOffset : Option Sp
+  dash : Option (Array Length)
+  dashOffset : Option Length
   strokeOpacity : Option Alpha
   deriving Repr, Inhabited
 
@@ -70,7 +70,7 @@ public inductive El where
 @[expose] public def svgMiter : Rat := 4
 
 /-- One user unit: the viewBox's point. -/
-@[expose] public def svgUnit : Sp := Dim.spPerPt
+@[expose] public def svgUnit : Length := Dim.bp 1
 
 /-- Where emission stands: whether coordinates are still carried by the
 placement exactly. -/
@@ -367,12 +367,12 @@ end
 closed subpath's `Z` too unless it ends the path. -/
 public def pathD (subs : Array Subpath) : String :=
   let seg (acc : String) : Seg → String
-    | .line p => acc ++ s!"L {p.1.toPtString} {p.2.toPtString} "
+    | .line p => acc ++ s!"L {p.1.toBpString} {p.2.toBpString} "
     | .cubic c1 c2 p =>
-      acc ++ s!"C {c1.1.toPtString} {c1.2.toPtString}, {c2.1.toPtString} {c2.2.toPtString}, \
-{p.1.toPtString} {p.2.toPtString} "
+      acc ++ s!"C {c1.1.toBpString} {c1.2.toBpString}, {c2.1.toBpString} {c2.2.toBpString}, \
+{p.1.toBpString} {p.2.toBpString} "
   let raw := subs.foldl (fun acc sp =>
-    let acc := acc ++ s!"M {sp.start.1.toPtString} {sp.start.2.toPtString} "
+    let acc := acc ++ s!"M {sp.start.1.toBpString} {sp.start.2.toBpString} "
     let acc := sp.segs.foldl seg acc
     if sp.closed then acc ++ "Z " else acc) ""
   if raw.endsWith "Z " then (raw.dropEnd 1).toString else raw
@@ -393,15 +393,15 @@ paint (ISO 32000-2 §8.5.3.2). -/
 public def geomEl (g : Geom) (attrs : Array (String × String)) : Html.Node :=
   match g with
   | .rect x y w h =>
-    Html.elem "rect" #[] (#[("x", x.toPtString), ("y", y.toPtString), ("width", w.toPtString),
-      ("height", h.toPtString)] ++ attrs)
+    Html.elem "rect" #[] (#[("x", x.toBpString), ("y", y.toBpString), ("width", w.toBpString),
+      ("height", h.toBpString)] ++ attrs)
   | .ellipse cx cy rx ry =>
     if rx = ry then
-      Html.elem "circle" #[] (#[("cx", cx.toPtString), ("cy", cy.toPtString),
-        ("r", rx.toPtString)] ++ attrs)
+      Html.elem "circle" #[] (#[("cx", cx.toBpString), ("cy", cy.toBpString),
+        ("r", rx.toBpString)] ++ attrs)
     else
-      Html.elem "ellipse" #[] (#[("cx", cx.toPtString), ("cy", cy.toPtString),
-        ("rx", rx.toPtString), ("ry", ry.toPtString)] ++ attrs)
+      Html.elem "ellipse" #[] (#[("cx", cx.toBpString), ("cy", cy.toBpString),
+        ("rx", rx.toBpString), ("ry", ry.toBpString)] ++ attrs)
   -- An empty path spells no `d`: an empty value is a bare attribute, which XML refuses.
   | .path subs => Html.elem "path" #[] ((if subs.isEmpty then #[] else #[("d", pathD subs)]) ++ attrs)
 
@@ -413,12 +413,12 @@ public def geomEl (g : Geom) (attrs : Array (String × String)) : Html.Node :=
 public def gradientEl (id : String) : Gradient → Html.Node
   | .linear p0 p1 stops xf =>
     Html.elem "linearGradient" (stops.map stopEl) #[("id", id), ("gradientUnits", "userSpaceOnUse"),
-      ("x1", p0.1.toPtString), ("y1", p0.2.toPtString), ("x2", p1.1.toPtString),
-      ("y2", p1.2.toPtString), ("gradientTransform", s!"matrix({xf.operands})")]
+      ("x1", p0.1.toBpString), ("y1", p0.2.toBpString), ("x2", p1.1.toBpString),
+      ("y2", p1.2.toBpString), ("gradientTransform", s!"matrix({xf.operands})")]
   | .radial c0 r0 c1 r1 stops xf =>
     Html.elem "radialGradient" (stops.map stopEl) #[("id", id), ("gradientUnits", "userSpaceOnUse"),
-      ("fx", c0.1.toPtString), ("fy", c0.2.toPtString), ("fr", r0.toPtString),
-      ("cx", c1.1.toPtString), ("cy", c1.2.toPtString), ("r", r1.toPtString),
+      ("fx", c0.1.toBpString), ("fy", c0.2.toBpString), ("fr", r0.toBpString),
+      ("cx", c1.1.toBpString), ("cy", c1.2.toBpString), ("r", r1.toBpString),
       ("gradientTransform", s!"matrix({xf.operands})")]
 where
   stopEl (st : Stop) : Html.Node :=
@@ -460,7 +460,7 @@ public def paintValue (sp : Spell) : SPaint → String × Spell
 /-- A stroke width's attributes: a length, or the hairline's one pixel
 that does not scale. -/
 @[expose] public def widthAttrs : Option SWidth → Array (String × String)
-  | some (.len l) => #[("stroke-width", l.toPtString)]
+  | some (.len l) => #[("stroke-width", l.toBpString)]
   | some .hairline => #[("stroke-width", "1"), ("vector-effect", "non-scaling-stroke")]
   | none => #[]
 
@@ -473,8 +473,8 @@ each present only where the typed tree says. -/
     optAttr "fill-opacity" (a.fillOpacity.map alphaSpell) ++ optAttr "stroke" sv.1 ++
     widthAttrs a.strokeWidth ++ optAttr "stroke-linecap" (a.cap.map capName) ++
     optAttr "stroke-linejoin" (a.join.map joinName) ++
-    optAttr "stroke-dasharray" (a.dash.map fun d => " ".intercalate (d.toList.map Sp.toPtString)) ++
-    optAttr "stroke-dashoffset" (a.dashOffset.map Sp.toPtString) ++
+    optAttr "stroke-dasharray" (a.dash.map fun d => " ".intercalate (d.toList.map Length.toBpString)) ++
+    optAttr "stroke-dashoffset" (a.dashOffset.map Length.toBpString) ++
     optAttr "stroke-miterlimit" (a.miter.map ratDecimal) ++
     optAttr "stroke-opacity" (a.strokeOpacity.map alphaSpell), sv.2)
 
@@ -1012,8 +1012,8 @@ top-left corner at the origin, y down. -/
 does; a `stretch`ing figure fills the box it is shown in. -/
 public def documentRoot (box : Box) (clipToBox : Bool) (kids : Array Html.Node)
     (stretch : Bool := false) : Html.Node :=
-  let w := (box.2.1 - box.1.1).toPtString
-  let h := (box.2.2 - box.1.2).toPtString
+  let w := (box.2.1 - box.1.1).toBpString
+  let h := (box.2.2 - box.1.2).toBpString
   Html.elem "svg" kids (#[("xmlns", "http://www.w3.org/2000/svg"), ("viewBox", s!"0 0 {w} {h}"),
     ("width", s!"{w}pt"), ("height", s!"{h}pt"),
     ("overflow", if clipToBox then "hidden" else "visible")] ++
@@ -1062,7 +1062,7 @@ gradient's `gradientTransform` composed through to the figure frame. -/
 /-- A shape's stroke, read with SVG's initial values: no stroke unless one
 is named, width 1, and a zero width paints nothing. -/
 @[expose] public def readStroke (ss : SState) (a : ShapeAttrs) : Option Stroke :=
-  let width : Option Sp := match a.strokeWidth with
+  let width : Option Length := match a.strokeWidth with
     | none => some svgUnit
     | some (.len w) => if w = 0 then none else some w
     | some .hairline => some 0

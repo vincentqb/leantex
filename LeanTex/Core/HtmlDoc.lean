@@ -38,8 +38,8 @@ public inductive CssMode where
 
 /-- The unit a table length is spelled in on screen: the deck's stage height or the class size. -/
 public inductive LengthBasis where
-  | stage (height : Sp)
-  | classSize (size : Sp)
+  | stage (height : Length)
+  | classSize (size : Length)
   deriving Repr, BEq, Inhabited
 
 /-- Each code role's colour, and the palette role it reads, in each shipped scheme. -/
@@ -118,7 +118,7 @@ public structure Config where
   page : Ir.PageSpec := {}
   lengthBasis : LengthBasis := .classSize Ir.baseFontSize
   /-- The step a narrowing table sets at and whether it overhangs, by the page's decision. -/
-  tableFit : Sp → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) →
+  tableFit : Length → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) →
     Array Ir.ColSpan → Option String × Bool := fun _ _ _ _ _ _ => (none, false)
   /-- The document's list lineage, which list and quotation levels indent by. -/
   lists : Ir.ListLineage := .sizeFile
@@ -136,7 +136,7 @@ public structure Config where
   continues : Bool := false
   /-- The paragraph before runs on into the next block, an overlay step (`Ir.Block.runsOn`). -/
   runsOn : Bool := false
-  inset : Sp := 0
+  inset : Length := 0
   /-- The local measurement context; `none` reads the document's text area. -/
   measures : Option MeasureValues := none
   /-- Custom-property redefinitions the following siblings carry on their style attribute. -/
@@ -156,11 +156,11 @@ public structure Config where
   /-- How a picture label's content measures, as layout places labels. -/
   labelMetric : Ir.Pic.LabelMetric := fun _ _ => {}
   /-- The footline band's box on frame `n`, as the page sets it. -/
-  footBox : Nat → Array Ir.BandSlot → Option (Sp × Sp) := fun _ _ => none
+  footBox : Nat → Array Ir.BandSlot → Option (Length × Length) := fun _ _ => none
   /-- Where a rule reaching by a block title's lines stands in its header. -/
   blockTitleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none
   /-- The depth below the baseline of the line box a block's last line stands in. -/
-  blockLastBelow : Option Ir.Block → Option Int := fun _ => none
+  blockLastBelow : Option Ir.Block → Option Length := fun _ => none
   /-- Measured cancellation in the surrounding text style. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
     Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ _ => none
@@ -189,7 +189,7 @@ public def Config.deeper (cfg : Config) (both : Bool) : Config :=
   { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm), shaped := none }
 
 /-- Enter a box of the given width, at the list depth around it, as the page counts it there. -/
-public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
+public def Config.atMeasure (cfg : Config) (width : Length) : Config :=
   { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight)
              inset := 0 }
 
@@ -295,7 +295,7 @@ private def decMilli (n : Int) : String :=
 
 /-- A length in CSS: its absolute part spelled by `absolute`, its `em` and `ex` kept as CSS units,
 and zero as `zero`, `0pt` unless asked, so it composes in `calc()`. -/
-public def cssLengthIn (absolute : Sp → String) (l : Length) (zero : String := "0pt") : String :=
+public def cssLengthIn (absolute : Length → String) (l : SymLength) (zero : String := "0pt") : String :=
   let parts :=
     (if l.sp != 0 then [absolute l.sp] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
@@ -306,30 +306,30 @@ public def cssLengthIn (absolute : Sp → String) (l : Length) (zero : String :=
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
 /-- A length in CSS, its absolute part in points. -/
-public def cssLength (l : Length) : String :=
-  cssLengthIn (fun sp => s!"{sp.toPtString}pt") l
+public def cssLength (l : SymLength) : String :=
+  cssLengthIn (fun sp => s!"{sp.toBpString}pt") l
 
-public theorem cssLength_zero_exact : cssLength ({} : Length) = "0pt" := by
+public theorem cssLength_zero_exact : cssLength ({} : SymLength) = "0pt" := by
   simp [cssLength, cssLengthIn]
 
 /-- A length's share of the deck stage, in thousandths of a percent. -/
-public def deckStageMilli (x stage : Int) : Int :=
-  x * 100000 / stage
+public def deckStageMilli (x stage : Length) : Int :=
+  x * (100000 : Int) / stage
 
 /-- A length's share of a deck stage's extent, in `unit`. -/
-private def stageShare (unit : String) (x stage : Int) : String :=
+private def stageShare (unit : String) (x stage : Length) : String :=
   s!"{decMilli (deckStageMilli x stage)}{unit}"
 
 /-- A length on a deck's stage: its absolute part as a share of the stage height, in `vh`. -/
-public def stageLengthCss (stage : Sp) (l : Length) : String :=
+public def stageLengthCss (stage : Length) (l : SymLength) : String :=
   cssLengthIn (stageShare "vh" · stage) l
 
 /-- A length's share of the class size, in thousandths, rounded to the nearest. -/
-public def classShareMilli (x size : Int) : Int :=
-  if 0 ≤ x then (x * 1000 + size / 2) / size else -((-x * 1000 + size / 2) / size)
+public def classShareMilli (x size : Length) : Int :=
+  if 0 ≤ x then (x * (1000 : Int) + size / 2) / size else -((-x * (1000 : Int) + size / 2) / size)
 
 /-- A length on a page whose body text is 1 rem: its absolute part as a share of the class size. -/
-public def classLengthCss (size : Sp) (l : Length) : String :=
+public def classLengthCss (size : Length) (l : SymLength) : String :=
   if size ≤ 0 then cssLength l
   else cssLengthIn (fun sp => s!"{decMilli (classShareMilli sp size)}rem") l
 
@@ -393,8 +393,8 @@ public def Config.groundLiteral (cfg : Config) (c : Ir.Color) : String :=
 /-- The math face's cancel-mark metrics in thousandths of an em, or TeX's defaults without faces. -/
 public def mathMarks (cfg : Config) : MathMl.Marks :=
   let marks : MathMl.Marks := {
-    alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.Length.ofSp Math.minAlignSep)
-      else classLengthCss cfg.page.fontSize (Dim.Length.ofSp Math.minAlignSep)
+    alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.SymLength.ofLength (.ofUnits Math.minAlignSep))
+      else classLengthCss cfg.page.fontSize (Dim.SymLength.ofLength (.ofUnits Math.minAlignSep))
     metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
     em := cfg.mathEm cfg.measureValues cfg.mathStyles
     textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles
@@ -413,17 +413,17 @@ public def lengthBasisOf (doc : Doc) : LengthBasis :=
   if doc.docClass.record.model == .frame then .stage doc.page.height
   else .classSize doc.page.fontSize
 
-public def tableLengthCss : LengthBasis → Length → String
+public def tableLengthCss : LengthBasis → SymLength → String
   | .stage h, l => stageLengthCss h l
   | .classSize size, l => classLengthCss size l
 
-public def tokenCss (basis : LengthBasis) (name : String) (l : Length) : String :=
+public def tokenCss (basis : LengthBasis) (name : String) (l : SymLength) : String :=
   if Ir.loadLength name then tableLengthCss basis l else cssLength l
 
 /-- A table length's fallback: the default the page sets an undeclared table by. -/
 @[expose] public def tableLengthFallback (doc : Doc) (name : String) : String :=
   tableLengthCss (lengthBasisOf doc)
-    (Length.ofSp (doc.preambleFace.resolve (Ir.tableLengthDefault name)))
+    (SymLength.ofLength (doc.preambleFace.resolve (Ir.tableLengthDefault name)))
 
 public def cellSideClass (h : Ir.HAlign) : String := "bt-" ++ h.align
 
@@ -439,7 +439,7 @@ public def tokenVar? (n : String) : Option String :=
 
 /-- A sourced length in CSS, spelled by `spell`: its declared custom property with the resolved
 length as fallback, or the length alone where it has none. -/
-private def sourcedIn (spell : Length → String) (g : Ir.Sourced SymGlue) : String :=
+private def sourcedIn (spell : SymLength → String) (g : Ir.Sourced SymGlue) : String :=
   match g.token.bind tokenVar? with
   | some v => s!"var({v}, {spell g.value.width})"
   | none => spell g.value.width
@@ -933,10 +933,10 @@ public theorem body_leading_in_band :
 public def printLeadingMilli (page : Ir.PageSpec) : Nat :=
   Ir.leadingMilli * page.leading / 1000
 
-public theorem printLeading_exact (page : Ir.PageSpec) (size : Int) (h : page.leading = 1000) :
-    size * (printLeadingMilli page : Int) / 1000 = Ir.leadingFor size page.leading := by
+public theorem printLeading_exact (page : Ir.PageSpec) (size : Length) (h : page.leading = 1000) :
+    size * (printLeadingMilli page : Int) / (1000 : Int) = Ir.leadingFor size page.leading := by
   simp only [printLeadingMilli, Ir.leadingFor, Ir.leadingMilli, h]
-  omega
+  length_omega
 
 /-- A vertical gap of `k` screen rhythm quanta, in rem. -/
 public def quantaRem (k : Nat) : String := milliFactor (k * bodyLeadingMilli / 2) ++ "rem"
@@ -944,31 +944,35 @@ public def quantaRem (k : Nat) : String := milliFactor (k * bodyLeadingMilli / 2
 private def gapK (kind : String) : Nat := (Ir.rhythmGapQuanta.lookup kind).getD 0
 
 /-- A print length as screen milli-rem: its multiple of the print quantum, in the screen's. -/
-public def screenMilli (size v : Int) : Nat :=
+public def screenMilli (size v : Length) : Nat :=
   if Ir.rhythmQuantum size ≤ 0 then 0
   else (v * ((bodyLeadingMilli / 2 : Nat) : Int) / Ir.rhythmQuantum size).toNat
 
 private def milliRem (m : Nat) : String := milliFactor m ++ "rem"
 
 /-- A stage length as its share of the stage's height, in `vh`. -/
-private def stageVh (page : PageSpec) (x : Sp) : String := stageShare "vh" x page.height
+private def stageVh (page : PageSpec) (x : Length) : String := stageShare "vh" x page.height
 
 /-- A length in the page's own unit: on a deck the stage's share, elsewhere screen rem. -/
-private def pageLength (deck : Bool) (page : PageSpec) (x : Sp) : String :=
+private def pageLength (deck : Bool) (page : PageSpec) (x : Length) : String :=
   if deck then stageVh page x else milliRem (screenMilli page.fontSize x)
 
-public theorem screenMilli_between (size v : Int) (hq : 0 < Ir.rhythmQuantum size) (hv : 0 ≤ v) :
+public theorem screenMilli_between (size v : Length) (hq : 0 < Ir.rhythmQuantum size) (hv : 0 ≤ v) :
     (screenMilli size v : Int) * Ir.rhythmQuantum size ≤ v * ((bodyLeadingMilli / 2 : Nat) : Int) ∧
       v * ((bodyLeadingMilli / 2 : Nat) : Int) <
         ((screenMilli size v : Int) + 1) * Ir.rhythmQuantum size := by
   have hh : (0 : Int) ≤ ((bodyLeadingMilli / 2 : Nat) : Int) := by decide
   unfold screenMilli
-  generalize (Ir.rhythmQuantum size : Int) = q at *
+  generalize Ir.rhythmQuantum size = q at *
   generalize ((bodyLeadingMilli / 2 : Nat) : Int) = h at *
-  have hnq : ¬ q ≤ 0 := Int.not_le.mpr hq
-  have hnn : 0 ≤ v * h / q := Int.ediv_nonneg (Int.mul_nonneg hv hh) (Int.le_of_lt hq)
+  have hq' : 0 < q.units := hq
+  have hv' : 0 ≤ v.units := hv
+  have hnq : ¬ q ≤ 0 := Length.not_le.mpr hq
+  have hnn : (0 : Int) ≤ v * h / q := by
+    length_units; exact Int.ediv_nonneg (Int.mul_nonneg hv' hh) (Int.le_of_lt hq')
   simp only [hnq, ↓reduceIte, Int.toNat_of_nonneg hnn]
-  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hq), Int.lt_ediv_add_one_mul_self _ hq⟩
+  length_units
+  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hq'), Int.lt_ediv_add_one_mul_self _ hq'⟩
 
 /-- The block elements the backend emits into flow, with the kind of gap each opens. -/
 public def blockGapKinds : List (String × String) :=
@@ -1051,10 +1055,10 @@ private def ownsBelow (sels : List String) (peer own : String) (after : Option S
     [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
 
 /-- A document skip as a box of its own, carrying the skip's natural width as `--skip`. -/
-private def skipNode (size ex : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat := none) :
+private def skipNode (size ex : Length) (g : Ir.Sourced SymGlue) (grow : Option Nat := none) :
     Node :=
   let v := g.value.width.resolve size ex
-  let rem := milliRem (screenMilli size v.natAbs)
+  let rem := milliRem (screenMilli size v.abs)
   let len := if v < 0 then s!"-{rem}" else rem
   let len := match g.token.bind tokenVar? with
     | some v => s!"var({v}, {len})"
@@ -1087,14 +1091,14 @@ private def texParskip : Option String := some "var(--parskip, 0rem)"
 
 /-- The x-height an ex reads on the page at `size`: the shipped body face's, the PDF's, else half an
 em, the value CSS takes for an x-height it cannot know, where the page ships no face. -/
-public def exAt (fonts : Option Font.FontSet) (size : Int) : Int :=
+public def exAt (fonts : Option Font.FontSet) (size : Length) : Length :=
   match fonts with
   | some fs => fs.xHeightAt size
   | none => size / 2
 
 /-- A token's custom-property value: a trivlist's `\topsep` or `\partopsep` in the screen's
 quanta on a flow page, as the gap rules read a list's skips (`listSkipSp`), else `tokenCss`. -/
-public def gapTokenCss (basis : LengthBasis) (ex : Int) (name : String) (l : Length) : String :=
+public def gapTokenCss (basis : LengthBasis) (ex : Length) (name : String) (l : SymLength) : String :=
   match basis with
   | .classSize size =>
     if name == Ir.trivlistSkipName || name == "partopsep" then
@@ -1104,21 +1108,21 @@ public def gapTokenCss (basis : LengthBasis) (ex : Int) (name : String) (l : Len
   | .stage _ => tokenCss basis name l
 
 /-- A list skip's natural width at the page's size and x-height (`exAt`). -/
-public def listSkipSp (size ex : Int) (g : SymGlue) : Int := g.width.resolve size ex
+public def listSkipSp (size ex : Length) (g : SymGlue) : Length := g.width.resolve size ex
 
 /-- One list level's `\topsep`, `\itemsep` and `\parsep`, in screen milli-rem. -/
-public def listLevelGaps (size ex : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
+public def listLevelGaps (size ex : Length) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
   (screenMilli size (listSkipSp size ex sk.topsep),
    screenMilli size (listSkipSp size ex sk.itemsep),
    screenMilli size (listSkipSp size ex sk.parsep))
 
 /-- A list level's `\@topsepadd` where the list opens a paragraph, in screen milli-rem. -/
-public def listOpenGap (size ex : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
+public def listOpenGap (size ex : Length) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
   screenMilli size (listSkipSp size ex sk.topsep + listSkipSp size ex partopsep)
 
 /-- A level's `\topsep` and `\partopsep` in force for a trivlist (`Ir.TrivIn.within`), in screen
 milli-rem, the size file's lineage alone stating them on its levels' content. -/
-public def trivInMilli (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int)
+public def trivInMilli (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length)
     (tokens : Ir.Tokens) (level : Nat) (sk : Ir.ListSkips) (pts : SymGlue) : Option (Nat × Nat) :=
   if l != .sizeFile then none else
   let t := Ir.TrivIn.within l extra size level sk pts (Ir.TrivIn.top l tokens size)
@@ -1174,7 +1178,7 @@ private def listSetLevelRules (pre cls : String) (g : Nat × Nat × Nat) (opened
 
 /-- The rules of the lists declaring their own spacing, each spacing at the class's three levels:
 the level's skips under what it declares (`Ir.listSpacing`). -/
-public def listSetRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def listSetRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (disc : String := "details[open]") (extra : Ir.ListExtra := .none) :
     List GapRule :=
   sets.zipIdx.flatMap fun (set, i) => [1, 2, 3].flatMap fun n =>
@@ -1192,7 +1196,7 @@ public def listSetRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens
 
 /-- The own `\parsep` of the quotation kinds a page holds on their paragraphs, standing over every
 level's and spacing's rule; the web's quotations keep the page's. -/
-public def quoteKindRules (l : Ir.ListLineage) (size ex : Int) (kinds : List Ir.QuoteKind) :
+public def quoteKindRules (l : Ir.ListLineage) (size ex : Length) (kinds : List Ir.QuoteKind) :
     List GapRule :=
   if l == .web || kinds.isEmpty then [] else
   -- a list or quotation opening a quotation stands in its item's label, leaving no skip below it
@@ -1215,7 +1219,7 @@ public structure SpineStep where
   deriving BEq, Hashable
 
 /-- The trivlist values a list or quotation spaced `sk`, `pts` at `level` leaves in force. -/
-private def spineTrivIn (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Int) (tokens : Ir.Tokens)
+private def spineTrivIn (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Length) (tokens : Ir.Tokens)
     (level : Nat) (sk : Ir.ListSkips) (pts : SymGlue) : Ir.TrivIn :=
   Ir.TrivIn.within l extra size level sk pts (Ir.TrivIn.top l tokens size)
 
@@ -1225,8 +1229,8 @@ mutual
 /-- The spine a block closing an item hangs down each last item, and the natural width of the skip
 it leaves: its own, or where larger the one it closes on, a list's with its `\parsep` less `outer`;
 `t` is the trivlist values in force where it stands. -/
-public def blockSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
-    (level : Nat) (outer : Int) (t : Ir.TrivIn) (inPar : Bool) : Block → Option (List SpineStep × Int)
+public def blockSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length) (tokens : Ir.Tokens)
+    (level : Nat) (outer : Length) (t : Ir.TrivIn) (inPar : Bool) : Block → Option (List SpineStep × Length)
   | .list _ s items =>
     (Ir.listSpacing l size level tokens s).map fun (sk, pts) =>
       let own := listSkipSp size ex sk.topsep + (if inPar then 0 else listSkipSp size ex pts)
@@ -1266,29 +1270,29 @@ public def blockSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int
   | .float .. | .bibliography .. | .contents .. => none
 
 /-- The spine the last item closes on. -/
-public def itemsSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
-    (level : Nat) (outer : Int) (t : Ir.TrivIn) : List (Array Block) → Option (List SpineStep × Int)
+public def itemsSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length) (tokens : Ir.Tokens)
+    (level : Nat) (outer : Length) (t : Ir.TrivIn) : List (Array Block) → Option (List SpineStep × Length)
   | [] => none
   | [item] => lastSpine l extra size ex tokens level outer t item.toList
   | _ :: rest => itemsSpine l extra size ex tokens level outer t rest
 
 /-- The spine the last block hangs, none from an item's one block, which stands in its label. -/
-public def lastSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
-    (level : Nat) (outer : Int) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Int)
+public def lastSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length) (tokens : Ir.Tokens)
+    (level : Nat) (outer : Length) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Length)
   | [] => none
   | [_] => none
   | [_, b] => blockSpine l extra size ex tokens level outer t false b
   | _ :: rest => lastSpine l extra size ex tokens level outer t rest
 
 /-- The spine a trivlist's centred or ragged body hangs. -/
-public def trivSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
-    (level : Nat) (outer : Int) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Int)
+public def trivSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length) (tokens : Ir.Tokens)
+    (level : Nat) (outer : Length) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Length)
   | [.center b] | [.ragged _ b] => lastSpine l extra size ex tokens level outer t b.toList
   | _ => none
 
 /-- The spine an in-paragraph wrapper's one block hangs. -/
-public def roleSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
-    (level : Nat) (outer : Int) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Int)
+public def roleSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Length) (tokens : Ir.Tokens)
+    (level : Nat) (outer : Length) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Length)
   | [b] => blockSpine l extra size ex tokens level outer t true b
   | _ => none
 
@@ -1311,10 +1315,10 @@ public structure NestedClose where
   outer : Ir.ListSet
   outerInPar : Bool
   spine : List SpineStep
-  close : Int
+  close : Length
   last : Bool
   /-- A trivlist parent's own `\@topsepadd`, the values in force where it stands. -/
-  own : Int
+  own : Length
   deriving BEq, Hashable
 
 /-- Whether a nested close sets a space the class's level and spacing rules may not: a spine longer
@@ -1333,14 +1337,14 @@ private def trivlistInner? (body : Array Block) : Option (Array Block) :=
 /-- The nested closes a body's lists, quotations and abstracts hold that `NestedClose.owed` keeps,
 each once, ordered so a deeper level's rule, a declared side's and a longer spine's follow the
 rules they refine; `abstractNests` counts an abstract as a quotation. -/
-public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def nestedClosesOf (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (abstractNests : Bool) (body : Array Block) (extra : Ir.ListExtra := .none) : List NestedClose :=
   let top := Ir.TrivIn.top l tokens size
   let trivAt (spacing : Option (Ir.ListSkips × SymGlue)) (level : Nat) : Ir.TrivIn :=
     (spacing.map fun (sk, pts) => spineTrivIn l extra size tokens level sk pts).getD top
-  let note (level : Nat) (parent : CloseParent) (s : Ir.ListSet) (inPar : Bool) (outer : Int)
+  let note (level : Nat) (parent : CloseParent) (s : Ir.ListSet) (inPar : Bool) (outer : Length)
       (t : Ir.TrivIn) (items : Array (Array Block))
-      (acc : Array NestedClose × Std.HashSet NestedClose) (own : Int := 0) :
+      (acc : Array NestedClose × Std.HashSet NestedClose) (own : Length := 0) :
       Array NestedClose × Std.HashSet NestedClose :=
     items.zipIdx.foldl (fun acc (item, i) =>
       match lastSpine l extra size ex tokens (level + 1) outer t item.toList with
@@ -1349,11 +1353,11 @@ public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Toke
                                  last := i + 1 == items.size, own }
         if !c.owed || acc.2.contains c then acc else (acc.1.push c, acc.2.insert c)
       | none => acc) acc
-  let parsepAt (level : Nat) (s : Ir.ListSet) : Int :=
+  let parsepAt (level : Nat) (s : Ir.ListSet) : Length :=
     ((Ir.listSpacing l size level tokens s).map fun (sk, _) => listSkipSp size ex sk.parsep).getD 0
   -- the walk's context: the `\@listdepth`, whether a block opens inside a paragraph, and the
   -- trivlist values and `\parskip` in force
-  let walk : Ir.CtxFold (Nat × Bool × Ir.TrivIn × Int)
+  let walk : Ir.CtxFold (Nat × Bool × Ir.TrivIn × Length)
       (Array NestedClose × Std.HashSet NestedClose) := {
     openBlock := fun (depth, inPar, t, par) acc b =>
       match b with
@@ -1391,7 +1395,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Toke
 
 /-- The rules of a page's nested closes: the larger of a spine's skip and the item skip before the
 next item, and below what holds the last item its close as the page sets it. -/
-public def nestedCloseRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def nestedCloseRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (closes : List NestedClose) (disc : String := "details[open]") :
     List GapRule :=
   let index : Std.HashMap Ir.ListSet Nat := sets.zipIdx.foldl (fun m (s, i) => m.insert s i) {}
@@ -1464,7 +1468,7 @@ public def nestedCloseRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.To
 
 /-- The list rules a page's class owes, `\@list⟨n⟩` for levels one to three; the web lineage
 owes none. -/
-public def listRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def listRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (disc : String := "details[open]") (extra : Ir.ListExtra := .none) : List GapRule :=
   let spaces (n : Nat) : Nat × Nat := match Ir.listSkips l size n with
     | some sk =>
@@ -1477,7 +1481,7 @@ public def listRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     | none => []
 
 /-- A squeezed frame's list rules: the class's levels with beamer's `\itemsep0pt`. -/
-public def squeezeListRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def squeezeListRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (disc : String := "details[open]") : List GapRule :=
   let squeezed (n : Nat) : Option Ir.ListSkips :=
     (Ir.listSkips l size n).map fun sk => { sk with itemsep := {} }
@@ -1498,7 +1502,7 @@ public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.P
     String :=
   String.join ((List.range 6).map fun k =>
     let pre := String.join (List.replicate k itemAncestor)
-    let fixed := tableLengthCss basis (.ofSp (Ir.leftMarginAt l {} face (k + 1)))
+    let fixed := tableLengthCss basis (.ofLength (Ir.leftMarginAt l {} face (k + 1)))
     let v := s!"var(--{Ir.leftMarginName (k + 1)}, {fixed})"
     s!":where({pre}ul, {pre}ol, {pre}dd) \{ padding-left: {v}; }\n" ++
       s!":where({pre}:is(blockquote, .abstract.quoted)) \{ padding: 0 {v}; }\n")
@@ -1507,9 +1511,9 @@ public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.P
 class's list fixes them: quotation's first-line indent, and verse's lines hung from a margin
 `Ir.verseHang` past the quotation's, each forced line restarting; none on the web's. -/
 public def quoteKindCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.PreambleFace)
-    (indent : Dim.Length) (kinds : Array Ir.QuoteKind) : String :=
+    (indent : Dim.SymLength) (kinds : Array Ir.QuoteKind) : String :=
   if l == .web then "" else
-  let fixed (len : Dim.Length) : String := tableLengthCss basis (.ofSp (face.resolve len))
+  let fixed (len : Dim.SymLength) : String := tableLengthCss basis (.ofLength (face.resolve len))
   let hang := fixed Ir.verseHang
   -- an overlay's carrier is grouping, its blocks the verse's own
   let carriers := ".step, .step-set, .alt-pair, [data-backend]"
@@ -1525,10 +1529,10 @@ blockquote.verse > :is({carriers}) > :not(p) \{ margin-left: {hang}; }\n" else "
 /-- beamer's abstract inset as CSS on the abstract's own paragraphs, in the page's unit as the
 preamble's font fixes it. -/
 public def abstractInsetCss (basis : LengthBasis) (face : Ir.PreambleFace) : String :=
-  s!".abstract.inset > p \{ padding: 0 {tableLengthCss basis (.ofSp (face.resolve Ir.abstractInset))}; }\n"
+  s!".abstract.inset > p \{ padding: 0 {tableLengthCss basis (.ofLength (face.resolve Ir.abstractInset))}; }\n"
 
 /-- The space rules of theorem-like blocks, on the element their role's class marks. -/
-public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+public def thmRules (l : Ir.ListLineage) (size : Length) : List GapRule :=
   Ir.ThmSpace.all.flatMap fun k =>
     let c := "." ++ roleClass (Ir.thmSpaceRole k)
     match Ir.thmSkips l size 1 {} k false with
@@ -1541,7 +1545,7 @@ public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
 
 /-- A theorem-like block opening right after a trivlist, in vertical mode: the larger of the
 trivlist's close and the theorem's own space above. -/
-public def thmAfterTrivRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+public def thmAfterTrivRules (l : Ir.ListLineage) (size : Length) : List GapRule :=
   let top := Ir.TrivIn.top l {} size
   let rem (g : SymGlue) : String := milliRem (screenMilli size g.width.sp)
   let topsep := s!"var(--{Ir.trivlistSkipName}, {rem top.topsep})"
@@ -1598,7 +1602,7 @@ private def labelledSels : List String :=
 
 /-- A trivlist's boundaries as `Ir.TrivIn` spends them under the `\parskip` in force, and none where
 it or a list opens its holder's label (`\@noparlist`), its follower taking the peer gap. -/
-public def trivRules (l : Ir.ListLineage) (size ex : Int) : List GapRule :=
+public def trivRules (l : Ir.ListLineage) (size ex : Length) : List GapRule :=
   let top := Ir.TrivIn.top l {} size
   let rem (g : SymGlue) : String := milliRem (screenMilli size (listSkipSp size ex g))
   let topsep := s!"var(--{Ir.trivlistSkipName}, {rem top.topsep})"
@@ -1614,7 +1618,7 @@ public def trivRules (l : Ir.ListLineage) (size ex : Int) : List GapRule :=
    .boundary s!"{labelHolder} > {labelPassed} + {labelOpener}" "0"]
 
 /-- `trivPairRules`' selectors and values. -/
-private def trivPairBounds (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+private def trivPairBounds (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) : List (String × String) :=
   if l != .sizeFile then [] else
   let top := Ir.TrivIn.top l {} size
@@ -1640,7 +1644,7 @@ private def trivPairBounds (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tok
 /-- The boundaries where a list or quotation opens right after a trivlist, `\@item`'s
 `\addvspace\@topsep` over the trivlist's `\@topsepadd`: the larger of the two, or the list's own
 after one standing in its label; per list level and declared spacing, in the size file's lineage. -/
-public def trivPairRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def trivPairRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) : List GapRule :=
   (trivPairBounds l size ex tokens sets).map fun (sel, v) => .boundary sel v
 
@@ -1691,12 +1695,12 @@ private def gapAfterLists : List GapRule :=
 private def headingFollowerRule : GapRule := .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"
 
 /-- A skip register in force, as a print length at the page's x-height (`exAt`). -/
-private def skipSp (size ex : Int) (tokens : Ir.Tokens) (name : String) : Int :=
+private def skipSp (size ex : Length) (tokens : Ir.Tokens) (name : String) : Length :=
   (Ir.skipAmount tokens name).width.resolve size ex
 
 /-- A block's own space above it, `\medskipamount` and `\lineskip` (beamerinnerthemedefault.sty),
 in screen milli-rem. -/
-private def blockAboveMilli (size ex : Int) (tokens : Ir.Tokens) : Nat :=
+private def blockAboveMilli (size ex : Length) (tokens : Ir.Tokens) : Nat :=
   screenMilli size (skipSp size ex tokens "medskipamount" + Ir.inkClearance)
 
 /-- What stands for a block at a frame's opening: the block, or the overlay step carrier it
@@ -1706,7 +1710,7 @@ private def blockAt (edge : String) : String :=
     s!":is(.step, .step-set):has(> .step-end > section.block:{edge}))"
 
 /-- A block's boundaries: its space above, and `\smallskipamount` below its body box. -/
-private def blockRules (size ex : Int) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
+private def blockRules (size ex : Length) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
   let above := blockAboveMilli size ex tokens
   let below := screenMilli size (skipSp size ex tokens "smallskipamount")
   -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`
@@ -1729,7 +1733,7 @@ private def blockRules (size ex : Int) (tokens : Ir.Tokens) (shaped : Bool) : Li
   [.parskip "section.tcolorbox > *" "0rem"]
 
 /-- The boundaries beamer sets by adding where `\addvspace` would take the larger. -/
-private def beamerPairRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) :
+private def beamerPairRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens) :
     List GapRule :=
   match l, Ir.listSkips l size 1 with
   | .beamer, some sk =>
@@ -1756,7 +1760,7 @@ private def beamerPairRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.To
   | _, _ => []
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a block element carries. -/
-public def blockGapRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def blockGapRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (shaped : Bool := false) (squeezed : Bool := false) (disc : String := "details[open]")
     (sets : List Ir.ListSet := []) (closes : List NestedClose := [])
     (kinds : List Ir.QuoteKind := []) (extra : Ir.ListExtra := .none) : List GapRule :=
@@ -2023,7 +2027,7 @@ public theorem GapRule.throughCarriers_isReset (pairs : List (Nat × Nat)) (r : 
   | trivIn _ _ _ => rfl
 
 /-- The block-boundary sheet read through a tree's boundary shapes. -/
-public def blockGapCss (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def blockGapCss (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false)
     (sets : List Ir.ListSet := []) (closes : List NestedClose := [])
     (kinds : List Ir.QuoteKind := []) (extra : Ir.ListExtra := .none) : String :=
@@ -2031,7 +2035,7 @@ public def blockGapCss (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (kinds := kinds) (extra := extra)).map fun r => (r.throughCarriers pairs).render)
 
 /-- The boundaries paper reads through a closed disclosure, whose body it sets. -/
-public def disclosurePrintGapCss (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public def disclosurePrintGapCss (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false)
     (sets : List Ir.ListSet := []) (closes : List NestedClose := [])
     (kinds : List Ir.QuoteKind := []) (extra : Ir.ListExtra := .none) : String :=
@@ -2066,14 +2070,14 @@ private theorem listLevelRules_noReset (pre : String) (g : Nat × Nat × Nat) (o
   unfold listLevelRules
   cases triv <;> split <;> split <;> split <;> rfl
 
-private theorem listRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+private theorem listRules_noReset (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (disc : String) (extra : Ir.ListExtra) :
     (listRules l size ex tokens disc extra).all (fun r => !r.isReset) = true := by
   simp only [listRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
     Bool.and_eq_true]
   refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _ _ _ _ _
 
-private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) :
+private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens) :
     (beamerPairRules l size ex tokens).all (fun r => !r.isReset) = true := by
   unfold beamerPairRules
   split
@@ -2082,7 +2086,7 @@ private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size ex : Int) (to
     split <;> split <;> simp [GapRule.isReset]
   · rfl
 
-private theorem squeezeListRules_noReset (l : Ir.ListLineage) (size ex : Int)
+private theorem squeezeListRules_noReset (l : Ir.ListLineage) (size ex : Length)
     (tokens : Ir.Tokens) :
     (squeezeListRules l size ex tokens).all (fun r => !r.isReset) = true := by
   simp only [squeezeListRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
@@ -2095,7 +2099,7 @@ private theorem listSetLevelRules_noReset (pre cls : String) (g : Nat × Nat × 
   unfold listSetLevelRules
   cases triv <;> split <;> split <;> split <;> rfl
 
-private theorem listSetRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+private theorem listSetRules_noReset (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (disc : String) (extra : Ir.ListExtra) :
     (listSetRules l size ex tokens sets disc extra).all (fun r => !r.isReset) = true := by
   simp only [listSetRules, List.all_flatMap, List.all_eq_true]
@@ -2105,22 +2109,22 @@ private theorem listSetRules_noReset (l : Ir.ListLineage) (size ex : Int) (token
   · intro _ h
     cases h
 
-private theorem trivRules_noReset (l : Ir.ListLineage) (size ex : Int) :
+private theorem trivRules_noReset (l : Ir.ListLineage) (size ex : Length) :
     (trivRules l size ex).all (fun r => !r.isReset) = true := by
   simp [trivRules, ownsBelow, GapRule.isReset]
 
-private theorem thmAfterTrivRules_noReset (l : Ir.ListLineage) (size : Int) :
+private theorem thmAfterTrivRules_noReset (l : Ir.ListLineage) (size : Length) :
     (thmAfterTrivRules l size).all (fun r => !r.isReset) = true := by
   simp only [thmAfterTrivRules, List.all_flatMap, List.all_eq_true]
   intro k _
   split <;> simp [GapRule.isReset]
 
-private theorem trivPairRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+private theorem trivPairRules_noReset (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) :
     (trivPairRules l size ex tokens sets).all (fun r => !r.isReset) = true := by
   simp [trivPairRules, GapRule.isReset]
 
-private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size ex : Int)
+private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size ex : Length)
     (kinds : List Ir.QuoteKind) :
     (quoteKindRules l size ex kinds).all (fun r => !r.isReset) = true := by
   unfold quoteKindRules
@@ -2134,7 +2138,7 @@ private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size ex : Int)
     obtain ⟨g, -, rfl⟩ := Option.map_eq_some_iff.mp hk
     rfl
 
-private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (closes : List NestedClose) (disc : String) :
     (nestedCloseRules l size ex tokens sets closes disc).all (fun r => !r.isReset) = true := by
   simp only [nestedCloseRules, List.all_flatMap, List.all_eq_true]
@@ -2146,13 +2150,13 @@ private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size ex : Int) (t
     · intro _ h
       cases h
 
-private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
+private theorem thmRules_noReset (l : Ir.ListLineage) (size : Length) :
     (thmRules l size).all (fun r => !r.isReset) = true := by
   simp only [thmRules, List.all_flatMap, List.all_eq_true]
   intro k _
   split <;> simp [ownsBelow, GapRule.isReset, texParskip]
 
-public theorem blockGap_owner_contract (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+public theorem blockGap_owner_contract (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens)
     (shaped : Bool) (squeezed : Bool := false) (sets : List Ir.ListSet := [])
     (closes : List NestedClose := []) (kinds : List Ir.QuoteKind := [])
     (extra : Ir.ListExtra := .none) :
@@ -2191,7 +2195,7 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size ex : Int) (tok
     exact hall
   · simp [blockGapRules, headingFollowerRule]
 
-public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size ex : Int)
+public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size ex : Length)
     (tokens : Ir.Tokens) (d : List (Nat × Nat)) (shaped : Bool) (squeezed : Bool := false)
     (sets : List Ir.ListSet := []) (closes : List NestedClose := []) (kinds : List Ir.QuoteKind := [])
     (extra : Ir.ListExtra := .none) :
@@ -2214,7 +2218,7 @@ public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size ex : In
   · rw [List.getLast?_map, hc.2]
     rfl
 
-public theorem listGaps_agree (size ex : Int) (sk : Ir.ListSkips) (pt : SymGlue)
+public theorem listGaps_agree (size ex : Length) (sk : Ir.ListSkips) (pt : SymGlue)
     (hq : 0 < Ir.rhythmQuantum size)
     (h0 : 0 ≤ listSkipSp size ex sk.topsep ∧ 0 ≤ listSkipSp size ex sk.itemsep ∧
       0 ≤ listSkipSp size ex sk.parsep)
@@ -2234,25 +2238,25 @@ public theorem listGaps_agree (size ex : Int) (sk : Ir.ListSkips) (pt : SymGlue)
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
    screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
-public theorem listRules_web_exact (size ex : Int) (tokens : Ir.Tokens) :
+public theorem listRules_web_exact (size ex : Length) (tokens : Ir.Tokens) :
     listRules .web size ex tokens = [] := by
   simp only [listRules, Ir.listSkips_web_exact]
   rfl
 
 /-- A declared `\parskip`'s natural width in sp, at the body size it was set under and the page's
 x-height (`exAt`). -/
-public def parskipSp (page : Ir.PageSpec) (ex : Int) (g : SymGlue) : Dim.Sp :=
+public def parskipSp (page : Ir.PageSpec) (ex : Length) (g : SymGlue) : Dim.Length :=
   g.width.resolve page.fontSize ex
 
 /-- The document's declared `\parskip` as the screen peer gap, written only where the page
 declares one. -/
-public def parskipVar (page : Ir.PageSpec) (ex : Int) : String :=
+public def parskipVar (page : Ir.PageSpec) (ex : Length) : String :=
   match page.parskip with
   | none => ""
   | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize (parskipSp page ex g))};\n"
 
 /-- The PDF backend's default gap at a boundary kind; an unknown kind is zero. -/
-public def pdfGapSp : String → Dim.Sp
+public def pdfGapSp : String → Dim.Length
   | "peer" => (Ir.parskipDefault Ir.baseFontSize).width.sp
   | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.sp
   | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.sp
@@ -2280,9 +2284,12 @@ private def slideBorderPx : Nat := 1
 /-- The deck's safe area, 6vmin by default: the middle of the 5–7% Keynote's themes keep clear. -/
 private def safeareaVar : String := "var(--safearea, 6vmin)"
 
+/-- A thousand base units: the size a per-mille ratio of the engine's length functions is read at. -/
+private def milleBase : Length := 1000 * Length.quantum
+
 /-- A named size step of the document's ladder as a CSS factor, read through `Ir.scaleStepIn`. -/
 private def stepFactor (scale : List (String × Nat)) (name : String) : String :=
-  milliFactor (Ir.scaleStepIn scale (1000 : Dim.Sp) name).toNat
+  milliFactor (Ir.scaleStepIn scale milleBase name).units.toNat
 
 /-- A standout frame's size step, `\Large`. -/
 private def standoutStep : String := "Large"
@@ -2290,9 +2297,9 @@ private def standoutStep : String := "Large"
 /-- The tallest type a footline band's slots set, per mille of the band's own step. -/
 private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot) :
     List String :=
-  let step := (Ir.footlineSize scale 1000).toNat
+  let step := (Ir.footlineSize scale milleBase).units.toNat
   let sizeOf (m : Nat) (x : Inline) : Nat := match x with
-    | .styled (.size n) _ => max m (Ir.scaleStepIn scale 1000 n).toNat
+    | .styled (.size n) _ => max m (Ir.scaleStepIn scale milleBase n).units.toNat
     | _ => m
   let tallest := band.foldl (fun m s => Ir.foldInlines sizeOf m s.content) step
   if tallest ≤ step then [] else [s!"--foot-cap: {milliFactor (tallest * 1000 / max step 1)};"]
@@ -2310,26 +2317,26 @@ public def titledBodyBoxPaint : String :=
 public def titleSlotCss (doc : Doc) : String :=
   let slots := ((doc.styles.find? "titlepage").getD {}).slots
   if slots.isEmpty || doc.docClass != .slides then "" else
-  let body := max doc.page.fontSize 1
-  let emOf (l : Dim.Length) : String :=
+  let body := max doc.page.fontSize Length.quantum
+  let emOf (l : Dim.SymLength) : String :=
     let e := if l.ex != 0 then s!" + {decMilli l.ex}ex" else ""
     s!"{decMilli (l.em + l.sp * 1000 / body)}em{e}"
-  let zero : Dim.Length := {}
+  let zero : Dim.SymLength := {}
   let rules := slots.zipIdx.toList.filterMap fun (sl, i) =>
     let (slotWidth, place) := sl.box
     place.map fun pl =>
       let sel := s!"section.slide.title-page > .{roleClass (Ir.titleSlotRole i)}"
-      let outer := Dim.Length.ofSp Ir.pgfOuterSep
-      let anchorOffset (s : Nat × Nat) : Dim.Length :=
+      let outer := Dim.SymLength.ofLength Ir.pgfOuterSep
+      let anchorOffset (s : Nat × Nat) : Dim.SymLength :=
         outer.scale ((s.2 : Int) - (s.1 : Int)) (s.1 + s.2)
       let dx := ((pl.xshift.map (·.width)).getD zero).add
         (anchorOffset pl.anchor.hshares)
       let dy := (pl.yshift.map (·.width)).getD zero
       -- TikZ's `yshift` is up; the stage's `top` grows down
-      let up0 : Dim.Length := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
+      let up0 : Dim.SymLength := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
       let up := up0.add (anchorOffset pl.anchor.vshares)
       let sep := (pl.innerSep.map (·.width)).getD
-        (Dim.Length.ofSp (Ir.pgfInnerSep doc.page.fontSize))
+        (Dim.SymLength.ofLength (Ir.pgfInnerSep doc.page.fontSize))
       let width := match slotWidth with
         | some w => s!" width: {emOf w.width};"
         | none => ""
@@ -2393,18 +2400,19 @@ public def blockShapeCss (doc : Doc)
       left.getD "" ++ right.getD ""
     let places := (sh.edges.filter (·.besideTitle)).toList.filterMap fun e => titleRule k e.reach
     let room := (places.map (·.room)).foldl max 0
-    let below := if room == 0 then between else s!"calc({between} + {len { width := .ofSp room }})"
+    let below := if room == 0 then between
+      else s!"calc({between} + {len { width := .ofLength (.ofUnits room) }})"
     let rise := (places.map (·.rise)).foldl max 0
     let riseMany := (places.map (·.riseMany)).foldl max 0
     let raised (base : String) (r : Int) : String :=
-      if r == 0 then base else s!"calc({base} + {len { width := .ofSp r }})"
+      if r == 0 then base else s!"calc({base} + {len { width := .ofLength (.ofUnits r) }})"
     let boxTop := raised inner rise
     let titlePlace (r : Int) (e : Ir.BlockEdge) : String × String := match e.reach with
       | .box => (raised peerGap r, below)
       | .lines .. =>
         let p := (titleRule k e.reach).getD default
-        (s!"calc({peerGap} + {raised inner r} + {len { width := .ofSp p.top }})",
-         s!"calc({below} + {len { width := .ofSp p.bottom }})")
+        (s!"calc({peerGap} + {raised inner r} + {len { width := .ofLength (.ofUnits p.top) }})",
+         s!"calc({below} + {len { width := .ofLength (.ofUnits p.bottom) }})")
     let broken := s!"{sel} > header:has(br)"
     let titleRules := boxRules .title s!"{sel} > header" (titlePlace rise) ++
       (if riseMany == rise then "" else
@@ -2420,9 +2428,9 @@ public def blockShapeCss (doc : Doc)
       let p := (titleRule k e.reach).getD default
       let pad := len (sh.inset .title (if e.side == .left then .left else .right))
       let top (r : Int) : String :=
-        s!"calc({before} + {peerGap} + {raised inner r} + {len { width := .ofSp p.top }})"
-      let bottom := s!"calc({after} + var(--block-last-below, {len { width := .ofSp p.bodyBelow }}) - \
-{len { width := .ofSp p.depth }})"
+        s!"calc({before} + {peerGap} + {raised inner r} + {len { width := .ofLength (.ofUnits p.top) }})"
+      let bottom := s!"calc({after} + var(--block-last-below, \
+{len { width := .ofLength (.ofUnits p.bodyBelow) }}) - {len { width := .ofLength (.ofUnits p.depth) }})"
       rule pseudo sel e pad (top rise) bottom ++
         (if riseMany == rise then "" else
           s!"{sel}:has(> header br)::{pseudo} \{ top: {top riseMany}; }\n") ++
@@ -2457,7 +2465,7 @@ public def blockShapeCss (doc : Doc)
   String.join rules
 
 /-- A tcolorbox length, in TeX millimetres, as CSS at the body size. -/
-private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSize v)
+private def tcbLength (v : Length) : String := milliRem (screenMilli Ir.baseFontSize v)
 
 /-! ## Colour roles -/
 
@@ -2851,12 +2859,12 @@ private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : Lis
       fun (n, _) => s!"    --{n}: var({(Ir.ColorRef.color n).property});"
 
 /-- A length a class's lineage fixes, in the page's own unit. -/
-private def lineageLength (doc : Doc) (x : Sp) : String :=
+private def lineageLength (doc : Doc) (x : Length) : String :=
   pageLength (doc.docClass.record.model == .frame) doc.page x
 
 /-- The trivlist's and the float's spaces at a list depth in beamer's lineage, in the page's
 unit. -/
-private def lineageSkipDecls (doc : Doc) (ex : Int) (depth : Nat) (squeezed : Bool := false) :
+private def lineageSkipDecls (doc : Doc) (ex : Length) (depth : Nat) (squeezed : Bool := false) :
     String :=
   let size := doc.page.fontSize
   let t := (Ir.trivlistSkipFor .beamer doc.tokens size depth).width.resolve size ex
@@ -2875,13 +2883,13 @@ private def anySqueezed (doc : Doc) : Bool :=
     (fun acc _ => acc) false doc.body
 
 /-- In beamer's lineage, the top level's trivlist and float spaces on the root. -/
-private def lineageSkipVars (doc : Doc) (ex : Int) : String :=
+private def lineageSkipVars (doc : Doc) (ex : Length) : String :=
   match doc.docClass.record.lists with
   | .beamer => s!"    {lineageSkipDecls doc ex 0}\n"
   | .sizeFile | .web => ""
 
 /-- Each list level's spaces in beamer's lineage. -/
-private def lineageLevelRules (doc : Doc) (ex : Int) : String :=
+private def lineageLevelRules (doc : Doc) (ex : Length) : String :=
   match doc.docClass.record.lists with
   | .beamer =>
     let within := ["li", "dd", "blockquote"]
@@ -2896,28 +2904,28 @@ private def lineageLevelRules (doc : Doc) (ex : Int) : String :=
   | .sizeFile | .web => ""
 
 /-- The footline band's box as the stage lengths `footlineCss` reads. -/
-private def footBoxDecls (page : PageSpec) : Option (Sp × Sp) → List String
+private def footBoxDecls (page : PageSpec) : Option (Length × Length) → List String
   | some (h, d) => [s!"--foot-h: {stageVh page h};", s!"--foot-d: {stageVh page d};"]
   | none => []
 
 /-- The frame title's size step: the `frametitle` font template's, else Large. -/
 private def frameTitleStep (doc : Doc) : String :=
   match (doc.styles.find? "frametitle").bind (·.font) with
-  | some tpl => milliFactor (Ir.templateSize doc.page.scale (1000 : Dim.Sp) tpl).toNat
+  | some tpl => milliFactor (Ir.templateSize doc.page.scale milleBase tpl).units.toNat
   | none => stepFactor doc.page.scale "Large"
 
 /-- moloch's frame-title box on the stage, as the PDF builds it. -/
 private def frameTitleStrutCss (hdr : String := "section.slide > header") : String :=
   let pad := s!"var(--frametitlepadding, {cssLength Ir.frameTitlePadding.width})"
   s!"{hdr} h2::before \{ content: \"\"; display: inline-block;\n" ++
-  s!"  height: calc({pad} + {decMilli (Ir.frameTitleStrut 1000)}em); }\n" ++
+  s!"  height: calc({pad} + {decMilli (Ir.frameTitleStrut milleBase).units}em); }\n" ++
   s!"{hdr} h2::after \{ content: \"\"; display: inline-block;\n" ++
   s!"  vertical-align: calc(-1 * {pad}); }\n"
 
 /-- moloch's footline (beamerouterthememoloch.sty), standing on the stage's bottom edge. -/
 private def footlineCss (page : PageSpec) : String :=
   let raise := stageVh page Ir.footline.raise
-  let step := milliFactor (Ir.footlineSize page.scale 1000).toNat
+  let step := milliFactor (Ir.footlineSize page.scale milleBase).units.toNat
   "section.slide > footer.slide-foot { position: relative; order: 1;\n" ++
   s!"  margin: 0 calc(-1 * {safeareaVar}); line-height: 0;\n" ++
   "  font-weight: var(--ltx-body-weight, normal);\n" ++
@@ -2937,7 +2945,7 @@ private def footlineCss (page : PageSpec) : String :=
   "@media screen { section.slide > footer.slide-foot { position: sticky; bottom: 0; } }\n"
 
 /-- The furniture rules the semantic palette keys turn on, shared by every theme. -/
-public def themeCss (doc : Doc) (ex : Int)
+public def themeCss (doc : Doc) (ex : Length)
     (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none)
     (lit : Ir.Color → String := cssColor) : String :=
   let d := Design.ofDoc doc
@@ -2946,7 +2954,8 @@ public def themeCss (doc : Doc) (ex : Int)
   let largeEm := s!"{stepFactor doc.page.scale "Large"}rem"
   let size := doc.page.fontSize
   let nameGapEm :=
-    s!"{decMilli (Ir.sectionNameSkip size (Ir.scaleStepIn doc.page.scale size "Large") * 1000 / max size 1)}rem"
+    s!"{decMilli (Ir.sectionNameSkip size (Ir.scaleStepIn doc.page.scale size "Large") * (1000 : Int) /
+      max size Length.quantum)}rem"
   let declares (r : Ir.Role) : Bool :=
     (Ir.Design.declared? doc.palette r).isSome ||
       Ir.foldBlocks (fun a b => a || match b with
@@ -2970,8 +2979,8 @@ public def themeCss (doc : Doc) (ex : Int)
        else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
       (if (doc.tokens.find? "frametitlepadding").isSome then
         -- moloch's bar spans the paper, its title inset by `Ir.frameTitleInset`
-        s!"  padding: 0 {decMilli (Ir.frameTitleInset 1000)}em; line-height: \
-{decMilli (Ir.leadingFor 1000)}; } }\n" ++
+        s!"  padding: 0 {decMilli (Ir.frameTitleInset milleBase).units}em; line-height: \
+{decMilli (Ir.leadingFor milleBase).units}; } }\n" ++
         frameTitleStrutCss hdr
        else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
      else "")
@@ -3001,7 +3010,7 @@ public def themeCss (doc : Doc) (ex : Int)
 { text-box: trim-end text alphabetic; }\n" ++
       s!"section.slide:not(.title-page):not(.titlebar):has(> header) \{ --frame-title-below: \
 calc({stepFactor doc.page.scale Ir.plainFrameTitleStep} * \
-({decMilli (Ir.defaultFrameTitleBelow 1000 doc.page.leading 0)}em - 1ex)); }\n"
+({decMilli (Ir.defaultFrameTitleBelow milleBase doc.page.leading 0).units}em - 1ex)); }\n"
      else "") ++
     (if declares .frameTitleBar then barRules "section.slide.titlebar > header" else "")) ++
   -- the poster's headline band: title matter between two equal tracks, logos in the corners
@@ -3061,7 +3070,7 @@ color: {roleRef .sectionTitleInk}; }\n" ++
     -- moloch's section page closes on the subsection title's strut below its bar
     (if doc.chromeAllowed then
       s!"section.section-page::after \{ content: \"\"; flex: none; \
-height: calc({decMilli (Ir.sectionPageStrut doc.page.scale 1000 doc.page.leading)}em - var(--progressheight, 1pt)); }\n"
+height: calc({decMilli (Ir.sectionPageStrut doc.page.scale milleBase doc.page.leading).units}em - var(--progressheight, 1pt)); }\n"
      else "") ++
     -- the deck's progress hairline, scroll-driven where supported, screen only
     (if doc.docClass == .slides && d.progress.isSome then
@@ -3083,7 +3092,7 @@ to { transform: scaleX(1) } }\n" ++
         | _ => false) then
     footlineCss doc.page ++
     -- a named size inside a slot is the body's step, as TeX's size commands are absolute
-    (let step := (Ir.footlineSize doc.page.scale 1000).toNat
+    (let step := (Ir.footlineSize doc.page.scale milleBase).units.toNat
      String.join (doc.page.scale.map fun (name, k) =>
        s!"footer.slide-foot .size-{name} \{ font-size: \
 {milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
@@ -3630,15 +3639,15 @@ public theorem PageResources.fontHref_exact (imgs : Image.Store) (fs : Font.Font
     · contradiction
   · rfl
 
-/-- A length in whole CSS pixels, to nearest, at 1in = 72pt = 96px. -/
-public def cssPxOfSp (l : Int) : Nat := ((4 * l + 3 * spPerPt / 2) / (3 * spPerPt)).toNat
+/-- A length in whole CSS pixels, to nearest, at 1in = 96px. -/
+public def cssPxOfSp (l : Length) : Nat := ((l + px 1 / 2) / px 1).toNat
 
-public theorem cssPxOfSp_between (l : Int) (h : 0 ≤ l) :
-    3 * spPerPt * (cssPxOfSp l : Int) ≤ 4 * l + 3 * spPerPt / 2 ∧
-      4 * l + 3 * spPerPt / 2 < 3 * spPerPt * ((cssPxOfSp l : Int) + 1) := by
+public theorem cssPxOfSp_between (l : Length) (h : 0 ≤ l) :
+    (cssPxOfSp l : Int) * px 1 ≤ l + px 1 / 2 ∧
+      l + px 1 / 2 < ((cssPxOfSp l : Int) + 1) * px 1 := by
   unfold cssPxOfSp
-  simp only [spPerPt]
-  omega
+  simp only [px, unitsPerInch]
+  length_omega
 
 /-- The size an `<img>` declares, in CSS pixels: a raster's grid, or a PDF page's box. -/
 public def intrinsicPx (p : Image.Plan) : Nat × Nat :=
@@ -3819,32 +3828,37 @@ private def scaleSize (scale : List (String × Nat)) (name : String) (unit : Str
 
 /-- The leading a named size step sets, as a unitless CSS line height in milli. -/
 @[expose] public def stepLineHeightMilli (skips : List (String × Nat)) (factor : Nat)
-    (body : Dim.Sp) (step : String) (k : Nat) : Nat :=
-  let size := max 1 (body * (k : Int) / 1000)
-  ((Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 + size / 2) / size).toNat
+    (body : Dim.Length) (step : String) (k : Nat) : Nat :=
+  let size := max Length.quantum (body * (k : Int) / (1000 : Int))
+  ((Ir.stepSkip (Ir.stepLead skips step body) body factor * (1000 : Int) + size / 2) / size).toNat
 
 public theorem stepLineHeight_between (skips : List (String × Nat)) (factor : Nat)
-    (body : Int) (step : String) (k : Nat) (hs : 0 < body * (k : Int) / 1000)
+    (body : Length) (step : String) (k : Nat) (hs : 0 < body * (k : Int) / (1000 : Int))
     (hl : 0 ≤ Ir.stepSkip (Ir.stepLead skips step body) body factor) :
-    (stepLineHeightMilli skips factor body step k : Int) * (body * (k : Int) / 1000) ≤
-        Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 +
-          body * (k : Int) / 1000 / 2 ∧
-      Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 +
-          body * (k : Int) / 1000 / 2 <
+    (stepLineHeightMilli skips factor body step k : Int) * (body * (k : Int) / (1000 : Int)) ≤
+        Ir.stepSkip (Ir.stepLead skips step body) body factor * (1000 : Int) +
+          body * (k : Int) / (1000 : Int) / 2 ∧
+      Ir.stepSkip (Ir.stepLead skips step body) body factor * (1000 : Int) +
+          body * (k : Int) / (1000 : Int) / 2 <
         ((stepLineHeightMilli skips factor body step k : Int) + 1) *
-          (body * (k : Int) / 1000) := by
+          (body * (k : Int) / (1000 : Int)) := by
   unfold stepLineHeightMilli
-  generalize body * (k : Int) / 1000 = sz at hs ⊢
-  have hm : max 1 sz = sz := by omega
-  have hq : 0 ≤ (Ir.stepSkip (Ir.stepLead skips step body) body factor * 1000 + sz / 2) / sz :=
-    Int.ediv_nonneg (Int.add_nonneg (Int.mul_nonneg hl (by decide))
-      (Int.ediv_nonneg (Int.le_of_lt hs) (by decide))) (Int.le_of_lt hs)
+  generalize body * (k : Int) / (1000 : Int) = sz at hs ⊢
+  have hs' : 0 < sz.units := hs
+  have hl' : 0 ≤ (Ir.stepSkip (Ir.stepLead skips step body) body factor).units := hl
+  have hm : max Length.quantum sz = sz := by length_omega
+  have hq : (0 : Int) ≤
+      (Ir.stepSkip (Ir.stepLead skips step body) body factor * (1000 : Int) + sz / 2) / sz := by
+    length_units
+    exact Int.ediv_nonneg (Int.add_nonneg (Int.mul_nonneg hl' (by decide))
+      (Int.ediv_nonneg (Int.le_of_lt hs') (by decide))) (Int.le_of_lt hs')
   simp only [hm, Int.toNat_of_nonneg hq]
-  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hs), Int.lt_ediv_add_one_mul_self _ hs⟩
+  length_units
+  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hs'), Int.lt_ediv_add_one_mul_self _ hs'⟩
 
 /-- Size rules from the document's ladder, and on a deck each step's leading class. -/
 private def sizeRules (scale : List (String × Nat))
-    (deck : Option (List (String × Nat) × Nat × Dim.Sp) := none) : String :=
+    (deck : Option (List (String × Nat) × Nat × Dim.Length) := none) : String :=
   String.join (scale.map fun (name, k) =>
     match deck with
     | some (skips, factor, body) =>
@@ -4440,7 +4454,7 @@ private def deckPageRule (size : String) : DeckRule :=
 
 /-- The page size `deckPageRule` declares: the PDF's MediaBox, in `pt`. -/
 public def deckPageSize (page : PageSpec) : String :=
-  s!"{page.width.toPtString}pt {page.height.toPtString}pt"
+  s!"{page.width.toBpString}pt {page.height.toBpString}pt"
 
 /-- A stage on paper opens its sheet and grows with its content instead of clipping it. -/
 private def printStageRule : DeckRule :=
@@ -4500,7 +4514,7 @@ private def looseStageCss (doc : Doc) : String :=
 
 /-- A frame's content as TeX opens it below its `\vbox{}` (beamerbaseframe.sty): the first
 baseline one `\baselineskip` down, the last line trimmed to its baseline. -/
-private def frameOpeningCss (doc : Doc) (ex : Int) : String :=
+private def frameOpeningCss (doc : Doc) (ex : Length) : String :=
   let l := doc.docClass.record.lists
   let size := doc.page.fontSize
   -- One set of rules per edge: the frame's opening element, the stage's
@@ -4529,7 +4543,7 @@ private def frameOpeningCss (doc : Doc) (ex : Int) : String :=
     s!"{pre}dl{cls} > dt:first-child::before,\n" ++
     s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
     s!"{firstPara item} \{ content: \"\"; display: inline-block;\n" ++
-    s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
+    s!"  height: {decMilli (Ir.leadingFor milleBase doc.page.leading).units}em; }\n"
   rules "section.slide > " ".frame-body-start" ++ rules "section.slide " ".frame-flow-start" ++
   "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
 .frame-body-end,\nsection.slide :is(p, ul, ol, dl, blockquote, .centered, .ragged, \
@@ -5193,14 +5207,17 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
     (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
-    deckStageMilli x stage * stage ≤ x * 100000 ∧
-    x * 100000 < deckStageMilli x stage * stage + stage := by
+public theorem deckStageMilli_share (x stage : Length) (hs : 0 < stage) :
+    deckStageMilli x stage * stage ≤ x * (100000 : Int) ∧
+    x * (100000 : Int) < deckStageMilli x stage * stage + stage := by
+  unfold deckStageMilli
+  length_units
+  generalize x.units = x at *
+  generalize stage.units = stage at *
   have hne : stage ≠ 0 := by omega
   have hmod := Int.emod_nonneg (x * 100000) hne
   have hlt := Int.emod_lt_of_pos (x * 100000) hs
   have heq := Int.mul_ediv_add_emod (x * 100000) stage
-  unfold deckStageMilli
   rw [Int.mul_comm (x * 100000 / stage) stage]
   generalize x * 100000 % stage = r at hmod hlt heq
   generalize stage * (x * 100000 / stage) = p at heq ⊢
@@ -5209,32 +5226,32 @@ public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
 
 /-- The shared frame opening, as a share of the stage. -/
 public def frameBodySkipMilli (hasTitle : Bool) (valign : VAlign)
-    (size height : Sp) : Int :=
+    (size height : Length) : Int :=
   deckStageMilli ((Ir.frameBodySkip hasTitle valign).resolve size 0) height
 
 public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign)
-    (size height : Sp) (hh : 0 < height) :
+    (size height : Length) (hh : 0 < height) :
     frameBodySkipMilli hasTitle valign size height * height ≤
-        (Ir.frameBodySkip hasTitle valign).resolve size 0 * 100000 ∧
-      (Ir.frameBodySkip hasTitle valign).resolve size 0 * 100000 <
+        (Ir.frameBodySkip hasTitle valign).resolve size 0 * (100000 : Int) ∧
+      (Ir.frameBodySkip hasTitle valign).resolve size 0 * (100000 : Int) <
         frameBodySkipMilli hasTitle valign size height * height + height := by
   simpa only [frameBodySkipMilli] using
     deckStageMilli_share ((Ir.frameBodySkip hasTitle valign).resolve size 0) height hh
 
-public theorem deck_type_is_stage_ratio (fontSize height : Int) (hh : 0 < height) :
-    deckStageMilli fontSize height * height ≤ fontSize * 100000 ∧
-    fontSize * 100000 < deckStageMilli fontSize height * height + height :=
+public theorem deck_type_is_stage_ratio (fontSize height : Length) (hh : 0 < height) :
+    deckStageMilli fontSize height * height ≤ fontSize * (100000 : Int) ∧
+    fontSize * (100000 : Int) < deckStageMilli fontSize height * height + height :=
   deckStageMilli_share fontSize height hh
 
 /-- The deck's root size as a share of the stage: the body size scaled by the print leading over
 the screen's. -/
-public def deckRootMilli (fontSize height : Int) : Int :=
+public def deckRootMilli (fontSize height : Length) : Int :=
   deckStageMilli (fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int)) height
 
-public theorem deck_root_between (fontSize height : Int) (hh : 0 < height) :
+public theorem deck_root_between (fontSize height : Length) (hh : 0 < height) :
     deckRootMilli fontSize height * height ≤
-        fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * 100000 ∧
-      fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * 100000 <
+        fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * (100000 : Int) ∧
+      fontSize * (Ir.leadingMilli : Int) / (bodyLeadingMilli : Int) * (100000 : Int) <
         deckRootMilli fontSize height * height + height :=
   deckStageMilli_share _ height hh
 
@@ -5245,13 +5262,13 @@ private def deckType (page : PageSpec) : DeckType :=
       (stepLineHeightMilli page.skipScale page.leading page.fontSize "normalsize" 1000)
     scale := page.scale }
 
-public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int)
+public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Length)
     (hs : 0 < stage) :
     (Image.resolveSize { width := some l } iW iH textW textH).1
         = l.resolve textW textH ∧
     deckStageMilli (l.resolve textW textH) stage * stage
-        ≤ (Image.resolveSize { width := some l } iW iH textW textH).1 * 100000 ∧
-    (Image.resolveSize { width := some l } iW iH textW textH).1 * 100000
+        ≤ (Image.resolveSize { width := some l } iW iH textW textH).1 * (100000 : Int) ∧
+    (Image.resolveSize { width := some l } iW iH textW textH).1 * (100000 : Int)
         < deckStageMilli (l.resolve textW textH) stage * stage + stage :=
   ⟨rfl, deckStageMilli_share (l.resolve textW textH) stage hs⟩
 
@@ -5716,7 +5733,7 @@ private def docHasBibliography (doc : Doc) : Bool :=
 private def bibCss (doc : Doc) : String :=
   let hang := s!"var(--{Ir.bibHangName}, {cssLength (Ir.bibHang {}).width})"
   let size := doc.page.fontSize
-  let sepMilli := (Ir.bibSepDefault size).width.sp * 1000 / (max size 1)
+  let sepMilli := (Ir.bibSepDefault size).width.sp * 1000 / (max size Length.quantum)
   let sep := s!"var(--{Ir.bibSepName}, {decMilli sepMilli}em)"
   let flush := Ir.foldBlocks (fun b bl => b || match bl with
     | .bibliography _ _ items => items.any (·.labelFlush)
@@ -5773,10 +5790,10 @@ public def autoHyphens (page : PageSpec) : Bool :=
   page.justify != some false && page.hyphenate != some false
 
 /-- The line-through rule thickness, from the token the PDF path also reads. -/
-public def lineThroughThicknessCss : String := s!"{Ir.lineThroughThickness.toPtString}pt"
+public def lineThroughThicknessCss : String := s!"{Ir.lineThroughThickness.toBpString}pt"
 
 @[simp] public theorem lineThroughThicknessCss_agree :
-    lineThroughThicknessCss = s!"{Ir.lineThroughThickness.toPtString}pt" := by rfl
+    lineThroughThicknessCss = s!"{Ir.lineThroughThickness.toBpString}pt" := by rfl
 
 public def figureWordsClass : String := "figure-words"
 
@@ -5815,7 +5832,7 @@ public def figureWordsNode (words : String) : Node :=
     #[("class", figureWordsClass), ("aria-hidden", "true"), ("style", visuallyHidden)]
 
 /-- The base stylesheet's rules, after its custom properties. -/
-public def baseRules (doc : Doc) (ex : Int) (pairs : List (Nat × Nat) := []) : String :=
+public def baseRules (doc : Doc) (ex : Length) (pairs : List (Nat × Nat) := []) : String :=
   let tl := tableLengthFallback doc
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
@@ -6462,9 +6479,9 @@ private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : 
   let size := Ir.scaleStepIn page.scale page.fontSize step
   let pitch := Ir.stepSkip (Ir.stepLead page.skipScale step page.fontSize) page.fontSize
     page.leading - spec.lineOverlap
-  decMilli (pitch * 1000 / max size 1)
+  decMilli (pitch * 1000 / max size Length.quantum)
 
-private def stageLength (cfg : Config) (v : Int) : String := pageLength cfg.deck cfg.page v
+private def stageLength (cfg : Config) (v : Length) : String := pageLength cfg.deck cfg.page v
 
 /-- A block that sets no line box in its section's flow. -/
 private def shipsNoLine : Block → Bool
@@ -6504,7 +6521,8 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
   | .verbatim covered content spec =>
     match cfg.blockLastBelow (some (.verbatim covered content spec)) with
     | some v =>
-      if cfg.deck then stageLength cfg v else s!"calc({stageLength cfg v} + {quantaRem 1})"
+      if cfg.deck then stageLength cfg v
+      else s!"calc({stageLength cfg v} + {quantaRem 1})"
     | none => para
   | .para .. | .lines .. | .section .. | .equation .. | .algorithm .. | .rule .. | .picture ..
   | .table .. | .bibliography .. | .contents .. | .columns .. | .altSteps .. | .note .. | .nav ..
@@ -6634,7 +6652,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         -- `keepaspectratio` scales by the smaller ratio, as graphicx does
         match size.keepAspect, pixels? with
         | true, some (pw, ph) =>
-          let (rw, rh) := canvas?.getD (Int.ofNat pw, Int.ofNat ph)
+          let (rw, rh) := (canvas?.map fun (w, h) => (w.units, h.units)).getD
+            (Int.ofNat pw, Int.ofNat ph)
           let floor := if wRow.isSome then s!"width: {w}; " else ""
           some (s!"{floor}width: min({wRow.getD w}, calc({h} * {rw} / {rh})); " ++
             "height: auto")
@@ -6650,12 +6669,12 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
             if cfg.deck then
               s!"width: {stageShare "vw" scaled cfg.page.width}; height: auto"
             else
-              s!"width: {Dim.Sp.toPtString scaled}pt; height: auto"
+              s!"width: {Dim.Length.toBpString scaled}pt; height: auto"
         else none
     -- animate §6.1 fixes the canvas to frame one
     let style := match canvas? with
       | some (w, h) =>
-        let ar := s!"aspect-ratio: {w} / {h}; object-fit: fill"
+        let ar := s!"aspect-ratio: {w.units} / {h.units}; object-fit: fill"
         some (match style with | some s => s ++ "; " ++ ar | none => ar)
       | none => style
     let requestAttrs := match index? with
@@ -7213,7 +7232,7 @@ public def epochPaletteDiff (roles : List Ir.Role) (before after : Ir.Palette) :
       (r, Ir.Design.cssDecl after .light r)).toArray }
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
-public def epochTokenStyle (basis : LengthBasis) (ex : Int) (before after : Ir.Tokens) : String :=
+public def epochTokenStyle (basis : LengthBasis) (ex : Length) (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.filterMap fun (n, g) =>
       (tokenVar? n).map fun v => s!"{v}: {gapTokenCss basis ex n g.width}")
@@ -8107,13 +8126,13 @@ public def pictureLabelNode (metric : Ir.Pic.LabelMetric) (cfg : Config) (fr : G
     | .west => "start"
     | .east => "end"
   let baseline := Ir.Pic.labelBaseline l.y l.align (metric l.content l.scale)
-  let size := (Ir.baseFontSize * (l.scale : Int) / 1000).toPtString
-  let (px, py) : Dim.Sp × Dim.Sp := match fr.iso with
+  let size := (Ir.baseFontSize * (l.scale : Int) / 1000).toBpString
+  let (px, py) : Dim.Length × Dim.Length := match fr.iso with
     | some t => t.apply (l.x, baseline)
     | none => (l.x, -baseline)
   let placed := #[
-    ("x", px.toPtString),
-    ("y", py.toPtString),
+    ("x", px.toBpString),
+    ("y", py.toBpString),
     ("dominant-baseline", "alphabetic")]
   let node :=
     if Ir.anyInline (fun x => match x with | .formula _ _ _ => true | _ => false) l.content then
@@ -8160,7 +8179,7 @@ private theorem pictureLabelNode_baseline (box : Ir.Pic.Box) (metric : Ir.Pic.La
     (match pictureLabelNode metric cfg { iso := some (pictureIso box) } l with
       | .elem _ attrs _ => (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
       | _ => (none, none)) =
-      (some (box.2.2 - Ir.Pic.labelBaseline l.y l.align (metric l.content l.scale)).toPtString,
+      (some (box.2.2 - Ir.Pic.labelBaseline l.y l.align (metric l.content l.scale)).toBpString,
         some "alphabetic") := by
   by_cases hm : Ir.anyInline
       (fun x => match x with | .formula _ _ _ => true | _ => false) l.content = true <;>
@@ -8348,13 +8367,13 @@ public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (box : Ir.Pi
   rfl
 
 public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
-    (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Sp)
+    (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Length)
     (content : Array Inline) (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (h : pic.shapes[i]? = some (.label x y content color scale align)) (cfg : Config := {}) :
     (match (pictureKids pic box metric cfg)[(pic.shapes.toList.take i).countP Gfx.shapeOneEl]? with
       | some (.elem _ attrs _) => (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
       | _ => (none, none)) =
-      (some (box.2.2 - Ir.Pic.labelBaseline y align (metric content scale)).toPtString,
+      (some (box.2.2 - Ir.Pic.labelBaseline y align (metric content scale)).toBpString,
         some "alphabetic") := by
   obtain ⟨_, es, hes, hidx⟩ := pictureShapes_tree metric cfg box #[] pic.shapes.toList
   let l : Gfx.LabelSpec :=
@@ -8381,16 +8400,16 @@ public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pi
   | script _ _ => simp at hb
 
 /-- The picture's box as the element's own size: pt in flow classes, a stage share on a deck. -/
-public def pictureBox (cfg : Config) (w h : Dim.Sp) (rise : Dim.Sp := 0) : Array (String × String) :=
-  #[("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
+public def pictureBox (cfg : Config) (w h : Dim.Length) (rise : Dim.Length := 0) : Array (String × String) :=
+  #[("viewBox", s!"0 0 {w.toBpString} {h.toBpString}")] ++
     (if cfg.deck then
       #[("style", s!"width: {stageShare "vw" w cfg.page.width}; \
 height: {stageShare "dvh" h cfg.page.height}" ++
         (if rise == 0 then "" else
           s!"; vertical-align: -{stageShare "dvh" rise cfg.page.height}"))]
      else
-      #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")] ++
-        (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toPtString}pt")]))
+      #[("width", s!"{w.toBpString}pt"), ("height", s!"{h.toBpString}pt")] ++
+        (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toBpString}pt")]))
 
 /-- What a picture says to a reader: its alternative, else the figure word. -/
 public def pictureName (loc : Locale) (pic : Ir.Pic.Picture) : String :=
@@ -8477,7 +8496,7 @@ public theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
       | .elem _ attrs _ => attrOf? attrs "viewBox"
       | _ => none) =
       (let b := (Gfx.ofPicture cfg.labelMetric pic).box
-       some s!"0 0 {(b.2.1 - b.1.1).toPtString} {(b.2.2 - b.1.2).toPtString}") := by
+       some s!"0 0 {(b.2.1 - b.1.1).toBpString} {(b.2.2 - b.1.2).toBpString}") := by
   simp only [Gfx.ofPicture_box_exact]
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, attrOf?]
@@ -9028,7 +9047,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         match shape.edges.find? fun e => e.span == .whole && e.besideTitle with
         | none => ""
         | some e =>
-          let para := ((cfg.blockTitleRule kind e.reach).map fun p => stageLength cfg p.bodyBelow).getD
+          let para := ((cfg.blockTitleRule kind e.reach).map fun p => stageLength cfg (.ofUnits p.bodyBelow)).getD
             "0rem"
           s!" --block-last-below: {endBelowList cfg para body.toList};"
       fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
@@ -9060,7 +9079,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
     let total := cfg.measureValues.lineWidth
     let declared := cols.foldl (fun s c => s + (c.1.resolve total).getD 0) 0
-    let unspecified := cols.foldl (fun n c => if c.1.declared then n else n + 1) 0
+    let unspecified : Int := cols.foldl (fun n c => if c.1.declared then n else n + 1) 0
     let share := if unspecified > 0 then max 0 (total - declared) / unspecified else 0
     Html.elem "div" (columnNodesInto cfg.into total share #[] cols.toList)
       #[("class", "columns"),
@@ -9156,7 +9175,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       -- a wrapped line's continuation hangs `breakIndent` in (`hanging each-line`)
       (match spec.breakIndent with
         | some w =>
-          if spec.breakLines then s!" text-indent: {cssLength (.ofSp w)} hanging each-line;"
+          if spec.breakLines then s!" text-indent: {cssLength (.ofLength w)} hanging each-line;"
           else ""
         | none => "") ++
       (if paint.isEmpty then "" else " " ++ paint)
@@ -9212,7 +9231,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let openingAttrs := if opening then
         let length := if cfg.deck then
             s!"{decMilli (frameBodySkipMilli hasTitle valign cfg.page.fontSize cfg.page.height)}vh"
-          else cssLength (Length.ofSp ((Ir.frameBodySkip hasTitle valign).resolve cfg.page.fontSize 0))
+          else cssLength (SymLength.ofLength ((Ir.frameBodySkip hasTitle valign).resolve cfg.page.fontSize 0))
         #[("style", s!"--frame-body-skip: {length}")]
       else #[]
     let kids := if cfg.deck then
@@ -9303,7 +9322,7 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
       (acc.push (cfg.applyEpoch
         (if cfg.runsOn then withClass "u-runs-on" (blockNode cfg b) else blockNode cfg b))) rest
 
-private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node) :
+private def columnNodesInto (cfg : Config) (total share : Length) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
   | [] => acc
   | (w, body) :: rest =>

@@ -13,13 +13,13 @@ namespace LeanTex.Core.FigureOutline
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 
-/-- One font unit in outline space: three points of 65536 sp. -/
-@[expose] public def unitsPerFontUnit : Int := 3 * 65536
+/-- One font unit in outline space: three big points. -/
+@[expose] public def unitsPerFontUnit : Length := bp 3
 
 /-- A glyph's outline commands as closed subpaths in outline space, each quadratic as its cubic. -/
 public def subpathsOf (cmds : Array Ink.Cmd) : Array Subpath := Id.run do
   let k := unitsPerFontUnit
-  let q : Int := 65536
+  let q : Length := bp 1
   let mut out : Array Subpath := #[]
   let mut cur : Option Subpath := none
   let mut px : Int := 0
@@ -78,7 +78,7 @@ public def stampsOf (fs : Font.FontSet) (table : Array (Nat × Nat)) (glyphs : A
     match table.idxOf? (face, g) with
     | some i =>
       if (glyphs[i]?.getD #[]).isEmpty then acc else
-      let k : Rat := (s.size : Rat) / ((unitsPerFontUnit * ((fs.get face).unitsPerEm : Int) : Int) : Rat)
+      let k : Rat := s.size.toRat / (unitsPerFontUnit.toRat * (((fs.get face).unitsPerEm : Int) : Rat))
       acc.push (.stamp (base + i) (s.xf.compose ((Affine.translate x 0).compose (Affine.scale k k)))
         s.fill none)
     | none => acc) acc

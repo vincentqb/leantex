@@ -44,7 +44,7 @@ def blockBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
           let body := glyphs.filter fun g => g.page == first.page && g.line == first.line
           match bars[0]?, ShippedInk.targetInk fonts body with
           | some bar, .ok ink =>
-            check ref (s!"{label}: bar bottom {bar.y + bar.h} <= body ink top {-ink.top}")
+            check ref (s!"{label}: bar bottom {reprStr (bar.y + bar.h)} <= body ink top {reprStr (-ink.top)}")
               (bar.y + bar.h ≤ -ink.top)
           | _, .error message => failures ref (label ++ ": " ++ message)
           | none, _ => failures ref (label ++ ": title background is missing")

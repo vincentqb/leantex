@@ -1089,13 +1089,13 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
 /-- One shipped line of the page census over `Layout.Out`: the observable facts a page claim may
 cite. -/
 structure CensusLine where
-  x : Dim.Sp
+  x : Dim.Length
   /-- The line's baseline, in layout coordinates (y down). -/
-  y : Dim.Sp
+  y : Dim.Length
   /-- The largest set size among the line's glyph runs (0 on a glyphless line). -/
-  size : Dim.Sp
+  size : Dim.Length
   /-- The line's set width. -/
-  width : Dim.Sp
+  width : Dim.Length
   text : String
   /-- The line stands in the reserved margin band by design (`Layout.LineOut.furniture`). -/
   furniture : Bool := false
@@ -1104,30 +1104,30 @@ structure CensusLine where
   /-- The face each glyph run sets in, in run order: the page side of `Picture.labelFace_agree`. -/
   runFonts : Array Nat := #[]
   /-- How far each glyph run's baseline stands above the line's, in run order. -/
-  runRaises : Array Dim.Sp := #[]
+  runRaises : Array Dim.Length := #[]
 
 structure CensusPage where
   lines : Array CensusLine
   covered : String
   rules : Nat
   /-- Every rule segment on the page, in line order: baseline and thickness. -/
-  ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
+  ruleSegs : Array (Dim.Length × Dim.Length) := #[]
   /-- Typed decoration segments in line order: kind, baseline, width,
   thickness, raise, and colour. -/
-  decorations : Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) := #[]
+  decorations : Array (Ir.Decoration × Dim.Length × Dim.Length × Dim.Length × Dim.Length × Ir.Color) := #[]
   fills : Nat
   /-- Every fill rectangle on the page, in paint order. -/
-  fillRects : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+  fillRects : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length) := #[]
   /-- The picture paths on the page, every mark of every picture's ink, in paint order. -/
   paths : Nat
   /-- Every shipped path's stroke colour and width, in paint order; an unstroked path contributes
   none. -/
-  pathStrokes : Array (Ir.Color × Dim.Sp) := #[]
+  pathStrokes : Array (Ir.Color × Dim.Length) := #[]
   /-- Every shipped path's extent, in paint order. -/
-  pathSpans : Array (Dim.Sp × Dim.Sp) := #[]
+  pathSpans : Array (Dim.Length × Dim.Length) := #[]
   /-- Every shipped path's bounding box `(x, y, w, h)` in page coordinates, in paint order, where
   `Picture.placeRel_exact` and `Picture.place_order_agree` are read. -/
-  pathBoxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+  pathBoxes : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length) := #[]
   /-- The drawn figures the page places, and their text run by run, in placement order. -/
   figures : Nat := 0
   figureText : String := ""
@@ -1137,7 +1137,7 @@ structure CensusPage where
   /-- Image boxes shipped on the page: embedded figures and boundary request boxes. -/
   images : Nat := 0
   /-- Filled polygons in the page's lines, as points in page coordinates (y down). -/
-  polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
+  polys : Array (Array (Dim.Length × Dim.Length)) := #[]
 
 def CensusPage.text (p : CensusPage) : String :=
   String.intercalate " " (p.lines.toList.map (·.text))
@@ -1199,13 +1199,13 @@ def subpathSegs (subs : Array Gfx.Subpath) : Array Ir.Pic.PathSeg :=
 
 /-- A shape's ink read back as a circle: centre, radius, stroke, fill. -/
 def shapeCircle? : Ir.Pic.Shape →
-    Option (Dim.Sp × Dim.Sp × Dim.Sp × Option Gfx.Stroke × Option Gfx.Fill)
+    Option (Dim.Length × Dim.Length × Dim.Length × Option Gfx.Stroke × Option Gfx.Fill)
   | .ink (.draw (.ellipse x y rx _) fl st) => some (x, y, rx, st, fl)
   | _ => none
 
 /-- A shape's ink read back as a frame or fill: min corner, extents, stroke, fill. -/
 def shapeFrame? : Ir.Pic.Shape →
-    Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Option Gfx.Stroke × Option Gfx.Fill)
+    Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length × Option Gfx.Stroke × Option Gfx.Fill)
   | .ink (.draw (.rect x y w h) fl st) => some (x, y, w, h, st, fl)
   | _ => none
 
@@ -1232,7 +1232,7 @@ def edgeSegs (p : Layout.PageOut) : Array Ir.Pic.PathSeg :=
 
 /-- A placed mark's extent as the census reads it: a rectangle's box, a path's box over its
 endpoints. -/
-def markExtent : Gfx.Geom → Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp
+def markExtent : Gfx.Geom → Dim.Length × Dim.Length × Dim.Length × Dim.Length
   | .rect x y w h => (x, y, w, h)
   | .ellipse cx cy rx ry => (cx - rx, cy - ry, 2 * rx, 2 * ry)
   | .path subs =>
@@ -1250,19 +1250,19 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
     let mut lines : Array CensusLine := #[]
     let mut covered := ""
     let mut rules := 0
-    let mut ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
+    let mut ruleSegs : Array (Dim.Length × Dim.Length) := #[]
     let mut decorations :
-        Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) := #[]
+        Array (Ir.Decoration × Dim.Length × Dim.Length × Dim.Length × Dim.Length × Ir.Color) := #[]
     let mut images := 0
     let mut figures := 0
     let mut figureText := ""
-    let mut polys : Array (Array (Dim.Sp × Dim.Sp)) := #[]
+    let mut polys : Array (Array (Dim.Length × Dim.Length)) := #[]
     for l in p.lines do
       let mut px := l.x
       let mut chars := ""
-      let mut runSize : Dim.Sp := 0
+      let mut runSize : Dim.Length := 0
       let mut runFonts : Array Nat := #[]
-      let mut runRaises : Array Dim.Sp := #[]
+      let mut runRaises : Array Dim.Length := #[]
       for seg in l.segs do
         match seg with
         | .run idx color _ w glyphs size _ _ raise _ _ =>
@@ -1550,23 +1550,23 @@ def pageAllRevealed (c : Array CensusPage) (i : Nat) : Bool :=
   (c[i]?.map fun p => (p.covered.trimAscii.toString).isEmpty).getD false
 
 /-- The x of the first shipped line on page `i` containing `needle`. -/
-def lineXOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+def lineXOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Length :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.x)
 
 /-- The baseline of the first shipped line on page `i` containing `needle`. -/
-def lineYOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+def lineYOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Length :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.y)
 
 /-- The largest run size of the first shipped line on page `i` containing `needle`. -/
-def lineSizeOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+def lineSizeOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Length :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.size)
 
 /-- The rule segments shipped on page `i`, in line order: (baseline, thickness). -/
-def pageRuleSegs (c : Array CensusPage) (i : Nat) : Array (Dim.Sp × Dim.Sp) :=
+def pageRuleSegs (c : Array CensusPage) (i : Nat) : Array (Dim.Length × Dim.Length) :=
   (c[i]?.map (·.ruleSegs)).getD #[]
 
 /-- The right edge of the first shipped line on page `i` containing `needle`. -/
-def lineRightOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+def lineRightOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Length :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map
     fun l => l.x + l.width
 
@@ -1582,18 +1582,18 @@ def letters (text : String) : String := text.replace " " ""
 
 /-- The baseline of a page's first body line whose text opens with `word`, any case, past a list's
 marker. -/
-def openingLineY (page : Layout.PageOut) (word : String) : Option Dim.Sp :=
+def openingLineY (page : Layout.PageOut) (word : String) : Option Dim.Length :=
   (page.lines.find? fun l =>
     !l.furniture &&
       (String.ofList ((lineText l).toLower.toList.dropWhile (!·.isAlpha))).startsWith
         word.toLower).map (·.y)
 
 /-- The distance from a probe page's `Alpha` line down to its `Omega` line. -/
-def probeSpan (page : Layout.PageOut) : Option Dim.Sp := do
+def probeSpan (page : Layout.PageOut) : Option Dim.Length := do
   pure ((← openingLineY page "omega") - (← openingLineY page "alpha"))
 
 /-- Where a character first stands on a shipped line. -/
-def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
+def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Length := Id.run do
   let mut x := l.x
   for s in l.segs do
     match s with
@@ -1609,7 +1609,7 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
   return none
 
 /-- A shipped line's runs, left to right: face index, glyphs, left edge and width. -/
-def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) := Id.run do
+def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Length × Dim.Length) := Id.run do
   let mut out := #[]
   let mut x := l.x
   for seg in l.segs do
@@ -1670,13 +1670,13 @@ def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match se
   | _ => s) ""
 
 /-- Does the page stand a text height alone as geometry's default `vmarginratio` 2:3 places it? -/
-def geometrySplit (p : Ir.PageSpec) (h : Dim.Sp) : Bool :=
+def geometrySplit (p : Ir.PageSpec) (h : Dim.Length) : Bool :=
   p.vmargin == (p.height - h) * 2 / 5 && p.bottomMargin == p.height - h - p.vmargin
 
 /-- The head and foot furniture baselines a geometry owes under `font`'s ink and a declared gap. -/
 def furnYs (font : Font) (geom : Layout.Geom)
-    (gap : Option Dim.Sp := none) : Dim.Sp × Dim.Sp :=
-  let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+    (gap : Option Dim.Length := none) : Dim.Length × Dim.Length :=
+  let scale (u : Int) : Dim.Length := u * geom.fontSize / (font.unitsPerEm : Int)
   let ink := scale font.ascent + scale (-font.descent)
   (Layout.furnHeadY (Layout.furnitureBand geom.vmargin ink gap) (scale font.ascent),
    Layout.furnFootY (Layout.furnitureBand geom.bottomMargin ink gap) geom.pageH
@@ -2165,13 +2165,13 @@ def codeFenceLines (fonts : Font.FontSet) (lang code : String) : Array Layout.Li
   bodyLines (layoutOf fonts (elabMd ("```" ++ lang ++ "\n" ++ code ++ "\n```\n")).1)
 
 /-- The distances between consecutive body baselines, in page order. -/
-def baselinePitches (out : Layout.Out) : Array Dim.Sp :=
+def baselinePitches (out : Layout.Out) : Array Dim.Length :=
   let lines := bodyLines out
   (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
 
 /-- Every shipped line's position, size and text, furniture included, in page order. -/
 def shippedLinesOf (fonts : Font.FontSet) (doc : Ir.Doc) :
-    Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+    Array (Dim.Length × Dim.Length × Dim.Length × String) :=
   (allLines (layoutOf fonts doc)).map fun l => (l.x, l.y, l.size, lineText l)
 
 /-- Face indices and character scalars of shipped body glyphs, in paint order. -/
@@ -2181,9 +2181,9 @@ def bodyGlyphs (out : Layout.Out) : Array (Nat × Char) :=
     | _ => #[]
 
 /-- The x each glyph run of a shipped line starts at, with its text. -/
-def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
+def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Length) := Id.run do
   let mut x := l.x
-  let mut out : Array (String × Dim.Sp) := #[]
+  let mut out : Array (String × Dim.Length) := #[]
   for s in l.segs do
     match s with
     | .run _ _ _ w glyphs _ _ _ _ _ _ =>
@@ -2204,14 +2204,14 @@ structure ShippedGlyph where
   face : Nat
   glyph : Nat
   scalar : Char
-  x : Dim.Sp
-  y : Dim.Sp
-  advance : Dim.Sp
-  size : Dim.Sp
+  x : Dim.Length
+  y : Dim.Length
+  advance : Dim.Length
+  size : Dim.Length
   expand : Int
   color : Ir.Color
   link : Option String
-  leading : Option Dim.Sp
+  leading : Option Dim.Length
   decorations : Layout.Decorations
   ground : Option Ir.Color
   deriving BEq, Repr
@@ -2243,13 +2243,13 @@ namespace ShippedInk
 
 /-- An outline hull in page coordinates, y up, control points included. -/
 structure InkBounds where
-  left : Dim.Sp
-  bottom : Dim.Sp
-  right : Dim.Sp
-  top : Dim.Sp
+  left : Dim.Length
+  bottom : Dim.Length
+  right : Dim.Length
+  top : Dim.Length
   deriving BEq, Repr
 
-def InkBounds.shift (b : InkBounds) (dx dy : Dim.Sp) : InkBounds :=
+def InkBounds.shift (b : InkBounds) (dx dy : Dim.Length) : InkBounds :=
   { left := b.left + dx, right := b.right + dx
     bottom := b.bottom + dy, top := b.top + dy }
 
@@ -2266,10 +2266,10 @@ def InkBounds.union (a b : InkBounds) : InkBounds :=
 def InkBounds.disjoint (a b : InkBounds) : Bool :=
   a.right ≤ b.left || b.right ≤ a.left || a.top ≤ b.bottom || b.top ≤ a.bottom
 
-def InkBounds.inRoom (b : InkBounds) (left right : Dim.Sp) : Bool :=
+def InkBounds.inRoom (b : InkBounds) (left right : Dim.Length) : Bool :=
   left ≤ b.left && b.right ≤ right
 
-def polygonHull (points : Array (Dim.Sp × Dim.Sp)) : Option InkBounds := do
+def polygonHull (points : Array (Dim.Length × Dim.Length)) : Option InkBounds := do
   let (x, y) ← points[0]?
   return points.foldl (fun b (px, py) => b.union ⟨px, py, px, py⟩) ⟨x, y, x, y⟩
 
@@ -2309,7 +2309,7 @@ def targetInk (fonts : Font.FontSet) (glyphs : Array ShippedGlyph) :
   return ink
 
 /-- Polygon origins from the line pen, advancing through every width-bearing segment. -/
-def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.Sp)) := Id.run do
+def polygonPens (line : Layout.LineOut) : Array (Dim.Length × Array (Dim.Length × Dim.Length)) := Id.run do
   let mut pen := line.x
   let mut polys := #[]
   for seg in line.segs do
@@ -2321,16 +2321,16 @@ def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.
   return polys
 
 /-- Shipped polygons in `glyphInk`'s upward page coordinates. -/
-def polygonsAt (line : Layout.LineOut) : Array (Array (Dim.Sp × Dim.Sp)) :=
+def polygonsAt (line : Layout.LineOut) : Array (Array (Dim.Length × Dim.Length)) :=
   (polygonPens line).map fun (pen, points) =>
     points.map fun (x, y) => (pen + x, y - line.y)
 
 end ShippedInk
 
 /-- Gaps that stand before glyph ink, excluding a paragraph's closing fill. -/
-def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
-  let mut out : Array Dim.Sp := #[]
-  let mut pending : Array Dim.Sp := #[]
+def metricInnerGaps (l : Layout.LineOut) : Array Dim.Length := Id.run do
+  let mut out : Array Dim.Length := #[]
+  let mut pending : Array Dim.Length := #[]
   for s in l.segs do
     match s with
     | .gap w _ | .decoratedGap w _ _ => pending := pending.push w
@@ -2342,19 +2342,19 @@ def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
   return out
 
 /-- Painted inline rules on shipped body pages. -/
-def metricRuleSegs (out : Layout.Out) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
+def metricRuleSegs (out : Layout.Out) : Array (Dim.Length × Dim.Length × Dim.Length × Ir.Color) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
     | .rule w h raise color => some (w, h, raise, color)
     | _ => none
 
 def metricDecorationSegs (out : Layout.Out) :
-    Array (Ir.Decoration × Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
+    Array (Ir.Decoration × Dim.Length × Dim.Length × Dim.Length × Ir.Color) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
     | .decoration kind w h raise color => some (kind, w, h, raise, color)
     | _ => none
 
 /-- Sizes of glyph runs on shipped body pages. -/
-def metricRunSizes (out : Layout.Out) : Array Dim.Sp :=
+def metricRunSizes (out : Layout.Out) : Array Dim.Length :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
     | .run _ _ _ _ glyphs size _ _ _ _ _ => if glyphs.isEmpty then none else some size
     | _ => none
@@ -2458,12 +2458,12 @@ def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=
   censusOf (coveredColorsOf doc) (layoutOf fonts doc)
 
 /-- The laid-out lines of a source: baseline and text. -/
-def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Sp × String)) :=
+def pageLines (fonts : Font.FontSet) (src : String) : Array (Array (Dim.Length × String)) :=
   (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.text))
 
 /-- Every shipped line of a source: position, size and text. -/
 def shippedLines (fonts : Font.FontSet) (src : String) :
-    Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+    Array (Dim.Length × Dim.Length × Dim.Length × String) :=
   (censusOfSrc fonts src).flatMap fun p => p.lines.map fun l => (l.x, l.y, l.size, l.text)
 
 /-- A source elaborated as the driver elaborates it, against the label measurement layout sets
@@ -2510,7 +2510,7 @@ def shippedFiraFont : IO (Option Font) := do
   | .error _ => pure none
 
 /-- A measurement in thousandths of a point. -/
-def ptMilli (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
+def ptMilli (milli : Int) : Dim.Length := Dim.pt 1 * milli / 1000
 
 /-- A 10 pt beamer deck under `theme`, each frame its options and body. -/
 def beamerDeck (theme : String) (frames : List (String × String)) : String :=
@@ -2520,7 +2520,7 @@ def beamerDeck (theme : String) (frames : List (String × String)) : String :=
   "\\end{document}\n"
 
 /-- The baseline of the first body line holding `word` on page `page`. -/
-def bodyLineY (out : Layout.Out) (page : Nat) (word : String) : Option Dim.Sp :=
+def bodyLineY (out : Layout.Out) (page : Nat) (word : String) : Option Dim.Length :=
   (out.pages[page]?.bind fun p => p.lines.find? fun l =>
     !l.furniture && hasStr (lineText l) word).map (·.y)
 
@@ -2531,7 +2531,7 @@ def cssEmMilli (v : String) : Option Int := do
   return m * 1000 / (sc : Int)
 
 /-- Two lengths within `slack` of each other. -/
-def withinSp (slack a b : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
+def withinSp (slack a b : Dim.Length) : Bool := a - b ≤ slack && b - a ≤ slack
 
 /-- Two faces over the three slots (roman 0, sans 1, typewriter 2): `other` in slot `slot` and
 `base` in the rest, so a run's face says which (`CensusLine.runFonts`). -/
@@ -2638,8 +2638,8 @@ def screenRulesOf (css sel : String) : List String :=
 /-- The first of `screenRulesOf`'s rules. -/
 def screenRuleOf (css sel : String) : Option String := (screenRulesOf css sel).head?
 
-/-- A length in sp as thousandths of a point, rounded to nearest. -/
-def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
+/-- A length as thousandths of a point, rounded to nearest. -/
+def spMilli (d : Dim.Length) : Int := (d * (1000 : Int) + Dim.pt 1 / 2) / Dim.pt 1
 
 /-- 2 thousandths of a point: the rounding a lualatex probe's printed decimals carry into TeX
 points. -/
@@ -2735,7 +2735,7 @@ def chaseCssValue (vars : List (String × String)) (value : String) : Option Str
 
 /-- Whether a CSS stage length's share matches the shipped PDF length, within one printed
 milli-percent. -/
-def cssStageLength (style key : String) (length height : Dim.Sp) : Bool :=
+def cssStageLength (style key : String) (length height : Dim.Length) : Bool :=
   ((style.splitOn ";").findSome? fun decl => do
     let [name, value] := decl.splitOn ":" | none
     if name.trimAscii.toString != key then none else

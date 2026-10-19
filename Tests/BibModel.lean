@@ -7,6 +7,9 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-! The bibliography's one entry model, held against bibtex and biber: name splitting, the two
 views, both inheritances, and the reference lists of the BibTeX styles and biblatex's standard
 families over the probes in `testdata/probes/u102`. -/
@@ -1250,7 +1253,7 @@ def bibLabelAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     @misc{c, author = {Di Delta and Ed Epsilon and Flo Zeta and Gus Eta}, title = {Third}, year = 2022}\n"
   -- each entry's first line: where it starts, where its marker ends, and
   -- where its text starts
-  let edges (doc : Ir.Doc) : Array (Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let edges (doc : Ir.Doc) : Array (Dim.Length × Dim.Length × Dim.Length) :=
     (bibEntryLines (bodyLines (layoutOf fonts doc))).filterMap fun e => e[0]?.map fun l =>
       match l.segs[0]?, l.segs[1]? with
       | some (Layout.Seg.run _ _ _ w _ _ _ _ _ _ _), some (Layout.Seg.gap g _) =>
@@ -1267,7 +1270,7 @@ def bibLabelAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     let (doc, _) := bibBuild (bibProbeDoc pre list "*") #[("r", src), ("r.bib", src)]
     let es := edges doc
     let html := (HtmlDoc.emit {} doc).1
-    let same (f : Dim.Sp × Dim.Sp × Dim.Sp → Dim.Sp) : Bool := es.all (f · == (es[0]?.map f).getD 0)
+    let same (f : Dim.Length × Dim.Length × Dim.Length → Dim.Length) : Bool := es.all (f · == (es[0]?.map f).getD 0)
     t s!"labels {style}: {count} entries" (es.size == count)
     if flush then
       t s!"labels {style}: every label starts at one x ({es.map (·.1)})" (same (·.1))
@@ -1285,7 +1288,7 @@ def bibLabelAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let (doc, _) := bibBuild own #[]
   let es := edges doc
   let html := (HtmlDoc.emit {} doc).1
-  let same (f : Dim.Sp × Dim.Sp × Dim.Sp → Dim.Sp) : Bool := es.all (f · == (es[0]?.map f).getD 0)
+  let same (f : Dim.Length × Dim.Length × Dim.Length → Dim.Length) : Bool := es.all (f · == (es[0]?.map f).getD 0)
   t s!"labels own: 3 entries ({es.size})" (es.size == 3)
   t s!"labels own: every hand-written label starts at one x ({es.map (·.1)})" (same (·.1))
   t s!"labels own: every entry's text starts at one x ({es.map (·.2.2)})" (same (·.2.2))

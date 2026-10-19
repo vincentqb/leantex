@@ -74,7 +74,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
                 HtmlDoc.attrOf? padded "height" == some "0px" &&
                 HtmlDoc.attrOf? padded "depth" == some "0px" &&
                 HtmlDoc.attrOf? inner "style" ==
-                  some s!"font-size: {(Ir.baseFontSize * (scale : Int) / 1000).toPtString}px"
+                  some s!"font-size: {(Ir.baseFontSize * (scale : Int) / 1000).toBpString}px"
               | _ => false)
         let glyphs := shippedBodyGlyphs out
         t (name ++ " keeps its first native letter")
@@ -95,7 +95,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
             let baseline := (pic.box metric).2.2 -
               Ir.Pic.labelBaseline y align (metric content size)
             t (name ++ " retains the shared alphabetic baseline")
-              (baselines.contains baseline.toPtString &&
+              (baselines.contains baseline.toBpString &&
                 (bodyLines out)[0]?.any fun l => l.y - geom.vmargin == baseline)
             let small : Ir.Pic.Picture := {
               shapes := #[.label x y content color size align]
@@ -147,7 +147,7 @@ def paragraphSource (content : String) : String :=
   "\\documentclass{article}\\begin{document}\n" ++ content ++ "\n\\end{document}"
 
 /-- The gaps, left and right, from the outline the page strokes to the label line it sets. -/
-def outlineGaps (out : Layout.Out) : Option (Dim.Sp × Dim.Sp) := do
+def outlineGaps (out : Layout.Out) : Option (Dim.Length × Dim.Length) := do
   let page ← out.pages[0]?
   let (x, w) ← (pageDraws page).findSome? fun (g, _, st) => match g, st with
     | .rect x _ w _, some _ => some (x, w)
@@ -197,12 +197,12 @@ def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
     let (doc, _) := elabMeasured fs (drawnNodeSource content)
     PictureMathLabels.outlineGaps (layoutOf fs doc)
   let plain := gapsOf "W"
-  t s!"picture alphabet: a text node ships its outline and label line ({plain})" plain.isSome
+  t s!"picture alphabet: a text node ships its outline and label line ({reprStr plain})" plain.isSome
   for content in #["$\\mathbf{W}$", "$\\mathrm{Fir}$", "$\\mathsf{Q}$", "$\\mathtt{k}$"] do
     let alphabet := gapsOf content
-    t s!"picture alphabet: a drawn node around {content} clears its label by the inner sep ({alphabet} against {plain})"
+    t s!"picture alphabet: a drawn node around {content} clears its label by the inner sep ({reprStr alphabet} against {reprStr plain})"
       (match plain, alphabet with
-       | some (l, r), some (l', r') => (l - l').natAbs ≤ 2 && (r - r').natAbs ≤ 2
+       | some (l, r), some (l', r') => (l - l').abs ≤ 2 * Dim.Length.quantum && (r - r').abs ≤ 2 * Dim.Length.quantum
        | _, _ => false)
   let (displayDoc, _) := elabStr (PictureMathLabels.paragraphSource "\\[\\frac{1}{2}\\]")
   let displayBody := firstFormula displayDoc

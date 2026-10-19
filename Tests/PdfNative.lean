@@ -982,7 +982,7 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let widths := glyphWidth.filterMap fun m => match m with
     | .paint _ _ _ (some st) _ _ => some st.width
     | _ => none
-  t s!"state: a Type 3 glyph strokes with the line width in force ({widths})" (widths == #[Dim.pt 7])
+  t s!"state: a Type 3 glyph strokes with the line width in force ({reprStr widths})" (widths == #[Dim.pt 7])
   let tile := streamObj "1 0 0 rg 0 0 5 5 re f"
     "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >> "
   t "state: a tiling pattern that strokes is named"
@@ -1068,7 +1068,7 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
      | [.paint _ g _ _ _ _] => g == .path #[Gfx.Kit.rectPath (Dim.pt 150) (Dim.pt 80) (Dim.pt (-100)) (Dim.pt (-50))]
      | _ => false)
   -- A stroked glyph's lengths stand in its frame: in user space 0.5 pt wide, dashed 2 on 1 from 0.25.
-  let inUser (m : Gfx.Affine) (v : Dim.Sp) : Rat := (v : Rat) * m.a / 65536
+  let inUser (m : Gfx.Affine) (v : Dim.Length) : Rat := v.toRat * m.a / (Dim.bp 1).toRat
   let near (x y : Rat) : Bool := x - y ≤ mkRat 1 1000 && y - x ≤ mkRat 1 1000
   for mode in [1, 2] do
     let ttStroked := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,

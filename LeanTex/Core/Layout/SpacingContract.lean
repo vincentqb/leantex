@@ -21,7 +21,7 @@ private def selectedDefault (p : PendingView) (peer tex : Glue) : Glue :=
 boundary can owe the peer default. A zero-width tail causes `addvspace` to
 append and clear `declaredSkip`, so its old stacked default must be covered.
 A nonzero tail keeps that flag and pays the larger tail width instead. -/
-public def replacementFloor (a : Pending) (r : Context) : Sp :=
+public def replacementFloor (a : Pending) (r : Context) : Length :=
   let p := pending a
   match p.owed.back? with
   | none =>
@@ -37,9 +37,9 @@ public def replacementFloor (a : Pending) (r : Context) : Sp :=
 /-- Input condition in resolved scaled points. Nonnegative width alone does
 not cover a positive peer default that the element's convention removes. -/
 public def CoversDefault (a : Pending) (r : Context) (g : Glue) : Prop :=
-  (0 : Int) ≤ g.width ∧ replacementFloor a r ≤ g.width
+  (0 : Length) ≤ g.width ∧ replacementFloor a r ≤ g.width
 
-private def boundaryWidth (p : PendingView) (peer tex : Glue) : Sp :=
+private def boundaryWidth (p : PendingView) (peer tex : Glue) : Length :=
   (p.owed.foldl Glue.add {}).width +
     if p.owed.isEmpty then
       if p.wantDefault then peer.width else 0
@@ -57,7 +57,7 @@ private theorem flushed_width (a : Pending) (r : Context) (h : Ordinary a) :
     cases want <;> simp [boundaryWidth, Glue.add]
   · have hn : owed.isEmpty = false := Bool.eq_false_iff.mpr he
     cases want <;> cases declared <;> cases triv <;>
-      simp [boundaryWidth, selectedDefault, hn, Glue.add, Int.add_comm]
+      simp [boundaryWidth, selectedDefault, hn, Glue.add, Length.add_comm]
 
 private theorem sum_width_from (gs : Array Glue) (g : Glue) :
     (gs.foldl Glue.add g).width = g.width + (gs.foldl Glue.add {}).width := by
@@ -68,17 +68,17 @@ private theorem sum_width_from (gs : Array Glue) (g : Glue) :
       (g₁ := Glue.add) (g₂ := fun w v => w + v.width)
       (xs := gs) (init := initial) (fun _ _ => rfl)).symm
   rw [widths, widths]
-  have shifted := Array.foldl_hom (fun w : Sp => g.width + w)
+  have shifted := Array.foldl_hom (fun w : Length => g.width + w)
     (g₁ := fun w (v : Glue) => w + v.width)
     (g₂ := fun w (v : Glue) => w + v.width)
-    (xs := gs) (init := 0) (fun _ _ => Int.add_assoc ..)
+    (xs := gs) (init := 0) (fun _ _ => Length.add_assoc ..)
   simpa using shifted
 
 /-- The actual `addvOwed` selection never reduces the sum of pending widths
 when the inserted width is nonnegative. Empty, zero-tail append, replacement
 and retained-tail arms are all quantified, including signed prior glue. -/
 public theorem merge_width_monotone (gs : Array Glue) (g : Glue)
-    (hg : (0 : Int) ≤ g.width) :
+    (hg : (0 : Length) ≤ g.width) :
     (gs.foldl Glue.add {}).width ≤ ((merge gs g).foldl Glue.add {}).width := by
   cases hb : gs.back? with
   | none =>
@@ -93,11 +93,11 @@ public theorem merge_width_monotone (gs : Array Glue) (g : Glue)
     simp only [Array.back?_push]
     by_cases h0 : last.width == 0
     · simp only [h0, ite_true, Array.foldl_push, Glue.add]
-      exact Int.le_add_of_nonneg_right hg
+      exact Length.le_add_of_nonneg_right hg
     · simp only [h0, Bool.false_eq_true, ite_false]
       by_cases hlt : last.width < g.width
       · simp only [hlt, ite_true, Array.pop_push, Array.foldl_push, Glue.add]
-        exact Int.add_le_add_left (Int.le_of_lt hlt) _
+        exact Length.add_le_add_left (Length.le_of_lt hlt) _
       · simp [hlt]
 
 /-- The resolved compensation condition suffices for the emitted boundary,
@@ -121,7 +121,7 @@ public theorem flushed_width_monotone (a : Pending) (r : Context) (g : Glue)
       simp only [Array.back?_empty]
     cases want <;> cases declared <;> cases triv <;>
       simp_all [boundaryWidth, selectedDefault, Glue.add] <;>
-      dsimp only [Sp] at * <;> omega
+      length_omega
   | some last =>
     obtain ⟨prior, rfl⟩ := Array.back?_eq_some_iff.mp hb
     simp only [Array.back?_push, Option.any_some] at hc ⊢
@@ -130,18 +130,18 @@ public theorem flushed_width_monotone (a : Pending) (r : Context) (g : Glue)
     by_cases h0 : last.width == 0
     · cases want <;> cases declared <;> cases triv <;>
         simp_all [boundaryWidth, selectedDefault, Glue.add] <;>
-        dsimp only [Sp] at * <;> omega
+        length_omega
     · by_cases hlt : last.width < g.width
       · cases want <;> cases declared <;> cases triv <;>
           simp_all [boundaryWidth, selectedDefault, Glue.add] <;>
-          dsimp only [Sp] at * <;> omega
+          length_omega
       · simp [h0, hlt]
 
 /-- The page's fit test as an input inequality over the current geometry,
 the fixed line's measured extent, and the resolved glue about to be consumed.
 This does not assert that a line stayed on a page: `place_exact` proves that
 the production `fitCommit` takes its checked commit arm from this bound. -/
-public def Fits (a : Pending) (r : Context) (b : Page) (size : Sp)
+public def Fits (a : Pending) (r : Context) (b : Page) (size : Length)
     (segs : Array Seg) : Prop :=
   let i := input r b size segs
   let g := (flushed a r).foldl Glue.add i.skip
@@ -158,13 +158,13 @@ This is a contract at the production placement boundary, before page-close
 stretch/shrink distribution. It does not compare unconstrained whole-document
 runs or infer rendered ink from font metadata. -/
 public theorem elementSpace_placement_monotone (a : Pending) (r : Context) (b : Page)
-    (x size : Sp) (segs : Array Seg) (width : Sp) (g : Glue)
+    (x size : Length) (segs : Array Seg) (width : Length) (g : Glue)
     (ha : Ordinary a) (hb : Ready b segs) (hg : CoversDefault a r g)
     (hfit : Fits a r b size segs) (hfit' : Fits (add a g) r b size segs) :
     Emits a r (flushed a r) ∧ Emits (add a g) r (flushed (add a g) r) ∧
     shipped (place a r b x size segs width) = shipped b ∧
     shipped (place (add a g) r b x size segs width) = shipped b ∧
-    ∃ y y' : Sp,
+    ∃ y y' : Length,
       baselines (place a r b x size segs width) = (baselines b).push y ∧
       baselines (place (add a g) r b x size segs width) = (baselines b).push y' ∧
       y ≤ y' := by
@@ -176,7 +176,7 @@ public theorem elementSpace_placement_monotone (a : Pending) (r : Context) (b : 
     hp.1, hp'.1, _, _, hp.2, hp'.2, ?_⟩
   rw [sum_width_from (flushed a r) (input r b size segs).skip,
     sum_width_from (flushed (add a g) r) (input r b size segs).skip]
-  exact Int.add_le_add_left (Int.add_le_add_left hw _) _
+  exact Length.add_le_add_left (Length.add_le_add_left hw _) _
 
 /-- Resolved element spacing cannot lower the last ink baseline of the
 actual `Layout.run` output under the stated production input conditions.
@@ -202,13 +202,13 @@ public theorem elementSpace_monotone (geom : Geom) (fs : Font.FontSet)
     (hafter : AtTail geom fs after b j breaks (flushed (add a g) r))
     (hfit : ParagraphSafe fs b j breaks (flushed a r))
     (hfit' : ParagraphSafe fs b j breaks (flushed (add a g) r)) :
-    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Int) ≤
+    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Length) ≤
       (inkBaselines (Layout.run geom fs none after)).getLast?.getD 0 := by
   apply run_tail_monotone geom fs before after b j breaks _ _
     hbefore hafter hfit hfit'
   rw [sum_width_from (flushed a r) (queuedGlue b),
     sum_width_from (flushed (add a g) r) (queuedGlue b)]
-  exact Int.add_le_add_left (flushed_width_monotone a r g ha hg) _
+  exact Length.add_le_add_left (flushed_width_monotone a r g ha hg) _
 
 /-- A certificate discharges the staging and fit premises of the whole-run
 contract. The remaining inequality compares resolved input glue, before
@@ -217,14 +217,14 @@ public theorem TailPair.run_monotone {geom : Geom} {fs : Font.FontSet}
     {before after : Ir.Doc} (c : TailPair geom fs before after)
     (hw : (c.beforeSkips.foldl Glue.add {}).width ≤
       (c.afterSkips.foldl Glue.add {}).width) :
-    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Int) ≤
+    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Length) ≤
       (inkBaselines (Layout.run geom fs none after)).getLast?.getD 0 := by
   apply run_tail_monotone geom fs before after c.page c.paragraph c.breaks
     c.beforeSkips c.afterSkips c.before_reaches c.after_reaches
     c.before_safe c.after_safe
   rw [sum_width_from c.beforeSkips (queuedGlue c.page),
     sum_width_from c.afterSkips (queuedGlue c.page)]
-  exact Int.add_le_add_left hw _
+  exact Length.add_le_add_left hw _
 
 /-- A sufficient-input check for arbitrary actual documents. The bounded
 two-paragraph certificate checks common preparation and numeric fit; this
@@ -243,7 +243,7 @@ every supplied font environment and document pair. Callers need neither
 private staging identities nor an assumed output-page comparison. -/
 public theorem twoParagraphIncreasing_contract (geom : Geom) (fs : Font.FontSet)
     (before after : Ir.Doc) (h : twoParagraphIncreasing geom fs before after = true) :
-    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Int) ≤
+    ((inkBaselines (Layout.run geom fs none before)).getLast?.getD 0 : Length) ≤
       (inkBaselines (Layout.run geom fs none after)).getLast?.getD 0 := by
   cases hc : twoParagraphPair? geom fs before after with
   | none => simp [twoParagraphIncreasing, hc] at h

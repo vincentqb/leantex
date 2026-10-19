@@ -100,7 +100,7 @@ def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       \\bibliographystyle\{plainnat}\n\\begin\{document}\n{body}\\bibliography\{refs}\n\
       \\end\{document}\n" #[("refs", natbibBib)]
     (bodyLines (layoutOf oneFace doc), (HtmlDoc.emit {} doc).1, eds ++ ds)
-  let step (lines : Array Layout.LineOut) (next : String) : Option Dim.Sp :=
+  let step (lines : Array Layout.LineOut) (next : String) : Option Dim.Length :=
     match lines.find? (lineInk · |>.startsWith "First paragraph"),
         lines.find? (lineInk · |>.startsWith next) with
     | some a, some b => some (b.y - a.y)
@@ -110,7 +110,7 @@ def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let (lines, html, ds) := build withNocite
     let (cLines, cHtml, _) := build control
     let next := if tag == "before the list" then "References" else "Second paragraph"
-    t s!"nocite {tag}: the page steps as without it ({step lines next} vs {step cLines next})"
+    t s!"nocite {tag}: the page steps as without it ({reprStr (step lines next)} vs {reprStr (step cLines next)})"
       ((step lines next).isSome && step lines next == step cLines next)
     t s!"nocite {tag}: the html has the control's paragraphs ({paras html} vs {paras cHtml})"
       (paras html == paras cHtml)

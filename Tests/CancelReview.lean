@@ -87,10 +87,10 @@ private def docWitness (fonts : Font.FontSet) (doc : Ir.Doc) (ds : Array Diag) :
   let #[node] := (elemNodesList (· == "mpadded") #[] nodes.toList).filter
     (nodeAttr "data-cancel-metric" · == "measured") | throw "missing measured HTML construct"
   return {
-    em := anchor.size, origin := left, baseline := anchor.y
-    nativeAdvance := right - left, line
-    lineExtents := #[box.above, box.below, box.inkAbove, box.inkBelow]
-    flowBaselines := #[middle.y - above.y, below.y - middle.y]
+    em := anchor.size.units, origin := left.units, baseline := anchor.y.units
+    nativeAdvance := (right - left).units, line
+    lineExtents := #[box.above.units, box.below.units, box.inkAbove.units, box.inkBelow.units]
+    flowBaselines := #[(middle.y - above.y).units, (below.y - middle.y).units]
     glyphs, node }
 
 private def witness (fonts : Font.FontSet) (options before body target after : String) :
@@ -117,19 +117,19 @@ private def targetAgrees (w : Witness) : Bool := (do
   let value ← (nodeKids w.node)[1]?
   let placement ← offset w.em value
   let first ← w.glyphs.find? (fun (g : ShippedGlyph) => g.scalar == '0')
-  return near w.em placement.chromiumX (first.x - w.origin) &&
-    near w.em placement.firefoxX (first.x - w.origin) &&
-    near w.em placement.y (w.baseline - first.y) &&
+  return near w.em placement.chromiumX (first.x.units - w.origin) &&
+    near w.em placement.firefoxX (first.x.units - w.origin) &&
+    near w.em placement.y (w.baseline - first.y.units) &&
     near w.em placement.advance 0).getD false
 
 /-- The top and bottom of the shipped line's one zero-width math strut, cancellation's reservation. -/
 private def reservation (w : Witness) : Option (Int × Int) := do
   let struts := w.line.segs.filterMap fun seg => match seg with
     | .run _ _ _ width glyphs size metrics _ raise _ _ =>
-      if width == 0 && glyphs.isEmpty && size == 1 then
+      if width == 0 && glyphs.isEmpty && size == Dim.Length.quantum then
         metrics.math.map fun m =>
-          let delta := raise - (w.line.y - w.baseline)
-          (m.top + delta, m.bottom + delta)
+          let delta := raise.units - (w.line.y.units - w.baseline)
+          (m.top.units + delta, m.bottom.units + delta)
       else none
     | _ => none
   let #[bounds] := struts | none
@@ -157,7 +157,7 @@ private def targetSpacePen (fonts : Font.FontSet) (source : String) :
   let #[anchor] := (shippedBodyGlyphs out).filter (·.scalar == '𝑢') |
     throw "missing plain script em witness"
   let (left, right) ← CancelAlignment.constructEndpoints out
-  return (anchor.size, right - left)
+  return (anchor.size.units, (right - left).units)
 
 private def targetSpaceAdvance (w : Witness) : Option (Int × Int) := do
   let placed ← (nodeKids w.node)[1]?
@@ -225,7 +225,7 @@ def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
           (advanceAgrees w)
         if options == "overlap" then
           check ref s!"cancel wide {options}/{style}: target starts left of origin"
-            ((w.glyphs.find? (·.scalar == '0')).any (·.x < w.origin))
+            ((w.glyphs.find? (·.scalar == '0')).any (·.x.units < w.origin))
     for target in ["", "\\color{red}", "{}", "\\,", "\\!", "\\color{red}\\,"] do
       match witness fonts options "$" "x" target "$" with
       | .error err => check ref s!"cancel empty {options}/{target}: {err}" false

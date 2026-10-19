@@ -73,7 +73,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let mOut := layoutOf fonts mDoc
   let grey := (mDoc.palette.lookup (.color "bg")).getD Ir.Color.white
   let greyFills := mOut.pages.flatMap fun p => p.fills.filter (·.color == grey)
-  let baseline (text : String) : Option Int :=
+  let baseline (text : String) : Option Dim.Length :=
     ((allLines mOut).find? (lineText · == text)).map (·.y)
   t "minted bgcolor: the listing stands on its colour and the page on none"
     ((pageFills mDoc mOut).isEmpty && greyFills.size == 1 && !mDs.any (·.code == "W0110"))

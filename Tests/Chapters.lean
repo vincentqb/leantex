@@ -8,14 +8,16 @@ open LeanTex.Core
 
 namespace Tests.Chapters
 
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-- The pages a source ships: each line's baseline, size and text. -/
 private def pagesOf (fonts : Font.FontSet) (src : String) :
-    Array (Array (Dim.Sp × Dim.Sp × String)) :=
+    Array (Array (Dim.Length × Dim.Length × String)) :=
   (censusOfSrc fonts src).map (·.lines.map fun l => (l.y, l.size, l.text))
 
 /-- The first line on `page` whose text is `text`. -/
-private def lineAt (pages : Array (Array (Dim.Sp × Dim.Sp × String))) (page : Nat) (text : String) :
-    Option (Dim.Sp × Dim.Sp) :=
+private def lineAt (pages : Array (Array (Dim.Length × Dim.Length × String))) (page : Nat) (text : String) :
+    Option (Dim.Length × Dim.Length) :=
   (pages[page]?.getD #[]).findSome? fun (y, size, t) => if t == text then some (y, size) else none
 
 /-- report.cls's and book.cls's `\chapter` as lualatex sets it, its head's lines where lualatex

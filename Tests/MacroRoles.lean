@@ -60,7 +60,7 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   let classes (source : String) : Array String :=
     let (_, tree, _) := HtmlDoc.emitTree {} (elabStr source).1
     tree.flatMap (attrValuesOf (fun _ => true) "class")
-  let lines (source : String) : Array (String × Dim.Sp) :=
+  let lines (source : String) : Array (String × Dim.Length) :=
     (bodyLines (layoutOf fonts (elabStr source).1)).map fun line => (lineText line, line.y)
   for (label, definition, call) in #[
       ("newcommand", "\\newcommand\\entryprobe[1]{#1\\par}", "\\entryprobe{follow}"),

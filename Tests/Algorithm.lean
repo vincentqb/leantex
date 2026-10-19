@@ -152,7 +152,7 @@ def algorithmReadChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
      ls.any (hasStr · "Delta words") && !ls.any (hasStr · "label") && !ds.any (·.code == "E0310"))
 
 /-- Each run of a shipped line with its x and its font's index, words and gaps in order. -/
-private def runsAt (l : Layout.LineOut) : Array (String × Dim.Sp × Nat) := Id.run do
+private def runsAt (l : Layout.LineOut) : Array (String × Dim.Length × Nat) := Id.run do
   let mut x := l.x
   let mut out := #[]
   for s in l.segs do
@@ -196,7 +196,7 @@ def algWordChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let ioOut := layoutOf fonts (elabStr io).1
   let ls := bodyLines ioOut
   let lineOf (w : String) : Option Layout.LineOut := ls.find? fun l => (runsAt l).any (·.1 == w)
-  let colonEnd (l : Layout.LineOut) : Option Dim.Sp := (runsAt l).findSome? fun (w, x, _) =>
+  let colonEnd (l : Layout.LineOut) : Option Dim.Length := (runsAt l).findSome? fun (w, x, _) =>
     if w.endsWith ":" then
       let width := ((l.segs.filterMap fun s => match s with
         | .run _ _ _ rw glyphs .. =>
@@ -204,10 +204,10 @@ def algWordChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         | _ => none)[0]?).getD 0
       some (x + width)
     else none
-  let startOf (l : Layout.LineOut) (w : String) : Option Dim.Sp :=
+  let startOf (l : Layout.LineOut) (w : String) : Option Dim.Length :=
     (runsAt l).findSome? fun (r, x, _) => if r == w then some x else none
   let body := fonts.get regular
-  let tie : Dim.Sp := ((body.spaceAdvance * (Dim.pt 10).toNat / body.unitsPerEm : Nat) : Int)
+  let tie : Dim.Length := body.spaceAdvance * Dim.pt 10 / body.unitsPerEm
   match lineOf "Input", lineOf "Output:", ls.find? (fun l => hasStr (lineText l) "wraps") with
   | some inLine, some outLine, some wrapped =>
     t "algorithm2e io: the aligned words start where their lines do, their colons where the widest's ends"

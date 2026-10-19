@@ -116,7 +116,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let (pages, doc) := pagesOf fonts (document pre frames)
       let size := doc.page.fontSize
       -- The engine pays the skip's elaborated glue whole, at its natural width.
-      let width := (skipsOf doc).foldl (fun s g => s + (g.value.resolve size (size / 2)).width) (0 : Dim.Sp)
+      let width := (skipsOf doc).foldl (fun s g => s + (g.value.resolve size (size / 2)).width) (0 : Dim.Length)
       let width := width / pairs.length
       check ref s!"block skips ({label}): {name} resolves to lualatex's {lua} TeX points"
         ((spMilli width - (if physical then bpMilli lua else lua)).natAbs ≤ probeTolerance.toNat)
@@ -187,7 +187,7 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       (diags.all (·.code != "W0301") &&
         pages.all fun p => p.lines.all fun l =>
           !hasStr (lineText l) "pt" && !hasStr (lineText l) "plus" && !hasStr (lineText l) "minus")
-  let fillOf (skip : String) : Option Dim.Sp :=
+  let fillOf (skip : String) : Option Dim.Length :=
     let (doc, _) := Elab.run "block-skips-fill.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
     ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind
@@ -203,7 +203,7 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let size := doc.page.fontSize
   let topsep := (Ir.trivlistSkipFor doc.docClass.record.lists doc.tokens size 0).width.resolve
     size (size / 2)
-  let moved (i : Nat) : Option Dim.Sp := do
+  let moved (i : Nat) : Option Dim.Length := do
     pure ((← pages[i]?.bind probeSpan) - (← pages[0]?.bind probeSpan))
   check ref s!"block skips: a centred block's space after \\vskip 12pt is the larger, the skip less its own {spMilli topsep}, got {(moved 1).map spMilli}"
     (moved 1 == some (Dim.pt 12 - topsep))
@@ -239,7 +239,7 @@ private def registerChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         check ref s!"block skips ({label}): {skip} moves what follows {lua} (lualatex), got {spMilli (d1 - d0)}"
           ((spMilli (d1 - d0) - lua).natAbs ≤ probeTolerance.toNat)
       | _, _ => check ref s!"block skips ({label}): the {skip} probe ships its marks" false
-  let fillOf (skip : String) : Option Dim.Sp :=
+  let fillOf (skip : String) : Option Dim.Length :=
     let (doc, _) := Elab.run "block-skips-fill.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
     ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind
@@ -379,7 +379,7 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
 `\vskip 0pt plus 1fill` stays `\vfill`. -/
 private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let para := above "paragraph"
-  let pageOf (skip : String) : Option Dim.Sp × Array Diag :=
+  let pageOf (skip : String) : Option Dim.Length × Array Diag :=
     let (doc, diags) := Elab.run "block-skips-fil.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
     (((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind

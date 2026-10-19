@@ -22,10 +22,10 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Layout
 
 /-- A rectangle in PDF user space: lower-left and upper-right corners. -/
 public structure Rect where
-  x0 : Int
-  y0 : Int
-  x1 : Int
-  y1 : Int
+  x0 : Length
+  y0 : Length
+  x1 : Length
+  y1 : Length
   deriving Repr, BEq
 
 /-- Containment, the relation ISO 32000-2 expects between the page boxes. -/
@@ -35,30 +35,28 @@ public def Rect.within (inner outer : Rect) : Prop :=
 
 /-- The rectangle's corners in points, spelled as a PDF array. -/
 public def Rect.render (r : Rect) : String :=
-  s!"[{Sp.toPtString r.x0} {Sp.toPtString r.y0} {Sp.toPtString r.x1} {Sp.toPtString r.y1}]"
+  s!"[{Length.toBpString r.x0} {Length.toBpString r.y0} {Length.toBpString r.x1} {Length.toBpString r.y1}]"
 
-private def ptObj (x : Sp) : PdfRead.Obj :=
-  let milli := (x.natAbs * 1000 + 32768) / 65536
-  if milli % 1000 == 0 then
-    .int (if x < 0 then -(milli / 1000 : Int) else (milli / 1000 : Int))
-  else .real x.toPtString
+private def ptObj (x : Length) : PdfRead.Obj :=
+  let milli := x.toBpMilli
+  if milli % 1000 == 0 then .int (milli / 1000) else .real x.toBpString
 
 private def Rect.obj (r : Rect) : PdfRead.Obj :=
   .arr #[ptObj r.x0, ptObj r.y0, ptObj r.x1, ptObj r.y1]
 
 /-- The MediaBox, BleedBox and TrimBox the declared trim size and bleed imply (ISO 32000-2 §14.11.2). -/
-public def pageBoxes (pageW pageH bleed : Int) : Rect × Rect × Rect :=
+public def pageBoxes (pageW pageH bleed : Length) : Rect × Rect × Rect :=
   (⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
    ⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
    ⟨bleed, bleed, pageW + bleed, pageH + bleed⟩)
 
-public theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
+public theorem pageBoxes_nest (W H b : Length) (hb : 0 ≤ b) :
     (pageBoxes W H b).2.2.within (pageBoxes W H b).2.1 ∧
     (pageBoxes W H b).2.1.within (pageBoxes W H b).1 ∧
     (pageBoxes W H b).2.2.x1 - (pageBoxes W H b).2.2.x0 = W ∧
     (pageBoxes W H b).2.2.y1 - (pageBoxes W H b).2.2.y0 = H := by
   dsimp only [pageBoxes, Rect.within]
-  omega
+  length_omega
 
 /-- The PDF 1.7 standard type a 2.0-only structure type is role-mapped onto in a PDF 1.7 file. -/
 public def pdf17Role (s : String) : Option String :=
@@ -163,8 +161,8 @@ public def profile : Ir.Realization :=
     math := .layout }
 
 private def linkRects (geom : Geom) (page : PageOut) :
-    Array (Sp × Sp × Sp × Sp × String) := Id.run do
-  let mut out : Array (Sp × Sp × Sp × Sp × String) := page.links.map fun r =>
+    Array (Length × Length × Length × Length × String) := Id.run do
+  let mut out : Array (Length × Length × Length × Length × String) := page.links.map fun r =>
     (geom.bleed + r.x, geom.bleed + geom.pageH - r.y - r.h,
       geom.bleed + r.x + r.w, geom.bleed + geom.pageH - r.y, r.target)
   for l in page.lines do
@@ -621,8 +619,8 @@ public def shadingObj (g : Gfx.Gradient) (cmyk : Bool := false) : PdfRead.Obj :=
 in points. -/
 public def matrixObj (m : Gfx.Affine) : PdfRead.Obj :=
   .arr #[ratObj m.a.num m.a.den, ratObj m.b.num m.b.den, ratObj m.c.num m.c.den,
-    ratObj m.d.num m.d.den, ratObj m.e.num ((m.e.den : Int) * spPerPt),
-    ratObj m.f.num ((m.f.den : Int) * spPerPt)]
+    ratObj m.d.num m.d.den, ratObj (unitsInBp m.e).num (unitsInBp m.e).den,
+    ratObj (unitsInBp m.f).num (unitsInBp m.f).den]
 
 /-- A table entry spelled as a dictionary, its shadings in DeviceCMYK on a `cmyk` press where they
 can be; a form is a stream and has none. -/
@@ -652,9 +650,8 @@ public def glyphInkOf (fs : FontSet) (keep : Array Nat) : GfxPdf.GlyphInk :=
 /-- No face: what a reader of forms that set no text needs. -/
 @[expose] public def noGlyphInk : GfxPdf.GlyphInk := { width := fun _ _ => 0, hull := fun _ _ => Option.none }
 
-/-- A coordinate in whole points, rounded down. -/
-@[expose] public def floorPt (x : Int) : Int :=
-  if x ≥ 0 then x / spPerPt else -((-x + spPerPt - 1) / spPerPt)
+/-- A coordinate in whole big points, rounded down. -/
+@[expose] public def floorPt (x : Length) : Int := x.units / (bp 1).units
 
 /-- A form's bounding box in whole points outward, the hull of everything its body paints. -/
 public def formBBox (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array ContentOp) :
@@ -666,16 +663,18 @@ public def formBBox (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array Conte
 public theorem formBBox_covers (gi : GfxPdf.GlyphInk) (kind : FormKind) (body : Array ContentOp)
     (b : Gfx.Box) (h : GfxPdf.formBox gi kind body = some b) :
     let r := formBBox gi kind body
-    r.1 * spPerPt ≤ b.1.1 ∧ r.2.1 * spPerPt ≤ b.1.2 ∧ b.2.1 ≤ r.2.2.1 * spPerPt ∧
-      b.2.2 ≤ r.2.2.2 * spPerPt := by
+    bp r.1 ≤ b.1.1 ∧ bp r.2.1 ≤ b.1.2 ∧ b.2.1 ≤ bp r.2.2.1 ∧ b.2.2 ≤ bp r.2.2.2 := by
   obtain ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩ := b
   simp only [formBBox, h]
-  have lo (x : Int) : floorPt x * spPerPt ≤ x := by
-    unfold floorPt spPerPt
-    split <;> omega
-  have hi (x : Int) : x ≤ -floorPt (-x) * spPerPt := by
+  have hp := bp_one_pos
+  have lo (x : Length) : bp (floorPt x) ≤ x := by
+    simp only [floorPt, Length.le_def, bp_units (x.units / (bp 1).units)]
+    exact Int.ediv_mul_le _ (by omega)
+  have hi (x : Length) : x ≤ bp (-floorPt (-x)) := by
     have := lo (-x)
-    unfold spPerPt at *
+    simp only [Length.le_def, Length.units_neg] at this ⊢
+    rw [bp_units] at this ⊢
+    rw [Int.neg_mul]
     omega
   exact ⟨lo x0, lo y0, hi x1, hi y1⟩
 
@@ -2554,10 +2553,10 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let fv := f.val
         let bw := fv.w
         let bh := fv.h
-        let bbox := s!"[{Sp.toPtString fv.x0} {Sp.toPtString fv.y0} \
-{Sp.toPtString fv.x1} {Sp.toPtString fv.y1}]"
-        let matrix := s!"[{ratString spPerPt bw} 0 0 {ratString spPerPt bh} \
-{ratString (-fv.x0) bw} {ratString (-fv.y0) bh}]"
+        let bbox := s!"[{Length.toBpString fv.x0} {Length.toBpString fv.y0} \
+{Length.toBpString fv.x1} {Length.toBpString fv.y1}]"
+        let matrix := s!"[{ratString (bp 1).units bw.units} 0 0 {ratString (bp 1).units bh.units} \
+{ratString (-fv.x0).units bw.units} {ratString (-fv.y0).units bh.units}]"
         let stored := copiedFormStream fv.content (imgs.formZ[k]?).join
         let filter := if stored.2 then " /Filter /FlateDecode" else ""
         rows := rows.push ⟨imgId, .form s!"<< /Type /XObject /Subtype /Form \

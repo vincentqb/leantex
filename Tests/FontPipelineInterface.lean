@@ -27,13 +27,13 @@ example (a b : Ir.Pic.LabelMetric) (ps : Array FontFix.Probe)
   FontFix.agree_probe a b ps h p hp
 
 example (a b : Ir.Pic.LabelMetric) (content : Array Ir.Inline)
-    (scale : Nat) (align : Ir.Pic.LabelAlign) (w h : Dim.Sp)
+    (scale : Nat) (align : Ir.Pic.LabelAlign) (w h : Dim.Length)
     (same : a content scale = b content scale) :
     Ir.Pic.nodeExtent a content scale align w h =
       Ir.Pic.nodeExtent b content scale align w h :=
   FontFix.extent_agree a b content scale align w h same
 
-example (pic : Ir.Pic.Picture) (x y : Dim.Sp) (content : Array Ir.Inline)
+example (pic : Ir.Pic.Picture) (x y : Dim.Length) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (h : Ir.Pic.Shape.label x y content color scale align ∈ pic.shapes) :
     (content, scale) ∈ FontFix.probesOfPic pic :=

@@ -6,7 +6,7 @@ public import LeanTex.Core.Layout.MathRhythm
 public section
 
 open LeanTex.Core
-open LeanTex.Core.Dim (Sp pt)
+open LeanTex.Core.Dim (Length pt)
 
 namespace ParagraphMathRhythm
 
@@ -22,7 +22,7 @@ def source (size leading : Nat) (formula : String) : String :=
 
 /-- Outline hulls of the shipped runs plus every painted math rule or polygon, with no face-wide
 ascent or descent. -/
-def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Sp × Sp) := do
+def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Length × Length) := do
   let mut above := 0
   let mut below := 0
   for seg in line.segs do
@@ -44,7 +44,7 @@ def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Sp × Sp)
     | .gap .. | .decoratedGap .. => pure ()
   return (above, below)
 
-def gaps (lines : Array Layout.LineOut) : Array Sp :=
+def gaps (lines : Array Layout.LineOut) : Array Length :=
   (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
 
 /-- A visible collision check in page coordinates, over outline hulls. -/

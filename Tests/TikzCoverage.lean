@@ -18,9 +18,9 @@ def picDoc (opts body : String) (pre : String := "") : String :=
 /-- What a page of pictures shows: each line's text and position, each mark's box, stroke and
 runs. -/
 structure Shown where
-  lines : Array (String × Dim.Sp × Dim.Sp)
-  boxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp)
-  strokes : Array (Ir.Color × Dim.Sp)
+  lines : Array (String × Dim.Length × Dim.Length)
+  boxes : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length)
+  strokes : Array (Ir.Color × Dim.Length)
   runs : Array (Array Nat × Bool)
   deriving BEq, Repr
 
@@ -34,7 +34,7 @@ def shownOf (oneFace : Font.FontSet) (src : String) : Shown :=
 
 /-- Agreement within two sp per coordinate, the rounding of two separately rounded offsets. -/
 def Shown.close (a b : Shown) : Bool :=
-  let near (x y : Dim.Sp) : Bool := decide (x - y ≤ 2 ∧ y - x ≤ 2)
+  let near (x y : Dim.Length) : Bool := decide (x - y ≤ 2 * Dim.Length.quantum ∧ y - x ≤ 2 * Dim.Length.quantum)
   a.lines.size == b.lines.size && a.boxes.size == b.boxes.size &&
     (a.lines.zip b.lines).all (fun ((s, x, y), (s', x', y')) => s == s' && near x x' && near y y') &&
     (a.boxes.zip b.boxes).all (fun ((x, y, w, h), (x', y', w', h')) =>

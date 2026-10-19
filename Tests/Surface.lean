@@ -8,6 +8,9 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-- The extent a node registers (`Ir.Pic.nodeExtent`), and the separation it buys, over an invented
 metric. -/
 def nodeExtentChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -19,7 +22,7 @@ def nodeExtentChecks (ref : IO.Ref (List String)) : IO Unit := do
       height := Dim.pt 7 * scale / 1000
       depth := Dim.pt 2 * scale / 1000 }
   let label (text : String) : Array Ir.Inline := #[.text text]
-  let extent (text : String) (declA declB : Dim.Sp) : Dim.Sp × Dim.Sp :=
+  let extent (text : String) (declA declB : Dim.Length) : Dim.Length × Dim.Length :=
     Ir.Pic.nodeExtent metric (label text) 1000 .center declA declB
   t "a node body with no declared minimum still registers an extent"
     (extent "Placeholder" 0 0 == (Dim.pt 33, Dim.pt 9 / 2))
@@ -33,18 +36,18 @@ def nodeExtentChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Ir.Pic.nodeExtent metric (label "Placeholder") 1000 .west 0 0).1 == Dim.pt 66)
   t "a smaller label asks for less"
     ((extent "Placeholder" 0 0).1 > (Ir.Pic.nodeExtent metric (label "Placeholder") 700 .center 0 0).1)
-  let inkRight (x : Dim.Sp) (text : String) : Dim.Sp :=
+  let inkRight (x : Dim.Length) (text : String) : Dim.Length :=
     (Ir.Pic.labelInkBox x 0 .center (metric (label text) 1000)).2.1
-  let inkLeft (x : Dim.Sp) (text : String) : Dim.Sp :=
+  let inkLeft (x : Dim.Length) (text : String) : Dim.Length :=
     (Ir.Pic.labelInkBox x 0 .center (metric (label text) 1000)).1.1
   let sep := Dim.mm 10
-  let placed (declA : Dim.Sp) : Dim.Sp :=
+  let placed (declA : Dim.Length) : Dim.Length :=
     sep + (extent "Widest Placeholder" declA 0).1 + (extent "Second Placeholder" declA 0).1
   t "two measured nodes one separation apart do not overlap"
     (inkRight 0 "Widest Placeholder" < inkLeft (placed 0) "Second Placeholder")
   t "the gap the placement leaves is the separation the document declared"
     (inkLeft (placed 0) "Second Placeholder" - inkRight 0 "Widest Placeholder" == sep)
-  let unmeasured : Dim.Sp := sep
+  let unmeasured : Dim.Length := sep
   t "with no extent registered the same arithmetic overlaps the text"
     (inkLeft unmeasured "Second Placeholder" < inkRight 0 "Widest Placeholder")
 
@@ -145,19 +148,19 @@ def exprChecks (ref : IO.Ref (List String)) : IO Unit := do
 full = w + 2bleed, gap = bleed - 3pt, half = 0.5 * (bleed + safe) }")
   t "token arithmetic evaluates without errors" (ds.all (·.severity != .error))
   t "a + b is exact in sp"
-    (doc.tokens.find? "margin" == some { width := .ofSp (Dim.pt 18) })
+    (doc.tokens.find? "margin" == some { width := .ofLength (Dim.pt 18) })
   t "a + 2b reads TeX's coefficient form"
-    (doc.tokens.find? "full" == some { width := .ofSp (Dim.pt 258) })
+    (doc.tokens.find? "full" == some { width := .ofLength (Dim.pt 258) })
   t "a - b subtracts exactly"
-    (doc.tokens.find? "gap" == some { width := .ofSp (Dim.pt 6) })
+    (doc.tokens.find? "gap" == some { width := .ofLength (Dim.pt 6) })
   t "parentheses group before scaling"
-    (doc.tokens.find? "half" == some { width := .ofSp (Dim.pt 9) })
+    (doc.tokens.find? "half" == some { width := .ofLength (Dim.pt 9) })
   t "multiplication and division bind tighter than addition"
     (let d := (elabStr (pre "\\tokens{ a = 4pt, l = a + 2 * a, r = 2 * a + a, \
 d = a - a / 2 }")).1
-     d.tokens.find? "l" == some { width := .ofSp (Dim.pt 12) } &&
-       d.tokens.find? "r" == some { width := .ofSp (Dim.pt 12) } &&
-       d.tokens.find? "d" == some { width := .ofSp (Dim.pt 2) })
+     d.tokens.find? "l" == some { width := .ofLength (Dim.pt 12) } &&
+       d.tokens.find? "r" == some { width := .ofLength (Dim.pt 12) } &&
+       d.tokens.find? "d" == some { width := .ofLength (Dim.pt 2) })
   t "an unknown token in an expression is named"
     (let ds := (elabStr (pre "\\tokens{ a = b + 1pt }")).2
      ds.any fun d => d.code == "E0321" && (d.message.splitOn "'b' is not a declared token").length > 1)
@@ -166,7 +169,7 @@ d = a - a / 2 }")).1
      ds.any fun d => d.code == "E0321" && (d.message.splitOn "'b'").length > 1)
   t "a self-reference reads the earlier value, as TeX's 2\\x does"
     ((elabStr (pre "\\tokens{ a = 4pt, a = 2a }")).1.tokens.find? "a"
-      == some { width := .ofSp (Dim.pt 8) })
+      == some { width := .ofLength (Dim.pt 8) })
   t "a bare number in an expression needs a unit"
     (let ds := (elabStr (pre "\\tokens{ a = 3 + 2pt }")).2
      ds.any (·.code == "E0321"))
@@ -176,8 +179,8 @@ d = a - a / 2 }")).1
 \\setlength{\\cb}{2pt}\\newlength{\\cm}\\setlength{\\cm}{\\ca+\\cb}\
 \\newlength{\\ch}\\setlength{\\ch}{\\ca+2\\cb}")
      ds2.all (·.severity != .error) &&
-       d2.tokens.find? "cm" == some { width := .ofSp (Dim.pt 6) } &&
-       d2.tokens.find? "ch" == some { width := .ofSp (Dim.pt 8) })
+       d2.tokens.find? "cm" == some { width := .ofLength (Dim.pt 6) } &&
+       d2.tokens.find? "ch" == some { width := .ofLength (Dim.pt 8) })
   -- calc's `/` on a length is TeX's `\divide`, truncating toward zero (TeXbook ch. 24).
   let (d3, ds3) := elabStr (pre
     "\\tokens{ bleed = 9pt, safe = 9pt, w = 240pt, q = (bleed + safe) / 2, \
@@ -185,17 +188,17 @@ r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
   t "division by a numeric factor evaluates without errors"
     (ds3.all (·.severity != .error))
   t "a length divides by an integer"
-    (d3.tokens.find? "q" == some { width := .ofSp (Dim.pt 9) })
+    (d3.tokens.find? "q" == some { width := .ofLength (Dim.pt 9) })
   t "a length divides by a decimal"
-    (d3.tokens.find? "r" == some { width := .ofSp (Dim.pt 96) })
+    (d3.tokens.find? "r" == some { width := .ofLength (Dim.pt 96) })
   t "a negative length truncates toward zero, as TeX's \\divide does"
-    (d3.tokens.find? "negh" == some { width := .ofSp (-1) })
+    (d3.tokens.find? "negh" == some { width := .ofLength (-Dim.Length.quantum) })
   t "a parenthesized numeric divisor evaluates as a scalar"
     (let (d4, ds4) := elabStr (pre
       "\\newlength{\\cw}\\setlength{\\cw}{100pt}\\newlength{\\cb}\
 \\setlength{\\cb}{24pt}\\newlength{\\sw}\\setlength{\\sw}{(\\cw - 3\\cb) / (3+1)}")
      ds4.all (·.severity != .error) &&
-       d4.tokens.find? "sw" == some { width := .ofSp (Dim.pt 7) })
+       d4.tokens.find? "sw" == some { width := .ofLength (Dim.pt 7) })
   t "division by zero is refused with a diagnostic, never a silent 0"
     (let (d5, ds5) := elabStr (pre "\\tokens{ a = 4pt, b = a / 0 }")
      d5.tokens.find? "b" == none &&
@@ -225,8 +228,8 @@ r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
     "0.315\\dimexpr \\textwidth +36mm\\relax"
   let env := Dim.MeasureValues.horizontal (Dim.pt 345) 0
   let expected : Dim.SymGlue :=
-    (({ width := .ofSp (Dim.pt 345) } : Dim.SymGlue).add
-      { width := .ofSp (Dim.mm 36) }).scale 315 1000
+    (({ width := .ofLength (Dim.pt 345) } : Dim.SymGlue).add
+      { width := .ofLength (Dim.mm 36) }).scale 315 1000
   t "a typed local measure resolves in its supplied context"
     (match affine with
      | .ok e => e.eval env.find == expected
@@ -439,7 +442,7 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
       d0.page.fontSize == Dim.pt 2488 / 100)
   let (dc, _) := elabStr (deck "size=custom,width=84,height=59.4,scale=1.2")
   t "a custom board reads width/height as cm at fontscale 1"
-    (dc.page.width == (84 : Int) * (7200 * Dim.spPerPt) / 254 &&
+    (dc.page.width == Dim.inch (84 * 100) / 254 &&
       dc.page.fontSize == Dim.pt (2488 * 120) / 10000)
   let (_, dd) := elabStr (deck "debug,size=a2")
   t "an option outside the model is dropped by name (W0367)"
@@ -614,7 +617,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (strutDoc, strutDs) := elabStr
     (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\dp\\strutbox\\relax]{geometry}")
   t "compat geometry reads a dimexpr value"
-    (strutDoc.page.footskip == some (Dim.inch 3 / 10 + 235932) &&
+    (strutDoc.page.footskip == some (Dim.inch 3 / 10 + Dim.Length.ofSp 235932) &&
       strutDs.all (·.code != "W0101"))
   -- One the door cannot read is a named drop, never an unreadable `\page` value.
   let dimexprDs := (elabStr
@@ -1145,7 +1148,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       (d.message.splitOn "styled by the redefinition's rules and spacing").length == 2)
   t "an insert-spelled title reads its rules onto the built-in title page"
     (inTitleBlock iDoc fun b => match b with
-      | .rule _ _ g => g.value.width == Dim.Length.ofSp (Dim.pt 3)
+      | .rule _ _ g => g.value.width == Dim.SymLength.ofLength (Dim.pt 3)
       | _ => false)
   t "an insert-spelled author reads its strut and weight, inside the canvas"
     (inTitleBlock iDoc fun b => match b with
@@ -1157,11 +1160,11 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "style titlepage author-strut and author-font reach the author line"
     (nDs.isEmpty && (inTitleBlock nDoc fun b => match b with
       | .para #[.strut h, .styled .bold _] =>
-        h == { width := Dim.Length.ofSp (Dim.pt 18) }
+        h == { width := Dim.SymLength.ofLength (Dim.pt 18) }
       | _ => false))
   t "style titlepage after gaps the whole title block"
     (inTitleBlock nDoc fun b => match b with
-      | .spaced g #[] => g.value.width == Dim.Length.ofSp (Dim.pt 30)
+      | .spaced g #[] => g.value.width == Dim.SymLength.ofLength (Dim.pt 30)
       | _ => false)
   -- A body that only echoes its parameter is not empty, so LaTeX's identity-renew idiom wins.
   t "an argument-echoing redefinition of a rendered built-in wins"
@@ -1210,16 +1213,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat koma class declares the kernel's parskip"
     ((elabStr ("\\documentclass{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip ==
       some Ir.texParskipDefault)
-  for (opt, w, st) in [("half", 445644, 445644), ("full", 891289, 89128), ("", 891289, 89128)] do
+  for (opt, w, st) in ([("half", 445644, 445644), ("full", 891289, 89128), ("", 891289, 89128)] :
+      List (String × Int × Int)) do
     t s!"compat koma parskip={opt} is its share of the class's line"
       (((elabStr (s!"\\documentclass[parskip{if opt.isEmpty then "" else "=" ++ opt}]" ++
           "{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip.map
-        fun g => (g.width.sp, g.stretch.sp)) == some (w, st))
+        fun g => (g.width.sp, g.stretch.sp)) == some (Dim.Length.ofSp w, Dim.Length.ofSp st))
   t "compat parskip package"
     (((elabStr ("\\documentclass{article}\\usepackage{parskip}\\begin{document}x\\end{document}")).1.page.parskip.map
       (·.width.em)) == some 600)
   t "compat setlength parskip"
-    ((elabStr (pre "\\setlength{\\parskip}{4pt}")).1.page.parskip == some { width := Dim.Length.ofSp (Dim.pt 4) })
+    ((elabStr (pre "\\setlength{\\parskip}{4pt}")).1.page.parskip == some { width := Dim.SymLength.ofLength (Dim.pt 4) })
   t "a native article keeps the engine's parskip"
     ((elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.page.parskip == none)
   let (ndc, ndcDs) := elabStr ("\\documentclass{article}" ++
@@ -1461,7 +1465,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       == some (some .baseline, some (Dim.pt 4 / 10)))
   let ruleH (h : String) := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter" ++
     s!"\\renewcommand\\sectionlinesformat[4]\{#3#4 \\textcolor\{ink}\{\\leaders\\hrule{h}\\hfill\\kern\\z@}}\\makeatother"))
-  let thickOf (d : Ir.Doc × Array Diag) : Option Int :=
+  let thickOf (d : Ir.Doc × Array Diag) : Option Dim.Length :=
     ((d.1.styles.find? "section").bind (·.ruleThickness)).map (·.width.sp)
   t "compat koma section rule reads its declared height"
     (thickOf (ruleH " height 1.5pt") == some (Dim.pt 3 / 2))
@@ -1768,7 +1772,8 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
          ((slot, 400, true), i), ((slot, 700, true), i)]).toArray }
   let url := "https://example.org"
   -- The projection both commands must agree on: face, metrics, glyphs and size; the link and its underline stay out.
-  let runsOf (call : String) : Array ((Nat × Int × Array (Nat × Char × Int) × Int) × Bool × Bool) :=
+  let runsOf (call : String) :
+      Array ((Nat × Dim.Length × Array (Nat × Char × Dim.Length) × Dim.Length) × Bool × Bool) :=
     let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\nsee " ++
       call ++ " here\n\\end{document}")).1
     let segs := (allLines (layoutOf twoFace doc)).flatMap (·.segs)
@@ -1780,7 +1785,7 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => none
   let linked := runsOf s!"\\url\{{url}}"
   let plain := runsOf s!"\\nolinkurl\{{url}}"
-  let monoIdx (rs : Array ((Nat × Int × Array (Nat × Char × Int) × Int) × Bool × Bool)) : Bool :=
+  let monoIdx (rs : Array ((Nat × Dim.Length × Array (Nat × Char × Dim.Length) × Dim.Length) × Bool × Bool)) : Bool :=
     !rs.isEmpty && rs.all fun r => r.1.1 == 1
   t "url ships the URL in the mono face" (monoIdx linked)
   t "nolinkurl ships the URL in the mono face too" (monoIdx plain)
@@ -2007,8 +2012,8 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- Reference decimal printers spelled with `pushn` and `dropEndWhile`; `Dim.fracDigits` spells
 every value as they do. -/
-def legacyPtString (x : Dim.Sp) : String :=
-  let m := x.toPtMilli
+def legacyPtString (x : Dim.Length) : String :=
+  let m := x.toBpMilli
   let milli := m.natAbs
   let ip := milli / 1000
   let fr := milli % 1000
@@ -2047,36 +2052,37 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The digit-list printers spell as the legacy printers do, over every thousandth from -3 to 3 pt and a sweep of ratios.
   let ptBad := (List.range 6001).filterMap fun (i : Nat) =>
     let milli : Int := Int.ofNat i - 3000
-    let x : Int := milli * 65536 / 1000
-    [x - 1, x, x + 1, x + 32].find? fun y => Dim.Sp.toPtString y != legacyPtString y
+    let x : Dim.Length := Dim.bp milli / 1000
+    let q := Dim.Length.quantum
+    [x - q, x, x + q, x + 32 * q].find? fun y => Dim.Length.toBpString y != legacyPtString y
   t s!"sp pt string spells as the legacy printer does ({ptBad.take 3})" ptBad.isEmpty
   let ratBad := (List.range 4001).filterMap fun (i : Nat) =>
     let p : Int := Int.ofNat i * 7919 - 16000000
     [1, 7, 65536, 1000000000, 3 * 65536].find? fun q => Dim.ratString p q != legacyRatString p q
   t s!"rat string spells as the legacy printer does ({ratBad.take 3})" ratBad.isEmpty
-  -- toPtString rounds exact thirds to the nearest thousandth, collapses tiny values to "0" unsigned, and rounds halves away from zero.
-  t "sp pt string thirds" ((Dim.pt 1 / 3).toPtString == "0.333")
-  t "sp pt string negative thirds" ((-(Dim.pt 1) / 3).toPtString == "-0.333")
-  t "sp pt string eighth" (((8192 : Dim.Sp)).toPtString == "0.125")
-  t "sp pt string tiny is unsigned zero" (((-26 : Dim.Sp)).toPtString == "0")
-  t "sp pt string half milli rounds up" (((4096 : Dim.Sp)).toPtString == "0.063")
+  -- toBpString rounds exact thirds to the nearest thousandth, collapses tiny values to "0" unsigned, and rounds halves away from zero.
+  t "sp pt string thirds" ((Dim.pt 1 / 3).toBpString == "0.333")
+  t "sp pt string negative thirds" ((-(Dim.pt 1) / 3).toBpString == "-0.333")
+  t "sp pt string eighth" ((Dim.bp 1 / 8).toBpString == "0.125")
+  t "sp pt string tiny is unsigned zero" ((-26 * Dim.Length.quantum).toBpString == "0")
+  t "sp pt string half milli rounds up" ((Dim.bp 1 / 16).toBpString == "0.063")
 
   let mut s : UInt64 := 0xA0761D6478BD642F
-  let mut worst : Nat := 0
+  let mut worst : Dim.Length := 0
   let mut failed : Option String := none
   for _ in [0:2000] do
     let (mag, s') := rand s (2 ^ 32)
     s := s'
-    let x : Dim.Sp := (mag : Int) - 2 ^ 31
-    match Decl.parseLength (x.toPtString ++ "pt") with
+    let x : Dim.Length := ((mag : Int) - 2 ^ 31) * Dim.Length.quantum
+    match Decl.parseLength (x.toBpString ++ "pt") with
     | some l =>
-      let err := (l.sp - x).natAbs
+      let err := (l.sp - x).abs
       worst := max worst err
-      unless l.em == 0 && l.ex == 0 && err ≤ 33 do
-        failed := some s!"dim round-trip: {x} printed {x.toPtString}, reparsed {l.sp} (err {err})"
-    | none => failed := some s!"dim round-trip: {x} printed {x.toPtString}, which did not parse"
+      unless l.em == 0 && l.ex == 0 && err ≤ Dim.bp 1 / 2000 + Dim.Length.quantum do
+        failed := some s!"dim round-trip: {x} printed {x.toBpString}, reparsed {l.sp} (err {err})"
+    | none => failed := some s!"dim round-trip: {x} printed {x.toBpString}, which did not parse"
   if let some msg := failed then failures ref msg
-  t "dim round-trip error reaches the print rounding bound" (worst > 20)
+  t "dim round-trip error reaches the print rounding bound" (worst ≥ Dim.bp 1 / 3000)
 
 /-- Differential fuzz of the UTF-8 decoder against the core validator over random and
 one-byte-mutated strings. -/
@@ -3301,7 +3307,7 @@ def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "tokens derived scales earlier" (tokDoc.tokens.find? "sep" ==
     some { width := { ex := 1500 }, stretch := { ex := 375 } })
   t "tokens absolute" (tokDoc.tokens.find? "slab" ==
-    some { width := Dim.Length.ofSp (Dim.pt 18) })
+    some { width := Dim.SymLength.ofLength (Dim.pt 18) })
   t "block carries declared spacing" (tokDoc.body.any fun b =>
     match b with
     | .spaced before _ => before.value.width.ex == 1500
@@ -3317,12 +3323,12 @@ def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "block needs a body" (errCodes ("\\documentclass{article}" ++
     "\\begin{document}\\block\\end{document}") == ["E0304"])
 
-  t "length resolve ex" ((Dim.Length.mk 0 0 1000).resolve (Dim.pt 10) (Dim.pt 5) ==
+  t "length resolve ex" ((Dim.SymLength.mk 0 0 1000).resolve (Dim.pt 10) (Dim.pt 5) ==
     Dim.pt 5)
-  t "length resolve em" ((Dim.Length.mk 0 1500 0).resolve (Dim.pt 10) (Dim.pt 5) ==
+  t "length resolve em" ((Dim.SymLength.mk 0 1500 0).resolve (Dim.pt 10) (Dim.pt 5) ==
     Dim.pt 15)
   t "length resolve mixed"
-    ((Dim.Length.mk (Dim.pt 2) 1000 1000).resolve (Dim.pt 10) (Dim.pt 4) == Dim.pt 16)
+    ((Dim.SymLength.mk (Dim.pt 2) 1000 1000).resolve (Dim.pt 10) (Dim.pt 4) == Dim.pt 16)
 
   -- text symbols keep the space after them, unlike other control words
   t "symbol keeps space" (toks "a \\middot b" ==
@@ -3988,7 +3994,7 @@ def natbibListBib : String := Id.run do
   return out
 
 /-- A shipped line's segments with the x each starts at, from the line's own origin. -/
-def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
+def segStarts (l : Layout.LineOut) : Array (Dim.Length × Layout.Seg) := Id.run do
   let mut x := l.x
   let mut out := #[]
   for s in l.segs do
@@ -4010,8 +4016,8 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       \\bibliographystyle\{unsrtnat}\n\\begin\{document}\nL1 \\citep\{{keys}} end.\n\n\
       \\bibliography\{refs}\n\\end\{document}\n" #[("refs", natbibListBib)]
     (doc, layoutOf oneFace doc, (HtmlDoc.emit {} doc).1)
-  let edge (l : Layout.LineOut) : Dim.Sp := l.x + l.hang
-  let step (a b : Layout.LineOut) : Dim.Sp := b.y - a.y
+  let edge (l : Layout.LineOut) : Dim.Length := l.x + l.hang
+  let step (a b : Layout.LineOut) : Dim.Length := b.y - a.y
   let ay (pre : String) := build ("\\usepackage{natbib}" ++ pre) "e10,e1,e2"
   let (doc, out, html) := ay ""
   let geom := Layout.Geom.ofPage doc.page
@@ -4055,7 +4061,7 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     build "\\usepackage[numbers]{natbib}" "e1,e2,e3,e4,e5,e6,e7,e8,e9,e10"
   let ngeom := Layout.Geom.ofPage ndoc.page
   let ns := bibEntryLines (bodyLines nout)
-  let label (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) :=
+  let label (l : Layout.LineOut) : Option (Dim.Length × Dim.Length) :=
     (segStarts l).findSome? fun (x, s) => match s with
       | .run _ _ _ w _ _ _ _ _ _ .label => some (x, x + w)
       | _ => none
@@ -4063,7 +4069,7 @@ def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (a + l.hang, b + l.hang)
   let widest := labels.foldl (fun m (a, b) => max m (b - a)) 0
   let column := ngeom.hmargin + widest + ngeom.fontSize / 2
-  let textStart (l : Layout.LineOut) : Option Dim.Sp :=
+  let textStart (l : Layout.LineOut) : Option Dim.Length :=
     (segStarts l).findSome? fun (x, s) => match s with
       | .run _ _ _ _ glyphs _ _ _ _ _ a =>
         if glyphs.isEmpty || a == .label then none else some x
@@ -4799,7 +4805,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a title-page template of another shape keeps its refusal"
     (dsR.any (·.code == "W0361"))
   -- The withdrawal's premise: two builds differing only by the font's size ship different title sizes.
-  let fontProbe (size : String) : Option Dim.Sp :=
+  let fontProbe (size : String) : Option Dim.Length :=
     let pre := "\\setbeamerfont{probe heading}{size=" ++ size ++ "}" ++
       "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
       "\\node[anchor=west, font=\\usebeamerfont{probe heading}] at (current page.west) " ++
@@ -5111,16 +5117,16 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- `left: calc(0% + 4.123em)` reads as the percentage and the shift in sp; `padding: 0.333em` as the shift alone.
   let field (decls key : String) : Option String :=
     (decls.splitOn (key ++ ": "))[1]?.map fun rest => ((rest.splitOn ";")[0]?).getD ""
-  let emSp (s : String) : Option Dim.Sp :=
+  let emSp (s : String) : Option Dim.Length :=
     (Decl.parseDecimal ((s.trimAscii.toString.dropEnd 2).toString)).map fun (m, sc) =>
       m * em / (sc : Int)
-  let calcOf (v : String) : Option (String × Dim.Sp) :=
+  let calcOf (v : String) : Option (String × Dim.Length) :=
     match ((v.drop 5).toString.dropEnd 1).toString.splitOn "% + " with
     | [pct, shift] => (emSp shift).map (pct, ·)
     | _ => none
-  let near (a b : Dim.Sp) : Bool := (a - b).natAbs ≤ (em / 1000).natAbs + 1
+  let near (a b : Dim.Length) : Bool := (a - b).abs ≤ (em / 1000).abs + Dim.Length.quantum
   let outer := Ir.pgfOuterSep
-  let want : List (Nat × String × Dim.Sp × String × Dim.Sp × String) :=
+  let want : List (Nat × String × Dim.Length × String × Dim.Length × String) :=
     [(0, "0", Dim.mm 16 + outer, "50", Dim.mm 4, "translate(-0%, -50%)"),
      (1, "0", Dim.mm 16 + outer, "0", Dim.mm 14 + outer, "translate(-0%, -0%)"),
      (2, "0", Dim.mm 16 + outer, "100", -Dim.mm 14 - outer, "translate(-0%, -100%)"),
@@ -5220,7 +5226,7 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
       let o := layoutOf oneFace d
       let c := censusOf (coveredColorsOf d) o
       let (h, b, _) := HtmlDoc.emitTree {} d
-      let baseline : Option Dim.Sp := do
+      let baseline : Option Dim.Length := do
         return (← lineYOf c 0 "Line Beta") - (← lineYOf c 0 "Line Alpha")
       t s!"title size* keeps both PDF run sizes and its leading on stage {aspect}/{leading}"
         (lineSizeOf c 0 "Line Alpha" == some (Dim.pt 28) &&
@@ -5279,7 +5285,7 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
     unless subtitle.isEmpty do
       let (_, _, outZ, _, _) := shipPre (populated.replace "\\vskip3pt" "\\vskip0pt")
       let cZ := censusOf (coveredColorsOf doc) outZ
-      let gap (c : Array CensusPage) : Option Dim.Sp := do
+      let gap (c : Array CensusPage) : Option Dim.Length := do
         return (← lineYOf c 0 "Further Detail") - (← lineYOf c 0 "Synthetic Heading")
       t "the optional subtitle's declared skip reaches the shipped baselines"
         (match gap cN, gap cZ with
@@ -6125,7 +6131,7 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
   -- The centre and half-extents of the k-th shipped path.
   let box (c : Array CensusPage) (k : Nat) :
-      Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+      Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     (c[0]?.bind (·.pathBoxes[k]?)).map fun (x, y, w, h) =>
       (x + w / 2, y + h / 2, w / 2, h / 2)
   let node (nm body extra : String) : String :=
@@ -6197,7 +6203,7 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let run (body : String) : Array CensusPage × Array Diag :=
     let (doc, ds) := elabStr (pic body)
     (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
-  let labels (c : Array CensusPage) : Array (String × Dim.Sp × Dim.Sp) :=
+  let labels (c : Array CensusPage) : Array (String × Dim.Length × Dim.Length) :=
     (c[0]?.map fun p => p.lines.filterMap fun l =>
       if l.text.isEmpty || l.furniture then none
       else some (l.text, l.y, l.size)).getD #[]
@@ -6434,13 +6440,13 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     doc ("\\begin{tikzpicture}\n\\node (a) at (0,0) {" ++ body ++ "};\n\\end{tikzpicture}")
   -- A line as its runs, each run's face, glyphs and colour, and each gap's width.
   let runsOf (l : Layout.LineOut) :
-      Array (Sum Dim.Sp (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color)) :=
+      Array (Sum Dim.Length (Nat × Array (Nat × Char × Dim.Length) × Ir.Color)) :=
     l.segs.filterMap fun seg => match seg with
       | .run idx color _ _ glyphs _ _ _ _ _ _ => some (.inr (idx, glyphs, color))
       | .gap w true => some (.inl w)
       | _ => none
   let shipped (src : String) :
-      Array (Array (Sum Dim.Sp (Nat × Array (Nat × Char × Dim.Sp) × Ir.Color))) :=
+      Array (Array (Sum Dim.Length (Nat × Array (Nat × Char × Dim.Length) × Ir.Color))) :=
     let (d, _) := elabStr src
     ((bodyLines (layoutOf fs d)).filter fun l => (runsOf l).any (· matches .inr _)).map runsOf
   let diagsOf (src : String) : Array Diag := (elabStr src).2
@@ -6694,7 +6700,7 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       s := s ++ "\\node (n" ++ toString k ++ ") [right =of n" ++ toString (k - 1) ++
         "] {Another Very Wide Label Here};\n"
     return s
-  let shipped (src : String) : Array CensusLine × Dim.Sp × Dim.Sp × Array Diag :=
+  let shipped (src : String) : Array CensusLine × Dim.Length × Dim.Length × Array Diag :=
     let (doc, _) := elabStr src
     let out := layoutOf oneFace doc
     let geom := Layout.Geom.ofPage doc.page
@@ -6726,7 +6732,7 @@ def pictureInkBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\end{tikzpicture}\n\\end{document}"
   let (dDoc, _) := elabStr declared
   let dc := censusOf (coveredColorsOf dDoc) (layoutOf oneFace dDoc)
-  let dbox (k : Nat) : Option (Dim.Sp × Dim.Sp) :=
+  let dbox (k : Nat) : Option (Dim.Length × Dim.Length) :=
     (dc[0]?.bind (·.pathBoxes[k]?)).map fun (x, _, w, _) => (x + w / 2, w / 2)
   t "measuring the box leaves a declared border-to-border separation exact"
     (match dbox 0, dbox 1 with
@@ -6891,7 +6897,7 @@ def pictureNodePrologueChecks (ref : IO.Ref (List String)) (oneFace : Font.FontS
     , "\\node (nn) at (2,0) [draw, minimum size=8mm] {Quince};\n"
     , "\\node[draw] at (2,0) (nn) [minimum size=8mm] {Quince};\n"
     , "\\node at (2,0) [draw, minimum size=8mm] (nn) {Quince};\n" ]
-  let boxesOf (body : String) : Option (Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp)) :=
+  let boxesOf (body : String) : Option (Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length)) :=
     (censusSrc (pic body))[0]?.map (·.pathBoxes)
   let first := boxesOf (orders.headD "")
   t "a node's outline ships whatever order its prologue was written in"
@@ -6936,7 +6942,7 @@ def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\node (bb) [draw, minimum size=8mm] at (4,0) {Plum};\n" ++
     "\\draw (" ++ endA ++ ") -- (" ++ endB ++ ");\n"
   let box (c : Array CensusPage) (k : Nat) :
-      Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+      Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     c[0]?.bind (·.pathBoxes[k]?)
   let (_, ds) := elabStr (pic (two "aa.east" "bb.west"))
   t "an edge between two named anchors elaborates with nothing refused"
@@ -7026,14 +7032,14 @@ def pictureAutoLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     "\\draw[" ++ pathOpts ++ "] (0, 0) -- node[" ++ labelOpts ++ "] {Kappa} " ++
     endPt ++ ";\n\\end{tikzpicture}\n\\end{document}"
   -- The picture's box grows toward the label's side, so only the label's offset from the edge is a fact.
-  let offset (pre pathOpts labelOpts endPt : String) : Option Dim.Sp :=
+  let offset (pre pathOpts labelOpts endPt : String) : Option Dim.Length :=
     let (doc, _) := elabStr (pic pre pathOpts labelOpts endPt)
     let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
     match (c[0]?.bind (·.pathBoxes[0]?)),
           (c[0]?.bind fun p => (p.lines.find? fun l => hasStr l.text "Kappa")) with
     | some (_, ey, _, _), some l => some (l.y - ey)
     | _, _ => none
-  let horiz (pre pathOpts labelOpts : String) : Option Dim.Sp :=
+  let horiz (pre pathOpts labelOpts : String) : Option Dim.Length :=
     offset pre pathOpts labelOpts "(4, 0)"
   -- `auto` is pinned against the `above` and `below` placements, not a sign convention.
   let above := horiz "" "" "above"
@@ -7078,7 +7084,7 @@ def pictureAutoLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "a label's own placement beats the side 'auto' computed"
     (horiz "" "auto" "below" == below)
   -- On an upward path the left is toward smaller x.
-  let vertX (pathOpts labelOpts : String) : Option Dim.Sp :=
+  let vertX (pathOpts labelOpts : String) : Option Dim.Length :=
     let src := "\\begin{document}\n\\begin{tikzpicture}\n" ++
       "\\draw[" ++ pathOpts ++ "] (2, 0) -- node[" ++ labelOpts ++
       "] {Kappa} (2, 4);\n\\end{tikzpicture}\n\\end{document}"
@@ -7106,7 +7112,7 @@ def pictureInnerSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     "\\node[" ++ opts ++ "] (bb) at (4, 0) {Plum};\n" ++
     "\\draw (aa.east) -- (bb.west);\n" ++
     "\\end{tikzpicture}\n\\end{document}"
-  let edgeBox (opts : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let edgeBox (opts : String) : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     let (doc, _) := elabStr (pic opts)
     ((censusOf (coveredColorsOf doc) (layoutOf oneFace doc))[0]?).bind (·.pathBoxes[0]?)
   let dflt := edgeBox "text=black"
@@ -7127,9 +7133,9 @@ def pictureInnerSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   -- With no sep and a null metric the anchors are the centres, the edge spanning the separation to within a scaled point.
   t "a zero 'inner sep' puts the anchor back on the letters"
     (match zero with
-     | some (_, _, wz, _) => Dim.mm 40 - wz <= 1 && wz <= Dim.mm 40
+     | some (_, _, wz, _) => Dim.mm 40 - wz <= Dim.Length.quantum && wz <= Dim.mm 40
      | none => false)
-  let vert (opts : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let vert (opts : String) : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     let src := "\\begin{document}\n\\begin{tikzpicture}\n" ++
       "\\node[" ++ opts ++ "] (aa) at (0, 0) {Pear};\n" ++
       "\\node[" ++ opts ++ "] (bb) at (0, -4) {Plum};\n" ++

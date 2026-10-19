@@ -22,12 +22,11 @@ def toleranceMilliBp : Int := 500
 base, a constant so an engine change cannot move it. -/
 def nearMilliBp : Int := 3000
 
-/-- sp per bp, and the conversion to thousandths of a bp, rounded half away from zero. -/
-def spPerBp : Int := 65536
+/-- A length in thousandths of a bp, rounded half away from zero. -/
+def milliBpOf (v : Dim.Length) : Int := v.toBpMilli
 
-def milliBpOfSp (v : Int) : Int :=
-  let n := v * 1000
-  if n ≥ 0 then (n + spPerBp / 2) / spPerBp else -((-n + spPerBp / 2) / spPerBp)
+/-- A PDF number in the content scanner's fixed point, 65536 to the point, as a length. -/
+def fixedLen (v : Int) : Dim.Length := (Dim.bp 1).ofRatio v 65536
 
 /-- A value in thousandths of a bp, spelled `12.345`. -/
 def showMilli (m : Int) : String :=
@@ -128,7 +127,7 @@ def parseFixture (name src : String) : Except String Fixture := do
 top edge on both sides. -/
 
 structure MLine where
-  y : Int
+  y : Dim.Length
   text : String
   /-- The structure leaf the line sets; the reference's untagged lines carry none. -/
   leaf : Option Nat := none
@@ -139,7 +138,7 @@ structure MPage where
   /-- Text lines, top to bottom; a line with no glyph is a mark. -/
   lines : Array MLine
   /-- Every non-text mark: its top and bottom edge. -/
-  marks : Array (Int × Int)
+  marks : Array (Dim.Length × Dim.Length)
   deriving Inhabited, Repr
 
 /-- Whether `marker` stands in `s` as a word, with no letter immediately before or after
@@ -201,11 +200,11 @@ def lineAbove (p : MPage) (j : Nat) : Option MLine := Id.run do
   return best
 
 /-- The marks whose vertical extent overlaps the open band between two baselines. -/
-def marksBetween (p : MPage) (hi lo : Int) : Array (Int × Int) :=
+def marksBetween (p : MPage) (hi lo : Dim.Length) : Array (Dim.Length × Dim.Length) :=
   p.marks.filter fun (t, b) => t < lo && b > hi
 
-/-- One boundary's measured gap, in sp, or why it has none. -/
-def gapOf (pages : Array MPage) (s : Spec) : Except String Int := do
+/-- One boundary's measured gap, or why it has none. -/
+def gapOf (pages : Array MPage) (s : Spec) : Except String Dim.Length := do
   let some (i, j) := findMarker pages s.marker
     | throw s!"no line holds the marker '{s.marker}'"
   let p := pages[i]!
@@ -244,7 +243,7 @@ marks the picture paths, fills, rules, images and polygons. -/
 def ofOut (out : Layout.Out) : Array MPage :=
   out.pages.map fun p => Id.run do
     let mut lines : Array MLine := #[]
-    let mut marks : Array (Int × Int) := #[]
+    let mut marks : Array (Dim.Length × Dim.Length) := #[]
     for l in p.lines do
       let mut text := ""
       for s in l.segs do
@@ -306,7 +305,7 @@ def ctmMarks (content : ByteArray) : Array (Int × Int × Int × Int) := Id.run 
     | some (x0, y0, x1, y1) => some (min x0 p.1, min y0 p.2, max x1 p.1, max y1 p.2)
   for t in scanContent content do
     match t with
-    | .num v _ => nums := nums.push v
+    | .num v _ => nums := nums.push (v * (65536 : Int) / Dim.bp 1)
     | .op o =>
       if o == "q" then saved := saved.push ctm
       else if o == "Q" then
@@ -345,7 +344,7 @@ def ctmMarks (content : ByteArray) : Array (Int × Int × Int × Int) := Id.run 
 downward from the media box's top, with its marks (`ctmMarks`). -/
 def ofArt (p : ArtPage) : MPage := Id.run do
   let top := p.media.2.2.2
-  let mut ys : Array Int := #[]
+  let mut ys : Array Dim.Length := #[]
   let mut runs : Array (Array ArtRun) := #[]
   for r in p.runs do
     match ys.findIdx? (· == r.y) with
@@ -359,7 +358,7 @@ def ofArt (p : ArtPage) : MPage := Id.run do
     let text := String.intercalate " " (rs.toList.map (·.text))
     if !(text.trimAscii.isEmpty) then
       lines := lines.push { y := top - ys[i]!, text }
-  let marks := (ctmMarks p.content).map fun (_, y0, _, y1) => (top - y1, top - y0)
+  let marks := (ctmMarks p.content).map fun (_, y0, _, y1) => (top - fixedLen y1, top - fixedLen y0)
   return { lines := lines.qsort (·.y < ·.y), marks }
 
 /-! The reference file: numbers only, one row per boundary, with the content keys of both
@@ -522,7 +521,7 @@ regenerate: lake env lean --run scripts/rhythm.lean --reference {name}"
     let engine := match openFault pages row.spec, premiseFault pages row.spec with
       | some why, _ => .error s!"premise: {why}"
       | none, some why => .error s!"premise: {why}"
-      | none, none => (gapOf pages row.spec).map milliBpOfSp
+      | none, none => (gapOf pages row.spec).map milliBpOf
     { fixture := name, row, engine })
 
 /-- Every fixture measured; a fault anywhere is a fault of the run. -/
@@ -607,9 +606,9 @@ def dumpLines (name : String) : IO UInt32 := do
   for p in ofOut out, i in [0:out.pages.size] do
     IO.println s!"page {i + 1}"
     for l in p.lines do
-      IO.println s!"  {showMilli (milliBpOfSp l.y)}\tleaf={l.leaf}\tfurniture={l.furniture}\t{l.text}"
+      IO.println s!"  {showMilli (milliBpOf l.y)}\tleaf={l.leaf}\tfurniture={l.furniture}\t{l.text}"
     for (t, b) in p.marks do
-      IO.println s!"  mark {showMilli (milliBpOfSp t)} → {showMilli (milliBpOfSp b)}"
+      IO.println s!"  mark {showMilli (milliBpOf t)} → {showMilli (milliBpOf b)}"
   for d in diags do IO.println s!"  diag {d.code} {d.subject} {d.message.take 100}"
   return 0
 
@@ -731,7 +730,7 @@ def pdfQuantumMilli (name : String) : IO Int := do
   let file := s!"{rhythmDir}/{name}.tex"
   let src ← engineSource file
   let (doc, _) := Elab.runExecuted file src.executed src.diags
-  return milliBpOfSp (Ir.rhythmQuantum doc.page.fontSize)
+  return milliBpOf (Ir.rhythmQuantum doc.page.fontSize)
 
 /-- A number of thousandths as quanta of `q` thousandths, to two decimals. -/
 def inQuanta (v q : Int) : String :=
@@ -767,10 +766,10 @@ written but not measured"
   if r.exitCode != 0 then
     IO.eprintln s!"rhythm: the probe exited {r.exitCode}: {r.stderr}"
     return 2
-  -- CSS px scaled to sp at 65536 per px, so every predicate applies unchanged.
-  let pxSp (s : String) : Int := (parseMilli s).getD 0 * spPerBp / 1000
+  -- CSS px read as points, so every predicate applies unchanged.
+  let pxSp (s : String) : Dim.Length := (Dim.bp 1).ofRatio ((parseMilli s).getD 0) 1000
   let mut pages : Array (String × MPage) := #[]
-  let mut leadings : Array (String × Int) := #[]
+  let mut leadings : Array (String × Dim.Length) := #[]
   let mut version := "?"
   for l in r.stdout.splitOn "\n" do
     match l.splitOn "\t" with
@@ -796,13 +795,13 @@ and measured by the browser; lengths bp (PDF) and CSS px (HTML); q = that contex
   for m in ms do
     let qPdf ← pdfQuantumMilli m.fixture
     let lead := ((leadings.find? (·.1 == m.fixture)).map (·.2)).getD 0
-    let qHtml := milliBpOfSp (lead / 2)
+    let qHtml := milliBpOf (lead / 2)
     let html : Except String Int := match pages.find? (·.1 == m.fixture) with
       | some (_, p) =>
         if m.row.spec.kind == .top then .error "a page's top is not a screen's"
         else match openFault #[p] m.row.spec with
           | some why => .error why
-          | none => (gapOf #[p] m.row.spec).map milliBpOfSp
+          | none => (gapOf #[p] m.row.spec).map milliBpOf
       | none => .error "not measured"
     let showQ (v : Except String Int) (q : Int) : String × String := match v with
       | .ok x => (showMilli x, inQuanta x q)
@@ -832,7 +831,7 @@ def lineTag (rs : Array ArtRun) : Option (String × Nat) :=
     | .artifact _ => none
 
 structure PLine where
-  y : Int
+  y : Dim.Length
   key : String
   tag : Option (String × Nat)
   deriving Inhabited
@@ -841,7 +840,7 @@ structure PLine where
 written out), and the structure tag. -/
 def pairLines (p : ArtPage) : Array PLine := Id.run do
   let top := p.media.2.2.2
-  let mut ys : Array Int := #[]
+  let mut ys : Array Dim.Length := #[]
   let mut runs : Array (Array ArtRun) := #[]
   for r in p.runs do
     match ys.findIdx? (· == r.y) with
@@ -878,15 +877,15 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
   -- The HTML page's lines where a browser measured them, as sp.
   let keyOfText (t : String) : String :=
     String.ofList ((t.toList.filter Char.isAlpha).take 12)
-  let mut html : Array (Int × String) := #[]
-  let mut lead : Int := 0
+  let mut html : Array (Dim.Length × String) := #[]
+  let mut lead : Dim.Length := 0
   if let some pf := probe then
     for l in (← IO.FS.readFile pf).splitOn "\n" do
       match l.splitOn "\t" with
       | ["line", _, y, t] =>
         if (keyOfText t).length ≥ 3 then
-          html := html.push ((parseMilli y).getD 0 * spPerBp / 1000, keyOfText t)
-      | ["page", _, v] => lead := (parseMilli v).getD 0 * spPerBp / 1000
+          html := html.push ((Dim.bp 1).ofRatio ((parseMilli y).getD 0) 1000, keyOfText t)
+      | ["page", _, v] => lead := (Dim.bp 1).ofRatio ((parseMilli v).getD 0) 1000
       | _ => pure ()
   let mut cursor := 0
   let mut rows : Array String :=
@@ -905,14 +904,15 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
       if !opens then continue
       let tagName (t : Option (String × Nat)) : String := (t.map (·.1)).getD "none"
       -- A mark stands between only when inside the band.
-      let between := emarks.any fun (_, y0, _, y1) => etop - y1 ≥ up.y && etop - y0 ≤ me.y
+      let between := emarks.any fun (_, y0, _, y1) =>
+        etop - fixedLen y1 ≥ up.y && etop - fixedLen y0 ≤ me.y
       let egap := me.y - up.y
-      let rgap : Option Int := do
+      let rgap : Option Dim.Length := do
         let j ← rl.findIdx? (·.key == me.key)
         if j == 0 then none
         some (rl[j]!.y - rl[j - 1]!.y)
       let (rb, d) := match rgap with
-        | some g => (showMilli (milliBpOfSp g), showMilli (milliBpOfSp (egap - g)))
+        | some g => (showMilli (milliBpOf g), showMilli (milliBpOf (egap - g)))
         | none => ("-", "-")
       -- The HTML twin: the next line with the same key, and the line above it on the screen.
       let mut hb := "-"
@@ -921,14 +921,14 @@ def privateReport (enginePdf refPdf outDir label : String) (probe : Option Strin
         let j := cursor + k
         cursor := j + 1
         let above := html.filter fun (y, _) => y < html[j]!.1
-        if let some (ya, _) := above.foldl (fun (acc : Option (Int × String)) h =>
+        if let some (ya, _) := above.foldl (fun (acc : Option (Dim.Length × String)) h =>
             match acc with
             | some a => if a.1 < h.1 then some h else some a
             | none => some h) none then
-          hb := showMilli (milliBpOfSp (html[j]!.1 - ya))
+          hb := showMilli (milliBpOf (html[j]!.1 - ya))
       | none => pure ()
       rows := rows.push s!"{pi + 1}\t{tagName up.tag}\t{tagName me.tag}\t{if between then "yes" else "no"}\t\
-{showMilli (milliBpOfSp egap)}\t{rb}\t{d}\t{hb}\t{showMilli (milliBpOfSp lead)}"
+{showMilli (milliBpOf egap)}\t{rb}\t{d}\t{hb}\t{showMilli (milliBpOf lead)}"
   let path : System.FilePath := outDir / s!"{label}-boundaries.tsv"
   IO.FS.writeFile path ("\n".intercalate rows.toList ++ "\n")
   IO.println s!"rhythm: {rows.size - 1} boundaries over {eng.size} engine pages, {ref.size} reference pages"
@@ -987,7 +987,7 @@ its log: {work}/{fx.name}.log\n{r1.stdout.takeEnd 1200}"
       | .error e => return .error s!"{fx.name}: the reference PDF does not read: {e}"
     -- The reference's premise without structure: every marker found, in the declared order.
     let mut rows : Array RefRow := #[]
-    let mut last : Option (Nat × Int) := none
+    let mut last : Option (Nat × Dim.Length) := none
     for s in fx.specs do
       if let some why := openFault pages s then
         return .error s!"{fx.name}: in the reference, {why}; declare the word that opens the line"
@@ -995,7 +995,7 @@ its log: {work}/{fx.name}.log\n{r1.stdout.takeEnd 1200}"
       | .error e => return .error s!"{fx.name}: the reference has no gap for '{s.cls} {s.marker} \
 {s.kind.name}': {e}"
       | .ok v =>
-        rows := rows.push { spec := s, milliBp := milliBpOfSp v }
+        rows := rows.push { spec := s, milliBp := milliBpOf v }
         if s.kind != .top then
           let some (i, j) := findMarker pages s.marker | pure ()
           let y := pages[i]!.lines[j]!.y
@@ -1043,10 +1043,11 @@ measurement differs from the committed file"
   return (if bad == 0 then 0 else 1)
 
 def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
-  let bp (n : Int) : Int := n * spPerBp
-  -- Units: sp to thousandths of a bp, rounded symmetrically, and back.
-  no "units: 12 bp is 12.000" (showMilli (milliBpOfSp (bp 12)) == "12.000")
-  no "units: -0.5 bp is -0.500" (showMilli (milliBpOfSp (-(spPerBp / 2))) == "-0.500")
+  let bp := Dim.bp
+  let fp (n : Int) : Int := n * 65536
+  -- Units: lengths to thousandths of a bp, rounded symmetrically, and back.
+  no "units: 12 bp is 12.000" (showMilli (milliBpOf (bp 12)) == "12.000")
+  no "units: -0.5 bp is -0.500" (showMilli (milliBpOf (-(bp 1 / 2))) == "-0.500")
   no "units: parse reads three decimals" (parseMilli "17.933" == some 17933)
   no "units: parse reads a negative" (parseMilli "-0.25" == some (-250))
   no "units: parse refuses four decimals" (parseMilli "1.2345").isNone
@@ -1085,12 +1086,12 @@ def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   -- The reference's marks are read under the transformation in force.
   let content := "q 1 0 0 1 100 200 cm 0 0 m 10 0 l 10 20 l S Q 5 5 20 10 re f".toUTF8
   no s!"marks: a path inside cm is moved by it: {ctmMarks content}"
-    (ctmMarks content == #[(bp 100, bp 200, bp 110, bp 220), (bp 5, bp 5, bp 25, bp 15)])
+    (ctmMarks content == #[(fp 100, fp 200, fp 110, fp 220), (fp 5, fp 5, fp 25, fp 15)])
   let scaled := "q 2 0 0 3 10 10 cm 0 0 m 1 1 l S Q q 50 0 0 40 7 9 cm /Im1 Do Q".toUTF8
   no s!"marks: scale composes, and an image is its unit square mapped: {ctmMarks scaled}"
-    (ctmMarks scaled == #[(bp 10, bp 10, bp 12, bp 13), (bp 7, bp 9, bp 57, bp 49)])
+    (ctmMarks scaled == #[(fp 10, fp 10, fp 12, fp 13), (fp 7, fp 9, fp 57, fp 49)])
   -- Polygon coordinates rise from the baseline while marks run down; bounds seed from a vertex.
-  let polygonMarks (pts : Array (Int × Int)) : Array (Int × Int) :=
+  let polygonMarks (pts : Array (Dim.Length × Dim.Length)) : Array (Dim.Length × Dim.Length) :=
     let line : Layout.LineOut :=
       { x := 0, y := bp 160, size := bp 12
         segs := #[.poly pts Ir.Color.black], setWidth := 0 }
@@ -1162,7 +1163,7 @@ def selftest : IO UInt32 := tierSelftest "rhythm" fun no => do
   no "band: 3.1 bp apart is outside it" (!at31.near)
   no "band: an unmeasured engine side is outside it" (!unmeasured.near)
   no "band: half the rhythm quantum at the article base"
-    (nearMilliBp == milliBpOfSp (Ir.rhythmQuantum Ir.baseFontSize) / 2)
+    (nearMilliBp == milliBpOf (Ir.rhythmQuantum Ir.baseFontSize) / 2)
   -- The rows: three per fixture and class, in the order first met.
   let rs := rowsOf #[at04, at06, at31, { at04 with row := { row with spec := { s1 with cls := "a-b" } } }]
   no s!"rows: within, near and boundaries: {rs.map (fun r => (r.item, r.value))}"

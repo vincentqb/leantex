@@ -67,7 +67,7 @@ def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     let frames := layoutOf oneFace (elabStr (deck body)).1
     t s!"a frame holding a picture of {kind} alone is a page of its own"
       (frames.pages.size == 3 && draws frames 1 == marks && draws frames 2 == 0)
-  let bottomOf (out : Layout.Out) (i : Nat) : Option Dim.Sp := do
+  let bottomOf (out : Layout.Out) (i : Nat) : Option Dim.Length := do
     let ds := (← out.pages[0]?).inks.flatMap fun k =>
       (pageDraws { inks := #[k] }).map fun (g, _, _) => markExtent g
     let (_, y, _, h) ← ds[i]?
@@ -86,14 +86,14 @@ def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      | some bottom, some top => twice.pages.size == 1 && bottom ≤ top
      | _, _ => false)
   let lay (src : String) : Layout.Out := layoutOf oneFace (elabStr src).1
-  let picTops (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
+  let picTops (out : Layout.Out) (page : Nat) : Array Dim.Length :=
     ((out.pages[page]?.map pageDraws).getD #[]).map fun (g, _, _) => (markExtent g).2.1
-  let ruleTops (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
+  let ruleTops (out : Layout.Out) (page : Nat) : Array Dim.Length :=
     ((out.pages[page]?.map fun p => p.lines.filter (!·.furniture)).getD #[]).map fun l =>
       l.y - (Layout.segsInk oneFace l.segs).1
   -- pgf's cm (28.45274pt) and TeX's (7227/254pt) differ by 0.56 ppm, about 30sp across a page.
-  let near (a b : Array Dim.Sp) : Bool :=
-    a.size == b.size && (a.zip b).all fun (x, y) => (x - y).natAbs ≤ 64
+  let near (a b : Array Dim.Length) : Bool :=
+    a.size == b.size && (a.zip b).all fun (x, y) => (x - y).abs ≤ 64 * Dim.Length.quantum
   let rule := "\\noindent\\rule{3cm}{2cm}"
   let box := pic "\\fill[red] (0,0) rectangle (3,2);"
   let frameSrc (opt body : String) : String :=

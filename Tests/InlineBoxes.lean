@@ -9,19 +9,19 @@ open LeanTex.Core
 namespace Tests.InlineBoxes
 
 /-- The runs of a source's shipped lines whose glyphs spell `word`, with their line's baseline. -/
-private def runsOf (out : Layout.Out) (word : String) : Array (Layout.Seg × Dim.Sp) :=
+private def runsOf (out : Layout.Out) (word : String) : Array (Layout.Seg × Dim.Length) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
     | .run _ _ _ _ glyphs .. =>
       if String.ofList (glyphs.toList.map (·.2.1)) == word then some (s, l.y) else none
     | _ => none
 
 /-- A run's raise. -/
-private def raiseOf : Layout.Seg → Dim.Sp
+private def raiseOf : Layout.Seg → Dim.Length
   | .run _ _ _ _ _ _ _ _ raise _ _ => raise
   | _ => 0
 
 /-- A run's x on its line, from the advances before it. -/
-private def runX (out : Layout.Out) (word : String) : Option Dim.Sp :=
+private def runX (out : Layout.Out) (word : String) : Option Dim.Length :=
   (bodyLines out).findSome? fun l => Id.run do
     let mut x := l.x
     for s in l.segs do
@@ -35,14 +35,14 @@ private def runX (out : Layout.Out) (word : String) : Option Dim.Sp :=
     return none
 
 /-- Every rule and mark a source's lines paint: its kind, width, thickness, raise and colour. -/
-private def paintsOf (out : Layout.Out) : Array (String × Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+private def paintsOf (out : Layout.Out) : Array (String × Dim.Length × Dim.Length × Dim.Length × String) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
     | .rule w t r c => if w != 0 && t != 0 then some ("rule", w, t, r, c.hex) else none
     | .decoration (.highlight _ _) w t r c => some ("mark", w, t, r, c.hex)
     | _ => none
 
 /-- The pt as sp, for a length an expectation states. -/
-private def pt (n : Nat) : Dim.Sp := Dim.pt n
+private def pt (n : Nat) : Dim.Length := Dim.pt n
 
 private def doc (pre body : String) : String := dvDoc ("\\pagestyle{empty}\\usepackage{xcolor}\n" ++ pre) body
 
@@ -70,12 +70,12 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   let natural := layout (doc "" "\\raisebox{0pt}{Bravo}")
   let halved := layout (doc "" "\\raisebox{-0.5\\height}{Bravo}")
   let ink := Layout.segsInk fonts ((runsOf natural "Bravo").map (·.1))
-  t s!"raisebox: a lift of -0.5\\height lowers the content by half its own height ({ink})"
+  t s!"raisebox: a lift of -0.5\\height lowers the content by half its own height ({reprStr (ink)})"
     ((runsOf halved "Bravo").map (raiseOf ·.1) == #[-(ink.1 / 2)])
   -- a declared extent claims the line
   let smashed := layout (doc "" "Alpha\\\\\n\\raisebox{0pt}[0pt][0pt]{\\Huge Bravo}Charlie\\\\\nDelta")
   let plain := layout (doc "" "Alpha\\\\\nCharlie\\\\\nDelta")
-  let baselines (out : Layout.Out) (words : List String) : List Dim.Sp :=
+  let baselines (out : Layout.Out) (words : List String) : List Dim.Length :=
     words.filterMap fun w => ((runsOf out w)[0]?).map (·.2)
   t "raisebox: a declared zero height and depth leave the lines where they stand without the box"
     ((baselines plain ["Alpha", "Charlie", "Delta"]).length == 3 &&
@@ -97,7 +97,7 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   let bravoW := ((runsOf bare "Bravo")[0]?.map fun (s, _) => match s with
     | .run _ _ _ w .. => w
     | _ => 0).getD 0
-  t s!"colorbox: one ground, fboxsep around the content's own box, under its text ({paintsOf boxed})"
+  t s!"colorbox: one ground, fboxsep around the content's own box, under its text ({reprStr (paintsOf boxed)})"
     (paintsOf boxed == #[("mark", bravoW + 2 * pt 3, bravoInk.1 + bravoInk.2 + 2 * pt 3,
       -bravoInk.2 - pt 3, yellow)])
   t "colorbox: the content stands fboxsep into the box, the text after it a box width on"
@@ -108,7 +108,7 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   let framed := layout (doc "" "Alpha \\fcolorbox{red}{yellow}{Bravo} Charlie")
   let red := "#FF0000"
   let rules := (paintsOf framed).filter (·.1 == "rule")
-  t s!"fcolorbox: four fboxrule sides in the frame's colour round the ground ({rules})"
+  t s!"fcolorbox: four fboxrule sides in the frame's colour round the ground ({reprStr (rules)})"
     (rules.size == 4 && rules.all (fun r => r.2.2.2.2 == red) &&
       (rules.filter fun r => r.2.1 == pt 2 / 5).size == 2 &&
       (rules.filter fun r => r.2.2.1 == pt 2 / 5).size == 2 &&
@@ -117,7 +117,7 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   let ink := ((runsOf inked "Alpha")[0]?.map fun (s, _) => match s with
     | .run _ c .. => c.hex
     | _ => "").getD ""
-  t s!"fbox: its frame takes the text's colour {ink} and no ground ({paintsOf inked})"
+  t s!"fbox: its frame takes the text's colour {ink} and no ground ({reprStr (paintsOf inked)})"
     ((paintsOf inked).size == 4 && (paintsOf inked).all fun r => r.1 == "rule" && r.2.2.2.2 == ink)
   let tight := layout (doc "\\setlength{\\fboxsep}{0pt}\n" "Alpha \\colorbox{yellow}{Bravo} Charlie")
   t "colorbox: a declared fboxsep pads the ground"
@@ -152,7 +152,7 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
     | .run _ _ _ _ glyphs size _ _ raise .. =>
       if glyphs.any (·.2.1 == '∼') then some (size, raise) else none
     | _ => none
-  t s!"lowtilde: the URL's tilde sets as a raised script-size sim ({tildes})"
+  t s!"lowtilde: the URL's tilde sets as a raised script-size sim ({reprStr (tildes)})"
     (tildes.size == 1 && tildes.all fun (_, r) => 0 < r)
   t "lowtilde: the link's address keeps its tilde"
     (Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
@@ -231,20 +231,20 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let grouped := doc "" "Alpha {\\setlength{\\fboxsep}{0pt}\\colorbox{yellow}{tight}} and \\colorbox{yellow}{normal} end."
   t s!"box scope: a body fboxsep holds to its group and keeps the paragraph ({said grouped})"
     (said grouped == [] && paras grouped == 1 &&
-      pads grouped == #[Dim.Length.ofSp 0, Dim.Length.ofSp (pt 3)])
+      pads grouped == #[Dim.SymLength.ofLength 0, Dim.SymLength.ofLength (pt 3)])
   let viaMacro := doc "\\newcommand\\tightbox[1]{{\\setlength{\\fboxsep}{1pt}\\colorbox{yellow}{#1}}}\n"
     "Alpha \\tightbox{one} and \\colorbox{yellow}{two} end."
-  t s!"box scope: a macro's own group scopes its fboxsep ({(pads viaMacro).map (·.sp.toPtString)})"
-    (paras viaMacro == 1 && pads viaMacro == #[Dim.Length.ofSp (pt 1), Dim.Length.ofSp (pt 3)])
+  t s!"box scope: a macro's own group scopes its fboxsep ({(pads viaMacro).map (·.sp.toBpString)})"
+    (paras viaMacro == 1 && pads viaMacro == #[Dim.SymLength.ofLength (pt 1), Dim.SymLength.ofLength (pt 3)])
   let ruled := doc "" "Alpha {\\setlength{\\fboxrule}{2pt}\\fbox{a}} \\fbox{b} end."
   t "box scope: a body fboxrule holds to its group"
     (paras ruled == 1 &&
-      (boxes ruled).map (·.1.rule.width) == #[Dim.Length.ofSp (pt 2), Dim.Length.ofSp (pt 2 / 5)])
+      (boxes ruled).map (·.1.rule.width) == #[Dim.SymLength.ofLength (pt 2), Dim.SymLength.ofLength (pt 2 / 5)])
   let inBox := doc "" "Alpha \\colorbox{yellow}{{\\setlength{\\fboxsep}{0pt}\\fbox{in}}\\fbox{out}} end."
   let padOf (text : String) := ((boxes inBox).find? (·.2 == text)).map (·.1.pad.width)
   t "box scope: a setting inside a box's content ends with it"
-    (padOf "inout" == some (Dim.Length.ofSp (pt 3)) && padOf "in" == some (Dim.Length.ofSp 0) &&
-      padOf "out" == some (Dim.Length.ofSp (pt 3)))
+    (padOf "inout" == some (Dim.SymLength.ofLength (pt 3)) && padOf "in" == some (Dim.SymLength.ofLength 0) &&
+      padOf "out" == some (Dim.SymLength.ofLength (pt 3)))
   let broken := doc "" "Alpha \\colorbox{yellow}{one\\\\two} and \\fbox{three \\\\ four} end."
   let out := layoutOf fonts (elabStr broken).1
   t s!"box scope: a line break inside a box breaks nothing ({(boxes broken).map (·.2)})"
@@ -260,8 +260,8 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (pale.size == 1 && pale.all fun d => d.span.any fun sp => sp.pos.line == 5 && sp.pos.col == 19)
   let envTight := doc "\\newenvironment{tight}{\\setlength{\\fboxsep}{0pt}}{}\n"
     "Foxtrot \\begin{tight}\\colorbox{yellow}{six}\\end{tight} words \\colorbox{yellow}{seven}.\n\n\\colorbox{yellow}{eight}"
-  t s!"box scope: an environment's begin code sets its content's boxes and ends with it ({(pads envTight).map (·.sp.toPtString)})"
-    (pads envTight == #[Dim.Length.ofSp 0, Dim.Length.ofSp (pt 3), Dim.Length.ofSp (pt 3)])
+  t s!"box scope: an environment's begin code sets its content's boxes and ends with it ({(pads envTight).map (·.sp.toBpString)})"
+    (pads envTight == #[Dim.SymLength.ofLength 0, Dim.SymLength.ofLength (pt 3), Dim.SymLength.ofLength (pt 3)])
   let envNotes := doc "\\newenvironment{probe}{\\footnote{begin note}}{}\n"
     "Alpha \\begin{probe}text\\footnote{inner note}\\end{probe} words\\footnote{after note}."
   let notes := Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
@@ -280,7 +280,7 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let expanded := layoutOf fonts (elabStr (doc "" words)).1
   let framesMeet := (bodyLines expanded).all fun l => Id.run do
     let mut x := l.x
-    let mut sides : Array (Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+    let mut sides : Array (Dim.Length × Dim.Length × Dim.Length) := #[]
     for seg in l.segs do
       match seg with
       | .rule w t _ c => if c.hex == "#FF0000" then sides := sides.push (x, w, t)

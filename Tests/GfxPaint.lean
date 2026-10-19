@@ -220,16 +220,22 @@ def gfxKitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let reach := Gfx.Kit.arcEndpoint (0, 0) (p / 2) (p / 2) 0 false true (2 * p, 0)
   t "kit: radii too small to reach scale up, the centre at the chord's midpoint"
     (match reach[0]?.map Gfx.Seg.endPt with
-     | some (x, y) => (x - p).natAbs ≤ 2 && (y + p).natAbs ≤ 2
+     | some (x, y) => (x - p).abs ≤ 2 * Dim.Length.quantum && (y + p).abs ≤ 2 * Dim.Length.quantum
      | none => false)
   t "kit: a zero radius is a line, coincident ends draw nothing"
     (Gfx.Kit.arcEndpoint (0, 0) 0 p 0 false true (p, p) == #[.line (p, p)] &&
       (Gfx.Kit.arcEndpoint (p, p) p p 0 false true (p, p)).isEmpty)
   let rr := Gfx.Kit.roundedRect 0 0 (10 * p) (4 * p) (3 * p) (3 * p)
+  let half : Dim.Length := 5000 * Dim.Length.quantum
+  let r3 : Dim.Length := 3 * p
+  let r2 : Dim.Length := 2 * p
+  let a3 : Dim.Length := r3 * (5523 : Int)
+  let a2 : Dim.Length := r2 * (5523 : Int)
+  let kx : Dim.Length := (a3 + half) / (10000 : Int)
+  let ky : Dim.Length := (a2 + half) / (10000 : Int)
   t "kit: a rounded rectangle clamps its radii to half its extents and closes"
     (rr.closed && rr.start == (3 * p, 0) && rr.segs[1]? == some
-      (.cubic (7 * p + (3 * p * 5523 + 5000) / 10000, 0) (10 * p, 2 * p - (2 * p * 5523 + 5000) / 10000)
-        (10 * p, 2 * p)) &&
+      (.cubic (7 * p + kx, 0) (10 * p, 2 * p - ky) (10 * p, 2 * p)) &&
       (rr.segs.back?.map Gfx.Seg.endPt) == some rr.start)
   t "kit: a rounded rectangle with no radius is the rectangle"
     (Gfx.Kit.roundedRect 0 0 p p 0 (p / 2) == Gfx.Kit.rectPath 0 0 p p)
@@ -237,8 +243,10 @@ def gfxKitChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Gfx.Kit.quadToCubic (0, 0) (3 * p, 3 * p) (6 * p, 0) ==
       .cubic (2 * p, 2 * p) (4 * p, 2 * p) (6 * p, 0))
   t "kit: an odd dash list doubles, a list with no positive entry or a negative one is solid"
-    (Gfx.Kit.normDash #[1, 2, 3] == #[1, 2, 3, 1, 2, 3] && Gfx.Kit.normDash #[0, 0] == #[] &&
-      Gfx.Kit.normDash #[-1, 2] == #[] && Gfx.Kit.normDash #[2, 1] == #[2, 1])
+    (let q (n : Int) : Dim.Length := n * Dim.Length.quantum
+     Gfx.Kit.normDash #[q 1, q 2, q 3] == #[q 1, q 2, q 3, q 1, q 2, q 3] &&
+      Gfx.Kit.normDash #[0, 0] == #[] && Gfx.Kit.normDash #[q (-1), q 2] == #[] &&
+      Gfx.Kit.normDash #[q 2, q 1] == #[q 2, q 1])
   let sq := Gfx.Kit.regularPolygon 0 0 (10 * p) 4 0
   t "kit: a regular polygon's vertices stand on its circle"
     (sq.closed && sq.start == (10 * p, 0) &&

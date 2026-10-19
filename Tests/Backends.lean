@@ -12,6 +12,9 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- `n` base units: a coordinate whose value only the comparison reads. -/
+private def q (n : Int) : Dim.Length := n * Dim.Length.quantum
+
 /-- Math in HTML is MathML Core built from the parsed atoms, one shape per construct, and its leaf
 text matches the PDF's coverage census. -/
 def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -2222,8 +2225,8 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "pdf intrinsic size is the page box"
     (match inf? with
      | .ok inf =>
-       (Dim.mm 90 - inf.width).natAbs ≤ 66 &&
-       (Dim.mm 54 - inf.height).natAbs ≤ 66
+       (Dim.mm 90 - inf.width).abs ≤ Dim.Length.ofBpMilli 1 &&
+       (Dim.mm 54 - inf.height).abs ≤ Dim.Length.ofBpMilli 1
      | .error _ => false)
   t "pdf resources graph copied with the page"
     (match inf? with
@@ -2250,7 +2253,7 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      | .ok f => !f.val.content.isEmpty
      | .error _ => false)
   let segs := Id.run do
-    let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
+    let mut acc : Array (Option Nat × Dim.Length × Dim.Length) := #[]
     for p in out.pages do
       for l in p.lines do
         for s in l.segs do
@@ -2259,7 +2262,7 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "pdf figure places at the declared width"
     (match inf?, segs with
      | .ok inf, #[(some 0, w, h)] =>
-       w == Dim.pt 100 && h == Dim.pt 100 * inf.height / inf.width
+       w == Dim.pt 100 && h == (Dim.pt 100).mulDiv inf.height inf.width
      | _, _ => false)
 
 /-- `algNest`'s forest renders as one `<li>` per node and one nested `<ol>` per level, in census
@@ -2950,8 +2953,8 @@ def contentOpsRed : Ir.Color := { r := 200, g := 30, b := 30 }
 def contentOpsGrey : Ir.Color := { r := 240, g := 240, b := 240 }
 def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
-def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
-    (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
+def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Length) (glyphs : List (Nat × Char))
+    (size : Dim.Length := 0) (raise : Dim.Length := 0) : Layout.Seg :=
   .run idx color none w (glyphs.toArray.map fun (g, c) => (g, c, w / glyphs.length)) size {} {}
     raise none (.leaf 0)
 
@@ -3118,9 +3121,9 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
       == Pdf.paintRuns contentOpsTextPage &&
       Pdf.paintRuns contentOpsTextPage == Pdf.pageRuns contentOpsTextPage)
   t "content ops: a fill and a fill-only rectangle path spell the same"
-    (Pdf.render #[.fill contentOpsRed 1 2 3 4]
+    (Pdf.render #[.fill contentOpsRed (q 1) (q 2) (q 3) (q 4)]
       == Pdf.render #[.paint (some { paint := .solid contentOpsRed, evenOdd := false }) none none
-        #[.rect 1 2 3 4]])
+        #[.rect (q 1) (q 2) (q 3) (q 4)]])
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let twoFace : Font.FontSet := { fonts := #[font, font] }
@@ -3561,22 +3564,22 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (Pdf.pageMarks (ops contentOpsTextPage) == #[(0, 0), (1, 1)]
       && Pdf.pageMarks (ops contentOpsPathPage) == #[(0, 0), (1, 1)])
   let nest : Array Pdf.ContentOp :=
-    #[.marked (.artifact none) #[.marked (.artifact (some .page)) #[.fill contentOpsRed 1 2 3 4],
-        .imageMissing 5 6 7 8], .fill contentOpsRed 9 9 9 9]
+    #[.marked (.artifact none) #[.marked (.artifact (some .page)) #[.fill contentOpsRed (q 1) (q 2) (q 3) (q 4)],
+        .imageMissing (q 5) (q 6) (q 7) (q 8)], .fill contentOpsRed (q 9) (q 9) (q 9) (q 9)]
   let nestLines := (Pdf.render nest).splitOn "\n"
   t "artifacts: a nested wrapper renders two opening lines and two EMC lines, ink between"
     ((nestLines.filter fun l => l.endsWith " BDC" || l.endsWith " BMC").length == 2
       && (nestLines.filter (· == "EMC")).length == 2
       && stripMarkLines (Pdf.render nest)
-          == Pdf.render #[.fill contentOpsRed 1 2 3 4, .imageMissing 5 6 7 8, .fill contentOpsRed 9 9 9 9]
+          == Pdf.render #[.fill contentOpsRed (q 1) (q 2) (q 3) (q 4), .imageMissing (q 5) (q 6) (q 7) (q 8), .fill contentOpsRed (q 9) (q 9) (q 9) (q 9)]
       && Pdf.render (Pdf.inkOps nest) == stripMarkLines (Pdf.render nest))
   t "artifacts: an empty wrapper is one opening line and one EMC line"
     (Pdf.render #[.marked (.artifact none) #[]] == "/Artifact BMC\nEMC")
   let nested : Array Pdf.ContentOp :=
-    #[.marked (.content "P" 9 0) #[.fill contentOpsRed 1 2 3 4,
-        .marked (.content "Span" 9 1) #[.fill contentOpsRed 5 6 7 8]],
+    #[.marked (.content "P" 9 0) #[.fill contentOpsRed (q 1) (q 2) (q 3) (q 4),
+        .marked (.content "Span" 9 1) #[.fill contentOpsRed (q 5) (q 6) (q 7) (q 8)]],
       .text #[.marked (.artifact none) #[.scale 0], .marked (.content "H1" 9 2) #[.scale 1]],
-      .marked (.artifact (some .layout)) #[.marked (.content "Figure" 9 3) #[.imageMissing 1 1 1 1]]]
+      .marked (.artifact (some .layout)) #[.marked (.content "Figure" 9 3) #[.imageMissing (q 1) (q 1) (q 1) (q 1)]]]
   t "artifacts: numbering hands out 0 … n−1 in stream order through every body, leaves kept"
     (Pdf.pageMarks (Pdf.numberMarks nested) == #[(0, 0), (1, 1), (2, 2), (3, 3)]
       && Pdf.inkOps (Pdf.numberMarks nested) == Pdf.inkOps nested)

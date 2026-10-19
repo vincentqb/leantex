@@ -61,7 +61,7 @@ def printMacros : String :=
 def docOf (src : String) : Ir.Doc × Array Diag := elabLocated "t" src
 
 /-- Every shipped line's text and place. -/
-def placed (out : Layout.Out) : Array (String × Dim.Sp × Dim.Sp) :=
+def placed (out : Layout.Out) : Array (String × Dim.Length × Dim.Length) :=
   (allLines out).map fun l => (lineText l, l.x, l.y)
 
 /-- Each link on a page: its target and its text. -/

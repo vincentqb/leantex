@@ -9,11 +9,11 @@ open LeanTex.Core LeanTex.Core.Dim
 namespace Tests.LineRhythm
 
 /-- The line pitches a source's shipped page sets. -/
-private def pitchesOf (fs : Font.FontSet) (src : String) : Array Sp :=
+private def pitchesOf (fs : Font.FontSet) (src : String) : Array Length :=
   baselinePitches (layoutOf fs (elabStr src).1)
 
 /-- The baselines a source's body lines stand on, in page order. -/
-private def baselines (fs : Font.FontSet) (src : String) : Array Sp :=
+private def baselines (fs : Font.FontSet) (src : String) : Array Length :=
   (bodyLines (layoutOf fs (elabStr src).1)).map (·.y)
 
 /-- Two lines forced apart inside one paragraph set wholly in `step`, so the line pitch is the
@@ -128,8 +128,8 @@ private def longPara : String :=
 
 /-- Whether a ragged line holds every word that fits: the next line's first word, one space after
 this line's end, would stand past the measure. -/
-private def lineFillsTo (l : Layout.LineOut) (space : Sp) (next : Layout.LineOut)
-    (measure : Sp) : Bool :=
+private def lineFillsTo (l : Layout.LineOut) (space : Length) (next : Layout.LineOut)
+    (measure : Length) : Bool :=
   let first := (next.segs.toList.takeWhile fun sg => match sg with
       | .gap _ _ | .decoratedGap _ _ _ => false
       | _ => true).foldl (fun w sg => match sg with
@@ -201,13 +201,13 @@ def listingPitchChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (hasStr (HtmlDoc.emit {} (elabStr minted).1).1 "line-height: 1.156;")
 
 /-- The largest run size a shipped line carries, `0` on a line of none. -/
-private def runSize (l : Layout.LineOut) : Sp :=
+private def runSize (l : Layout.LineOut) : Length :=
   l.segs.foldl (fun m s => match s with
     | .run _ _ _ _ _ sz _ _ _ _ _ => max m sz
     | _ => m) 0
 
 /-- Consecutive shipped body lines of one size, with the pitch between them. -/
-private def sizedPitches (out : Layout.Out) : Array (Sp × Sp) :=
+private def sizedPitches (out : Layout.Out) : Array (Length × Length) :=
   let ls := (bodyLines out).filter (0 < runSize ·)
   ((ls.zip (ls.extract 1 ls.size)).filter fun (a, b) => runSize a == runSize b).map
     fun (a, b) => (runSize b, b.y - a.y)
@@ -224,10 +224,10 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- 8⁄7 ≤ pitch ⁄ size, a sp of rounding per line.
   let clears (out : Layout.Out) : Bool :=
     let ps := sizedPitches out
-    !ps.isEmpty && ps.all fun (sz, p) => 8 * sz ≤ 7 * p + 8
+    !ps.isEmpty && ps.all fun (sz, p) => 8 * sz ≤ 7 * p + 8 * Length.quantum
   -- A display wholly in one step is no looser than 9⁄7.
   let banded (out : Layout.Out) : Bool :=
-    clears out && (sizedPitches out).all fun (sz, p) => 7 * p ≤ 9 * sz + 9
+    clears out && (sizedPitches out).all fun (sz, p) => 7 * p ≤ 9 * sz + 9 * Length.quantum
   let art (pre body : String) : Layout.Out :=
     layoutOf oneFace (elabStr (dvDoc pre body)).1
   let deck (pre body : String) : Layout.Out :=
@@ -246,7 +246,7 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (banded (art ("\\title{\\Huge " ++ longTitle ++ "}\n\\author{Kilo Lima}\n\\date{}\n")
       "\\maketitle"))
   -- beamer sets a frame's title in a group, so a smaller size ends before the template's `\par`.
-  let titlePitches (pre : String) : Array Sp :=
+  let titlePitches (pre : String) : Array Length :=
     (sizedPitches (deck "" ("\\begin{frame}{" ++ pre ++ longTitle ++ " " ++ longTitle ++ "}\n" ++
       "Body words.\n\\end{frame}"))).map (·.2)
   t "a small frame title's lines lead at the frame title's own skip"
@@ -290,8 +290,8 @@ def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
 
 /-- The distances between the distinct baselines a source's body lines stand on: a table's row
 pitch, one per row. -/
-private def rowPitches (fs : Font.FontSet) (src : String) : Array Sp :=
-  let ys := (bodyLines (layoutOf fs (elabStr src).1)).foldl (fun (acc : Array Sp) l =>
+private def rowPitches (fs : Font.FontSet) (src : String) : Array Length :=
+  let ys := (bodyLines (layoutOf fs (elabStr src).1)).foldl (fun (acc : Array Length) l =>
     if acc.back? == some l.y then acc else acc.push l.y) #[]
   (ys.zip (ys.extract 1 ys.size)).map fun (a, b) => b - a
 
@@ -361,7 +361,7 @@ private def venuePre : String :=
 proportion to the body's. -/
 def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let near (a b : Sp) : Bool := (a - b).natAbs ≤ (pt 1 / 100).natAbs
+  let near (a b : Length) : Bool := (a - b).abs ≤ (pt 1 / 100).abs
   for (name, skip) in [("tiny", 700), ("scriptsize", 800), ("footnotesize", 1000),
       ("normalsize", 1095), ("large", 1500), ("small", 1100), ("Large", 1800)] do
     let ps := pitchesOf oneFace (dvDoc venuePre (stepPara name))
@@ -395,7 +395,7 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (notes.size == 2 && near (notes[1]!.y - notes[0]!.y) (pt 10) &&
       noteSizes.contains (pt 9) && !noteSizes.contains (pt 8))
   -- The body's skip and `\linespread` compose in either order: 11 pt stretched 1.5 is 16.5.
-  let skipped (pre : String) : Array Sp := pitchesOf oneFace (dvDoc pre (stepPara "normalsize"))
+  let skipped (pre : String) : Array Length := pitchesOf oneFace (dvDoc pre (stepPara "normalsize"))
   for (name, pre, want) in [
       ("before the size", "\\page{ baselineskip = 14pt, fontsize = 12pt }\n", pt 14),
       ("after the size", "\\page{ fontsize = 12pt, baselineskip = 14pt }\n", pt 14),
@@ -414,7 +414,7 @@ private def mixedRuns : String :=
 /-- A smaller inline run never moves its line, under every skip column the page reads. -/
 def inlineRunChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let near (a b : Sp) : Bool := (a - b).natAbs ≤ (pt 1 / 100).natAbs
+  let near (a b : Length) : Bool := (a - b).abs ≤ (pt 1 / 100).abs
   let venueBody := "\\makeatletter\n" ++
     "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}\n\\makeatother\n"
   for (name, pre, lead) in [("size10.clo's column", "", pt 12),
@@ -971,7 +971,7 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (!d.isEmpty && hasStr ovCss through && through != plain)
   t "without reading through carriers the judge finds the gaps that vanish"
     (!agree flat (frameFlow on (ovCss.replace through plain)))
-  let pages (doc : Ir.Doc) : Array (Array (String × Sp)) :=
+  let pages (doc : Ir.Doc) : Array (Array (String × Length)) :=
     (layoutOf oneFace doc).pages.map fun p =>
       (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
   let flatPages := pages flatDoc
@@ -1039,7 +1039,7 @@ private def carrierDisplayCases : List (String × String × String) :=
 does, save the empty line beamer's closing `\uncover` leaves. -/
 def carrierDisplayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let pages (doc : Ir.Doc) : Array (Array (String × Sp)) :=
+  let pages (doc : Ir.Doc) : Array (Array (String × Length)) :=
     (layoutOf oneFace doc).pages.map fun p =>
       (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
   for (label, overlaid, flat) in carrierDisplayCases do

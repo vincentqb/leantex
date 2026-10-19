@@ -35,7 +35,7 @@ example (pal : Ir.Palette)
     (metric : Ir.Pic.LabelMetric) : Cx :=
   { pal, math, metric }
 
-example (cx : Cx) : Sp × Array (Array Tok) × List (String × Ir.Style) :=
+example (cx : Cx) : Length × Array (Array Tok) × List (String × Ir.Style) :=
   (cx.toSp cx.scale, cx.opts, cx.argStyles)
 
 example (styles : List (String × Array Tok)) (keys : Array Tok) :
@@ -47,7 +47,7 @@ example : List (String × Array Tok) → Array Tok → Array String := unreadKey
 example : String := nodeFloorPlaceholder
 example : List String := phantomCtrl
 example : List String := TikzCommands.walkOwned
-example : Sp → Sp := innerSep
+example : Length → Length := innerSep
 
 example (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     Array LabelLine × Array PDiag :=
@@ -81,9 +81,9 @@ example (cx : Cx) (env : List (String × Val)) (toks : List Tok)
         ∃ input ∈ labelInputList env #[] toks, c ∈ (input.text cx).toList :=
   nodeLabel_clean_mem cx env toks clean
 
-example (x y a b : Sp) : NodeGeom := { x, y, a, b }
-example (g : NodeGeom) (anchor : NodeAnchor) : Sp × Sp := g.anchorPoint anchor
-example (d : Dir) (target : String) (sep : Sp × Sp) : NodePlacement :=
+example (x y a b : Length) : NodeGeom := { x, y, a, b }
+example (g : NodeGeom) (anchor : NodeAnchor) : Length × Length := g.anchorPoint anchor
+example (d : Dir) (target : String) (sep : Length × Length) : NodePlacement :=
   .relative d target sep
 example (name : Option String) (placement : NodePlacement) (shape : NodeGeom) :
     NodePlan :=
@@ -95,7 +95,7 @@ example (p q : NodePlan) (nodes : List (String × NodeGeom))
       (p.run (q.run nodes).2).2.lookup name :=
   NodePlan.place_order_agree p q nodes h name
 
-example (cx : Cx) (statements : List Stmt) (baseline : Option Sp) : Ir.Pic.Picture :=
+example (cx : Cx) (statements : List Stmt) (baseline : Option Length) : Ir.Pic.Picture :=
   (evalFixed cx statements).toPicture baseline
 
 example (pal : Ir.Palette) (raws : Array Parse.Raw)
@@ -103,7 +103,7 @@ example (pal : Ir.Palette) (raws : Array Parse.Raw)
     (sets : Array (Span × Array Parse.Raw)) (metric : Ir.Pic.LabelMetric)
     (macros : Array (String × String)) (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat)) (declStyles : List (String × Ir.Style))
-    (bodySize : Sp) : Ir.Pic.Picture × Array PDiag :=
+    (bodySize : Length) : Ir.Pic.Picture × Array PDiag :=
   elabPicture pal raws math sets metric macros argStyles ladder declStyles bodySize
 
 example : String → Ir.Pic.Picture := placeholder

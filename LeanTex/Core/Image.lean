@@ -116,21 +116,21 @@ public structure Plan where
   form : Option { f : PdfRead.Form // f.wf } := none
   deriving Inhabited
 
-/-- Intrinsic physical width in sp: pixels over density, or a PDF page's box. -/
-@[expose] public def Plan.width (i : Plan) : Sp :=
+/-- Intrinsic physical width: pixels over density, or a PDF page's box. -/
+@[expose] public def Plan.width (i : Plan) : Length :=
   match i.form with
   | some f => f.val.w
-  | none => (i.pxW : Int) * 72 * spPerPt / max i.dpiX 1
+  | none => inch (i.pxW : Int) / max i.dpiX 1
 
-@[expose] public def Plan.height (i : Plan) : Sp :=
+@[expose] public def Plan.height (i : Plan) : Length :=
   match i.form with
   | some f => f.val.h
-  | none => (i.pxH : Int) * 72 * spPerPt / max i.dpiY 1
+  | none => inch (i.pxH : Int) / max i.dpiY 1
 
 public theorem width_at_default_dpi (px : Nat) :
-    Plan.width { pxW := px, pxH := px } = Dim.pt px := by
-  show ((px : Int) * 72 * 65536) / (((72 : Nat) : Int)) = (px : Int) * 65536
-  omega
+    Plan.width { pxW := px, pxH := px } = Dim.bp px := by
+  simp only [Plan.width, inch, bp, Length.ext_iff', Length.units_divn, defaultDpi]
+  rfl
 
 private def u8? (b : ByteArray) (i : Nat) : Option Nat :=
   (b[i]?).map (·.toNat)
@@ -1215,8 +1215,8 @@ public def probePdf (b : ByteArray) (page : PdfRead.PageSelection := .first) :
     Except String Source := do
   let f ← PdfRead.readForm b page
   return { format := .pdf
-           pxW := (max 0 f.val.w / spPerPt).toNat
-           pxH := (max 0 f.val.h / spPerPt).toNat
+           pxW := (max 0 f.val.w / bp 1).toNat
+           pxH := (max 0 f.val.h / bp 1).toNat
            form := some f }
 
 /-- Reads any asset's header, told apart by signature. -/
@@ -1791,7 +1791,7 @@ public structure Request where
 
 /-- The plan for a request, with an animation's canvas from its first frame (animate §6.1). -/
 public def decodeRequest (params : PlanParams) (bytes : ByteArray) (req : Request) :
-    Except String (Plan × Option (Dim.Sp × Dim.Sp)) := do
+    Except String (Plan × Option (Dim.Length × Dim.Length)) := do
   let selected ← probePage bytes req.page >>= plan params
   let canvas ← if req.animated then do
       let first ← if req.page == .first then pure selected
@@ -1805,7 +1805,7 @@ public structure Loaded extends Request where
   href : String := ""
   info : Option Plan := none
   /-- An animation's canvas, from its first frame (animate §6.1). -/
-  canvasSize : Option (Dim.Sp × Dim.Sp) := none
+  canvasSize : Option (Dim.Length × Dim.Length) := none
   /-- The browser SVG the driver supplied, published as an image asset. -/
   webSvg : Option ByteArray := none
   /-- A static browser face of the animation's poster, for print and reduced motion. -/
@@ -1836,7 +1836,7 @@ public structure Loaded extends Request where
 
 /-- One intrinsic size for both backends: a vector figure's box, an animation's canvas, or the
 image's own geometry. -/
-@[expose] public def Loaded.size? (en : Loaded) : Option (Dim.Sp × Dim.Sp) :=
+@[expose] public def Loaded.size? (en : Loaded) : Option (Dim.Length × Dim.Length) :=
   match en.vector with
   | some fig => some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2)
   | none => en.info.map fun inf => en.canvasSize.getD (inf.width, inf.height)
@@ -1934,7 +1934,7 @@ public def lossDiags (src : String) (pl : Plan) : Array Diag :=
 boundary picture nothing drew. -/
 public inductive Fetch where
   | decoded (href : String) (res : Except String Plan) (webSvg : Option ByteArray)
-      (canvasSize : Option (Dim.Sp × Dim.Sp)) (source : Option ByteArray)
+      (canvasSize : Option (Dim.Length × Dim.Length)) (source : Option ByteArray)
       (companion : Option ByteArray)
   | missing (looked : String)
   | unreadable (err : String)
@@ -1977,7 +1977,7 @@ public theorem fulfilOne_named (req : Request) (f : Fetch) (h : (fulfilOne req f
   | refused why => exact ⟨_, rfl, rfl⟩
 
 public theorem fulfilOne_error_named (req : Request) (href e : String)
-    (webSvg : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp))
+    (webSvg : Option ByteArray) (canvasSize : Option (Dim.Length × Dim.Length))
     (source companion : Option ByteArray) :
     (fulfilOne req (.decoded href (.error e) webSvg canvasSize source companion)).1.info = none ∧
     ∃ d, (fulfilOne req (.decoded href (.error e) webSvg canvasSize source companion)).2 = some d ∧
@@ -1996,7 +1996,7 @@ public theorem fulfilOne_src (req : Request) (f : Fetch) : (fulfilOne req f).1.s
   congrArg Request.src (fulfilOne_request req f)
 
 public theorem fulfilOne_bytes (req : Request) (href : String) (info : Plan)
-    (webSvg source companion : Option ByteArray) (canvasSize : Option (Dim.Sp × Dim.Sp)) :
+    (webSvg source companion : Option ByteArray) (canvasSize : Option (Dim.Length × Dim.Length)) :
     (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.source = source ∧
     (fulfilOne req (.decoded href (.ok info) webSvg canvasSize source companion)).1.companion
       = companion := ⟨rfl, rfl⟩
@@ -2066,14 +2066,14 @@ public structure Len where
   deriving Repr, BEq, Inhabited
 
 /-- An absolute requested dimension. -/
-@[expose] public def Len.abs (sp : Sp) : Len := ⟨.lit { width := .ofSp sp }⟩
+@[expose] public def Len.abs (sp : Length) : Len := ⟨.lit { width := .ofLength sp }⟩
 
 /-- A fraction of one local measure. -/
 @[expose] public def Len.frac (measure : Measure) (permille : Int) : Len :=
   ⟨Affine.scaleQ permille 1000 (.ref measure)⟩
 
 /-- Resolves against the local horizontal measure and text height layout supplies. -/
-@[expose] public def Len.resolve (l : Len) (textW textH : Sp) : Sp :=
+@[expose] public def Len.resolve (l : Len) (textW textH : Length) : Length :=
   l.value.resolveWidth (MeasureValues.horizontal textW textH)
 
 /-- The sizing request from the source, unresolved; `scaleNum/scaleDen` carry the scale exactly. -/
@@ -2094,22 +2094,22 @@ public structure Spec extends SizeSpec where
 @[expose] public def Spec.request (spec : Spec) (src : String) : Request :=
   { src, page := spec.page, animated := spec.animated }
 
-/-- The placed box in sp, from the request and the intrinsic size `iW` × `iH`. -/
-@[expose] public def resolveSize (spec : SizeSpec) (iW iH : Sp) (textW textH : Sp) : Sp × Sp :=
+/-- The placed box, from the request and the intrinsic size `iW` × `iH`. -/
+@[expose] public def resolveSize (spec : SizeSpec) (iW iH : Length) (textW textH : Length) : Length × Length :=
   match spec.width, spec.height with
   | none, none =>
     (iW * spec.scaleNum / spec.scaleDen, iH * spec.scaleNum / spec.scaleDen)
   | some w, none =>
     let w := w.resolve textW textH
-    (w, w * iH / iW)
+    (w, w.mulDiv iH iW)
   | none, some h =>
     let h := h.resolve textW textH
-    (h * iW / iH, h)
+    (h.mulDiv iW iH, h)
   | some w, some h =>
     let w := w.resolve textW textH
     let h := h.resolve textW textH
     if spec.keepAspect then
-      if w * iH ≤ h * iW then (w, w * iH / iW) else (h * iW / iH, h)
+      if w * iH ≤ h * iW then (w, w.mulDiv iH iW) else (h.mulDiv iW iH, h)
     else
       (w, h)
 
@@ -2133,30 +2133,30 @@ private theorem ediv_within_one (a d : Int) (hd : 0 < d) :
       _ = d * (a / d) + d := Int.add_comm _ _
 
 public theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka : Bool)
-    (iW iH textW textH : Sp) (hW : 0 < iW) :
+    (iW iH textW textH : Length) (hW : 0 < iW) :
     (resolveSize { width := some w, scaleNum := n, scaleDen := d, keepAspect := ka }
       iW iH textW textH).1 = w.resolve textW textH ∧
     (resolveSize { width := some w, scaleNum := n, scaleDen := d, keepAspect := ka }
       iW iH textW textH).2 * iW ≤ w.resolve textW textH * iH ∧
     w.resolve textW textH * iH <
       ((resolveSize { width := some w, scaleNum := n, scaleDen := d, keepAspect := ka }
-        iW iH textW textH).2 + 1) * iW := by
-  have h := ediv_within_one (w.resolve textW textH * iH) iW hW
+        iW iH textW textH).2 + Length.quantum) * iW := by
+  have h := ediv_within_one (w.resolve textW textH * iH) iW.units hW
   exact ⟨rfl, h.1, h.2⟩
 
 public theorem resolveSize_height_keeps_aspect (h : Len) (n : Int) (d : Nat) (ka : Bool)
-    (iW iH textW textH : Sp) (hH : 0 < iH) :
+    (iW iH textW textH : Length) (hH : 0 < iH) :
     (resolveSize { height := some h, scaleNum := n, scaleDen := d, keepAspect := ka }
       iW iH textW textH).2 = h.resolve textW textH ∧
     (resolveSize { height := some h, scaleNum := n, scaleDen := d, keepAspect := ka }
       iW iH textW textH).1 * iH ≤ h.resolve textW textH * iW ∧
     h.resolve textW textH * iW <
       ((resolveSize { height := some h, scaleNum := n, scaleDen := d, keepAspect := ka }
-        iW iH textW textH).1 + 1) * iH := by
-  have hh := ediv_within_one (h.resolve textW textH * iW) iH hH
+        iW iH textW textH).1 + Length.quantum) * iH := by
+  have hh := ediv_within_one (h.resolve textW textH * iW) iH.units hH
   exact ⟨rfl, hh.1, hh.2⟩
 
-public theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Sp)
+public theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Length)
     (hW : 0 < iW) (hH : 0 < iH) :
     (resolveSize { width := some w, height := some h, keepAspect := true }
       iW iH textW textH).1 ≤ w.resolve textW textH ∧
@@ -2165,15 +2165,15 @@ public theorem resolveSize_keepAspect_fits (w h : Len) (iW iH textW textH : Sp)
   have hred : resolveSize { width := some w, height := some h, keepAspect := true }
       iW iH textW textH =
       (if w.resolve textW textH * iH ≤ h.resolve textW textH * iW then
-        (w.resolve textW textH, w.resolve textW textH * iH / iW)
-      else (h.resolve textW textH * iW / iH, h.resolve textW textH)) := rfl
+        (w.resolve textW textH, (w.resolve textW textH).mulDiv iH iW)
+      else ((h.resolve textW textH).mulDiv iW iH, h.resolve textW textH)) := rfl
   rw [hred]
   split
   · next hc =>
-    have h1 := (ediv_within_one (w.resolve textW textH * iH) iW hW).1
+    have h1 := (ediv_within_one (w.resolve textW textH * iH) iW.units hW).1
     exact ⟨Int.le_refl _, Int.le_of_mul_le_mul_right (Int.le_trans h1 hc) hW⟩
   · next hc =>
-    have h1 := (ediv_within_one (h.resolve textW textH * iW) iH hH).1
+    have h1 := (ediv_within_one (h.resolve textW textH * iW) iH.units hH).1
     have hlt : h.resolve textW textH * iW < w.resolve textW textH * iH :=
       Int.not_le.mp hc
     exact ⟨Int.le_of_mul_le_mul_right (Int.le_trans h1 (Int.le_of_lt hlt)) hH,

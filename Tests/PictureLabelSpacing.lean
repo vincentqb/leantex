@@ -10,12 +10,12 @@ namespace PictureLabelSpacing
 
 structure Witness where
   ink : ShippedInk.InkBounds
-  anchor : Dim.Sp × Dim.Sp
-  tangent : Dim.Sp × Dim.Sp
-  width : Dim.Sp
-  size : Dim.Sp
-  em : Dim.Sp
-  ex : Dim.Sp
+  anchor : Dim.Length × Dim.Length
+  tangent : Dim.Length × Dim.Length
+  width : Dim.Length
+  size : Dim.Length
+  em : Dim.Length
+  ex : Dim.Length
   text : String
   deriving Repr
 
@@ -53,7 +53,7 @@ def pathLabelSource (picOpts pathOpts labelOpts body endpoint : String)
 
 /-- The vertical distance from a horizontal stroke's outside to the nearest outline of the whole
 label. -/
-def Witness.gap (w : Witness) (above : Bool) : Dim.Sp :=
+def Witness.gap (w : Witness) (above : Bool) : Dim.Length :=
   (if above then w.ink.bottom - w.anchor.2 else w.anchor.2 - w.ink.top) - w.width / 2
 
 end PictureLabelSpacing
@@ -76,7 +76,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
             -- inner ysep is .3333em and outer ysep .5\pgflinewidth, so the half stroke leaves the inner clearance.
             let expected := w.em * 3333 / 10000
             t s!"whole label clears {auto}/{stroke}/{labelOpts}/{body}"
-              ((w.gap above - expected).natAbs ≤ 4)
+              ((w.gap above - expected).abs ≤ 4 * Dim.Length.quantum)
             t "label attachment preserves all source letters"
               (w.text == body.replace "\\\\" "")
   for (placement, dx, dy) in
@@ -90,7 +90,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       let gx := if dx > 0 then w.ink.left - w.anchor.1 else w.anchor.1 - w.ink.right
       let gy := if dy > 0 then w.ink.bottom - w.anchor.2 else w.anchor.2 - w.ink.top
       t s!"explicit {placement} clears every named side with the whole label"
-        ((dx == 0 || gx + 4 ≥ gap) && (dy == 0 || (gy - gap).natAbs ≤ 4) &&
+        ((dx == 0 || gx + 4 * Dim.Length.quantum ≥ gap) && (dy == 0 || (gy - gap).abs ≤ 4 * Dim.Length.quantum) &&
          w.text == "MAPgyp")
   for (opts, gap) in [("inner sep=0pt", Dim.pt 0), ("inner ysep=2pt", Dim.pt 2)] do
     for above in [true, false] do
@@ -98,7 +98,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       match pathLabelWitness fonts (pathLabelSource "" "" s!"{placement},{opts}" "MAP\\\\gyp" "(4,0)") with
       | .error e => t s!"explicit label separation: {e}" false
       | .ok w =>
-        t "explicit separation moves the whole multiline box" ((w.gap above - gap).natAbs ≤ 4)
+        t "explicit separation moves the whole multiline box" ((w.gap above - gap).abs ≤ 4 * Dim.Length.quantum)
   let direct := pathLabelSource "" "auto" "inner sep=2pt,align=left" "MAP\\\\gyp" "(4,0)"
   let named := pathLabelSource "edge-text/.style={inner sep=2pt,align=left}" "auto"
     "edge-text" "MAP\\\\gyp" "(4,0)"
@@ -118,7 +118,7 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       let dy := if up then w.ink.bottom - w.anchor.2 else w.anchor.2 - w.ink.top
       -- Horizontal glyph bearings can add room inside the logical width.
       t "a diagonal auto label clears the anchor in both coordinates"
-        (dx + 4 ≥ gap && (dy - gap).natAbs ≤ 4)
+        (dx + 4 * Dim.Length.quantum ≥ gap && (dy - gap).abs ≤ 4 * Dim.Length.quantum)
   -- A cubic with a horizontal chord has a downward tangent at its middle, selecting the upper-right corner.
   match pathLabelWitness fonts (pathLabelSource "" "auto" "" "MAP" "(4,0)" "to[out=100,in=0]") with
   | .error e => t s!"curved label: {e}" false
@@ -126,8 +126,8 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     t "the curve probe has a downward midpoint tangent" (w.tangent.1 > 0 && w.tangent.2 < 0)
     let gap := w.em * 3333 / 10000 + w.width / 2
     t "a curved auto label attaches according to its local tangent"
-      (w.ink.left - w.anchor.1 + 4 ≥ gap &&
-       (w.ink.bottom - w.anchor.2 - gap).natAbs ≤ 4)
+      (w.ink.left - w.anchor.1 + 4 * Dim.Length.quantum ≥ gap &&
+       (w.ink.bottom - w.anchor.2 - gap).abs ≤ 4 * Dim.Length.quantum)
   for (opts, body, unit) in
       [("", "\\Large MAP", ""),
        ("font=\\Large,inner sep=1em", "MAP", "em"),
@@ -142,14 +142,14 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       let expected := if unit == "em" then w.em else if unit == "ex" then w.ex
         else w.em * 3333 / 10000
       t s!"label padding retains its dimension font: {opts}/{body}"
-        ((w.gap true - expected).natAbs ≤ 4 && w.size > w.em)
+        ((w.gap true - expected).abs ≤ 4 * Dim.Length.quantum && w.size > w.em)
   match pathLabelWitness fonts (pathLabelSource "" "auto" "" "MAP" "(4,2)" "rectangle") with
   | .error e => t s!"rectangle label: {e}" false
   | .ok w =>
     let gap := w.em * 3333 / 10000 + w.width / 2
     t "a rectangle's auto label attaches to its diagonal like a straight path"
-      (w.anchor.1 - w.ink.right + 4 ≥ gap &&
-       (w.ink.bottom - w.anchor.2 - gap).natAbs ≤ 4)
+      (w.anchor.1 - w.ink.right + 4 * Dim.Length.quantum ≥ gap &&
+       (w.ink.bottom - w.anchor.2 - gap).abs ≤ 4 * Dim.Length.quantum)
   for pt in ["11pt", "12pt"] do
     let src := (pathLabelSource "" "auto" "" "MAP\\\\gyp" "(4,0)").replace
       "\\documentclass{article}" ("\\documentclass[" ++ pt ++ "]{article}")
@@ -157,4 +157,4 @@ def PictureLabelSpacing.checks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     | .error e => t s!"document dimension font: {e}" false
     | .ok w =>
       t "label padding follows the document's actual body size"
-        ((w.gap true - w.em * 3333 / 10000).natAbs ≤ 4 && w.em > Dim.pt 10)
+        ((w.gap true - w.em * (3333 : Int) / (10000 : Int)).abs ≤ 4 * Dim.Length.quantum && w.em > Dim.pt 10)

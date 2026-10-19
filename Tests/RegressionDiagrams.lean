@@ -78,7 +78,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
 
     let pt? := fun s => do
       let (n, d) ← Decl.parseDecimal s
-      return n * 65536 / (d : Int)
+      return Dim.pt n / (d : Int)
     let svgPaths := elemNodesOne (· == "path") #[] svg
     let svgShafts := svgPaths.filterMap fun n => do
       if nodeAttr "fill" n != "none" then none else
@@ -113,15 +113,15 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
       ("#ff0000", (1 : Int), (0 : Int)), ("#0000ff", 0, -1),
       ("#00ff00", 1, 0), ("#00ff00", -1, 0), ("#000000", 0, 1)]
     for (backend, shafts, heads, slack) in
-        #[("native", nativeShafts, nativeHeads, (1 : Nat)),
-          ("HTML", svgShafts, svgHeads, 132)] do
+        #[("native", nativeShafts, nativeHeads, Dim.Length.quantum),
+          ("HTML", svgShafts, svgHeads, 132 * Dim.Length.quantum)] do
       t s!"{backend} ships five shafts and five heads"
         (shafts.size == 5 && heads.size == 5)
       for (color, dx, dy) in aims do
         -- Each SVG point rounds on its own, so a level direction is level within that rounding.
-        let points := fun (x y : Int) =>
-          (if dx == 0 then x.natAbs ≤ slack else x * dx > 0) &&
-          (if dy == 0 then y.natAbs ≤ slack else y * dy > 0)
+        let points := fun (x y : Dim.Length) =>
+          (if dx == 0 then x.abs ≤ slack else x * dx > 0) &&
+          (if dy == 0 then y.abs ≤ slack else y * dy > 0)
         let matching := heads.filter fun (c, x, y, u, v, w, z) =>
           c == color && points (2 * x - u - w) (2 * y - v - z)
         t s!"{backend} {color} arrow points ({dx},{dy})" (matching.size == 1)
@@ -169,7 +169,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
         let readPlacement : Option Bool := do
           let anchor ← glyphs.find? (·.scalar == '𝑢')
           let first ← w.glyphs[0]?
-          let em := anchor.size
+          let em := anchor.size.units
           let css := fun n key => cssProperty (nodeAttr "style" n) key
           let .elem _ _ #[_, value, overlay] := cancel | none
           let vx ← readOffset em value
@@ -187,17 +187,17 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
                 let [x, y] := p.splitOn "," | none
                 let px ← x.toInt?
                 let py ← y.toInt?
-                return (ox + (px - x0) * sw / width,
-                  oy + sh - (py - y0) * sh / height)).map List.toArray
+                return (Dim.Length.ofUnits (ox + (px - x0) * sw / width),
+                  Dim.Length.ofUnits (oy + sh - (py - y0) * sh / height))).map List.toArray
             let .ok tip := CancelAlignment.arrowTip painted | none
             -- Em spellings, viewport scaling and integer division add at most six unit roundings.
-            let eps := (6 * ((em + 1999999) / 2000000 + 1)).toNat
+            let eps := Dim.Length.ofUnits (6 * ((em + 1999999) / 2000000 + 1))
             return chars value == "0𝑔" &&
               ["width", "height", "depth"].all (fun k => nodeAttr k value == "0") &&
               nodeAttr "preserveAspectRatio" svg == "none" &&
               css svg "vertical-align" == some "baseline" &&
-              (tip.1 - vx - (w.tip.1 - first.x)).natAbs ≤ eps &&
-              (tip.2 - vy - (w.tip.2 + first.y)).natAbs ≤ eps
+              (tip.1 - Dim.Length.ofUnits vx - (w.tip.1 - first.x)).abs ≤ eps &&
+              (tip.2 - Dim.Length.ofUnits vy - (w.tip.2 + first.y)).abs ≤ eps
         t "HTML target and painted arrow retain their native relative placement"
           (readPlacement == some true)
 

@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Color
+public import LeanTex.Core.Dim
 public import LeanTex.Core.DesignRole
 
 namespace LeanTex.Core.Math
@@ -785,7 +786,7 @@ public def GridKind.gapAfter : GridKind → Nat → Nat → Nat
   | .small, k, n => if k + 1 == n then 0 else 5
 
 /-- amsmath's `\minalignsep`, 10 pt (amsmath.sty): the space `aligned` stands after a pair. -/
-public def minAlignSep : Int := 10 * 65536
+public def minAlignSep : Int := (Dim.pt 10).units
 
 /-- The length gap after column `k` of `n`: `aligned`'s `\minalignsep` after each pair. -/
 public def GridKind.pairSep : GridKind → Nat → Nat → Int

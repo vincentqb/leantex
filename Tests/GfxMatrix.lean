@@ -28,7 +28,7 @@ def radial : Gfx.Gradient := .radial (Dim.pt 5, Dim.pt 5) 0 (Dim.pt 5, Dim.pt 5)
   Gfx.Affine.unit
 
 /-- A rotation by the 3-4-5 angle, then a translation: exact in rationals. -/
-def turn : Gfx.Affine := ⟨3 / 5, 4 / 5, -4 / 5, 3 / 5, Dim.pt 10, Dim.pt 20⟩
+def turn : Gfx.Affine := ⟨3 / 5, 4 / 5, -4 / 5, 3 / 5, (Dim.pt 10).toRat, (Dim.pt 20).toRat⟩
 
 def square : Gfx.Geom := .rect 0 0 (Dim.pt 10) (Dim.pt 10)
 
@@ -67,7 +67,7 @@ def cases : Array (String × Gfx.Figure Empty) := #[
   ("an outline stamped",
     figure #[.stamp 0 turn (some (fillOf blue)) none] (outlines := #[#[tri]])),
   ("a raster mapped",
-    figure #[.image 0 ⟨20, 0, 0, 10, Dim.pt 5, Dim.pt 5⟩]),
+    figure #[.image 0 ⟨20, 0, 0, 10, (Dim.pt 5).toRat, (Dim.pt 5).toRat⟩]),
   ("ink-free words", figure #[.words "recovered text", .draw square none (some (Ir.Pic.strokeOf {}))])]
 
 def pdfPlace : Gfx.Iso := { flipY := false, dx := Dim.pt 3, dy := Dim.pt 4 }

@@ -22,10 +22,10 @@ cross-reference, selects the page and copies its content and resources, claiming
 /-- The cap on a decoded stream's size, 64 MiB; past it the file is refused by name. -/
 @[expose] public def maxDecoded : Nat := 1 <<< 26
 
-/-- A numeric object in sp: `72` or `595.276`, exact to the sp. -/
-public def Obj.sp? (o : Obj) : Option Sp :=
+/-- A numeric object in big points as a length: `72` or `595.276`, the fraction rounded once. -/
+public def Obj.sp? (o : Obj) : Option Length :=
   match o with
-  | .int n => some (n * spPerPt)
+  | .int n => some (bp n)
   | .real raw => Id.run do
     let s := raw.toList
     let (neg, s) := match s with
@@ -66,7 +66,7 @@ public def Obj.sp? (o : Obj) : Option Sp :=
     | _ => pure ()
     if !seen || !rest.isEmpty then
       return none
-    let v : Int := ip * 65536 + ((num * 65536 + den / 2) / den : Nat)
+    let v : Length := bp ip + Length.bpRound num den
     return some (if neg then -v else v)
   | _ => none
 
@@ -1992,19 +1992,19 @@ public structure FormOc where
 its groups keep, none where its source has none. -/
 public structure Form where
   page : Nat
-  x0 : Sp
-  y0 : Sp
-  x1 : Sp
-  y1 : Sp
+  x0 : Length
+  y0 : Length
+  x1 : Length
+  y1 : Length
   content : ByteArray
   resources : Array Chunk
   objects : Array XObjOut
   oc : Option FormOc
   deriving Inhabited
 
-@[expose] public def Form.w (f : Form) : Sp := f.x1 - f.x0
+@[expose] public def Form.w (f : Form) : Length := f.x1 - f.x0
 
-@[expose] public def Form.h (f : Form) : Sp := f.y1 - f.y0
+@[expose] public def Form.h (f : Form) : Length := f.y1 - f.y0
 
 private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
   cs.all fun c => match c with
@@ -2038,7 +2038,7 @@ public theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
 
 /-- A page's box (§14.11.2): its CropBox when declared, else its MediaBox, refused unless four
 numbers enclosing area. -/
-public def Doc.pageBox (r : Doc) (page : Page) : Except String (Sp × Sp × Sp × Sp) := do
+public def Doc.pageBox (r : Doc) (page : Page) : Except String (Length × Length × Length × Length) := do
   let some boxObj := page.cropBox.or page.mediaBox
     | throw "malformed PDF: the selected page has no /MediaBox"
   let boxObj ← r.deref boxObj
@@ -2047,7 +2047,7 @@ public def Doc.pageBox (r : Doc) (page : Page) : Except String (Sp × Sp × Sp �
       if xs.size != 4 then
         throw "malformed PDF: the page box is not four numbers"
       else
-        let mut out : Array Sp := #[]
+        let mut out : Array Length := #[]
         for e in xs do
           match (← r.deref e).sp? with
           | some v => out := out.push v

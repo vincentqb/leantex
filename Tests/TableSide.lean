@@ -6,6 +6,9 @@ public section
 
 open LeanTex.Core LeanTex.Core.Dim
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 namespace Tests
 
 /-- Each row's cells in an emitted tree, by first class and side class (`HtmlDoc.cellClasses`);
@@ -45,17 +48,17 @@ private def wrapTable : String :=
 
 /-- The wrapping paragraph's lines on the first page, lead line excluded: each left edge and last
 run's right edge. -/
-private def wrapLines (out : Layout.Out) : Array (Dim.Sp × Dim.Sp) :=
+private def wrapLines (out : Layout.Out) : Array (Dim.Length × Dim.Length) :=
   let lines := ((out.pages[0]?.map (·.lines)).getD #[]).filter fun l =>
     !l.furniture && hasGlyphRun l && !hasStr (lineText l) "Lead"
   lines.filterMap fun l => (lineRuns l).back?.map fun (_, _, x, w) => (l.x, x + w)
 
 /-- Where the wrapping paragraph's lines but its last end on the first page. -/
-private def wrapEnds (out : Layout.Out) : Array Dim.Sp :=
+private def wrapEnds (out : Layout.Out) : Array Dim.Length :=
   (wrapLines out).pop.map (·.2)
 
 /-- How far a set of edges spreads: its largest less its smallest. -/
-private def edgeSpread (xs : Array Dim.Sp) : Dim.Sp :=
+private def edgeSpread (xs : Array Dim.Length) : Dim.Length :=
   match xs[0]? with
   | some x => xs.foldl max x - xs.foldl min x
   | none => 0
@@ -100,7 +103,7 @@ def tableSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
         ((r "RightLongCell").isSome && r "RightLongCell" == r "Rt")
       t s!"table side {kind} {scope}: the c column's cells share one centre"
         (match x "MiddleLongCell", r "MiddleLongCell", x "Md", r "Md" with
-         | some a, some b, some p, some q => (a + b - (p + q)).natAbs ≤ 2
+         | some a, some b, some p, some q => (a + b - (p + q)).abs ≤ 2 * Dim.Length.quantum
          | _, _, _, _ => false)
       t s!"table side {kind} {scope}: the p column's cells start flush left"
         ((x "ParLongCell").isSome && x "ParLongCell" == x "Pa")
@@ -136,7 +139,7 @@ def tableRaggedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       let ok := match name with
         | "raggedright" => edgeSpread lefts == 0 && edgeSpread rights.pop > Dim.pt 1
         | "raggedleft" => edgeSpread rights == 0 && edgeSpread lefts.pop > Dim.pt 1
-        | _ => edgeSpread (lines.map fun (a, b) => a + b) ≤ 4 && edgeSpread lefts > Dim.pt 1
+        | _ => edgeSpread (lines.map fun (a, b) => a + b) ≤ 4 * Dim.Length.quantum && edgeSpread lefts > Dim.pt 1
       t s!"table ragged {kind} {name}: the lines set ragged on the declared side" ok
       let (_, body, _) := HtmlDoc.emitTree {} doc
       t s!"table ragged {kind} {name}: the HTML cell states the declared side"
@@ -196,9 +199,9 @@ private def tableLengthsLualatex : List (String × String × List (String × Str
        fixed)]
 
 /-- A printed `\the` value in points read back as TeX reads it: the nearest 65536th. -/
-private def spOfPt (printed : String) : Int :=
+private def spOfPt (printed : String) : Dim.Length :=
   match Decl.parseDecimal printed with
-  | some (m, sc) => (m * 65536 * 2 + (sc : Int)) / (2 * (sc : Int))
+  | some (m, sc) => Dim.Length.ofSp ((m * 65536 * 2 + (sc : Int)) / (2 * (sc : Int)))
   | none => 0
 
 /-- A small formal table under every kind of rule. -/
@@ -228,11 +231,11 @@ private def milliOf (value unit : String) : Option Int := do
 
 /-- Whether a stylesheet length spells `want` as its share of the document's basis: stage height on
 a deck, class size elsewhere. -/
-private def statesShare (doc : Ir.Doc) (v : String) (want : Dim.Sp) : Bool :=
+private def statesShare (doc : Ir.Doc) (v : String) (want : Dim.Length) : Bool :=
   match HtmlDoc.lengthBasisOf doc with
   | .stage h => (milliOf v "vh").any fun m =>
     m * h ≤ want * 100000 && want * 100000 < (m + 1) * h
-  | .classSize s => (milliOf v "rem").any fun m => 2 * (want * 1000 - m * s).natAbs ≤ s
+  | .classSize s => (milliOf v "rem").any fun m => 2 * (want * (1000 : Int) - m * s).abs ≤ s
 
 /-- A table's lengths are lualatex's in both artifacts (`Layout.tableLength`,
 `Pdf.table_length_agree`), preamble em and ex lengths fixed in the preamble's font. -/
@@ -244,20 +247,20 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       let got := Layout.tableLength none doc.preambleFace name
       let want := spOfPt printed
       t s!"table length {kind} {name}: the page's default is lualatex's ({got} against {want} sp)"
-        ((got - want).natAbs ≤ 4)
+        ((got - want).abs ≤ 4 * Dim.Length.quantum)
     let declared := String.join (lengths.map fun (name, printed) =>
       s!"\\setlength\{\\{name}}\{{printed}pt}\n")
     let (declDoc, _) := elabStr (ruledSource kind cls declared)
     let c := censusOf #[] (layoutOf oneFace doc)
     let d := censusOf #[] (layoutOf oneFace declDoc)
     -- Each length is within TeX's rounding and a position sums a dozen, so 32 sp bounds it.
-    let near (a b : Option Dim.Sp) : Bool := match a, b with
-      | some x, some y => (x - y).natAbs ≤ 32
+    let near (a b : Option Dim.Length) : Bool := match a, b with
+      | some x, some y => (x - y).abs ≤ 32 * Dim.Length.quantum
       | _, _ => false
     t s!"table length {kind}: a table declaring lualatex's lengths ships the undeclared page"
       ((pageRuleSegs c 0).size == 4 && (pageRuleSegs c 0).size == (pageRuleSegs d 0).size &&
         ((pageRuleSegs c 0).zip (pageRuleSegs d 0)).all (fun (a, b) =>
-          (a.1 - b.1).natAbs ≤ 32 && (a.2 - b.2).natAbs ≤ 8) &&
+          (a.1 - b.1).abs ≤ 32 * Dim.Length.quantum && (a.2 - b.2).abs ≤ 8 * Dim.Length.quantum) &&
         ["HeadWord", "FirstRow", "SecondRow"].all fun w =>
           near (lineYOf c 0 w) (lineYOf d 0 w) && near (lineXOf c 0 w) (lineXOf d 0 w))
     let (page, _) := HtmlDoc.emit {} doc
@@ -274,8 +277,8 @@ def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let (abs, _) := elabStr (ruledSource "article" article
     "\\setlength{\\belowrulesep}{4.31pt}\n\\setlength{\\aboverulesep}{5pt}\n" small)
   t "table length: a preamble's 1ex and .5em are fixed as lualatex fixes them"
-    ((rel.tokens.find? "belowrulesep").map (·.width) == some (Dim.Length.ofSp (spOfPt "4.31")) &&
-      (rel.tokens.find? "aboverulesep").map (·.width) == some (Dim.Length.ofSp (spOfPt "5.0")))
+    ((rel.tokens.find? "belowrulesep").map (·.width) == some (Dim.SymLength.ofLength (spOfPt "4.31")) &&
+      (rel.tokens.find? "aboverulesep").map (·.width) == some (Dim.SymLength.ofLength (spOfPt "5.0")))
   let cr := censusOf #[] (layoutOf oneFace rel)
   let ca := censusOf #[] (layoutOf oneFace abs)
   t "table length: a small table under a preamble's 1ex ships the page of its 4.31pt"
@@ -308,14 +311,14 @@ def tableStrutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let c := censusOf #[] (layoutOf oneFace doc)
     let rules := pageRuleSegs c 0
     let rows := ["HeadWord", "FirstRow", "SecondRow"].filterMap (lineYOf c 0 ·)
-    let near (got want : Dim.Sp) : Bool := (got - want).natAbs ≤ 8
+    let near (got want : Dim.Length) : Bool := (got - want).abs ≤ 8 * Dim.Length.quantum
     t s!"table strut {kind}: the page ships four rules and three rows"
       (rules.size == 4 && rows.length == 3)
     -- rule k stands above row k, and row k above rule k + 1; a rule's segment is its band's bottom and thickness
-    let pairs : List (Dim.Sp × Option Dim.Sp × Option Dim.Sp) :=
+    let pairs : List (Dim.Length × Option Dim.Length × Option Dim.Length) :=
       (rows.zip (List.range 3)).map fun (y, k) =>
-        (y, (rules[k]?).map (fun (r : Dim.Sp × Dim.Sp) => r.1),
-          (rules[k + 1]?).map fun (r : Dim.Sp × Dim.Sp) => r.1 - r.2)
+        (y, (rules[k]?).map (fun (r : Dim.Length × Dim.Length) => r.1),
+          (rules[k + 1]?).map fun (r : Dim.Length × Dim.Length) => r.1 - r.2)
     t s!"table strut {kind}: each row stands lualatex's distance below the rule above it"
       (pairs.all fun (y, above, _) => above.any fun ry => near (y - ry) (spOfPt under))
     t s!"table strut {kind}: each rule stands lualatex's distance below the row above it"

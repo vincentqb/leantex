@@ -36,7 +36,7 @@ def titleInsetChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((cssBlocksFor css "section.slide > header").any fun decls =>
         match cssProperty decls "padding" with
         | some v => match v.splitOn " " with
-          | [top, side] => top == "0" && cssEmMilli side == some (Ir.frameTitleInset 1000)
+          | [top, side] => top == "0" && cssEmMilli side == some (Ir.frameTitleInset (1000 * Dim.Length.quantum)).units
           | _ => false
         | none => false)
 
@@ -118,8 +118,8 @@ def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (head, _, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
   -- The box below the title's baseline in the title's em and ex at its step, each number the IR's.
-  let below := Ir.defaultFrameTitleBelow 1000 doc.page.leading 0
-  let step := Ir.scaleStepIn Ir.sizeScale 1000 Ir.plainFrameTitleStep
+  let below := (Ir.defaultFrameTitleBelow (1000 * Dim.Length.quantum) doc.page.leading 0).units
+  let step := (Ir.scaleStepIn Ir.sizeScale (1000 * Dim.Length.quantum) Ir.plainFrameTitleStep).units
   let boxDecl := (cssBlocksFor css "section.slide:not(.title-page):not(.titlebar):has(> header)").findSome?
     (cssProperty · "--frame-title-below")
   t "title opening: the web title trims to its baseline and the body opens below beamer's box"
@@ -161,7 +161,7 @@ def centreSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match bodyLineY sout 0 "Kilo", bodyLineY sout 0 "Lima", bodyLineY sout 1 "Kilo", bodyLineY sout 1 "November" with
      | some k2, some l2, some k4, some n4 =>
        let growth := (n4 - k4) - (l2 - k2)
-       (k2 - k4 - growth / 2).natAbs ≤ 2
+       (k2 - k4 - growth / 2).abs ≤ 2 * Dim.Length.quantum
      | _, _, _, _ => false)
   t "centre split: a standout frame centres evenly under beamer's keys, in the web deck"
     ((stagesOf sdoc).size == 2 && (stagesOf sdoc).all (stageGrows · == #["1000", "1000"]))

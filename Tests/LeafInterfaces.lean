@@ -65,10 +65,10 @@ example : Array String :=
   #[HyphenData.patterns, HyphenDataFr.patterns, HyphenDataDe.patterns,
     FaData.table, NfcData.ccc]
 example : List (String × Char) := TextSymData.symbols
-example (n : Int) : Dim.pt n / Dim.spPerPt = n := Dim.pt_exact n
-example (value size height : Dim.Sp) :
-    (Dim.Length.ofSp value).resolve size height = value :=
-  Dim.Length.resolve_ofSp value size height
+example (n : Int) : Dim.pt n / Dim.pt 1 = n := Dim.pt_exact n
+example (value size height : Dim.Length) :
+    (Dim.SymLength.ofLength value).resolve size height = value :=
+  Dim.SymLength.resolve_ofLength value size height
 example : String → String := Nfc.normalize
 example : Thunk (Std.HashMap String FaIcons.Entry) := FaIcons.byName
 example : String → Option Hyphen.Patterns := Hyphen.forTag
@@ -88,7 +88,7 @@ example (lineEnds : Nat) :
 example (read : Binary.Reader α) (value : α) (encoded : ByteArray)
     (h : Binary.Reads read value encoded) : read.run encoded = some value :=
   Binary.Reads.run_id read value encoded h
-example : String → Option Dim.Length := Decl.parseLength
+example : String → Option Dim.SymLength := Decl.parseLength
 example : String → Option Dim.SymGlue := Decl.parseGlue
 example : String → Except String Decl.LenExpr := Decl.parseLengthSyntax
 example : Option String → String → Except Decl.ColorSpecError Decl.ColorSpec :=

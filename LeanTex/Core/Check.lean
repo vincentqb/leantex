@@ -18,16 +18,16 @@ public structure Shipped where
   /-- The worst offender, for the failure message. -/
   areaActual : String := ""
   /-- The smallest x-height set anywhere, from each run's font at its size. -/
-  minXHeight : Option Sp := none
+  minXHeight : Option Length := none
   /-- Failing or unverified accessibility rows. -/
   a11y : Array String := #[]
   /-- The rules of the declared PDF profiles that the built file's census breaks. -/
   pdfViolations : Array String := #[]
 
 /-- The worse of `cur` and one ink rectangle's overshoot past the text area, with its edge. -/
-private def worstOvershoot (left right top bottom x0 x1 y0 y1 : Sp)
-    (cur : Sp × String) : Sp × String :=
-  let past (d : Sp) (edge : String) (cur : Sp × String) : Sp × String :=
+private def worstOvershoot (left right top bottom x0 x1 y0 y1 : Length)
+    (cur : Length × String) : Length × String :=
+  let past (d : Length) (edge : String) (cur : Length × String) : Length × String :=
     if d > cur.1 then (d, edge) else cur
   past (y1 - bottom) "bottom" (past (top - y0) "top"
     (past (x1 - right) "right" (past (left - x0) "left" cur)))
@@ -35,8 +35,8 @@ private def worstOvershoot (left right top bottom x0 x1 y0 y1 : Sp)
 /-- Measure the shipped pages; running furniture is exempt from the area judgement. -/
 public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     (fontsEmbedded : Bool) : Shipped := Id.run do
-  let mut worstAt : Sp × String := (0, "")
-  let mut minX : Option Sp := none
+  let mut worstAt : Length × String := (0, "")
+  let mut minX : Option Length := none
   let right := geom.pageW - geom.hmargin
   let bottom := geom.bodyBottom
   for p in out.pages do
@@ -85,7 +85,7 @@ public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     pages := out.pages.size
     fontsEmbedded := fontsEmbedded
     inArea := worstAt.1 ≤ 0
-    areaActual := s!"ink {worstAt.1.toPtString}pt past the {worstAt.2} margin"
+    areaActual := s!"ink {worstAt.1.toBpString}pt past the {worstAt.2} margin"
     minXHeight := minX }
 
 private def failure (a : Assertion) (actual : String) : Diag :=
@@ -149,7 +149,7 @@ public def one (shipped : Shipped) (a : Assertion) : Option Diag :=
     | none => none
     | some v =>
       if v ≥ m then none
-      else some (failure a s!"{v.toPtString}pt x-height")
+      else some (failure a s!"{v.toBpString}pt x-height")
   | .accessibilityAA =>
     if shipped.a11y.isEmpty then none
     else some (failure a (String.intercalate "; " shipped.a11y.toList))

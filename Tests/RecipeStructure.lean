@@ -182,9 +182,9 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
         (fun n _ => n) 0 ldoc.body == 3)
   let lout := layoutOf oneFace ldoc
   let bout := layoutOf oneFace bdoc
-  let lineY (o : Layout.Out) (needle : String) : Option Dim.Sp :=
+  let lineY (o : Layout.Out) (needle : String) : Option Dim.Length :=
     (allLines o).findSome? fun l => if hasStr (lineText l) needle then some l.y else none
-  let lineX (o : Layout.Out) (needle : String) : Option Dim.Sp :=
+  let lineX (o : Layout.Out) (needle : String) : Option Dim.Length :=
     (allLines o).findSome? fun l => if hasStr (lineText l) needle then some l.x else none
   t "the three linked tiles stand on the unlinked row's one baseline"
     (match lineY lout "Tile Apple.", lineY lout "Tile Berry.", lineY lout "Tile Cherry.",
@@ -197,7 +197,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
       lineX lout "Tile Cherry." == lineX bout "Tile Cherry.")
   let rects := (lout.pages[0]?.map (·.links)).getD #[]
   let sorted := rects.qsort (fun a b => decide (a.x < b.x))
-  let covers (r : Layout.LinkRect) (x : Dim.Sp) : Bool :=
+  let covers (r : Layout.LinkRect) (x : Dim.Length) : Bool :=
     decide (r.x ≤ x) && decide (x ≤ r.x + r.w)
   t "linked row: exactly three disjoint link rectangles with gutters between"
     (rects.size == 3 &&
@@ -297,7 +297,9 @@ def recipeTabularxChecks (ref : IO.Ref (List String))
     #[{ width := .natural, align := .left },
       { width := .flex (.frac 1000), align := .left }]
   t "X receives the target less the natural column and pads, exactly"
-    (Layout.tableColWidths 10 1000 100 probeCols #[#[100, 200]] #[] == #[100, 860])
+    (let q (n : Int) : Dim.Length := n * Dim.Length.quantum
+     Layout.tableColWidths (q 10) (q 1000) (q 100) probeCols #[#[q 100, q 200]] #[] ==
+       #[q 100, q 860])
   let trees := doc.body.map (HtmlDoc.blockNode {})
   let tableStyles := trees.foldl
     (fun acc n => acc ++ attrValuesOf (· == "table") "style" n) #[]
@@ -478,14 +480,14 @@ def recipeTitlePageChecks (ref : IO.Ref (List String))
 
 mutual
 /-- Every PDF fill rectangle's colour, width and height, marked-content sequences included. -/
-private def pdfFillsOne (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
-    Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
+private def pdfFillsOne (out : Array (Ir.Color × Dim.Length × Dim.Length)) :
+    Pdf.ContentOp → Array (Ir.Color × Dim.Length × Dim.Length)
   | .fill color _ _ w h => out.push (color, w, h)
   | .marked _ body => pdfFillsList out body.toList
   | .paint _ _ _ _ | .group _ _ _ _ | .shade _ _ | .outline _ _ _ | .xobject _ _ _ _ | .text _
   | .image _ _ _ _ _ | .imageMissing _ _ _ _ => out
-private def pdfFillsList (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
-    List Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
+private def pdfFillsList (out : Array (Ir.Color × Dim.Length × Dim.Length)) :
+    List Pdf.ContentOp → Array (Ir.Color × Dim.Length × Dim.Length)
   | [] => out
   | op :: rest => pdfFillsList (pdfFillsOne out op) rest
 end
@@ -516,7 +518,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
     (out.pages.size == 1 && pageOccurs census 0 "Crossed words." == 1)
   let strikeSegs := (metricDecorationSegs out).filter fun (kind, _, _, _, _) =>
     kind == .lineThrough
-  let strikeWidth := strikeSegs.foldl (fun n (_, w, _, _, _) => n + w) (0 : Dim.Sp)
+  let strikeWidth := strikeSegs.foldl (fun n (_, w, _, _, _) => n + w) (0 : Dim.Length)
   let sourceWidth := (allLines out).foldl (fun n l =>
     n + l.segs.foldl (fun n s => match s with
       | .run _ _ _ w _ _ _ decorations _ _ _ =>
@@ -597,7 +599,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
       both.any (fun (kind, _, _, _, _) => kind == .lineThrough))
 
   let throughOf (ls : Array Layout.LineOut) :
-      Array (Dim.Sp × Dim.Sp × Dim.Sp × Ir.Color) :=
+      Array (Dim.Length × Dim.Length × Dim.Length × Ir.Color) :=
     ls.flatMap fun l => l.segs.filterMap fun s => match s with
       | .decoration .lineThrough w thickness raise color => some (w, thickness, raise, color)
       | _ => none

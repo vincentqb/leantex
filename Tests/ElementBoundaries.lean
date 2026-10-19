@@ -203,7 +203,7 @@ private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   let minted := "\\begin{minted}{text}\nalpha code\n\\end{minted}"
   let display := "\\[ \\text{Omega} = z \\]"
   for cls in ["article", "resume", "poster"] do
-    let spanOf (sep : String) : Option Dim.Sp :=
+    let spanOf (sep : String) : Option Dim.Length :=
       let src := s!"\\documentclass\{{cls}}\n\\begin\{document}\n" ++ verbatim ++ sep ++ display ++
         "\n\\end{document}\n"
       let (doc, _) := Elab.run s!"element-boundaries-endpe-{cls}.tex" src
@@ -214,7 +214,7 @@ private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
        | _, _ => false)
   let cases := [("webpage", verbatim), ("webpage", minted)]
   for (cls, listing) in cases do
-    let spanOf (sep : String) : Option Dim.Sp :=
+    let spanOf (sep : String) : Option Dim.Length :=
       let src := s!"\\documentclass\{{cls}}\n\\usepackage\{minted}\n\\begin\{document}\n" ++
         listing ++ sep ++ display ++ "\n\\end{document}\n"
       let (doc, _) := Elab.run s!"element-boundaries-endpe-{cls}.tex" src
@@ -236,7 +236,7 @@ def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     for row in rows do
       let (x, y) := row.pair
       let d := pages[idx]?.bind probeSpan
-      let b : Option Dim.Sp := if row.base.isSome then pages[idx + 1]?.bind probeSpan else some 0
+      let b : Option Dim.Length := if row.base.isSome then pages[idx + 1]?.bind probeSpan else some 0
       idx := idx + (probes row).length
       let against := match row.base with
         | some (bx, bz) => s!" beyond a {bz} under a {bx}"

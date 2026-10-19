@@ -1247,7 +1247,7 @@ def main (args : List String) : IO UInt32 := do
 
   dimChecks ref
   -- A fractional case: its String.Slice ops get stuck for decide, so it runs here.
-  check ref "sp pt string fractional" ((Dim.pt 3 / 2).toPtString == "1.5")
+  check ref "sp pt string fractional" ((Dim.pt 3 / 2).toBpString == "1.5")
   kpChecks ref
   hyphenChecks ref
   walkChecks ref

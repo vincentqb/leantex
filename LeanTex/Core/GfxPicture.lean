@@ -12,8 +12,8 @@ open LeanTex.Core LeanTex.Core.Dim
 
 /-- A picture label as its shape carries it: anchor, content, colour, per-mille size and alignment. -/
 public structure LabelSpec where
-  x : Sp
-  y : Sp
+  x : Length
+  y : Length
   content : Array Ir.Inline
   color : Ir.Color
   scale : Nat
@@ -51,7 +51,7 @@ public theorem Node.liftList_map {L : Type} (acc : Array (Node L)) (xs : List (N
     .label { x := x, y := y, content := content, color := color, scale := scale, align := align }
   | .ink n => n.lift
 
-public theorem ofPicture_ink_id (x y w h r : Sp) (c : Ir.Color) (st : Option Ir.Pic.Stroke)
+public theorem ofPicture_ink_id (x y w h r : Length) (c : Ir.Color) (st : Option Ir.Pic.Stroke)
     (fl : Option Ir.Color) (segs : Array Ir.Pic.PathSeg) (k : Ir.Pic.Stroke)
     (tip : Option Ir.Pic.Tip) :
     ofShape (.rect x y w h c) =

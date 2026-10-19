@@ -9,7 +9,7 @@ open LeanTex.Core LeanTex.Cli Tests.TikzCoverage
 /-- The shaft's two ends, then the head's geometry, fill and stroke, of a one-segment arrow in
 layout coordinates. -/
 def arrowParts (oneFace : Font.FontSet) (src : String) :
-    Option ((Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
+    Option ((Dim.Length × Dim.Length × Dim.Length × Dim.Length) × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
   match (drawsOf oneFace src).toList with
   | [(.path shaft, none, some _), (head, fl, st)] =>
     match (subpathSegs shaft).toList with
@@ -20,9 +20,9 @@ def arrowParts (oneFace : Font.FontSet) (src : String) :
 /-- Every arrow tip is drawn as pgf declares it, and each shaft stops at its tip's line end. -/
 def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let lw : Dim.Sp := Ir.Pic.thinWidth
-  let a : Dim.Sp := Dim.pt 28 / 100 + lw * 3 / 10
-  let near (x y : Dim.Sp) (tol : Nat := 3) : Bool := (x - y).natAbs ≤ tol
+  let lw : Dim.Length := Ir.Pic.thinWidth
+  let a : Dim.Length := Dim.pt 28 / 100 + lw * 3 / 10
+  let near (x y : Dim.Length) (tol : Nat := 3) : Bool := (x - y).abs ≤ tol * Dim.Length.quantum
   let line := "(0,0) -- (1,0);"
   match arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line)) with
   | some ((x0, _, x1, _), .path #[sub], none, some st) =>
@@ -90,10 +90,11 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     let len := Dim.pt 3 + lw * 45 / 10
     let wid := len * 75 / 100
     let alw := min lw (len / 5)
-    let lwF : Float := (alw.toNat.toFloat) / 65536
-    let ratio : Float := (len.toNat.toFloat) / (wid.toNat.toFloat)
+    let unitF : Float := (Dim.pt 1).units.toNat.toFloat
+    let lwF : Float := (alw.units.toNat.toFloat) / unitF
+    let ratio : Float := (len.units.toNat.toFloat) / (wid.units.toNat.toFloat)
     let front : Float := lwF * Float.sqrt (1 + 9 * ratio * ratio)
-    let sp (x : Float) : Dim.Sp := (x * 65536).round.toInt64.toInt
+    let sp (x : Float) : Dim.Length := .ofUnits (x * unitF).round.toInt64.toInt
     let ends := x0 + Dim.mm 10
     t "Latex: filled and stroked at its line width, mitred, curved"
       (st.join == .miter && st.width == alw && sub.closed &&

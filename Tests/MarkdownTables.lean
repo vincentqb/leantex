@@ -6,6 +6,9 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-! A GFM pipe table is the booktabs table, on both artifacts. -/
 
 namespace Tests.MarkdownTables
@@ -79,7 +82,7 @@ its label, then counts them"
     | .rule w _ _ _ => some w
     | _ => none
   t s!"and its rules span the measure, the columns filling it ({ruleWidths})"
-    (ruleWidths.size == 3 && ruleWidths.all fun w => measure - 8 ≤ w && w ≤ measure)
+    (ruleWidths.size == 3 && ruleWidths.all fun w => measure - 8 * Dim.Length.quantum ≤ w && w ≤ measure)
   let painted := String.intercalate "\n" (lines.map lineText).toList
   t "every word of its narrowed cells reaches the page, unhyphenated"
     ((note.splitOn " ").all (hasStr painted ·) && !hasStr painted "-\n")
@@ -91,7 +94,7 @@ its label, then counts them"
     (noteLines.size ≥ 4)
   let some face := fonts.fonts[0]?
     | t "the table face loads" false
-  let space : Dim.Sp := Dim.pt 10 * face.spaceAdvance / face.unitsPerEm
+  let space : Dim.Length := Dim.pt 10 * face.spaceAdvance / face.unitsPerEm
   t "a wrapping cell is ragged: its word spaces keep their natural width"
     (noteLines.all fun l => l.segs.all fun s => match s with
       | .gap w _ => w ≤ space + Dim.pt 1 / 2
@@ -125,7 +128,7 @@ its label, then counts them"
   let fout := layoutOf fonts located
   let flines := bodyLines fout
   let rowYs := (flines.filterMap fun l => if (lineText l).startsWith "1." then some l.y else none)
-  let cellsAt (y : Dim.Sp) : Array Layout.LineOut :=
+  let cellsAt (y : Dim.Length) : Array Layout.LineOut :=
     (flines.filter (·.y == y)).qsort (·.x < ·.x)
   t s!"a table too wide by its words alone keeps them whole, no cell overlapping ({rowYs.size})"
     (!rowYs.isEmpty && (rowYs.eraseReps).all fun y =>
@@ -136,7 +139,7 @@ its label, then counts them"
     (over.isEmpty && (flines.all fun l => l.size < located.page.fontSize))
   let rowOut := layoutOf fonts (elabStr (dvDoc ""
     "\\begin{tabular}{lll}\n\\toprule\nshort & {\\LARGE Tall} & low \\\\\n\\bottomrule\n\\end{tabular}")).1
-  let baselineOf (needle : String) : Option Dim.Sp := (bodyLines rowOut).findSome? fun l =>
+  let baselineOf (needle : String) : Option Dim.Length := (bodyLines rowOut).findSome? fun l =>
     if hasStr (lineText l) needle then some l.y else none
   t "a row's cells share one baseline despite a taller first line"
     ((baselineOf "Tall").isSome && baselineOf "short" == baselineOf "Tall"
@@ -179,7 +182,7 @@ pairs that do not reach every shelf, the folded names must equal the tallied one
     " ".intercalate (List.replicate 12 why) ++ " |\n"
   let sout := layoutOf fonts (elabMd single).1
   let slines := bodyLines sout
-  let yOf (w : String) : Option Dim.Sp :=
+  let yOf (w : String) : Option Dim.Length :=
     (slines.find? fun l => (lineRuns l).any (·.2.1 == w)).map (·.y)
   let ys := words.filterMap yOf
   t s!"a narrowed cell sets one word a line when only one fits ({ys})"
@@ -204,7 +207,7 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let src (label : String) := "| label | p | q | r | s | t | u | v | w | z |\n\
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n" ++
     s!"| {label} | {row 1} |\n| {label}x | {row 2} |\n"
-  let fitsIn (doc : Ir.Doc) (avail : Dim.Sp) := Layout.tableFit (Layout.Geom.ofPage doc.page)
+  let fitsIn (doc : Ir.Doc) (avail : Dim.Length) := Layout.tableFit (Layout.Geom.ofPage doc.page)
     fonts {} (Layout.tableLength none doc.preambleFace "tabcolsep") avail
   let fitsAt (doc : Ir.Doc) := fitsIn doc (Layout.Geom.ofPage doc.page).textWidth
   let tableOf (doc : Ir.Doc) := doc.body.findSome? fun b => match b with
@@ -215,7 +218,7 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       | _ => none) (fun found _ => found) none doc.body
   let decide (doc : Ir.Doc) : Option Layout.TableFit := (tableOf doc).map
     fun (cols, padL, padR, rows, spans) => fitsAt doc cols padL padR rows spans
-  let sizes (out : Layout.Out) : List Dim.Sp :=
+  let sizes (out : Layout.Out) : List Dim.Length :=
     (((bodyLines out).filter fun l => (lineText l).any Char.isDigit).toList.map (·.size)).eraseDups
   let (mid, _) := elabMd (src "sorter")
   let mout := layoutOf fonts mid
@@ -242,7 +245,7 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let lo := xs.foldl min (xs[0]?.getD 0)
   let hi := ends.foldl max (ends[0]?.getD 0)
   t s!"its overhang is centred across both margins ({left - lo} left, {hi - right} right)"
-    (lo < left && right < hi && (left - lo - (hi - right)).natAbs ≤ (Dim.pt 1).natAbs)
+    (lo < left && right < hi && (left - lo - (hi - right)).abs ≤ Dim.pt 1)
   t "and every glyph stays on the paper"
     (0 ≤ lo && hi ≤ big.page.width)
   t "the page names the overhang at the table's first cell"
@@ -310,7 +313,7 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       fitsIn kdoc ((Layout.Geom.ofPage kdoc.page).textWidth - lm) cols padL padR rows spans
     let kright := kdoc.page.width - kdoc.page.hmargin
     t s!"a listed table judged to fit its measure sets inside it ({k}: {repr kfit})"
-      (kfit.any (fun f => (0 : Dim.Sp) < f.overhang) ||
+      (kfit.any (fun f => (0 : Dim.Length) < f.overhang) ||
         ((bodyLines kout).filter hasGlyphRun).all fun l => l.x + l.setWidth ≤ kright)
   let flagCell := "| Flag | Effect |\n|---|---|\n\
 | `--rewrite-every-gadget-label-before-counting-them-and-writing-each-one-back` | \
@@ -355,7 +358,7 @@ the sorter reads every gadget it is handed |\n"
     let hhi := (hlines.map fun l => l.x + l.setWidth).foldl max hl
     t s!"an included table steps down in its host and centres its overhang ({repr (decide host)}; {hl - hlo} left, {hhi - hr} right)"
       ((decide host).any (·.step.isSome) && !hlines.isEmpty
-        && (hl - hlo - (hhi - hr)).natAbs ≤ (Dim.pt 1).natAbs)
+        && (hl - hlo - (hhi - hr)).abs ≤ Dim.pt 1)
 
 def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -441,10 +444,10 @@ def markdownTableChecks (ref : IO.Ref (List String)) : IO Unit := do
     (rules.size == 3 && match rules[0]?, rules[1]?, rules[2]? with
       | some (_, top), some (_, mid), some (_, bot) => top == bot && mid < top
       | _, _, _ => false)
-  let runRight (needle : String) : Option Dim.Sp :=
+  let runRight (needle : String) : Option Dim.Length :=
     (bodyLines out).findSome? fun l =>
       (lineRuns l).findSome? fun (_, s, x, w) => if s == needle then some (x + w) else none
-  let runLeft (needle : String) : Option Dim.Sp :=
+  let runLeft (needle : String) : Option Dim.Length :=
     (bodyLines out).findSome? fun l =>
       (lineRuns l).findSome? fun (_, s, x, _) => if s == needle then some x else none
   t "a right-aligned column ends its cells at one edge on the page"

@@ -147,7 +147,7 @@ def inked (s : String) : List Char :=
 /-- A page's lines top to bottom: runs grouped by exact baseline, in descending baseline
 then ascending pen order, never painting order; a single-column reading. -/
 def runLines (p : ArtPage) : Array (Array (Nat × ArtRun)) := Id.run do
-  let mut ys : Array Dim.Sp := #[]
+  let mut ys : Array Dim.Length := #[]
   let mut groups : Array (Array (Nat × ArtRun)) := #[]
   let mut n := 0
   for r in p.runs do
@@ -345,10 +345,10 @@ def parityNames : IO (Array String) := do
 
 /-- A page's glyph origins by line, each glyph with the offset in its line's character
 stream where it starts, its identity across writers. -/
-def placedLines (p : ArtPage) : Array (Array (Nat × Dim.Sp × Dim.Sp × String)) := Id.run do
-  let mut out : Array (Array (Nat × Dim.Sp × Dim.Sp × String)) := #[]
+def placedLines (p : ArtPage) : Array (Array (Nat × Dim.Length × Dim.Length × String)) := Id.run do
+  let mut out : Array (Array (Nat × Dim.Length × Dim.Length × String)) := #[]
   for line in runLines p do
-    let mut glyphs : Array (Nat × Dim.Sp × Dim.Sp × String) := #[]
+    let mut glyphs : Array (Nat × Dim.Length × Dim.Length × String) := #[]
     let mut off := 0
     for (_, r) in line do
       for (x, t) in r.glyphs do
@@ -362,10 +362,10 @@ def placedLines (p : ArtPage) : Array (Array (Nat × Dim.Sp × Dim.Sp × String)
 /-- The pairing a placement claim measures over: glyphs matched line for line by stream
 offset and spelling; a glyph spelled differently is skipped on both sides and counted. -/
 def placePairs (engine reference : ArtPage) :
-    Array ((Dim.Sp × Dim.Sp) × (Dim.Sp × Dim.Sp)) × Nat := Id.run do
+    Array ((Dim.Length × Dim.Length) × (Dim.Length × Dim.Length)) × Nat := Id.run do
   let el := placedLines engine
   let rl := placedLines reference
-  let mut pairs : Array ((Dim.Sp × Dim.Sp) × (Dim.Sp × Dim.Sp)) := #[]
+  let mut pairs : Array ((Dim.Length × Dim.Length) × (Dim.Length × Dim.Length)) := #[]
   let mut skipped := 0
   for li in [0:min el.size rl.size] do
     let a := el[li]!
@@ -390,7 +390,7 @@ def placePairs (engine reference : ArtPage) :
   return (pairs, skipped)
 
 /-- A sorted list's value at a percentile, for a distribution report. -/
-def atPercentile (xs : Array Dim.Sp) (pct : Nat) : Dim.Sp :=
+def atPercentile (xs : Array Dim.Length) (pct : Nat) : Dim.Length :=
   if xs.isEmpty then 0
   else
     let s := xs.qsort (· < ·)

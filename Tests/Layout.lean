@@ -35,7 +35,7 @@ def BRK : List Piece := [.B]
 
 /-- Total demerits of a break sequence ending at the final forced penalty, or none when it spans a
 forced break. -/
-def seqCost (items : Array Layout.Item) (target : Dim.Sp) (breaks : List Nat) :
+def seqCost (items : Array Layout.Item) (target : Dim.Length) (breaks : List Nat) :
     Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
@@ -63,7 +63,7 @@ def seqCost (items : Array Layout.Item) (target : Dim.Sp) (breaks : List Nat) :
   return some total
 
 /-- Minimum cost over every legal break sequence (exponential; tiny inputs). -/
-def bruteBest (items : Array Layout.Item) (target : Dim.Sp) : Option Int := Id.run do
+def bruteBest (items : Array Layout.Item) (target : Dim.Length) : Option Int := Id.run do
   let n := items.size
   let legal := (List.range n).filter (Layout.canBreakAt items)
   let mut best : Option Int := none
@@ -189,35 +189,35 @@ def algNumberColumnChecks (ref : IO.Ref (List String))
   let linesOf (src : String) : Array Layout.LineOut :=
     let (d, _) := Elab.run "t" src
     bodyLines (layoutOf oneFace d geom)
-  let leftmost (ls : Array Layout.LineOut) : Dim.Sp :=
+  let leftmost (ls : Array Layout.LineOut) : Dim.Length :=
     ls.foldl (fun m l => min m l.x) geom.pageW
   let short := linesOf (alg true 13)
   t s!"a numbered algorithm's numbers stand inside the measure \
-({(leftmost short).toPtString} vs {geom.hmargin.toPtString})"
+({(leftmost short).toBpString} vs {geom.hmargin.toBpString})"
     (0 < short.size && geom.hmargin ≤ leftmost short)
   let long := linesOf (alg true 120)
   t s!"a hundred-line algorithm's three-digit numbers stay inside \
-({(leftmost long).toPtString} vs {geom.hmargin.toPtString})"
+({(leftmost long).toBpString} vs {geom.hmargin.toBpString})"
     (0 < long.size && geom.hmargin ≤ leftmost long)
   let plain := linesOf (alg false 13)
   t s!"an unnumbered algorithm reserves no number column \
-({(leftmost plain).toPtString})"
+({(leftmost plain).toBpString})"
     (0 < plain.size && leftmost plain == geom.hmargin)
   -- All three set the same first line, so right-edge differences are reserve differences.
-  let rightOf (ls : Array Layout.LineOut) : Dim.Sp :=
+  let rightOf (ls : Array Layout.LineOut) : Dim.Length :=
     (ls[0]?.map fun l => l.x + l.setWidth).getD 0
   t s!"the default column is two ems, algorithm2e's inset and the HTML's padding \
-({(rightOf short - rightOf plain).toPtString})"
+({(rightOf short - rightOf plain).toBpString})"
     (rightOf short - rightOf plain == 2 * geom.fontSize)
   t s!"a wider number widens the column \
-({(rightOf long - rightOf short).toPtString})"
+({(rightOf long - rightOf short).toBpString})"
     (rightOf plain < rightOf short && rightOf short < rightOf long)
 
 /-- Line-level typesetting checks against a one-face set. -/
 def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  let widthOf (src : String) : Dim.Sp :=
+  let widthOf (src : String) : Dim.Length :=
     let (d, _) := Elab.run "t" src
     (((layoutOf oneFace d geom).pages.flatMap (·.lines))[0]?.map
       (·.setWidth)).getD 0
@@ -233,7 +233,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   t "tilde does not break the line" (widthOf "a~b" == widthOf "a\u00a0b")
   t "escaped tilde is a literal tilde"
     ((Elab.run "t" "a\\~b").1.body == #[.para #[.text "a~b"]])
-  let firstX (src : String) : Option Dim.Sp :=
+  let firstX (src : String) : Option Dim.Length :=
     ((bodyLines (layoutOf oneFace (Elab.run "t" src).1 geom))[0]?).map (·.x)
   t "noindent's first line stands at the margin, as every first line does"
     (firstX "\\noindent alpha beta" == some geom.hmargin &&
@@ -250,7 +250,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
     (scRuns.all (·.2 == geom.fontSize * Layout.smallCapScale / 1000))
 
   -- A departure from LaTeX: a last line's `\hfill` takes the whole leftover.
-  let measureOf (src : String) : Array Dim.Sp :=
+  let measureOf (src : String) : Array Dim.Length :=
     let (d, _) := Elab.run "t" src
     (bodyLines (layoutOf oneFace d geom)).map (·.setWidth)
   t "paragraph ending in a break keeps its content"
@@ -268,8 +268,8 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
 
   -- Every word starts 'A' and ends '.', so each full line's boundary glyphs are known.
   let font := oneFace.get 0
-  let scaledAdv (c : Char) : Dim.Sp :=
-    (font.advance c * geom.fontSize.toNat) / font.unitsPerEm
+  let scaledAdv (c : Char) : Dim.Length :=
+    font.advance c * max 0 geom.fontSize / font.unitsPerEm
   let lp := scaledAdv 'A' * 50 / 1000
   let rp := scaledAdv '.' * 700 / 1000
   let protDoc := (Elab.run "t" (String.intercalate " " (List.replicate 40 "Aaaa."))).1
@@ -454,7 +454,7 @@ def boxWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let boxDoc (pre : String) (w : String) : String :=
     "\\documentclass{article}" ++ pre ++ "\\begin{document}\\begin{minipage}{" ++ w ++
     "}" ++ filler ++ "\\end{minipage}\\end{document}"
-  let widest (src : String) : Dim.Sp :=
+  let widest (src : String) : Dim.Length :=
     ((allLines (layoutOf oneFace (elabStr src).1 geom)).filter
       fun l => !l.furniture && !l.segs.isEmpty).foldl
         (fun m l => max m (l.x + l.setWidth - geom.hmargin)) 0
@@ -558,14 +558,14 @@ def boxSideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      ("minipage", "\\begin{minipage}{0.4\\textwidth}" ++ marker ++ "\\end{minipage}"),
      ("parbox", "\\parbox{0.4\\textwidth}{" ++ marker ++ "}")]
   for (kind, box) in boxes do
-    let xOf (env : String) : Option Int :=
+    let xOf (env : String) : Option Dim.Length :=
       let src := "\\documentclass{article}\\begin{document}\\begin{" ++ env ++ "}" ++ box ++
         "\\end{" ++ env ++ "}\\end{document}"
       ((bodyLines (layoutOf oneFace (elabStr src).1)).find? (lineText · == marker)).map (·.x)
     match xOf "flushleft", xOf "center", xOf "flushright" with
     | some l, some c, some r =>
       t s!"a {kind} centres midway between its two flush placements"
-        (l < c && c < r && (c - l - (r - c)).natAbs ≤ 1)
+        (l < c && c < r && (c - l - (r - c)).abs ≤ Dim.Length.quantum)
     | _, _, _ => t s!"a {kind} sets its marker line under each side" false
 
 /-- The HTML twin of `boxSideChecks`: each alignment scope's rule places a box on its side. -/
@@ -601,7 +601,7 @@ def titleHeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\title{An Invented Title}\\author{Pat Placeholder}\\begin{document}\\maketitle " ++
     "Body text.\\end{document}"
   let (plain, _) := elabStr (src "")
-  let linesOf (d : Ir.Doc) : Array (Int × Int × String) :=
+  let linesOf (d : Ir.Doc) : Array (Dim.Length × Dim.Length × String) :=
     (bodyLines (layoutOf oneFace d)).map fun l => (l.x, l.y, lineText l)
   let values : List (String × String) :=
     [("rule", "quiet"), ("rule-position", "baseline"), ("rule-thickness", "1pt"),
@@ -959,7 +959,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
     (match mid[0]? with
      | some b =>
        let (h, d) := Layout.segsInk oneFace b.segs
-       ((b.y - h - geom.bodyTop - Dim.pt 10) - (geom.bodyBottom - (b.y + d))).natAbs ≤ 1
+       ((b.y - h - geom.bodyTop - Dim.pt 10) - (geom.bodyBottom - (b.y + d))).abs ≤ Dim.Length.quantum
      | none => false)
   t "a leading fill alone pushes content to the bottom"
     (match low[0]?, mid[0]? with
@@ -1024,7 +1024,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
      (lastSetPalette d).bind (·.find? "b") == some { r := 0x11, g := 0x22, b := 0x33 })
   t "a body setlength declares its token in the flow state"
     ((lastSetTokens (elabStr (doc "\\setlength{\\x}{4pt}y")).1).bind (·.find? "x")
-      == some { width := .ofSp (Dim.pt 4) })
+      == some { width := .ofLength (Dim.pt 4) })
   t "a preamble-only declaration in the body is W0340, not unknown"
     (let ds := (elabStr (doc "x\n\n\\page{ size = a5 }\n\ny")).2
      ds.any (·.code == "W0340") && ds.all (·.code != "W0301") &&
@@ -1327,15 +1327,15 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (inkMs < hangGuardMs 5)
   let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
     layoutOf fs (Elab.run "t" src).1 geom
-  let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Sp × Dim.Sp) :=
+  let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Length × Dim.Length) :=
     ((outOf fs src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
       match s with
       | .decoration .underline w th _ _ => some (w, th)
       | _ => none)
-  let widthOf (fs : Font.FontSet) (src : String) : Dim.Sp :=
+  let widthOf (fs : Font.FontSet) (src : String) : Dim.Length :=
     (((outOf fs src).pages.flatMap (·.lines))[0]?.map (·.setWidth)).getD 0
-  let coverage (fs : Font.FontSet) (src : String) : Dim.Sp × Dim.Sp :=
-    ((rulesOf fs src).foldl (fun acc (w, _) => acc + w) (0 : Dim.Sp),
+  let coverage (fs : Font.FontSet) (src : String) : Dim.Length × Dim.Length :=
+    ((rulesOf fs src).foldl (fun acc (w, _) => acc + w) (0 : Dim.Length),
      widthOf fs src)
   t "underline emits a rule" ((rulesOf oneFace "\\underline{ab}").size ≥ 1)
   t "plain text emits no rule" ((rulesOf oneFace "ab").isEmpty)
@@ -1391,7 +1391,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
               [((slot, 400, false), 0), ((slot, 700, false), 0),
                ((slot, 400, true), 1), ((slot, 700, true), 1)]).toArray
           }
-          let firstRunAndRule (src : String) : Dim.Sp × Dim.Sp := Id.run do
+          let firstRunAndRule (src : String) : Dim.Length × Dim.Length := Id.run do
             let lines := ((outOf mixedSet src).pages.flatMap (·.lines))
             let runW := ((lines[0]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
@@ -1534,11 +1534,11 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let size := geom.fontSize
   let bs := Ir.leadingFor size geom.leading
   let sk := Ir.displaySkipsAt size
-  let w (g : Dim.SymGlue) : Dim.Sp := (g.resolve size 0).width
+  let w (g : Dim.SymGlue) : Dim.Length := (g.resolve size 0).width
   let texPar := (geom.texParskip.resolve size 0).width
-  let depth (l : Layout.LineOut) : Dim.Sp := (Layout.segsInk fs l.segs).2
-  let height (l : Layout.LineOut) : Dim.Sp := (Layout.segsInk fs l.segs).1
-  let step (xs : Array Layout.LineOut) (i : Nat) : Dim.Sp := xs[i + 1]!.y - xs[i]!.y
+  let depth (l : Layout.LineOut) : Dim.Length := (Layout.segsInk fs l.segs).2
+  let height (l : Layout.LineOut) : Dim.Length := (Layout.segsInk fs l.segs).1
+  let step (xs : Array Layout.LineOut) (i : Nat) : Dim.Length := xs[i + 1]!.y - xs[i]!.y
   let long := "Alpha words run on long enough to pass the display."
   let three (ls : Array Layout.LineOut) : Bool := ls.size == 3
   let l1 := linesOf (long ++ "\n\\[ x = 1 \\]\nBravo words.")
@@ -1633,7 +1633,7 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
 def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) (font : Font) : IO Unit := do
   let t := check ref
-  let ysOf (g : Layout.Geom) (src : String) : Array Dim.Sp :=
+  let ysOf (g : Layout.Geom) (src : String) : Array Dim.Length :=
     -- Text lines only: an underline rule rides a sibling line at the same y.
     ((layoutOf oneFace (Elab.run "t" src).1 g).pages.flatMap (·.lines)).filterMap fun l =>
       if !l.furniture &&
@@ -1642,8 +1642,8 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (layoutOf oneFace (Elab.run "t" src).1 g).pages.size
   let body := geom.fontSize
   let leading := Ir.leadingFor body geom.leading
-  let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
-  let leadedAt (sz : Dim.Sp) (step : Option String := none) : Dim.Sp × Dim.Sp :=
+  let scaled (sz : Dim.Length) (units : Int) : Dim.Length := units * sz / font.unitsPerEm
+  let leadedAt (sz : Dim.Length) (step : Option String := none) : Dim.Length × Dim.Length :=
     Layout.leadedBox (scaled sz font.ascent) (scaled sz (-font.descent))
       (Ir.stepSkip (step.bind (Ir.stepLead Ir.sizeSkipScale · body)) sz geom.leading)
   let plain := ysOf geom "a\n\nb"
@@ -1692,7 +1692,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "the heading rule sits at half the heading's own x-height"
     (ruleRaises ==
       #[(font.xHeightOptical : Int) * Layout.sectionSize geom 1 / font.unitsPerEm / 2])
-  let firstRule (d : Ir.Doc) : Array (Int × Int) :=
+  let firstRule (d : Ir.Doc) : Array (Dim.Length × Dim.Length) :=
     ((layoutOf oneFace d geom).pages.flatMap (·.lines)).filterMap
       fun l => if l.furniture then none else
         l.segs.findSome? fun s => match s with
@@ -1702,7 +1702,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule height 2pt\\hfill}}\\makeatother" ++
     "\\begin{document}\\section{S}x\\end{document}")).1
   t "a TeX hrule heading rule sits on the baseline at its declared height"
-    (firstRule komaRule == #[(Dim.pt 2, 0)])
+    (firstRule komaRule == #[(Dim.pt 2, (0 : Dim.Length))])
   let nativeBaseline := (Elab.run "t" ("\\documentclass{article}\\palette{ ink = #112233 }" ++
     "\\style{section}{ rule = ink, rule-position = baseline, rule-thickness = 2pt }" ++
     "\\begin{document}\\section{S}x\\end{document}")).1
@@ -1728,10 +1728,10 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a bare vspace adds to parskip"
     (vs.size == 2 && vs[1]! - vs[0]! == leading + pq + Dim.pt 20)
   let plain := ysOf geom "a\n\nb"
-  let gapOf (mid : String) : Option Dim.Sp :=
+  let gapOf (mid : String) : Option Dim.Length :=
     let ys := ysOf geom ("a\n\n" ++ mid ++ "\nb")
     if ys.size == 2 then some (ys[1]! - ys[0]!) else none
-  let plainGap : Option Dim.Sp :=
+  let plainGap : Option Dim.Length :=
     if plain.size == 2 then some (plain[1]! - plain[0]!) else none
   t "a positive skip never narrows the paragraph gap"
     (["\\smallskip", "\\medskip", "\\bigskip", "\\vspace{1pt}"].all fun m =>
@@ -1758,13 +1758,13 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a heading after a list takes the larger space, not the sum"
     (sec.size == 3 && sec[1]! - sec[0]! ==
       (leadedAt body).2 + (leadedAt (Layout.sectionSize geom 1)).1 + Dim.pt 15)
-  let g0 := ysOf { geom with parskip := { width := Dim.Length.ofSp 0 } } "a\n\nb"
+  let g0 := ysOf { geom with parskip := { width := Dim.SymLength.ofLength 0 } } "a\n\nb"
   t "parskip zero sets peers one leading apart" (g0.size == 2 && g0[1]! - g0[0]! == leading)
   let (pDoc, pDs) := elabStr ("\\documentclass{article}\\page{ parskip = 3pt plus 1pt minus 1pt }" ++
     "\\begin{document}x\\end{document}")
   t "page parskip declared" (pDs.isEmpty && pDoc.page.parskip ==
-    some { width := Dim.Length.ofSp (Dim.pt 3), stretch := Dim.Length.ofSp (Dim.pt 1),
-           shrink := Dim.Length.ofSp (Dim.pt 1) })
+    some { width := Dim.SymLength.ofLength (Dim.pt 3), stretch := Dim.SymLength.ofLength (Dim.pt 1),
+           shrink := Dim.SymLength.ofLength (Dim.pt 1) })
   let firstY := geom.vmargin + body
   let three := "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc"
   let natural := firstY + 2 * (leading + pq + Dim.pt 20) + scaled body (-font.descent)
@@ -1785,7 +1785,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (if al.isEmpty then "" else "\\style{abstract}{ align = " ++ al ++ " }") ++
     "\\begin{document}\\begin{abstract}Placeholder abstract body.\\end{abstract}" ++
     "Body text.\\end{document}"
-  let alignX (al : String) : Option Dim.Sp :=
+  let alignX (al : String) : Option Dim.Length :=
     let (d, _) := elabStr (alignSrc al)
     lineXOf (censusOf (coveredColorsOf d) (layoutOf oneFace d geom)) 0 "Abstract"
   match alignX "left", alignX "", alignX "right" with
@@ -1810,8 +1810,8 @@ def titleBarChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- A measure narrow enough that the LARGE title breaks over two lines.
   let tg : Layout.Geom := { geom with pageW := Dim.inch 3 + 2 * geom.hmargin }
   let titleSize := geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000
-  let cap : Dim.Sp := (font.capHeight : Int) * titleSize / font.unitsPerEm
-  let probe (last : String) : Option (Dim.Sp × Dim.Sp × Nat) := do
+  let cap : Dim.Length := (font.capHeight : Int) * titleSize / font.unitsPerEm
+  let probe (last : String) : Option (Dim.Length × Dim.Length × Nat) := do
     let lines := bodyLines (layoutOf oneFace (Elab.run "t" (src last)).1 tg)
     let bars := lines.filter (fun l => Layout.ruleOnly l.segs)
     let titles := lines.filter (fun l => !Layout.ruleOnly l.segs && l.size == titleSize)
@@ -2035,7 +2035,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let t := check ref
   let linesOf (src : String) : Array Layout.LineOut :=
     allLines (layoutOf oneFace (elabStr src).1 geom)
-  let firstY (body : String) : Dim.Sp :=
+  let firstY (body : String) : Dim.Length :=
     ((linesOf (deck169Body body))[0]?.map (·.y)).getD 0
   let yT := firstY "\\begin{frame}[t]\nhello\n\\end{frame}"
   let yC := firstY "\\begin{frame}\nhello\n\\end{frame}"
@@ -2047,7 +2047,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (yC - (yT - Dim.mm 2) == (yB - (yT - Dim.mm 2)) * 1000 / 2500)
   t "[t] opens beamer's top skip and one baselineskip below the paper's top"
     (yT == Dim.mm 2 + Ir.leadingFor geom.fontSize geom.leading && yT < firstY "hello")
-  let textYs (body : String) : Array Dim.Sp :=
+  let textYs (body : String) : Array Dim.Length :=
     (linesOf (deck169Body body)).filterMap fun l =>
       if !l.furniture && l.segs.any (fun s => match s with | .run .. => true | _ => false)
       then some l.y else none
@@ -2078,7 +2078,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (((tLines[0]?).map (·.y)) == ((cLines[0]?).map (·.y)))
   t "the body distributes below the title"
     ((((tLines[1]?).map (·.y)).getD 0) < (((cLines[1]?).map (·.y)).getD 0))
-  let barH (opt : String) : Dim.Sp :=
+  let barH (opt : String) : Dim.Length :=
     let src := "\\documentclass[aspectratio=169]{slides}\n" ++
       "\\palette{frametitlebg = #23373B}\n\\begin{document}\n" ++
       "\\begin{frame}" ++ opt ++ "{Head}\nbody text\n\\end{frame}\n\\end{document}"
@@ -2122,7 +2122,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((linesOf deckTitleSrc).any (·.size == deckTitleSize) &&
       !(linesOf deckTitleSrc).any (·.size == Ir.scaleStepIn Ir.sizeScale geom.fontSize "LARGE"))
   -- The share is scale-free, so it is read from how fast the block moves as its height grows.
-  let titleBlock (extra : String) : Option (Dim.Sp × Dim.Sp) := do
+  let titleBlock (extra : String) : Option (Dim.Length × Dim.Length) := do
     let ls := (linesOf ("\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
       "\\begin{document}\n\\title{Alpha" ++ extra ++ "}\\author{Pat Placeholder}\n" ++
       "\\maketitle\n\\end{document}")).filter (!·.furniture)
@@ -2135,7 +2135,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     let predicted := y1 - (span2 - span1) * above / (above + below)
     t "the title page's block grew" (span1 < span2)
     t "the title page splits its leftover by the composed golden share"
-      ((y2 - predicted).natAbs ≤ 2)
+      ((y2 - predicted).abs ≤ 2 * Dim.Length.quantum)
   | _, _ => t "the title page's split probe produced its blocks" false
   let slotted (title yshift : String) : String :=
     "\\documentclass[aspectratio=169]{slides}\n" ++
@@ -2162,7 +2162,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
        let (ah, ad) := Layout.segsInk oneFace a.segs
        let (fh, _) := Layout.segsInk oneFace f.segs
        let (_, ld) := Layout.segsInk oneFace l.segs
-       (2 * (a.y - ah) + ah + ad - ((f.y - fh) + (l.y + ld))).natAbs ≤ 2
+       (2 * (a.y - ah) + ah + ad - ((f.y - fh) + (l.y + ld))).abs ≤ 2 * Dim.Length.quantum
      | _, _, _ => false)
   t "a slotted title page ships no separator and no golden flow"
     (one.size == 2 && one.all fun l => l.segs.all fun sg => !(sg matches .rule ..))
@@ -2173,7 +2173,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     !l.furniture && l.size == deckTitleSize
   t "a declared two-line title stays two lines"
     (titleLines.size == 2)
-  let firstRunWidth (l : Layout.LineOut) : Option Dim.Sp :=
+  let firstRunWidth (l : Layout.LineOut) : Option Dim.Length :=
     l.segs.findSome? fun sg => match sg with
       | .run _ _ _ w _ _ _ _ _ _ _ => some w
       | _ => none
@@ -2184,7 +2184,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       let wa ← firstRunWidth a
       let wb ← firstRunWidth b
       return wb == deckTitleSize && wa != deckTitleSize : Option Bool).getD false)
-  let ownGeomYs (src : String) : Array Dim.Sp :=
+  let ownGeomYs (src : String) : Array Dim.Length :=
     let (doc, _) := elabStr src
     (bodyLines (layoutOf oneFace doc (Layout.Geom.ofPage doc.page))).filterMap fun l =>
       if l.segs.any (fun s => match s with | .run .. => true | _ => false)
@@ -2214,7 +2214,7 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let out := layoutOf oneFace doc geom
   let lines := (out.pages[0]?.map (·.lines)).getD #[]
   let font := oneFace.body
-  let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+  let scale (u : Int) : Dim.Length := u * geom.fontSize / (font.unitsPerEm : Int)
   let headY := geom.vmargin / 2 + scale font.ascent
   t "the tight-margin page ships its head line" (lines.any fun l => l.y == headY)
   let headBottom := headY + scale (-font.descent)
@@ -2223,7 +2223,7 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "body ink clears the head's ink by the clearance floor under a tight margin"
     (!bodyInkTops.isEmpty &&
       bodyInkTops.all fun top => headBottom + Ir.inkClearance ≤ top)
-  let dflt (head : Bool) : Option Dim.Sp := Id.run do
+  let dflt (head : Bool) : Option Dim.Length := Id.run do
     let src := "\\documentclass{article}" ++
       (if head then "\\runninghead{Invented Notes}" else "") ++
       "\\begin{document}Body text at the default margin.\\end{document}"
@@ -2260,7 +2260,7 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let out := layoutOf oneFace doc geom
   t "the fixture runs past one page" (out.pages.size ≥ 2)
   let font := oneFace.body
-  let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+  let scale (u : Int) : Dim.Length := u * geom.fontSize / (font.unitsPerEm : Int)
   let a := scale font.ascent
   let d := scale (-font.descent)
   let band := Layout.furnitureBand geom.vmargin (a + d) none
@@ -2370,7 +2370,7 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let src (pre : String) : String :=
     "\\documentclass{article}\\usepackage{geometry}" ++ pre ++
     "\\begin{document}Alpha words.\n\nBravo words.\n\\end{document}"
-  let drop (s : String) : Option Dim.Sp := do
+  let drop (s : String) : Option Dim.Length := do
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let foot ← ((layoutOf oneFace doc).pages[0]?).bind (·.lines.find? (·.furniture))
@@ -2384,7 +2384,7 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "\\setlength{\\footskip} is read, not only noted"
     (drop (src "\\geometry{letterpaper, textheight=9in}\\setlength{\\footskip}{45pt}") ==
       some (Dim.pt 45))
-  let headAt (s : String) : Option Dim.Sp := do
+  let headAt (s : String) : Option Dim.Length := do
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let p ← (layoutOf oneFace doc).pages[0]?
@@ -2411,7 +2411,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let src (cls pre : String) : String :=
     s!"\\documentclass{cls}\\usepackage\{geometry}" ++ pre ++
     "\\begin{document}Alpha words.\n\nBravo words.\n\\end{document}"
-  let drop (s : String) : Option Dim.Sp := do
+  let drop (s : String) : Option Dim.Length := do
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let foot ← ((layoutOf oneFace doc).pages[0]?).bind (·.lines.find? (·.furniture))
@@ -2421,9 +2421,10 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let quarter := Dim.pt 18
   let geo := "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 0.25in + \\ht\\strutbox\\relax}"
   -- lualatex: `\the\ht\strutbox` 8.39996pt, 9.51996pt and 10.14995pt, `\dp` 3.60004pt at 10pt.
-  for (cls, ht) in [("[10pt]{article}", 550500), ("[11pt]{article}", 623900),
+  for (cls, htSp) in [("[10pt]{article}", (550500 : Int)), ("[11pt]{article}", 623900),
       ("[12pt]{report}", 665187), ("[11pt]{scrartcl}", 623900),
       ("[fontsize=12pt]{scrartcl}", 665187), ("{article}", 550500), ("{scrartcl}", 623900)] do
+    let ht := Dim.Length.ofSp htSp
     t s!"strut: {cls}'s geometry footskip reads the class's strut height"
       (drop (src cls geo) == some (quarter + ht) && !lost (src cls geo))
     t s!"strut: {cls}'s preamble \\setlength reads it too"
@@ -2432,7 +2433,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
        drop s == some (quarter + ht) && !lost s)
   let depth := src "[10pt]{article}"
     "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 2\\dp\\strutbox\\relax}"
-  t "strut: the depth reads as the class sets it" (drop depth == some (2 * 235932) && !lost depth)
+  t "strut: the depth reads as the class sets it" (drop depth == some (2 * Dim.Length.ofSp 235932) && !lost depth)
   let sum := src "[10pt]{article}"
     "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 20pt + 10pt\\relax}"
   t "strut: geometry reads any dimexpr the length door reads" (drop sum == some (Dim.pt 30))
@@ -2473,7 +2474,7 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
       (s!"\\maketitle\n{left}{frame}"))
     let out := layoutOf oneFace doc
     (out, censusOf (coveredColorsOf doc) out)
-  let numBox (c : Array CensusPage) (page : Nat) : Option (Dim.Sp × Dim.Sp) :=
+  let numBox (c : Array CensusPage) (page : Nat) : Option (Dim.Length × Dim.Length) :=
     (c[page]?.bind fun p => p.lines.find? (·.text == "1")).map fun l => (l.x, l.width)
   let (emptyOut, emptyC) := run ""
   let (secOut, secC) := run "\\section{S}\n"
@@ -2749,7 +2750,8 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
         | #[.columns #[(w1, #[.float .sub (some 1) false _ c1]),
                        (w2, #[.float .sub (some 2) false _ c2])]] =>
           w1.pos == .first && w2.pos == .first &&
-          w1.resolve 1000 == some 400 && w2.resolve 1000 == some 400 &&
+          w1.resolve (1000 * Dim.Length.quantum) == some (400 * Dim.Length.quantum) &&
+          w2.resolve (1000 * Dim.Length.quantum) == some (400 * Dim.Length.quantum) &&
           Ir.plainText c1 == "First sub" && Ir.plainText c2 == "Second sub"
         | _ => false)
      | _ => false)
@@ -2885,7 +2887,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      else
       "\\begin{figure}\nBody line\n\\caption{Caption words}\n\\end{figure}") ++
     "\n\nafter words\n\\end{document}"
-  let deltas (src : String) : Option (Int × Int × Int) :=
+  let deltas (src : String) : Option (Dim.Length × Dim.Length × Dim.Length) :=
     match (layoutOut src).pages[0]? with
     | some p =>
       match (p.lines.filter (!·.furniture)).map (·.y) with
@@ -2908,8 +2910,8 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | _ => false)
   let doc := (elabStr (wrap ("\\begin{tabular}{ll}\\toprule\na & b \\\\ \\cmidrule(lr){2-2}\nc & d \\\\ \\bottomrule\\end{tabular}"))).1
   let out := layoutOf oneFace doc
-  let ruleSegs : Array (Dim.Sp × Dim.Sp) := Id.run do
-    let mut acc : Array (Dim.Sp × Dim.Sp) := #[]
+  let ruleSegs : Array (Dim.Length × Dim.Length) := Id.run do
+    let mut acc : Array (Dim.Length × Dim.Length) := #[]
     for p in out.pages do
       for l in p.lines do
         let mut x := l.x
@@ -2939,7 +2941,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   let out (tab : String) : Layout.Out :=
     layoutOf oneFace (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++ tab ++
       "\n\\end{document}")).1
-  let topRule (o : Layout.Out) : Dim.Sp := Id.run do
+  let topRule (o : Layout.Out) : Dim.Length := Id.run do
     for p in o.pages do
       for l in p.lines do
         if l.size == 0 then
@@ -2948,7 +2950,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
               return w
     return 0
   -- (measure edge, right ink edge) of page 0's first line holding `needle`.
-  let extent (o : Layout.Out) (needle : String) : Option (Dim.Sp × Dim.Sp) := Id.run do
+  let extent (o : Layout.Out) (needle : String) : Option (Dim.Length × Dim.Length) := Id.run do
     for p in o.pages.extract 0 1 do
       for l in p.lines do
         if hasStr (lineText l) needle then
@@ -2959,7 +2961,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
             | .decoration _ w .. => a + w
             | .rule w .. => a + w
             | .image _ w _ _ _ => a + w
-            | .poly .. => a) (0 : Dim.Sp)
+            | .poly .. => a) (0 : Dim.Length)
           return some (l.x + l.hang, l.x + w)
     return none
   let tab (spec body : String) : String :=
@@ -2976,12 +2978,12 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   let co := out (tab "lrr" "& \\multicolumn{2}{c}{ZZZ} \\\\ alpha & 12345 & 67890")
   t "a spanned head is centred over the columns it covers"
     (match extent co "ZZZ", extent co "12345", extent co "67890" with
-     | some (hx, hr), some (ax, _), some (_, br) => ((hx + hr) - (ax + br)).natAbs ≤ 2
+     | some (hx, hr), some (ax, _), some (_, br) => ((hx + hr) - (ax + br)).abs ≤ 2 * Dim.Length.quantum
      | _, _, _ => false)
   let ro := out (tab "ll" "\\multicolumn{1}{r}{QQ} & b \\\\ widewidewide & b")
   t "a one-column multicolumn sets its own alignment"
     (match extent ro "QQ", extent ro "widewidewide" with
-     | some (_, qr), some (_, wr) => (qr - wr).natAbs ≤ 2
+     | some (_, qr), some (_, wr) => (qr - wr).abs ≤ 2 * Dim.Length.quantum
      | _, _ => false)
   let po := out (tab "ll" ("\\multicolumn{2}{p{2cm}}{word word word word word word} \\\\ " ++
     "widewidewidewide & widewidewidewide"))
@@ -2992,7 +2994,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
 
 def kpChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let cases : List (String × Array Layout.Item × Dim.Sp) := [
+  let cases : List (String × Array Layout.Item × Dim.Length) := [
     ("three words", mkItems [W 100, G, W 100, G, W 100], Dim.pt 250),
     ("four words", mkItems [W 50, G, W 60, G, W 70, G, W 80], Dim.pt 150),
     ("forced mid", mkItems ([W 100, G, W 100] ++ BRK ++ [W 100]), Dim.pt 250),
@@ -3008,10 +3010,10 @@ def kpChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"kp optimal ({name})" (kpCost.isSome && kpCost == brute && !kpBreaks.isEmpty)
   let ragged := Layout.raggedItems
     (mkItems (List.intersperse G (List.replicate 10 (W 50))))
-  let rNats : Array Dim.Sp := Id.run do
+  let rNats : Array Dim.Length := Id.run do
     let mut prev := 0
     let mut first := true
-    let mut nats : Array Dim.Sp := #[]
+    let mut nats : Array Dim.Length := #[]
     for b in Layout.kp ragged (Dim.pt 200) do
       let a := if first then Layout.lineStart ragged 0
         else Layout.lineStart ragged (prev + 1)
@@ -3182,13 +3184,13 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := layoutOf oneFace doc
     out.diags.any (·.code == "W0005")
   t "ragged card prose breaks without overfull lines" (!judgeOverfull "")
-  let widestGap (pre : String) : Dim.Sp :=
+  let widestGap (pre : String) : Dim.Length :=
     (bodyLines (layoutOf oneFace (elabStr (card "" prose pre)).1)).foldl (fun m l =>
       l.segs.foldl (fun m s => match s with
         | .gap w _ => max m w
         | _ => m) m) 0
   t s!"the same prose justified at card width sets loose lines, never overfull ones \
-({widestGap "\\page{ justify = on }\n"} against {widestGap ""} ragged)"
+({reprStr (widestGap "\\page{ justify = on }\n")} against {reprStr (widestGap "")} ragged)"
     (!judgeOverfull "\\page{ justify = on }\n"
       && widestGap "\\page{ justify = on }\n" > 2 * widestGap "")
   t "article leaves hyphenation to the class default"
@@ -3272,8 +3274,8 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "a reasonable card passes its whole contract"
     ((judge (card "" "Pat Placeholder\\\\ {\\small pat@example.org}")).isEmpty)
   let areaGeom : Layout.Geom := {}
-  let areaEdges (box : Dim.Sp → Dim.Sp → Layout.Seg) : List String :=
-    let edge (x y w h : Dim.Sp) : String :=
+  let areaEdges (box : Dim.Length → Dim.Length → Layout.Seg) : List String :=
+    let edge (x y w h : Dim.Length) : String :=
       let line : Layout.LineOut :=
         { x := x, y := y, size := Dim.pt 10, segs := #[box w h], setWidth := Dim.pt 100 }
       let out : Layout.Out := { diags := #[], pages := #[{ lines := #[line] }] }
@@ -3641,14 +3643,14 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let t := check ref
   let doc (cls pre body : String) : String :=
     s!"\\documentclass{cls}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
-  let steps (src : String) (words : List String) : List Dim.Sp :=
+  let steps (src : String) (words : List String) : List Dim.Length :=
     let c := censusOfSrc oneFace src
     let v := words.filterMap (lineYOf c 0 ·)
     (v.zip v.tail).map fun (a, b) => b - a
   let geomOf (src : String) : Layout.Geom := Layout.Geom.ofPage (elabStr src).1.page
-  let leadOf (src : String) : Dim.Sp := Ir.leadingFor (geomOf src).fontSize (geomOf src).leading
+  let leadOf (src : String) : Dim.Length := Ir.leadingFor (geomOf src).fontSize (geomOf src).leading
   let lead := leadOf (doc "{article}" "" "x")
-  let gaps (xs : List Int) : List Dim.Sp := xs.map fun x => lead + Dim.pt x
+  let gaps (xs : List Int) : List Dim.Length := xs.map fun x => lead + Dim.pt x
   let abc := ["Alpha.", "Bravo.", "Charlie."]
   let abcd := ["Alpha.", "Bravo.", "Charlie.", "Delta."]
   let ul (body : String) : String := "\\begin{itemize}\n" ++ body ++ "\n\\end{itemize}"
@@ -3736,7 +3738,7 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (steps (doc "{article}" "" (ul ("\\item Alpha.\n\\item \\begin{quote}\nBravo.\n\\end{quote}\n" ++
       "Charlie.\n\\item Delta."))) abcd == gaps [8, 4, 8])
   t "a heading after a center stands where it stands after a paragraph or a list, as lualatex sets it"
-    (let after (blk : String) : List Dim.Sp :=
+    (let after (blk : String) : List Dim.Length :=
       steps (doc "{article}" "" ("Alpha.\n\n" ++ blk ++ "\n\n\\section{Bravo}\nCharlie.")) ["Delta.", "Bravo"]
      after "\\begin{center}\nDelta.\n\\end{center}" == after "Delta." &&
        after "\\begin{center}\nDelta.\n\\end{center}" ==
@@ -3835,14 +3837,14 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let t := check ref
   let doc (cls body : String) : String :=
     s!"\\documentclass{cls}\\begin\{document}" ++ body ++ "\n\\end{document}"
-  let ys (src : String) (words : List String) : List Dim.Sp :=
+  let ys (src : String) (words : List String) : List Dim.Length :=
     let c := censusOfSrc oneFace src
     words.filterMap (lineYOf c 0 ·)
-  let steps (src : String) (words : List String) : List Dim.Sp :=
+  let steps (src : String) (words : List String) : List Dim.Length :=
     let v := ys src words
     (v.zip v.tail).map fun (a, b) => b - a
   let geomOf (src : String) : Layout.Geom := Layout.Geom.ofPage (elabStr src).1.page
-  let peerOf (cls : String) : Dim.Sp :=
+  let peerOf (cls : String) : Dim.Length :=
     match steps (doc cls "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
     | [d] => d
     | _ => 0
@@ -3888,7 +3890,7 @@ def vspaceKeptChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let t := check ref
   let doc (body : String) : String :=
     "\\documentclass{article}\\begin{document}Alpha.\n\n" ++ body ++ "\n\nCharlie.\n\\end{document}"
-  let at2 (src : String) : Option (Dim.Sp × Dim.Sp) := do
+  let at2 (src : String) : Option (Dim.Length × Dim.Length) := do
     let c := censusOfSrc oneFace src
     pure (← lineYOf c 0 "Alpha.", ← lineYOf c 0 "Bravo")
   let elements : List (String × String) :=
@@ -3912,7 +3914,7 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let t := check ref
   let doc (pre body : String) : String :=
     "\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
-  let y (src : String) (page : Nat) (word : String) : Option Dim.Sp :=
+  let y (src : String) (page : Nat) (word : String) : Option Dim.Length :=
     lineYOf (censusOfSrc oneFace src) page word
   let sandwich (inner : String) : String :=
     "\\vspace*{\\fill}\n" ++ inner ++ "\n\n\\vspace*{\\fill}"
@@ -3934,7 +3936,7 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (alone.isSome && second == alone)
   let pic := "\\begin{center}\n\\begin{tikzpicture}\\draw (0,0) rectangle (2,1);" ++
     "\\node at (1,0.5) {Alpha};\\end{tikzpicture}\n\\end{center}"
-  let skew (pre body : String) : Option (Dim.Sp × Bool) := do
+  let skew (pre body : String) : Option (Dim.Length × Bool) := do
     let (d, _) := elabStr (doc (card ++ "\\usepackage{tikz}\\pagestyle{empty}" ++ pre) body)
     let g := Layout.Geom.ofPage d.page
     let p ← (layoutOf oneFace d).pages[0]?
@@ -3943,8 +3945,8 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       | _ => none
     let label ← p.lines.find? fun l => hasStr (lineText l) "Alpha"
     pure ((top - g.bodyTop) - (g.bodyBottom - (top + h)), top < label.y && label.y < top + h)
-  let within (v : Option (Dim.Sp × Bool)) (want : Dim.Sp) : Bool :=
-    (v.map fun (s, inside) => inside && want - 1 ≤ s && s ≤ want + 1).getD false
+  let within (v : Option (Dim.Length × Bool)) (want : Dim.Length) : Bool :=
+    (v.map fun (s, inside) => inside && want - Dim.Length.quantum ≤ s && s ≤ want + Dim.Length.quantum).getD false
   t "a fill-framed picture stands centred, its label inside it"
     (within (skew "\\setlength{\\topskip}{0pt}"
       ("\\nointerlineskip\n" ++ sandwich pic)) 0)
@@ -3966,7 +3968,7 @@ def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     "\\begin{document}" ++ face "Large" "Alpha Bravo" "Charlie Delta, Echo" ++
     face "normalsize" "golf.example.org" "hotel@example.org" ++ "\\end{document}"
   -- The gap above the block's box on page `i` less the gap below it.
-  let skew (s : String) (i : Nat) : Option Dim.Sp := do
+  let skew (s : String) (i : Nat) : Option Dim.Length := do
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let p ← (layoutOf oneFace doc).pages[i]?
@@ -3975,8 +3977,8 @@ def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let top := first.y - (Layout.segsInk oneFace first.segs).1
     let bottom := last.y + (Layout.segsInk oneFace last.segs).2
     pure ((top - g.bodyTop) - (g.bodyBottom - bottom))
-  let within (v : Option Dim.Sp) (want : Dim.Sp) : Bool :=
-    (v.map fun d => want - 1 ≤ d && d ≤ want + 1).getD false
+  let within (v : Option Dim.Length) (want : Dim.Length) : Bool :=
+    (v.map fun d => want - Dim.Length.quantum ≤ d && d ≤ want + Dim.Length.quantum).getD false
   for i in [0, 1] do
     t s!"face {i + 1}: a block framed by two fills stands centred on its box"
       (within (skew (src "\\setlength{\\topskip}{0pt}") i) 0)
@@ -3987,14 +3989,15 @@ def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let deck (head last : String) : String :=
     "\\documentclass{beamer}\\usetheme{moloch}\\begin{document}\\begin{frame}[c]" ++ head ++
       "\nAlpha words here.\n\n" ++ last ++ "\n\\end{frame}\\end{document}"
-  let lastDepth (s : String) : Option (Dim.Sp × Dim.Sp) := do
+  let lastDepth (s : String) : Option (Dim.Length × Dim.Length) := do
     let p ← (layoutOf oneFace (elabStr s).1).pages[0]?
     let l ← p.lines.find? fun l => hasStr (lineText l) "Bravo"
     pure (l.y, (Layout.segsInk oneFace l.segs).2)
   match lastDepth (deck "" "Bravo words ooo"), lastDepth (deck "" "Bravo words ppp") with
   | some (yo, dO), some (yp, dp) =>
     t "an untitled centred frame lifts by half its last line's glyph depth, as lualatex does"
-      (dO < dp && (yo - yp) - (dp - dO) / 2 ≤ 1 && (dp - dO) / 2 - (yo - yp) ≤ 1)
+      (dO < dp && (yo - yp) - (dp - dO) / 2 ≤ Dim.Length.quantum &&
+        (dp - dO) / 2 - (yo - yp) ≤ Dim.Length.quantum)
   | _, _ => t "the frame depth fixtures lay out" false
   match lastDepth (deck "{Kilo}" "Bravo words ooo"), lastDepth (deck "{Kilo}" "Bravo words ppp") with
   | some (yo, dO), some (yp, dp) =>
@@ -4012,7 +4015,7 @@ def flushBottomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     "\\geometry{paperwidth=5in, paperheight=4in, margin=0.5in}\\pagestyle{empty}" ++
     "\\setlength{\\parskip}{0pt plus 1pt}" ++ decl ++ "\\begin{document}" ++
     String.intercalate "\n\n" (List.replicate 7 para) ++ "\n\\end{document}"
-  let pages (s : String) : Array (Array Dim.Sp) × Dim.Sp :=
+  let pages (s : String) : Array (Array Dim.Length) × Dim.Length :=
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     ((layoutOf oneFace doc).pages.map fun p => (p.lines.filter (!·.furniture)).map (·.y),
@@ -4026,10 +4029,10 @@ def flushBottomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "its first line keeps its place, the stretch spent below it, in order"
     (match flush[0]?, ragged[0]? with
      | some f, some r =>
-       let sh : List Dim.Sp := ((f.zip r).map fun (a, b) => a - b).toList
+       let sh : List Dim.Length := ((f.zip r).map fun (a, b) => a - b).toList
        f.size == r.size && f[0]? == r[0]? &&
          (sh.zip sh.tail).all (fun (a, b) => decide (a ≤ b)) &&
-         (sh.getLast?.map fun v => decide ((0 : Dim.Sp) < v)).getD false
+         (sh.getLast?.map fun v => decide ((0 : Dim.Length) < v)).getD false
      | _, _ => false)
   t "kept: raggedbottom is the undeclared page's natural glue" (ragged == bare)
   t "kept: the document's last page stays ragged under flushbottom"
@@ -4047,7 +4050,7 @@ def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     "\\geometry{paperwidth=4in, paperheight=2.5in, margin=0.3in}\\pagestyle{empty}" ++ pre ++
     "\\begin{document}" ++ body ++ "\n\\end{document}"
   -- The first line holding `word` on page `pg`: its baseline below the text top, and its glyph box.
-  let at? (s : String) (pg : Nat) (word : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp) := do
+  let at? (s : String) (pg : Nat) (word : String) : Option (Dim.Length × Dim.Length × Dim.Length) := do
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let p ← (layoutOf oneFace doc).pages[pg]?
@@ -4084,7 +4087,7 @@ def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     src "" (pre ++ "\\vspace*{\\fill}\n\\begin{center}\nAlpha words\n\\end{center}\n\\vspace*{\\fill}")
   t "a fill-framed line takes the interline glue under the anchor, halved by the fils"
     (match at? (sandwich "") 0 "Alpha", at? (sandwich "\\nointerlineskip\n") 0 "Alpha" with
-     | some (y, h, _), some (y0, _, _) => ((y - y0) - (lead - h) / 2).natAbs ≤ 1
+     | some (y, h, _), some (y0, _, _) => ((y - y0) - (lead - h) / 2).abs ≤ Dim.Length.quantum
      | _, _ => false)
   let html (s : String) : String :=
     Html.document "en" #[] (HtmlDoc.emitTree {} (elabStr s).1).2.1
@@ -4097,11 +4100,11 @@ def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let t := check ref
   let doc (cls pre body : String) : String :=
     s!"\\documentclass{cls}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
-  let steps (src : String) (words : List String) : List Dim.Sp :=
+  let steps (src : String) (words : List String) : List Dim.Length :=
     let c := censusOfSrc oneFace src
     let v := words.filterMap (lineYOf c 0 ·)
     (v.zip v.tail).map fun (a, b) => b - a
-  let leadOf (src : String) : Dim.Sp :=
+  let leadOf (src : String) : Dim.Length :=
     let g := Layout.Geom.ofPage (elabStr src).1.page
     Ir.leadingFor g.fontSize g.leading
   let art := doc "{article}" ""
@@ -4162,14 +4165,14 @@ fixed in the preamble font, a declared one reaching every list that deep, and th
 measures the same. -/
 def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let place (src : String) (w : String) : Option (Dim.Sp × Dim.Sp) := do
+  let place (src : String) (w : String) : Option (Dim.Length × Dim.Length) := do
     let (d, _) := elabStr src
     let g := Layout.Geom.ofPage d.page
     let l ← (bodyLines (layoutOf oneFace d { g with protrude := false })).find? fun l =>
       hasStr (lineText l) w
     let r ← (lineRuns l).find? fun r => r.2.1.startsWith w
     pure (r.2.2.1 - g.hmargin, l.y)
-  let xs (src : String) (ws : List String) : List (Option Dim.Sp) :=
+  let xs (src : String) (ws : List String) : List (Option Dim.Length) :=
     ws.map fun w => (place src w).map (·.1)
   let doc (cls pre body : String) : String :=
     "\\documentclass" ++ cls ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
@@ -4214,7 +4217,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let table := "\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n"
   let listed := tabled ("\\begin{itemize}\n\\item Bravo words.\n" ++ table ++ "\\end{itemize}\n")
   let quoted := tabled ("\\begin{quote}\nBravo words.\n" ++ table ++ "\\end{quote}\n")
-  let measured (src : String) (inset : Dim.Sp) : Bool :=
+  let measured (src : String) (inset : Dim.Length) : Bool :=
     let d := (elabStr src).1
     let w := (Layout.Geom.ofPage d.page).textWidth - inset
     hasStr (HtmlDoc.emit { tableFit := fun avail _ _ _ _ _ => (none, avail == w) } d).1 "bt-overhang"
@@ -4249,7 +4252,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "the list margins are the class's, fixed at the 10.95pt its 11pt option sets"
     (xs (doc "[11pt]{article}" "" nest) ["Bravo", "Charlie"] ==
       [some (2500 * s11 / 1000), some (2500 * s11 / 1000 + 2200 * s11 / 1000)])
-  let fits (src : String) (avail : Dim.Sp) : Bool :=
+  let fits (src : String) (avail : Dim.Length) : Bool :=
     hasStr (HtmlDoc.emit { tableFit := fun a _ _ _ _ _ => (none, a == avail) }
       (elabStr src).1).1 "bt-overhang"
   let width := (Layout.Geom.ofPage (elabStr (doc "{article}" "" "x")).1.page).textWidth
@@ -4295,7 +4298,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "html a webpage's lists keep the engine's one indent"
     ((List.range 4).all fun k => (pad (sheet "{webpage}") k).isSome &&
       pad (sheet "{webpage}") k == pad (sheet "{webpage}") 0)
-  let cssSp (page : Ir.PageSpec) (v : String) : Option Dim.Sp :=
+  let cssSp (page : Ir.PageSpec) (v : String) : Option Dim.Length :=
     match remMilliOf v with
     | some m => some (m * page.fontSize / 1000)
     | none => do
@@ -4320,7 +4323,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
 indent or the class's abstract decides it, and a deep level's spacing named. -/
 def listMarginChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let place (src : String) (w : String) : Option Dim.Sp := do
+  let place (src : String) (w : String) : Option Dim.Length := do
     let (d, _) := elabStr src
     let g := Layout.Geom.ofPage d.page
     let l ← (bodyLines (layoutOf oneFace d { g with protrude := false })).find? fun l =>
@@ -4386,12 +4389,12 @@ def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     let l ← (bodyLines (layoutOf oneFace d { g with protrude := false })).find? fun l =>
       hasStr (lineText l) w
     pure (g, l)
-  let place (src : String) (w : String) : Option Dim.Sp := do
+  let place (src : String) (w : String) : Option Dim.Length := do
     let (g, l) ← lineOf src w
     let r ← (lineRuns l).find? fun r => r.2.1.startsWith w
     pure (r.2.2.1 - g.hmargin)
   -- How far short of the measure's right edge a line's last glyph ends.
-  let short (src : String) (w : String) : Option Dim.Sp := do
+  let short (src : String) (w : String) : Option Dim.Length := do
     let (g, l) ← lineOf src w
     let r ← (lineRuns l).back?
     pure (g.hmargin + g.textWidth - (r.2.2.1 + r.2.2.2))
@@ -4422,7 +4425,7 @@ def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       place deck "Bravo" == some em2 && place deck "Charlie" == some (2 * em2) &&
       place deck "Delta" == some em2 && ((short deck "Alpha").map (decide <| em2 ≤ ·)).getD false)
   let deckDoc := (elabStr deck).1
-  let insetCss := HtmlDoc.tableLengthCss (HtmlDoc.lengthBasisOf deckDoc) (.ofSp em2)
+  let insetCss := HtmlDoc.tableLengthCss (HtmlDoc.lengthBasisOf deckDoc) (.ofLength em2)
   t "a deck page insets its abstract's paragraphs as the deck does, and not its lists"
     (hasStr (html deck) "class=\"abstract size-small inset" &&
       hasStr (html deck) s!".abstract.inset > p \{ padding: 0 {insetCss}; }" &&
@@ -4434,7 +4437,7 @@ def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\begin{itemize}\n\\item Bravo words.\n\\end{itemize}\n\\end{abstract}\n\\end{frame}\n" ++
     "\\end{document}"
   let posterEm2 := 2 * (Dim.pt 2488 / 100)
-  let off (src w : String) : Option Dim.Sp := do pure ((← place src w) - (← place src "Zulu"))
+  let off (src w : String) : Option Dim.Length := do pure ((← place src w) - (← place src "Zulu"))
   t "a poster's abstract text stands 2em of its class size in, as beamer's template sets it"
     (off poster "Alpha" == some posterEm2 && off poster "Bravo" == some posterEm2)
   let redefined := "\\documentclass{report}\n\\renewenvironment{abstract}{\\vskip 0.1in" ++
@@ -4455,7 +4458,7 @@ def afterHeadingListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let doc (body : String) : String :=
     "\\documentclass{article}\\begin{document}Alpha.\n\n\\section*{Bravo}\n\n" ++ body ++
       "\n\nDelta.\n\\end{document}"
-  let steps (src : String) (words : List String) : List Dim.Sp :=
+  let steps (src : String) (words : List String) : List Dim.Length :=
     let c := censusOfSrc oneFace src
     let v := words.filterMap (lineYOf c 0 ·)
     (v.zip v.tail).map fun (a, b) => b - a
@@ -4515,7 +4518,7 @@ def frameBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let deck (opt : String) : String :=
     "\\documentclass{beamer}\\usetheme{moloch}\\begin{document}\\begin{frame}" ++ opt ++
     "{Heading}\nWords on one line.\n\\end{frame}\\end{document}"
-  let run (src : String) : Option (Layout.Geom × Dim.Sp × Dim.Sp) := do
+  let run (src : String) : Option (Layout.Geom × Dim.Length × Dim.Length) := do
     let (d, _) := elabStr src
     let g := Layout.Geom.ofPage d.page
     let p ← (layoutOf oneFace d g).pages[0]?
@@ -4532,20 +4535,20 @@ def frameBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     let top := yC - lead - (barC + g.fontSize / 4)
     let bottom := yB - yC
     t "a centred frame's leftover splits evenly above and below its content"
-      (0 < top && top ≤ bottom && bottom ≤ top + 1)
+      (0 < top && top ≤ bottom && bottom ≤ top + Dim.Length.quantum)
   | _, _, _ => t "frame body fixtures lay out" false
   let art (inner : String) : String :=
     "\\documentclass{article}\\pictures{ tool = none }\\begin{document}Alpha.\n\n" ++
     "\\begin{center}\n" ++ inner ++ "\n\\end{center}\n\nCharlie.\n\\end{document}"
   let picSrc := art "\\begin{tikzpicture}\\fill (0,0) rectangle (2,1);\\end{tikzpicture}"
   let (pd, _) := elabStr picSrc
-  let below : Option Dim.Sp := do
+  let below : Option Dim.Length := do
     let p ← (layoutOf oneFace pd).pages[0]?
     let (_, fy, _, fh) ← (pageDraws p)[0]?.map fun (g, _, _) => markExtent g
     let l ← p.lines.find? fun l => hasStr (lineText l) "Charlie."
     pure (l.y - (fy + fh))
   let c := censusOfSrc oneFace (art "Bravo.")
-  let pitch : Option Dim.Sp := do
+  let pitch : Option Dim.Length := do
     let b ← lineYOf c 0 "Bravo."
     let d ← lineYOf c 0 "Charlie."
     pure (d - b)
@@ -4561,7 +4564,7 @@ def frameContentEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     "\\begin{document}" ++
     String.join (frames.map fun f => "\\begin{frame}{Heading}\n" ++ f ++ "\n\\end{frame}") ++
     "\\end{document}"
-  let y (src : String) (page : Nat) (word : String) : Option Dim.Sp :=
+  let y (src : String) (page : Nat) (word : String) : Option Dim.Length :=
     lineYOf (censusOfSrc oneFace src) page word
   let lone := y (deck ["\\begin{center}\nWords on one line.\n\\end{center}"]) 0 "Words"
   t "a centred frame's lone center line stands where its plain line stands"
@@ -4575,7 +4578,7 @@ def frameContentEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   | some y1, some y2 =>
     let lift := y1 - y2
     t "a declared box grown one cm below lifts a centred frame's ink half a cm"
-      (Dim.mm 5 - 1 ≤ lift && lift ≤ Dim.mm 5 + 1)
+      (Dim.mm 5 - Dim.Length.quantum ≤ lift && lift ≤ Dim.mm 5 + Dim.Length.quantum)
   | _, _ => t "declared-box frame fixtures lay out" false
   let two := deck [pic "-2" "", pic "-2" "\\node at (1.5,-1.5) {November};\n"]
   match y two 0 "Kilo", y two 1 "Kilo" with
@@ -4589,15 +4592,15 @@ def frameContentEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
 def footlineChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "footline: the shipped Fira Sans parses" false
-  let tol : Dim.Sp := Dim.pt 3 / 2
-  let near (a b slack : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
-  let bp (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
+  let tol : Dim.Length := Dim.pt 3 / 2
+  let near (a b slack : Dim.Length) : Bool := a - b ≤ slack && b - a ≤ slack
+  let bp (milli : Int) : Dim.Length := Dim.pt 1 * milli / 1000
   let build (pre : String) (frames : String) : Layout.Geom × Layout.Out :=
     let (doc, _) := elabStr ("\\documentclass[10pt]{beamer}\\usetheme{moloch}" ++ pre ++
       "\\begin{document}" ++ frames ++ "\\end{document}")
     let geom := Layout.Geom.ofPage doc.page
     (geom, layoutOf fira doc geom)
-  let baseline (out : Layout.Out) (page : Nat) (word : String) : Option Dim.Sp :=
+  let baseline (out : Layout.Out) (page : Nat) (word : String) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) word).map (·.y)
   let number (out : Layout.Out) (page : Nat) : Option Layout.LineOut :=
@@ -4639,9 +4642,9 @@ def topskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     s!"\\documentclass[{opts}]\{article}" ++
     "\\usepackage[paperwidth=5in,paperheight=4in,top=1in,bottom=1in,left=1in,right=1in]{geometry}" ++
     "\\pagestyle{empty}\\begin{document}" ++ body ++ "\\end{document}"
-  let first (src : String) (pg : Nat) (word : String) : Option Dim.Sp :=
+  let first (src : String) (pg : Nat) (word : String) : Option Dim.Length :=
     lineYOf (censusOfSrc oneFace src) pg word
-  let near (y : Option Dim.Sp) (milli : Int) : Bool :=
+  let near (y : Option Dim.Length) (milli : Int) : Bool :=
     (y.map fun v => let want := Dim.pt 1 * milli / 1000
       v - want ≤ Dim.pt 1 / 10 && want - v ≤ Dim.pt 1 / 10).getD false
   t "topskip: a body line stands \\topskip below the text area, as in lualatex"
@@ -4671,7 +4674,7 @@ def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let (raws, pds) := Parse.parse "t" toks
     Elab.runRaws "t" raws (lds ++ pds)
       (Layout.labelMetric (Layout.Geom.ofPage (Elab.run "t" s).1.page) oneFace)
-  let probe (s : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := do
+  let probe (s : String) : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) := do
     let (doc, _) := elabM s
     let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
     let ay ← lineYOf c 0 "Above."
@@ -4680,7 +4683,7 @@ def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let bl ← lineYOf c 0 "Below."
     pure (ay, lx, ly, bl)
   let node := "\\node at (0,0) {Label};"
-  let cm : Dim.Sp := Dim.mm 10
+  let cm : Dim.Length := Dim.mm 10
   let boxed := src "\\useasboundingbox (-2,-1) rectangle (2,1);\n" node
   let declared := probe boxed
   let taller := probe (src "\\useasboundingbox (-2,-1) rectangle (2,2);\n" node)
@@ -4707,7 +4710,7 @@ def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let page := (HtmlDoc.emit
     { labelMetric := Layout.labelMetric (Layout.Geom.ofPage dd.page) oneFace } dd).1
   t "the SVG's viewBox is the declared box"
-    (hasStr page s!"viewBox=\"0 0 {(4 * cm).toPtString} {(2 * cm).toPtString}\"")
+    (hasStr page s!"viewBox=\"0 0 {(4 * cm).toBpString} {(2 * cm).toBpString}\"")
   let (od, _) := elabM (src "\\useasboundingbox (0,0) rectangle (2,1);\n\\fill (0,0) rectangle (1,1);\n"
     "\\node at (3.5,0.5) {Outside};")
   let svgs := elemAttrsList (· == "svg") #[] (HtmlDoc.emitTree
@@ -4720,7 +4723,7 @@ def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "an undrawn node's inner sep reserves room above and below its label"
     (match padded, tight with
      | some (a0, _, l0, b0), some (a1, _, l1, b1) =>
-       a1 == a0 && l0 - l1 == sep && 2 * sep ≤ b0 - b1 && b0 - b1 ≤ 2 * sep + 1
+       a1 == a0 && l0 - l1 == sep && 2 * sep ≤ b0 - b1 && b0 - b1 ≤ 2 * sep + Dim.Length.quantum
      | _, _ => false)
 
 /-- Sibling picture labels share a baseline whatever their descenders, a hand-written correction
@@ -4734,7 +4737,7 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let pair (a b : String) : Ir.Pic.Picture := { shapes := #[
     .label (Dim.pt 10) (Dim.pt 20) #[.text a] Ir.Color.black 1000 .center,
     .label (Dim.pt 60) (Dim.pt 20) #[.text b] Ir.Color.black 1000 .center] }
-  let baselines (p : Ir.Pic.Picture) : List Dim.Sp :=
+  let baselines (p : Ir.Pic.Picture) : List Dim.Length :=
     ((run #[.picture p]).pages[0]?.map fun pg =>
       (pg.lines.filter (!·.furniture)).toList.map (·.y)).getD []
   t "two sibling labels ship two lines"
@@ -4769,20 +4772,22 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       == Ir.Pic.labelBaseline (Dim.pt 20) .center inkI)
   let seat := Ir.Pic.labelBaseline (Dim.pt 20) .center inkV - Dim.pt 20
   let font := oneFace.body
-  let units (u : Int) : Int := u * geom.fontSize / (font.unitsPerEm : Int)
+  let units (u : Int) : Dim.Length := u * geom.fontSize / (font.unitsPerEm : Int)
   t "the band is the face's capitals-to-descent box, as a border measures it"
     (let span := units (font.capHeight - font.descent)
-     span - 1 <= inkV.height + inkV.depth && inkV.height + inkV.depth <= span + 1)
+     span - Dim.Length.quantum <= inkV.height + inkV.depth &&
+       inkV.height + inkV.depth <= span + Dim.Length.quantum)
   let xh := units (font.xHeightOptical : Int)
   t "the seat is half the face's measured x-height below the anchor, to within two scaled points"
-    (-xh / 2 - 2 <= seat && seat <= -xh / 2 + 2)
+    (-xh / 2 - 2 * Dim.Length.quantum <= seat && seat <= -xh / 2 + 2 * Dim.Length.quantum)
   let xInk := m #[.text "xz"] 1000
   let rule : Ir.Color := { r := 200, g := 40, b := 40 }
   let ruled : Ir.Pic.Picture := { shapes := #[
     .rect 0 (Dim.pt 5 - Dim.pt 1 / 10) (Dim.pt 4) (Dim.pt 1 / 5) rule,
     .label (Dim.pt 20) (Dim.pt 5) #[.text "xz"] Ir.Color.black 1000 .center] }
   t "x-height letters measure the face's x-height box: its ex, no depth"
-    (xInk.boxDepth == 0 && xInk.boxHeight - 1 <= xInk.ex && xInk.ex <= xInk.boxHeight + 1)
+    (xInk.boxDepth == 0 && xInk.boxHeight - Dim.Length.quantum <= xInk.ex &&
+      xInk.ex <= xInk.boxHeight + Dim.Length.quantum)
   t "on the page, x-height letters stand half an ex below the rule at their anchor"
     (match (run #[.picture ruled]).pages[0]? with
      | some pg =>
@@ -4790,7 +4795,7 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
        | some (g, _, _), some l =>
          let (_, fy, _, fh) := markExtent g
          let below := l.y - (fy + fh / 2)
-         xh / 2 - 2 <= below && below <= xh / 2 + 2
+         xh / 2 - 2 * Dim.Length.quantum <= below && below <= xh / 2 + 2 * Dim.Length.quantum
        | _, _ => false
      | none => false)
   let milli (s : Option String) : Option Int := s.bind fun v =>
@@ -4804,19 +4809,19 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
            milli (HtmlDoc.attrOf? ta "y") with
        | some ry, some rh, some ty =>
          let below := ty - (ry + rh / 2)
-         let want := Dim.Sp.toPtMilli (xh / 2)
+         let want := Dim.Length.toBpMilli (xh / 2)
          want - 2 <= below && below <= want + 2
        | _, _, _ => false
      | _, _ => false)
   let reach (c : Char) : Option (Int × Int) := (font.gid c).bind font.yExtent
-  let bound : Int := match reach 'l', reach 'p' with
-    | some (_, asc), some (desc, _) => max (units asc - xh) (units (-desc)) / 2 + 2
+  let bound : Dim.Length := match reach 'l', reach 'p' with
+    | some (_, asc), some (desc, _) => max (units asc - xh) (units (-desc)) / 2 + 2 * Dim.Length.quantum
     | _, _ => 0
   for w in ["xz", "HIE", "Hg", "gap", "query", "label", "Fly", "42"] do
     let ink := m #[.text w] 1000
     let tex := -((ink.boxHeight - ink.boxDepth) / 2)
     t s!"the seat departs from TeX's by no more than the declared bound: {w}"
-      (bound > 2 && ((Ir.Pic.labelBaseline 0 .center ink) - tex).natAbs <= bound.toNat)
+      (bound > 2 * Dim.Length.quantum && ((Ir.Pic.labelBaseline 0 .center ink) - tex).abs <= bound)
   let dominated : Ir.Pic.LabelInk :=
     { w := 0, height := inkV.height - Dim.pt 1, depth := inkV.depth - Dim.pt 1 }
   t "a phantom box the label already covers moves neither letters nor box"
@@ -4883,7 +4888,7 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let out2 := layoutOf oneFace plain geom
   t "a role ships zero PDF bytes"
     ((Pdf.write geom oneFace out1.pages).data == (Pdf.write geom oneFace out2.pages).data)
-  let linesOf (src : String) : Array (String × Dim.Sp) :=
+  let linesOf (src : String) : Array (String × Dim.Length) :=
     let (d, _) := elabStr src
     (layoutOf oneFace d geom).pages.flatMap fun p =>
       p.lines.map fun l => (l.segs.foldl (fun s seg => match seg with
@@ -4967,7 +4972,7 @@ def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ((d.page.parskip.map (·.width.sp)) == some 0)
   let out := layoutOf oneFace d
   let c := censusOf #[] out
-  let yOf (s : String) : Option Dim.Sp := lineYOf c 0 s
+  let yOf (s : String) : Option Dim.Length := lineYOf c 0 s
   match yOf "Opening", yOf "Alpha", yOf "Closing" with
   | some yo, some yh, some yc =>
     let leading := Ir.leadingFor (Layout.Geom.ofPage d.page).fontSize
@@ -5132,7 +5137,7 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
     ((layoutOf oneFace bigDoc).diags.any (·.code == "W0372"))
   t "footnote: an ordinary note stays silent on W0372"
     (out.diags.all (·.code != "W0372") && (dvE src).all (·.code != "W0372"))
-  let gapOf (pre : String) : Option Dim.Sp := Id.run do
+  let gapOf (pre : String) : Option Dim.Length := Id.run do
     let (d, _) := elabStr (dvDoc pre
       ("Top claim\\footnote{gap probe} anchor.\n\n" ++
         String.intercalate "\n\n" (List.replicate 24 filler)))

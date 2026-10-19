@@ -8,14 +8,14 @@ namespace LeanTex.Core.Gfx
 
 open LeanTex.Core.Dim
 
-public theorem Geom.normal_rect_id {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
+public theorem Geom.normal_rect_id {x y w h : Length} (hp : 0 < w ∧ 0 < h) :
     (Geom.rect x y w h).normal = .rect x y w h := by
   simp only [Geom.normal]
   split
   · rfl
   · next hn => exact absurd hp hn
 
-public theorem Geom.normal_degenerate_exact {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
+public theorem Geom.normal_degenerate_exact {x y w h : Length} (hp : ¬(0 < w ∧ 0 < h)) :
     (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
   simp only [Geom.normal]
   split
@@ -73,23 +73,23 @@ public theorem Affine.compose_unit_id (m : Affine) :
   grind
 
 public theorem Iso.toAffine_apply_exact (t : Iso) (p : Pt) :
-    t.toAffine.apply ((p.1 : Rat), (p.2 : Rat)) =
-      (((t.apply p).1 : Rat), ((t.apply p).2 : Rat)) := by
+    t.toAffine.apply (p.1.toRat, p.2.toRat) = ((t.apply p).1.toRat, (t.apply p).2.toRat) := by
   obtain ⟨fl, dx, dy⟩ := t
   obtain ⟨x, y⟩ := p
   cases fl <;> simp only [Iso.toAffine, Affine.apply, Iso.apply, Prod.mk.injEq,
-    Bool.false_eq_true, ↓reduceIte] <;> push_cast <;> constructor <;> grind
+    Bool.false_eq_true, ↓reduceIte, Length.toRat, Length.units_add, Length.units_sub] <;>
+    push_cast <;> constructor <;> grind
 
 public theorem Iso.compose_apply_exact (s t : Iso) (p : Pt) :
     (s.compose t).apply p = s.apply (t.apply p) := by
   obtain ⟨fs, sx, sy⟩ := s
   obtain ⟨ft, tx, ty⟩ := t
   obtain ⟨x, y⟩ := p
-  have hx : ∀ a b c : Int, a + (b + c) = a + b + c := by intro a b c; omega
-  have ff : ∀ a b c : Int, a + (b + c) = a + b + c := by intro a b c; omega
-  have ft' : ∀ a b c : Int, b + c - a = b - a + c := by intro a b c; omega
-  have tf : ∀ a b c : Int, c - b - a = c - (a + b) := by intro a b c; omega
-  have tt : ∀ a b c : Int, a + (c - b) = c - (b - a) := by intro a b c; omega
+  have hx : ∀ a b c : Length, a + (b + c) = a + b + c := by intro a b c; length_omega
+  have ff : ∀ a b c : Length, a + (b + c) = a + b + c := by intro a b c; length_omega
+  have ft' : ∀ a b c : Length, b + c - a = b - a + c := by intro a b c; length_omega
+  have tf : ∀ a b c : Length, c - b - a = c - (a + b) := by intro a b c; length_omega
+  have tt : ∀ a b c : Length, a + (c - b) = c - (b - a) := by intro a b c; length_omega
   cases fs <;> cases ft
   · simp only [Iso.compose, Iso.apply, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
     exact Prod.ext (hx x tx sx) (ff y ty sy)
@@ -104,14 +104,15 @@ public theorem Iso.inv_compose_unit_id (t : Iso) :
     t.inv.toAffine.compose t.toAffine = Affine.unit := by
   obtain ⟨fl, dx, dy⟩ := t
   cases fl <;> simp only [Iso.inv, Iso.toAffine, Affine.compose, Affine.unit,
-    Bool.false_eq_true, ↓reduceIte, Affine.mk.injEq] <;> push_cast <;> grind
+    Bool.false_eq_true, ↓reduceIte, Affine.mk.injEq, Length.toRat, Length.units_neg] <;>
+    push_cast <;> grind
 
-public theorem Iso.rect_inv_id (t : Iso) (x y w h : Sp) :
+public theorem Iso.rect_inv_id (t : Iso) (x y w h : Length) :
     let r := t.rect x y w h
     t.inv.rect r.1 r.2.1 r.2.2.1 r.2.2.2 = (x, y, w, h) := by
   obtain ⟨fl, dx, dy⟩ := t
-  have hx : ∀ a b : Int, a + b + -b = a := by intro a b; omega
-  have hy : ∀ a b c : Int, b - (b - (a + c) + c) = a := by intro a b c; omega
+  have hx : ∀ a b : Length, a + b + -b = a := by intro a b; length_omega
+  have hy : ∀ a b c : Length, b - (b - (a + c) + c) = a := by intro a b c; length_omega
   cases fl
   · simp only [Iso.inv, Iso.rect, Bool.false_eq_true, ↓reduceIte]
     exact Prod.ext (hx x dx) (Prod.ext (hx y dy) rfl)
@@ -169,37 +170,40 @@ private theorem affine_between (a c e x0 x1 y0 y1 x y : Rat)
   grind
 
 public theorem Affine.boxImage_covers (m : Affine) (b : Box) (x y : Rat)
-    (hx0 : (b.1.1 : Rat) ≤ x) (hx1 : x ≤ (b.2.1 : Rat))
-    (hy0 : (b.1.2 : Rat) ≤ y) (hy1 : y ≤ (b.2.2 : Rat)) :
-    ((Box.image m b).1.1 : Rat) ≤ (m.apply (x, y)).1 ∧ (m.apply (x, y)).1 ≤ ((Box.image m b).2.1 : Rat) ∧
-    ((Box.image m b).1.2 : Rat) ≤ (m.apply (x, y)).2 ∧ (m.apply (x, y)).2 ≤ ((Box.image m b).2.2 : Rat) := by
+    (hx0 : b.1.1.toRat ≤ x) (hx1 : x ≤ b.2.1.toRat)
+    (hy0 : b.1.2.toRat ≤ y) (hy1 : y ≤ b.2.2.toRat) :
+    (Box.image m b).1.1.toRat ≤ (m.apply (x, y)).1 ∧ (m.apply (x, y)).1 ≤ (Box.image m b).2.1.toRat ∧
+    (Box.image m b).1.2.toRat ≤ (m.apply (x, y)).2 ∧ (m.apply (x, y)).2 ≤ (Box.image m b).2.2.toRat := by
   have hx := affine_between m.a m.c m.e _ _ _ _ x y hx0 hx1 hy0 hy1
   have hy := affine_between m.b m.d m.f _ _ _ _ x y hx0 hx1 hy0 hy1
-  simp only [Box.image, Affine.apply]
+  simp only [Box.image, Affine.apply, Length.toRat, Length.ofRatFloor, Length.ofRatCeil]
   exact ⟨Rat.le_trans (Rat.floor_le _) hx.1, Rat.le_trans hx.2 Rat.le_ceil,
     Rat.le_trans (Rat.floor_le _) hy.1, Rat.le_trans hy.2 Rat.le_ceil⟩
 
 private theorem image_monotone_core (m : Affine) (ax0 ay0 ax1 ay1 bx0 by0 bx1 by1 : Int)
     (h1 : bx0 ≤ ax0) (h2 : by0 ≤ ay0) (h3 : ax1 ≤ bx1) (h4 : ay1 ≤ by1)
     (hx : ax0 ≤ ax1) (hy : ay0 ≤ ay1) :
-    Box.le (Box.image m ((ax0, ay0), (ax1, ay1))) (Box.image m ((bx0, by0), (bx1, by1))) := by
+    Box.le (Box.image m ((⟨ax0⟩, ⟨ay0⟩), (⟨ax1⟩, ⟨ay1⟩)))
+      (Box.image m ((⟨bx0⟩, ⟨by0⟩), (⟨bx1⟩, ⟨by1⟩))) := by
   have cast : ∀ {p q : Int}, p ≤ q → (p : Rat) ≤ (q : Rat) := fun h =>
     Rat.intCast_le_intCast.mpr h
   have cv := fun (x y : Int) (hx0 : bx0 ≤ x) (hx1 : x ≤ bx1) (hy0 : by0 ≤ y) (hy1 : y ≤ by1) =>
-    Affine.boxImage_covers m ((bx0, by0), (bx1, by1)) x y (cast hx0) (cast hx1) (cast hy0) (cast hy1)
+    Affine.boxImage_covers m ((⟨bx0⟩, ⟨by0⟩), (⟨bx1⟩, ⟨by1⟩)) x y (cast hx0) (cast hx1) (cast hy0)
+      (cast hy1)
   have c00 := cv ax0 ay0 h1 (by omega) h2 (by omega)
   have c10 := cv ax1 ay0 (by omega) h3 h2 (by omega)
   have c01 := cv ax0 ay1 h1 (by omega) (by omega) h4
   have c11 := cv ax1 ay1 (by omega) h3 (by omega) h4
-  simp only [Box.image, Affine.apply] at c00 c10 c01 c11 ⊢
+  simp only [Box.image, Affine.apply, Length.toRat, Length.ofRatFloor, Length.ofRatCeil] at c00 c10 c01 c11 ⊢
+  simp only [Box.le, Length.le_def]
   refine ⟨Rat.le_floor_iff.mpr ?_, Rat.le_floor_iff.mpr ?_, Rat.ceil_le_iff.mpr ?_,
     Rat.ceil_le_iff.mpr ?_⟩ <;> grind
 
 public theorem Box.image_monotone (m : Affine) {a b : Box} (h : Box.le a b)
     (hx : a.1.1 ≤ a.2.1) (hy : a.1.2 ≤ a.2.2) :
     Box.le (Box.image m a) (Box.image m b) := by
-  obtain ⟨⟨ax0, ay0⟩, ⟨ax1, ay1⟩⟩ := a
-  obtain ⟨⟨bx0, by0⟩, ⟨bx1, by1⟩⟩ := b
+  obtain ⟨⟨⟨ax0⟩, ⟨ay0⟩⟩, ⟨⟨ax1⟩, ⟨ay1⟩⟩⟩ := a
+  obtain ⟨⟨⟨bx0⟩, ⟨by0⟩⟩, ⟨⟨bx1⟩, ⟨by1⟩⟩⟩ := b
   exact image_monotone_core m ax0 ay0 ax1 ay1 bx0 by0 bx1 by1 h.1 h.2.1 h.2.2.1 h.2.2.2 hx hy
 
 public theorem Node.marksList_append {L : Type} (outlines : Array (Array Subpath)) (cx : Ctx)
@@ -299,31 +303,8 @@ public theorem Figure.bodies_useFree_covers {L : Type} (fig : Figure L) :
 
 
 
-private theorem milli_back (M : Int) :
-    (((M * 65536 + 500) / 1000) * 1000 + 32768) / 65536 = M := by
-  omega
-
-private theorem toPtMilli_qSp_core (x : Int) : Sp.toPtMilli (qSp x) = Sp.toPtMilli x := by
-  have hm : ∀ y : Int, Sp.toPtMilli y =
-      if y < 0 then -(((y.natAbs * 1000 + 32768) / 65536 : Nat) : Int)
-      else (((y.natAbs * 1000 + 32768) / 65536 : Nat) : Int) := fun _ => rfl
-  generalize hM : Sp.toPtMilli x = m
-  have hq : qSp x = if m < 0 then -(((-m) * 65536 + 500) / 1000) else (m * 65536 + 500) / 1000 := by
-    simp only [qSp, hM]
-  rw [hq]
-  split
-  · rw [hm]
-    have := milli_back (-m)
-    split <;> omega
-  · rw [hm]
-    have := milli_back m
-    split <;> omega
-
-public theorem qSp_fixed_point (x : Sp) : qSp (qSp x) = qSp x := by
-  have hg : ∀ y : Sp, qSp y = (fun m : Int =>
-      if m < 0 then -(((-m) * 65536 + 500) / 1000) else (m * 65536 + 500) / 1000) (Sp.toPtMilli y) :=
-    fun _ => rfl
-  rw [hg (qSp x), toPtMilli_qSp_core x, ← hg x]
+public theorem qSp_fixed_point (x : Length) : qSp (qSp x) = qSp x := by
+  simp only [qSp, Length.toBpMilli_ofBpMilli]
 
 private theorem round_mul (v d : Int) (hd : 0 < d) :
     (if v * d < 0 then -((-(v * d) + d / 2) / d) else (v * d + d / 2) / d) = v := by
@@ -553,18 +534,18 @@ private theorem ptsHull_ordered (acc : Option Box)
       simp only [Box.joinOpt, Option.some.injEq] at hb
       subst hb
       simp only [Box.point]
-      exact ⟨Int.le_refl _, Int.le_refl _⟩
+      exact ⟨Length.le_refl _, Length.le_refl _⟩
     | some a =>
       simp only [Box.joinOpt, Option.some.injEq] at hb
       subst hb
       have ha := hacc a rfl
-      have hmin : ∀ x y z : Int, x ≤ z → min x y ≤ max z y := by intro x y z; omega
+      have hmin : ∀ x y z : Length, x ≤ z → min x y ≤ max z y := by intro x y z; length_omega
       simp only [Box.join, Box.point]
       exact ⟨hmin _ _ _ ha.1, hmin _ _ _ ha.2⟩
 
 private theorem Geom.hull_ordered (g : Geom) :
     ∀ b, g.hull = some b → b.1.1 ≤ b.2.1 ∧ b.1.2 ≤ b.2.2 := by
-  have hmm : ∀ x y : Int, min x y ≤ max x y := by intro x y; omega
+  have hmm : ∀ x y : Length, min x y ≤ max x y := by intro x y; length_omega
   intro b hb
   cases g with
   | rect x y w h =>
@@ -578,13 +559,13 @@ private theorem Geom.hull_ordered (g : Geom) :
   | path subs =>
     exact ptsHull_ordered none (by simp) _ b hb
 
-private theorem dilate_covers (b : Box) (d : Sp) (hd : 0 ≤ d) : Box.le b (Box.dilate b d) := by
-  have h1 : ∀ x e : Int, 0 ≤ e → x - e ≤ x := by intro x e; omega
-  have h2 : ∀ x e : Int, 0 ≤ e → x ≤ x + e := by intro x e; omega
+private theorem dilate_covers (b : Box) (d : Length) (hd : 0 ≤ d) : Box.le b (Box.dilate b d) := by
+  have h1 : ∀ x e : Length, 0 ≤ e → x - e ≤ x := by intro x e; length_omega
+  have h2 : ∀ x e : Length, 0 ≤ e → x ≤ x + e := by intro x e; length_omega
   exact ⟨h1 _ _ hd, h1 _ _ hd, h2 _ _ hd, h2 _ _ hd⟩
 
 private theorem Stroke.reach_nonneg (s : Stroke) : 0 ≤ s.reach := by
-  have h : ∀ a b : Int, 0 ≤ max 0 (max a b) := by intro a b; omega
+  have h : ∀ a b : Length, 0 ≤ max 0 (max a b) := by intro a b; length_omega
   exact h _ _
 
 private theorem Mark.geomBox_le_inkBox (mk : Mark) :
@@ -598,7 +579,7 @@ private theorem Mark.geomBox_le_inkBox (mk : Mark) :
       have ho := Geom.hull_ordered g b hg
       have hr : 0 ≤ (st.map Stroke.reach).getD 0 := by
         cases st with
-        | none => exact Int.le_refl 0
+        | none => exact Length.le_refl 0
         | some s => exact Stroke.reach_nonneg s
       exact Box.image_monotone ctm (dilate_covers b _ hr) ho.1 ho.2
   | raster ctm k w h => exact Box.le_refl _
@@ -647,12 +628,14 @@ private theorem bernstein (t : Rat) (h0 : 0 ≤ t) (h1 : t ≤ 1) :
 
 public theorem cubicAt_between (p0 c1 c2 p1 : Pt) (b : Box) (t : Rat) (h0 : 0 ≤ t) (h1 : t ≤ 1)
     (hp : ∀ p ∈ [p0, c1, c2, p1], Box.le (Box.point p) b) :
-    (b.1.1 : Rat) ≤ (cubicAt p0 c1 c2 p1 t).1 ∧ (cubicAt p0 c1 c2 p1 t).1 ≤ (b.2.1 : Rat) ∧
-    (b.1.2 : Rat) ≤ (cubicAt p0 c1 c2 p1 t).2 ∧ (cubicAt p0 c1 c2 p1 t).2 ≤ (b.2.2 : Rat) := by
+    b.1.1.toRat ≤ (cubicAt p0 c1 c2 p1 t).1 ∧ (cubicAt p0 c1 c2 p1 t).1 ≤ b.2.1.toRat ∧
+    b.1.2.toRat ≤ (cubicAt p0 c1 c2 p1 t).2 ∧ (cubicAt p0 c1 c2 p1 t).2 ≤ b.2.2.toRat := by
   obtain ⟨w0, w1, w2, w3, hs⟩ := bernstein t h0 h1
-  have cast : ∀ {p q : Int}, p ≤ q → (p : Rat) ≤ (q : Rat) := fun h => Rat.intCast_le_intCast.mpr h
+  have cast : ∀ {p q : Length}, p ≤ q → p.toRat ≤ q.toRat := fun h =>
+    Rat.intCast_le_intCast.mpr h
   have pt : ∀ p ∈ [p0, c1, c2, p1],
-      ((b.1.1 : Rat) ≤ p.1 ∧ (p.1 : Rat) ≤ b.2.1) ∧ ((b.1.2 : Rat) ≤ p.2 ∧ (p.2 : Rat) ≤ b.2.2) := by
+      (b.1.1.toRat ≤ p.1.toRat ∧ p.1.toRat ≤ b.2.1.toRat) ∧
+        (b.1.2.toRat ≤ p.2.toRat ∧ p.2.toRat ≤ b.2.2.toRat) := by
     intro p hm
     have h := hp p hm
     simp only [Box.le, Box.point] at h

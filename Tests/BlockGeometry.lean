@@ -100,7 +100,7 @@ private def measured : Array (Nat × Mark × Mark × Int) := #[
 private def boxOf (page : Layout.PageOut) (c : Ir.Color) (n : Nat) : Option Layout.Fill :=
   ((page.fills.filter (·.color == c)).qsort (·.y < ·.y))[n]?
 
-private def markY (page : Layout.PageOut) : Mark → Option Dim.Sp
+private def markY (page : Layout.PageOut) : Mark → Option Dim.Length
   | .base text => (page.lines.find? fun l => !l.furniture && lineText l false == letters text).map (·.y)
   | .top c n => (boxOf page c n).map (·.y)
   | .bottom c n => (boxOf page c n).map fun f => f.y + f.h
@@ -278,14 +278,14 @@ private def strutChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     "{python}\nabc = def\nabc = mno\n\\end{minted}\n\\end{block}\n" ++
     "\\begin{block}{Deep}\n\\begin{minted}" ++ opts ++
     "{python}\nabc = def\nagp = jqy\n\\end{minted}\n\\end{block}\n\\end{frame}\n\\end{document}\n"
-  let bodies (opts : String) : Array Dim.Sp :=
+  let bodies (opts : String) : Array Dim.Length :=
     (((layout fonts (src opts)).1.pages[0]?.getD ({} : Layout.PageOut)).fills.filter
       (·.color == bodyColor)).map (·.h)
   let broken := bodies "[breaklines]"
   let unbroken := bodies ""
-  check ref s!"block struts: under breaklines a body ends on its last line's strut ({broken})"
+  check ref s!"block struts: under breaklines a body ends on its last line's strut ({reprStr broken})"
     (broken.size == 2 && broken[0]? == broken[1]?)
-  check ref s!"block struts: unbroken lines end a body on their glyphs ({unbroken})"
+  check ref s!"block struts: unbroken lines end a body on their glyphs ({reprStr unbroken})"
     (unbroken.size == 2 && (match unbroken[0]?, unbroken[1]? with
       | some a, some b => a < b
       | _, _ => false))
@@ -462,7 +462,7 @@ private def listedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet
   let geom := Layout.Geom.ofPage doc.page
   let out := Layout.run geom fonts none doc
   let page := out.pages[0]?.getD {}
-  let lineX (text : String) : Option Dim.Sp :=
+  let lineX (text : String) : Option Dim.Length :=
     (page.lines.find? fun l => !l.furniture && lineText l false == letters text).map (·.x)
   check ref "block in a list: the item and quoted text keep their indents"
     (["Outer item words.", "Inner item words.", "Quoted words."].all fun t =>
@@ -535,8 +535,8 @@ private def skipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let set := s!"\\setlength\{\\{reg}}\{7pt}\n"
     let (setDoc, _) := Elab.run "kernel-skip-set.tex" (src set)
     check ref s!"kernel skips: \\{cmd} and the blocks spend the {reg} the document sets"
-      (spent (src set) == some { width := .ofSp (Dim.pt 7) } &&
-        Ir.skipAmount setDoc.tokens reg == { width := .ofSp (Dim.pt 7) })
+      (spent (src set) == some { width := .ofLength (Dim.pt 7) } &&
+        Ir.skipAmount setDoc.tokens reg == { width := .ofLength (Dim.pt 7) })
 
 /-- A block an overlay step wraps owns its boundaries through the wrapper, so a block after `\pause`
 stands the space an unwrapped one does. -/

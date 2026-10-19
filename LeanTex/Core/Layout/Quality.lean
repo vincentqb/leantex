@@ -126,11 +126,11 @@ public def leafRoles (t : Struct.Tree) : Array LeafRole :=
 /-! ## Reading one line -/
 
 /-- How far a line's segments advance from its `x`. -/
-public def advance (l : LineOut) : Sp :=
+public def advance (l : LineOut) : Length :=
   l.segs.foldl (fun w s => w + s.advance) 0
 
 /-- The glyphs of a line's runs, in order, each with its advance. -/
-def glyphsOf (l : LineOut) : Array (Char × Sp) :=
+def glyphsOf (l : LineOut) : Array (Char × Length) :=
   l.segs.foldl (fun acc s => match s with
     | .run _ _ _ _ gs .. => gs.foldl (fun a (_, c, adv) => a.push (c, adv)) acc
     | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => acc) #[]
@@ -157,7 +157,7 @@ public def wordGaps (l : LineOut) : Nat :=
 
 /-- The glyph a line opens on, when its first advancing segment is a text
 run (no indent, marker or kern before it) and that run is not a marker. -/
-def openingGlyph? (l : LineOut) : Option (Char × Sp) :=
+def openingGlyph? (l : LineOut) : Option (Char × Length) :=
   match l.segs.find? (fun s => s.advance != 0) with
   | some (.run _ _ _ _ gs _ _ _ _ _ attr) =>
     match attr with
@@ -169,11 +169,11 @@ def openingGlyph? (l : LineOut) : Option (Char × Sp) :=
 /-- How far protrusion may hang a line's last glyph past the measure: the
 engine's own table (`protrusionLR`) over the glyph's advance, widened by
 the line's expansion, which scales the run that holds it. -/
-def rightAllowance (l : LineOut) : Sp :=
+def rightAllowance (l : LineOut) : Length :=
   match (glyphsOf l).back? with
   | some (c, adv) =>
-    let p := adv * ((protrusionLR c).2 : Int) / 1000
-    p + p * l.expand.natAbs / 1000
+    let p : Length := adv * ((protrusionLR c).2 : Int) / (1000 : Int)
+    p + p * (l.expand.natAbs : Int) / (1000 : Int)
   | none => 0
 
 /-! ## The judges -/
@@ -181,7 +181,7 @@ def rightAllowance (l : LineOut) : Sp :=
 /-- The rounding a set line's right edge carries: each glyph advance and
 each expanded run rounds to the scaled point, so a line that fills its
 measure exactly lands within one sp per segment of it. -/
-def edgeSlack (l : LineOut) : Sp := l.segs.size
+def edgeSlack (l : LineOut) : Length := l.segs.size * Length.quantum
 
 /-- Does a segment set ink of its own: a glyph, an image, a rule? A line of
 decorations alone is the rider an underline or a strike lays under another
@@ -200,9 +200,9 @@ def paints (s : Seg) : Bool :=
 /-- The horizontal span the segments `keep` selects cover: from the pen
 position of the first to the end of the last, so an indent before the ink
 or a fill after it is not counted as ink. -/
-public def spanOf (keep : Seg → Bool) (l : LineOut) : Option (Sp × Sp) := Id.run do
+public def spanOf (keep : Seg → Bool) (l : LineOut) : Option (Length × Length) := Id.run do
   let mut x := l.x
-  let mut span : Option (Sp × Sp) := none
+  let mut span : Option (Length × Length) := none
   for s in l.segs do
     let next := x + s.advance
     if keep s then
@@ -213,7 +213,7 @@ public def spanOf (keep : Seg → Bool) (l : LineOut) : Option (Sp × Sp) := Id.
   return span
 
 /-- The span a line's own ink covers. -/
-public def inkSpan (l : LineOut) : Option (Sp × Sp) := spanOf setsInk l
+public def inkSpan (l : LineOut) : Option (Length × Length) := spanOf setsInk l
 
 /-- How far a body line passes the text area, beyond the hang protrusion
 grants it: its ink's right end past `pageW - hmargin` less the last glyph's
@@ -221,7 +221,7 @@ allowance, or its ink's left end before `hmargin` less the hang the line
 records. Furniture stands in the margin by design and a picture's labels
 are the picture's; neither is a line of the text, and a decoration's rider
 stands or falls with the line it decorates. -/
-public def overflow (geom : Geom) (l : LineOut) : Sp :=
+public def overflow (geom : Geom) (l : LineOut) : Length :=
   if l.furniture || l.pictureLabel.isSome then 0 else
     match inkSpan l with
     | none => 0
@@ -232,7 +232,7 @@ public def overflow (geom : Geom) (l : LineOut) : Sp :=
       if past > edgeSlack l then past else 0
 
 /-- Every body line's overflow, page by page. -/
-public def overflows (geom : Geom) (pages : Array PageOut) : Array Sp :=
+public def overflows (geom : Geom) (pages : Array PageOut) : Array Length :=
   pages.foldl (fun acc p => p.lines.foldl (fun a l =>
     let o := overflow geom l
     if o > 0 then a.push o else a) acc) #[]
@@ -268,7 +268,7 @@ public def offMediumCount (geom : Geom) (fs : Font.FontSet) (pages : Array PageO
 /-- The largest overflow any body line runs past the text area, in whole
 points, rounding up: a hair over the edge is a point. -/
 public def maxOverflowPt (geom : Geom) (pages : Array PageOut) : Nat :=
-  (((overflows geom pages).foldl max 0 + 65535) / 65536).toNat
+  (((overflows geom pages).foldl max 0 + Dim.pt 1 - Length.quantum) / Dim.pt 1).toNat
 
 /-- The role of a line's block, if it names a leaf the tree holds. -/
 def roleOf (roles : Array LeafRole) (l : LineOut) : Option LeafRole :=
@@ -361,7 +361,7 @@ public def ladderLines (roles : Array LeafRole) (pages : Array PageOut) : Nat :=
       (0, n)).2) 0
 
 /-- The protrusion the engine's table grants a line's opening glyph. -/
-def leftAllowance (c : Char) (adv : Sp) : Sp :=
+def leftAllowance (c : Char) (adv : Length) : Length :=
   adv * ((protrusionLR c).1 : Int) / 1000
 
 /-- Lines whose optical left edge steps out of its paragraph's: in a
@@ -385,7 +385,7 @@ public def edgeStepLines (geom : Geom) (roles : Array LeafRole) (pages : Array P
         ls.foldl (fun acc l =>
           match openingGlyph? l with
           | some (c, adv) =>
-            if l.x + l.hang == edge && (l.hang - leftAllowance c adv).natAbs > (edgeSlack l).natAbs
+            if l.x + l.hang == edge && (l.hang - leftAllowance c adv).abs > (edgeSlack l).abs
             then acc.push l else acc
           | none => acc) acc) #[]
 
@@ -481,7 +481,7 @@ public def strandedHeads (fs : Font.FontSet) (roles : Array LeafRole) (opens : A
 
 /-- The pitch of running prose: the smallest gap between two consecutive
 lines of one paragraph on one page. -/
-public def linePitch (roles : Array LeafRole) (pages : Array PageOut) : Option Sp :=
+public def linePitch (roles : Array LeafRole) (pages : Array PageOut) : Option Length :=
   pages.foldl (fun acc p =>
     let ls := p.lines.filter (prose roles)
     (ls.toList.zip (ls.toList.drop 1)).foldl (fun acc (x, y) =>
@@ -494,8 +494,8 @@ public def linePitch (roles : Array LeafRole) (pages : Array PageOut) : Option S
 /-- The room a page leaves under its body: from its lowest body baseline to
 its floor — the text area's bottom, or a pitch above the top of its
 footnotes. -/
-public def roomAt (geom : Geom) (pitch : Sp) (a : PageOut) : Option Sp :=
-  let low (ls : Array LineOut) (pick : Sp → Sp → Sp) : Option Sp :=
+public def roomAt (geom : Geom) (pitch : Length) (a : PageOut) : Option Length :=
+  let low (ls : Array LineOut) (pick : Length → Length → Length) : Option Length :=
     ls.foldl (fun m l => some (match m with
       | some y => pick y l.y
       | none => l.y)) none
@@ -512,7 +512,7 @@ public def shortPageLines : Nat := 3
 /-- Is the boundary from `a` to `b` a short page: the flow continues
 (`flowsAcross`) from a page whose body ends more than `shortPageLines` lines
 of prose above its floor, leaving room the next page's content did not take? -/
-public def shortAt (geom : Geom) (opens : Array Nat) (pitch : Sp) (a b : PageOut) : Bool :=
+public def shortAt (geom : Geom) (opens : Array Nat) (pitch : Length) (a b : PageOut) : Bool :=
   flowsAcross opens a b && ((roomAt geom pitch a).map fun r =>
     decide (r > (shortPageLines : Int) * pitch)).getD false
 

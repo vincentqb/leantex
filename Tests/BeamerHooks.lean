@@ -72,7 +72,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   -- `\smallskipamount` is 3pt plus 1pt minus 1pt; a top-aligned frame adds its natural 3pt.
   t "beamer hook: first body baseline moves by the natural smallskip"
     (match firstY actual "FirstBody", firstY plain "FirstBody" with
-     | some a, some b => a - b == 3 * 65536
+     | some a, some b => a - b == Dim.pt 3
      | _, _ => false)
   t "beamer hook: first title baseline stays put"
     ((firstY actual "First title").isSome &&

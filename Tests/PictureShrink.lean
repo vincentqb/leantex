@@ -45,16 +45,16 @@ private def fills (out : Layout.Out) := (draws out).filter plainFill
 private def paths (out : Layout.Out) := (draws out).filter (!plainFill ·)
 
 /-- A shipped draw's constructor, dimensions, segment kinds and every point. -/
-private def coordinates : Gfx.Geom → Nat × Array Dim.Sp × Array (Dim.Sp × Dim.Sp)
+private def coordinates : Gfx.Geom → Nat × Array Dim.Length × Array (Dim.Length × Dim.Length)
   | .ellipse x y rx ry => (0, #[rx, ry], #[(x, y)])
   | .rect x y w h => (1, #[w, h], #[(x, y)])
-  | .path subs => (2, (subpathSegs subs).map (fun s => match s with | .line .. => 0 | .cubic .. => 1),
+  | .path subs => (2, (subpathSegs subs).map (fun s => match s with | .line .. => 0 | .cubic .. => Dim.Length.quantum),
       (subpathSegs subs).flatMap fun s => match s with
       | .line x y u v => #[(x, y), (u, v)]
       | .cubic x y a b c d u v => #[(x, y), (a, b), (c, d), (u, v)])
 
 private def pathShift (before after : Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
-    (dy : Dim.Sp) : Bool :=
+    (dy : Dim.Length) : Bool :=
   let (bk, bd, bp) := coordinates before.2.1
   let (ak, ad, ap) := coordinates after.2.1
   bk == ak && bd == ad && bp.size == ap.size &&
@@ -62,14 +62,14 @@ private def pathShift (before after : Option Nat × Gfx.Geom × Option Gfx.Fill 
     before.2.2.2 == after.2.2.2 && before.2.2.1 == after.2.2.1 && before.1 == after.1
 
 private def fillShift (before after : Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
-    (dy : Dim.Sp) : Bool :=
+    (dy : Dim.Length) : Bool :=
   pathShift before after dy
 
-private def close (a b : Dim.Sp) : Bool :=
+private def close (a b : Dim.Length) : Bool :=
   -- Each PDF coordinate rounds to .001 pt; two edges and two baselines accumulate four roundings.
-  (a - b).natAbs ≤ (4 * (Dim.spPerPt / 1000 + 1)).toNat
+  (a - b).abs ≤ 4 * (Dim.pt 1 / 1000 + Dim.Length.quantum)
 
-private def boxShift (bh ah : Dim.Sp) (before after : ArtBox) (dy : Dim.Sp) : Bool :=
+private def boxShift (bh ah : Dim.Length) (before after : ArtBox) (dy : Dim.Length) : Bool :=
   before.kind == after.kind && close before.x0 after.x0 && close before.x1 after.x1 &&
     close (ah - after.y0) (bh - before.y0 + dy) &&
     close (ah - after.y1) (bh - before.y1 + dy)
@@ -124,7 +124,7 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (match rects.toList with
        | [(y, h)] =>
          let (ht, dp) := Layout.labelGlyphExtent oneFace b.size b.segs
-         (b.y + (dp - ht) / 2 - (y + h / 2)).natAbs ≤ 1
+         (b.y + (dp - ht) / 2 - (y + h / 2)).abs ≤ Dim.Length.quantum
        | _ => false)
   let roomyPdf := driverPdf oneFace geom doc roomy
   let tightPdf := driverPdf oneFace tightGeom doc tight

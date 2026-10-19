@@ -21,9 +21,9 @@ public theorem import_named (t : Xml.Item) (lang : String) (moving : Bool) (src 
 
 public theorem viewBox_exact (vb : ViewBox) (vx vy vw vh : Rat) (hw : vb.w ≠ 0) (hh : vb.h ≠ 0) :
     let m := viewMap vb { align := none, slice := false } vx vy vw vh
-    m.apply (vb.x * (pxSp : Rat), vb.y * (pxSp : Rat)) = (vx * (pxSp : Rat), vy * (pxSp : Rat)) ∧
-      m.apply ((vb.x + vb.w) * (pxSp : Rat), (vb.y + vb.h) * (pxSp : Rat)) =
-        ((vx + vw) * (pxSp : Rat), (vy + vh) * (pxSp : Rat)) := by
+    m.apply (vb.x * pxSp.toRat, vb.y * pxSp.toRat) = (vx * pxSp.toRat, vy * pxSp.toRat) ∧
+      m.apply ((vb.x + vb.w) * pxSp.toRat, (vb.y + vb.h) * pxSp.toRat) =
+        ((vx + vw) * pxSp.toRat, (vy + vh) * pxSp.toRat) := by
   simp only [viewMap, viewScale, Affine.apply]
   refine ⟨?_, ?_⟩
   · simp only [Prod.mk.injEq]; constructor <;> grind
@@ -57,7 +57,7 @@ public theorem length_exact :
     6 * LenUnit.factor .pc = LenUnit.factor .inch ∧
     (254 / 100 : Rat) * LenUnit.factor .cm = LenUnit.factor .inch ∧
     (254 / 10 : Rat) * LenUnit.factor .mm = LenUnit.factor .inch ∧
-    LenUnit.factor .pt * (pxSp : Rat) = 65536 := by decide +kernel
+    LenUnit.factor .pt * pxSp.toRat = (Dim.bp 1).toRat := by decide +kernel
 
 mutual
 

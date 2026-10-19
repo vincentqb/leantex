@@ -96,7 +96,7 @@ def svgMarks (body : String) (w h : Nat := 20) : Array Mark × Array Gfx.Loss :=
 
 /-- The importer's reading of invented figures, over their marks. -/
 def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let px (n : Int) : Int := n * Svg.pxSp
+  let px (n : Int) : Dim.Length := n * Svg.pxSp
   -- A rect's geometry is in user space under the root's flip into the y-up frame.
   let (ms, ls) := svgMarks "<rect x=\"2\" y=\"3\" width=\"4\" height=\"5\" fill=\"#ff0000\"/>"
   check ref "SVG import: a rect is one exact mark" (ls.isEmpty && ms.size == 1)
@@ -104,7 +104,7 @@ def svgImportChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ms.any fun m => match m with
       | .paint ctm (.rect x y w h) (some f) none _ _ =>
         x == px 2 && y == px 3 && w == px 4 && h == px 5 &&
-          ctm == ⟨1, 0, 0, -1, 0, (px 20 : Rat)⟩ &&
+          ctm == ⟨1, 0, 0, -1, 0, (px 20).toRat⟩ &&
           (match f.paint with | .solid c => c.r == 255 && c.g == 0 && c.b == 0 | _ => false)
       | _ => false)
   -- Stroke defaults are SVG's, stated in full: miter limit 4.
@@ -351,18 +351,17 @@ def paintAgrees : Paint → Paint → Bool
 
 /-- How far the writer's half-thousandth spelling moves a mark's box through its frame, plus a sp
 each way for rounding. -/
-def readbackBound (ctm : Affine) : Int :=
+def readbackBound (ctm : Affine) : Dim.Length :=
   let abs (q : Rat) : Rat := if q < 0 then -q else q
   let scale := max (abs ctm.a + abs ctm.c) (abs ctm.b + abs ctm.d)
-  Rat.ceil (scale * (Svg.pxSp : Rat) / 2000) + 2
+  Dim.Length.ofRatCeil (scale * Svg.pxSp.toRat / 2000) + 2 * Dim.Length.quantum
 
 /-- Two marks agree under the readback: kind, paint, rule, alphas and clip count, and geometry
 within the bound. -/
 def marksAgree (a b : Mark) : Bool :=
-  let near (x y : Option Box) (t : Int) : Bool := match x, y with
+  let near (x y : Option Box) (t : Dim.Length) : Bool := match x, y with
     | some ((x0, y0), (x1, y1)), some ((u0, v0), (u1, v1)) =>
-      (x0 - u0).natAbs ≤ t.toNat && (y0 - v0).natAbs ≤ t.toNat &&
-        (x1 - u1).natAbs ≤ t.toNat && (y1 - v1).natAbs ≤ t.toNat
+      (x0 - u0).abs ≤ t && (y0 - v0).abs ≤ t && (x1 - u1).abs ≤ t && (y1 - v1).abs ≤ t
     | none, none => true
     | _, _ => false
   match a, b with
@@ -398,7 +397,7 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
         let ((x0, y0), (x1, y1)) := i.fig.box
         let ((u0, v0), (u1, v1)) := j.fig.box
         check ref s!"SVG readback {name}: the box reads back within the spelling's half-thousandth of a point"
-          ([x0 - u0, y0 - v0, x1 - u1, y1 - v1].all fun d => d.natAbs ≤ 33)
+          ([x0 - u0, y0 - v0, x1 - u1, y1 - v1].all fun d => d.abs ≤ 33 * Dim.Length.quantum)
         check ref s!"SVG readback {name}: {i.fig.marks.size} marks read back as {j.fig.marks.size}, each agreeing"
           (j.fig.marks.size == i.fig.marks.size &&
             (i.fig.marks.zip j.fig.marks).all fun (a, b) => marksAgree a b)
@@ -409,7 +408,7 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The bound bites: a mark moved by twice its bound disagrees.
   let moved (m : Mark) : Mark := match m with
     | .paint c g fl st cl al =>
-      .paint { c with e := c.e + 2 * ((readbackBound c : Int) : Rat) + 1 } g fl st cl al
+      .paint { c with e := c.e + 2 * (readbackBound c).toRat + Dim.Length.quantum.toRat } g fl st cl al
     | m => m
   let probe := Svg.importBytes (svgDocument "<rect x=\"2\" y=\"3\" width=\"4\" height=\"5\"/>")
   match probe with
@@ -478,7 +477,7 @@ def markAndClipBoxes (m : Mark) : Option (Box × Box) :=
     | _, _ => none
   | .raster ctm _ clips _ =>
     match clips[0]? with
-    | some (cm, c) => c.geom.hull.map fun cb => (Box.image ctm ((0, 0), (65536, 65536)), Box.image cm cb)
+    | some (cm, c) => c.geom.hull.map fun cb => (Box.image ctm ((0, 0), (Dim.bp 1, Dim.bp 1)), Box.image cm cb)
     | none => none
   | .shading _ _ _ => none
 
@@ -486,7 +485,7 @@ def markAndClipBoxes (m : Mark) : Option (Box × Box) :=
 is a named loss and still drawn. -/
 def svgObjectClipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let half := "<clipPath id=\"half\" clipPathUnits=\"objectBoundingBox\"><rect width=\"0.5\" height=\"1\"/></clipPath>"
-  let near (a b : Int) : Bool := (a - b).natAbs ≤ 2
+  let near (a b : Dim.Length) : Bool := (a - b).abs ≤ 2 * Dim.Length.quantum
   let (ms, ls) := svgMarks (s!"<defs>{half}<rect id=\"r\" width=\"80\" height=\"80\" fill=\"navy\"/></defs>" ++
     "<use href=\"#r\" x=\"10\" y=\"10\" clip-path=\"url(#half)\"/>" ++
     "<g clip-path=\"url(#half)\"><rect x=\"110\" y=\"10\" width=\"80\" height=\"80\" fill=\"darkred\"/></g>") 200 100
@@ -778,7 +777,7 @@ def svgUndrawnNamedChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match rootBg with
       | .lossy i => i.fig.losses.contains (.property "background-color")
       | _ => false)
-  let px (n : Int) : Int := n * Svg.pxSp
+  let px (n : Int) : Dim.Length := n * Svg.pxSp
   let (ms, ls) := svgMarks ("<svg x=\"0\" y=\"0\" width=\"10\" height=\"10\" transform=\"translate(5 0)\">" ++
     "<rect width=\"4\" height=\"4\"/></svg>")
   check ref s!"SVG undrawn: a nested viewport's transform moves its content ({repr ls})"

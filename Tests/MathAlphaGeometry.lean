@@ -5,17 +5,17 @@ public import Tests.Artifact
 public section
 
 open LeanTex.Core
-open LeanTex.Core.Dim (Sp pt)
+open LeanTex.Core.Dim (Length pt)
 
 private structure AlphaGlyph where
   scalar : Char
   face : Nat
-  x : Sp
-  y : Sp
-  advance : Sp
-  size : Sp
-  bottom : Sp
-  top : Sp
+  x : Length
+  y : Length
+  advance : Length
+  size : Length
+  bottom : Length
+  top : Length
 
 private structure AlphaInk where
   glyphs : Array AlphaGlyph := #[]
@@ -136,7 +136,7 @@ private def alphaGeometryFonts : IO (Except String Font.FontSet) := do
       ((1, 400, false), 5), ((1, 700, false), 6),
       ((1, 400, true), 7), ((1, 700, true), 8), ((2, 400, false), 9)] }
 
-private def alphaNear (a b slack : Sp) : Bool := (a - b).natAbs ≤ slack.toNat
+private def alphaNear (a b slack : Length) : Bool := (a - b).abs ≤ slack
 
 private structure AlphaRoot where
   body : String
@@ -179,8 +179,8 @@ def mathAlphaGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
     | failures ref "math alpha geometry: math constants"; return
   t "math alpha geometry: the probe spans different font units"
     ((fs.get 0).unitsPerEm != (fs.get 5).unitsPerEm)
-  let mathSize := (Math.mathSize (pt 10).toNat (fs.get 0).xHeightOptical
-    (fs.get 0).unitsPerEm math.xHeightOptical math.unitsPerEm : Sp)
+  let mathSize : Length := .ofUnits (Math.mathSize (pt 10).units.toNat (fs.get 0).xHeightOptical
+    (fs.get 0).unitsPerEm math.xHeightOptical math.unitsPerEm)
   t "math alpha geometry: text and math sizes differ in the probe" (mathSize != pt 10)
   for c in alphaRootCases do
     match alphaReadings fs c.source with
@@ -215,7 +215,7 @@ def mathAlphaGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
             (root.bottom ≤ bottom + slack)
           t s!"math alpha geometry: {c.name}/{backend}/{i}: surd meets bar at its style size"
             (alphaNear root.top bar.y1 slack &&
-              alphaNear root.size (Math.sizeFor consts.scales mathSize spec.style) slack)
+              alphaNear root.size (.ofUnits (Math.sizeFor consts.scales mathSize.units spec.style)) slack)
           t s!"math alpha geometry: {c.name}/{backend}/{i}: bar covers operand advance"
             (body.all fun g => bar.x0 ≤ g.x + slack && g.x + g.advance ≤ bar.x1 + slack)
   for (ambient, ambientFace, ambientSize) in
@@ -224,13 +224,13 @@ def mathAlphaGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (cmd, face) in #[("mathrm", 0), ("mathbf", 1), ("mathit", 2), ("mathsf", 5), ("mathtt", 9)] do
       let src := "{" ++ ambient ++ "Z $\\" ++ cmd ++ "{x5}_{\\" ++ cmd ++ "{g}}^{\\" ++
         cmd ++ "{M}^{\\" ++ cmd ++ "{Q}}}\\symup{7}$}"
-      let label := s!"math alpha size: {cmd}/{ambientFace}/{ambientSize}"
+      let label := s!"math alpha size: {cmd}/{ambientFace}/{reprStr ambientSize}"
       match alphaReadings fs src with
       | .error e => t s!"{label}: {e}" false
       | .ok (laid, painted) =>
         let around := fs.get ambientFace
-        let symbolSize := (Math.mathSize ambientSize.toNat around.xHeightOptical
-          around.unitsPerEm math.xHeightOptical math.unitsPerEm : Sp)
+        let symbolSize : Length := .ofUnits (Math.mathSize ambientSize.units.toNat
+          around.xHeightOptical around.unitsPerEm math.xHeightOptical math.unitsPerEm)
         for (backend, ink, slack) in #[("layout", laid, 0), ("PDF", painted, artSpellSlack)] do
           t s!"{label}/{backend}: scalar census"
             (String.ofList (ink.glyphs.toList.map (·.scalar)) == "Zx5MQg7")
@@ -243,7 +243,7 @@ def mathAlphaGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
               else ambientSize
             let f := fs.get expectedFace
             let some gid := f.gid g.scalar | t s!"{label}: missing probe scalar" false; continue
-            let width := (f.widths[gid]?.getD 0 : Sp) * expectedSize / f.unitsPerEm
+            let width := (f.widths[gid]?.getD 0) * expectedSize / f.unitsPerEm
             t s!"{label}/{backend}/{g.scalar}: face and ambient style size"
               (g.face == expectedFace && alphaNear g.size expectedSize slack)
             t s!"{label}/{backend}/{g.scalar}: own-face advance at ambient style size"

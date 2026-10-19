@@ -2,7 +2,7 @@ module
 
 public import LeanTex.Core.Dim
 
-/-! What `Sp.toPtString` and `ratString` print, digit by digit, for a reader recovering it. -/
+/-! What `Length.toBpString` and `ratString` print, digit by digit, for a reader recovering it. -/
 
 namespace LeanTex.Core.Dim
 
@@ -108,19 +108,19 @@ public theorem fracDigits_value_exact (k fr : Nat) (h : fr < 10 ^ k) (h0 : fr �
     exact hval
 
 
-public theorem toPtString_chars_exact (x : Sp) :
-    (Sp.toPtString x).toList = (if x.toPtMilli < 0 then ['-'] else []) ++
-      Nat.toDigits 10 (x.toPtMilli.natAbs / 1000) ++
-      (if x.toPtMilli.natAbs % 1000 = 0 then [] else '.' :: fracDigits 3 (x.toPtMilli.natAbs % 1000)) := by
+public theorem toBpString_chars_exact (x : Length) :
+    (Length.toBpString x).toList = (if x.toBpMilli < 0 then ['-'] else []) ++
+      Nat.toDigits 10 (x.toBpMilli.natAbs / 1000) ++
+      (if x.toBpMilli.natAbs % 1000 = 0 then [] else '.' :: fracDigits 3 (x.toBpMilli.natAbs % 1000)) := by
   have ts : ∀ s : String, toString s = s := fun _ => rfl
-  unfold Sp.toPtString
+  unfold Length.toBpString
   simp only
-  by_cases hf : x.toPtMilli.natAbs % 1000 = 0
+  by_cases hf : x.toBpMilli.natAbs % 1000 = 0
   · simp only [hf, beq_self_eq_true, ↓reduceIte, List.append_nil]
-    by_cases hm : x.toPtMilli < 0 <;> simp [hm, ts]
-  · have hf' : (x.toPtMilli.natAbs % 1000 == 0) = false := by simpa using hf
+    by_cases hm : x.toBpMilli < 0 <;> simp [hm, ts]
+  · have hf' : (x.toBpMilli.natAbs % 1000 == 0) = false := by simpa using hf
     simp only [hf', Bool.false_eq_true, ↓reduceIte, hf]
-    by_cases hm : x.toPtMilli < 0 <;> simp [hm, ts, String.toList_ofList]
+    by_cases hm : x.toBpMilli < 0 <;> simp [hm, ts, String.toList_ofList]
 
 
 public theorem ratString_chars_exact (p q : Int) :

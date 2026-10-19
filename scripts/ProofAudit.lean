@@ -25,6 +25,93 @@ meta def projectModule (root : System.FilePath) (name : Name) : IO Bool := do
 meta def unexpectedAxioms (axioms : Array Name) : Array Name :=
   axioms.filter fun ax => !#[`Quot.sound, `Classical.choice, `propext].contains ax
 
+/-- The modules that define the engine's base unit, the only ones that may spell a count of it. -/
+meta def baseUnitModules : Array Name := #[`LeanTex.Core.Dim, `LeanTex.Core.DimSpell]
+
+/-- A numeral as it elaborates: a raw literal or `OfNat.ofNat`, possibly negated or cast. -/
+meta def numeral? (e : Expr) : Option Int :=
+  let nat? (e : Expr) : Option Nat := match e.consumeMData with
+    | .lit (.natVal n) => some n
+    | e => if e.isAppOfArity ``OfNat.ofNat 3 then
+        match (e.getArg! 1).consumeMData with
+        | .lit (.natVal n) => some n
+        | _ => none
+      else none
+  let e := e.consumeMData
+  let e := if e.isAppOfArity ``Nat.cast 3 || e.isAppOfArity ``NatCast.natCast 3 ||
+      e.isAppOfArity ``Int.cast 3 || e.isAppOfArity ``IntCast.intCast 3 then e.getArg! 2
+    else if e.isAppOfArity ``Int.ofNat 1 then e.getArg! 0 else e
+  match nat? e with
+  | some n => some n
+  | none =>
+    if e.isAppOfArity ``Neg.neg 3 then (nat? (e.getArg! 2)).map fun n => -(n : Int)
+    else if e.isAppOfArity ``Int.negSucc 1 then (nat? (e.getArg! 0)).map fun n => -((n : Int) + 1)
+    else none
+
+/-- Whether an expression reads a length's base-unit count, through casts, `toNat` and `natAbs`;
+`exact` counts its rational image too. -/
+meta def readsUnits (exact : Bool) (e : Expr) : Bool :=
+  let peel (e : Expr) : Expr :=
+    let e := e.consumeMData
+    if e.isAppOfArity ``Int.cast 3 || e.isAppOfArity ``IntCast.intCast 3 ||
+        e.isAppOfArity ``Nat.cast 3 || e.isAppOfArity ``NatCast.natCast 3 then
+      (e.getArg! 2).consumeMData
+    else if e.isAppOfArity ``Int.toNat 1 || e.isAppOfArity ``Int.natAbs 1 then
+      (e.getArg! 0).consumeMData
+    else e
+  let e := peel (peel e)
+  e.isAppOfArity `LeanTex.Core.Dim.Length.units 1 ||
+    (exact && e.isAppOfArity `LeanTex.Core.Dim.Length.toRat 1)
+
+/-- Whether an expression is a closed count made of numerals and arithmetic alone. -/
+meta def numericConstant (e : Expr) : Bool :=
+  !e.hasLooseBVars && !e.hasFVar && !e.hasMVar && e.getUsedConstants.all fun c =>
+    c.getRoot == `Int || c.getRoot == `Nat || c.getRoot == `Rat ||
+      #[``OfNat.ofNat, ``Neg.neg, ``HMul.hMul, ``HAdd.hAdd, ``HSub.hSub, ``HDiv.hDiv, ``HMod.hMod,
+        ``Mul.mul, ``Add.add, ``Sub.sub, ``Div.div, ``NatCast.natCast, ``IntCast.intCast].contains c ||
+      (match c with
+       | .str _ s => s.startsWith "inst"
+       | _ => false)
+
+/-- What a subterm spells of a count of the base unit, which Dim alone defines: the base itself, a
+length built from a closed count, a large multiple of the quantum, or a base-unit count or a large
+scale of its rational image against a numeral other than 0 and ±1. -/
+meta def baseLiteral (e : Expr) : Option String :=
+  let large (x : Expr) := match numeral? x with
+    | some n => n.natAbs ≥ 32768
+    | none => false
+  let hit (sub : Expr) : Option String :=
+    if sub.isConstOf `LeanTex.Core.Dim.unitsPerInch then some "the base unit itself"
+    else if (#[`LeanTex.Core.Dim.Length.ofUnits, `LeanTex.Core.Dim.Length.ofRatFloor,
+        `LeanTex.Core.Dim.Length.ofRatCeil, `LeanTex.Core.Dim.Length.ofRatRound].any
+          (sub.isAppOfArity · 1)) && numericConstant (sub.getArg! 0) then
+      some "a length built from a count of base units"
+    else if sub.isAppOfArity `LeanTex.Core.Dim.Length.ofRatio 3 &&
+        (sub.getArg! 0).consumeMData.isConstOf `LeanTex.Core.Dim.Length.quantum then
+      some "a length built from a count of quanta"
+    else
+      let args := sub.getAppArgs
+      let scaling := #[``HMul.hMul, ``HDiv.hDiv, ``HMod.hMod]
+      let compare := #[``HAdd.hAdd, ``HSub.hSub, ``LE.le, ``LT.lt, ``GE.ge, ``GT.gt, ``Eq, ``Ne,
+        ``BEq.beq, ``bne, ``Max.max, ``Min.min]
+      if !(scaling.any sub.isAppOf || compare.any sub.isAppOf) || args.size < 2 then none else
+      let a := args[args.size - 2]!
+      let b := args[args.size - 1]!
+      let quantum (x : Expr) := x.consumeMData.isConstOf `LeanTex.Core.Dim.Length.quantum
+      let big (x : Expr) := match numeral? x with
+        | some n => n.natAbs ≥ 2
+        | none => false
+      let scaled := scaling.any sub.isAppOf
+      if sub.isAppOf ``HMul.hMul && ((quantum a && large b) || (quantum b && large a)) then
+        some "a large multiple of the quantum"
+      else if (readsUnits false a && big b) || (readsUnits false b && big a) then
+        some "a base-unit count against a numeral"
+      else if (readsUnits true a && (if scaled then large b else big b)) ||
+          (readsUnits true b && (if scaled then large a else big a)) then
+        some "a rational base-unit count against a numeral"
+      else none
+  (e.find? fun sub => (hit sub).isSome).bind hit
+
 /-- Whether a definition of the given arity binds a `let` before a function it returns. -/
 meta def letBeforeLambda (arity : Nat) (value : Expr) : Bool :=
   let (params, body) := lambdas value
@@ -293,6 +380,21 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
       if !unexpected.isEmpty then
         logError m!"proof audit: {name}: {decl} depends on {unexpected}"
         failures := failures + 1
+      let numbered (s pre : String) : Bool :=
+        s.startsWith pre && !(s.drop pre.length).toString.isEmpty &&
+          (s.drop pre.length).toString.all Char.isDigit
+      let generated := (privateToUserName decl).isInternalDetail || match decl with
+        | .str _ s => numbered s "eq_" || s == "eq_def" || s == "splitter" || numbered s "match_"
+        | _ => false
+      if !baseUnitModules.contains name && !generated then
+        if let some info := env.find? decl then
+          let spelled := (baseLiteral info.type).orElse fun _ => match info with
+            | .defnInfo d => baseLiteral d.value
+            | _ => none
+          if let some what := spelled then
+            logError m!"proof audit: {name}: {decl} spells a count of the base unit, {what}; \
+build the length with Dim's unit constructors and read it through Dim's conversions"
+            failures := failures + 1
       if let some (.defnInfo d) := env.find? decl then
         let arity ← liftTermElabM <| withCurrHeartbeats <| Meta.withReducible <|
           Meta.forallTelescopeReducing d.type fun xs _ => pure xs.size

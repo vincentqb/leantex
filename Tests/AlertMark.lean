@@ -74,7 +74,7 @@ def containerChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The mark's ink on a line: every `.decoration .highlight` seg of the
 riders painted before the line, with its left edge and width. -/
 private def marksBefore (lines : Array Layout.LineOut) (i : Nat) :
-    Array (Ir.Color × Dim.Sp × Dim.Sp) := Id.run do
+    Array (Ir.Color × Dim.Length × Dim.Length) := Id.run do
   let mut out := #[]
   let mut j := i
   while j > 0 do
@@ -93,7 +93,7 @@ private def marksBefore (lines : Array Layout.LineOut) (i : Nat) :
 
 /-- The marks under the line setting `word`, or none where no line sets it. -/
 private def marksUnder (lines : Array Layout.LineOut) (word : String) :
-    Option (Array (Ir.Color × Dim.Sp × Dim.Sp)) :=
+    Option (Array (Ir.Color × Dim.Length × Dim.Length)) :=
   (lines.findIdx? fun l => hasStr (lineText l) word).map (marksBefore lines)
 
 /-- Every highlight seg a laid-out document ships. -/
@@ -122,7 +122,7 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
     let marks := marksBefore lines i
     -- The line's runs, each with whether it stands on the mark.
     let grounded := Id.run do
-      let mut out : Array (Dim.Sp × Dim.Sp × Bool) := #[]
+      let mut out : Array (Dim.Length × Dim.Length × Bool) := #[]
       let mut x := lines[i]!.x
       for seg in lines[i]!.segs do
         match seg with
@@ -131,7 +131,7 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
           x := x + w
         | .poly _ _ => pure ()
       return out
-    let covered (x w : Dim.Sp) : Bool := marks.any fun (_, mx, mw) => mx ≤ x && x + w ≤ mx + mw
+    let covered (x w : Dim.Length) : Bool := marks.any fun (_, mx, mw) => mx ≤ x && x + w ≤ mx + mw
     t s!"mark: one mark in the accent, the alert's whole stretch, is painted before its line ({marks.size})"
       (marks.size == 1 && marks.all (·.1 == yellow))
     t "mark: the mark spans the alerted runs and no other"

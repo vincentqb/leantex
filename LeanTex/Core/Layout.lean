@@ -27,23 +27,23 @@ namespace LeanTex.Core.Layout
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Ir
 
-public def frameBodySkip (hasTitle : Bool) (valign : VAlign) (size : Sp) : Sp :=
+public def frameBodySkip (hasTitle : Bool) (valign : VAlign) (size : Length) : Length :=
   (Ir.frameBodySkip hasTitle valign).resolve size 0
 
-public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign) (size : Sp) :
+public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign) (size : Length) :
     frameBodySkip hasTitle valign size = (Ir.frameBodySkip hasTitle valign).resolve size 0 := by
   simp only [frameBodySkip]
 
 public structure Geom where
-  pageW : Sp := pt 612
-  pageH : Sp := pt 792
-  hmargin : Sp := inch 1
-  vmargin : Sp := inch 1
+  pageW : Length := pt 612 -- US letter
+  pageH : Length := pt 792 -- US letter
+  hmargin : Length := inch 1 -- one-inch margins
+  vmargin : Length := inch 1 -- one-inch margins
   /-- The bottom margin where the page declares one apart from the top's. -/
-  bmargin : Option Sp := none
-  fontSize : Sp := Ir.baseFontSize
+  bmargin : Option Length := none
+  fontSize : Length := Ir.baseFontSize
   /-- TeX's `\topskip` (TeXbook ch. 15); `none` on a frame page, which beamer sets as one box. -/
-  topskip : Option Sp := none
+  topskip : Option Length := none
   parskip : SymGlue := Ir.parskipDefault Ir.baseFontSize
   /-- The `\parskip` TeX adds after a trivlist's `\topsep`: the
   declared parskip, else the standard classes' `0pt plus 1pt`. -/
@@ -60,19 +60,19 @@ public structure Geom where
   flushBottom : Bool := false
   penalties : Ir.PagePenalties := {}
   /-- Bleed past the trim edge, for the PDF writer; layout works in trim coordinates. -/
-  bleed : Sp := 0
+  bleed : Length := 0
   /-- Whether the pages ship printer's cut marks (`cutMarks`). -/
   marks : Bool := false
-  markGap : Sp := Ir.cutMarkGap
-  markThick : Sp := Ir.cutMarkThickness
+  markGap : Length := Ir.cutMarkGap
+  markThick : Length := Ir.cutMarkThickness
   /-- The page boxes the document declares, written as declared within the medium. -/
   boxes : Array Ir.PageBox := #[]
   /-- The band a page footer reserves above the bottom margin
   (`furnitureBand`); zero when the margin holds it. -/
-  footBand : Sp := 0
+  footBand : Length := 0
   /-- The band a running head reserves below the top margin
   (`furnitureBand`); zero when the margin holds it. -/
-  headBand : Sp := 0
+  headBand : Length := 0
   /-- The size ladder in force (`Ir.PageSpec.scale`), through which named size runs resolve. -/
   scale : List (String × Nat) := Ir.sizeScale
   /-- The skip column in force (`Ir.PageSpec.skipScale`): each named step's `\baselineskip`. -/
@@ -80,66 +80,89 @@ public structure Geom where
   /-- Whether ragged lines fill first, as LaTeX's `\@flushglue` sets a `\raggedright` scope. -/
   raggedFil : Bool := false
   /-- beamer's `\textheight` on a frame whose pages carry the footline; `none` elsewhere. -/
-  frameTextHeight : Option Sp := none
+  frameTextHeight : Option Length := none
   deriving Repr
 
-public def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
+/-- Ink bounds from four lengths. -/
+@[expose] public def inkBounds (l b r t : Length) : Ink.Bounds := ⟨l.units, b.units, r.units, t.units⟩
 
-public def Geom.bottomMargin (g : Geom) : Sp := g.bmargin.getD g.vmargin
+/-- A size the scale-free math helpers return, read back as a length. -/
+@[expose] public def mathLen (v : Int) : Length := .ofUnits v
 
-public def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.bottomMargin - g.footBand
+private theorem units_eq_zero_iff (a : Length) : a.units = 0 ↔ a = 0 :=
+  ⟨fun h => (Length.ext_iff' _ _).mpr h, fun h => h ▸ rfl⟩
 
-public def Geom.bodyTop (g : Geom) : Sp := g.vmargin + g.headBand
+private theorem mul_zero_div (x : Length) (k : Nat) : x * (0 : Nat) / k = 0 := by
+  length_units
+  simp
+
+/-- A title metric at a leading and cap height. -/
+@[expose] public def metricAt (m : Ir.BlockMetric) (lead cap : Length) : Length :=
+  mathLen (m.resolve lead.units cap.units)
+
+/-- An alignment's share of the slack beside a box. -/
+@[expose] public def slackShare (h : Ir.HAlign) (slack : Length) : Length := mathLen (h.boxOffset slack.units)
+
+/-- A face set's x-height at a size. -/
+@[expose] public def xHeightOf (fs : FontSet) (size : Length) : Length := fs.xHeightAt size
+
+public def Geom.textWidth (g : Geom) : Length := g.pageW - 2 * g.hmargin
+
+public def Geom.bottomMargin (g : Geom) : Length := g.bmargin.getD g.vmargin
+
+public def Geom.bodyBottom (g : Geom) : Length := g.pageH - g.bottomMargin - g.footBand
+
+public def Geom.bodyTop (g : Geom) : Length := g.vmargin + g.headBand
 
 /-- One side's running furniture: `edge` runs from the page edge to its nearest
 ink, and `band` is what its ink and body-side gap need beyond the margin. -/
 public structure FurnBand where
-  edge : Sp
-  band : Sp
+  edge : Length
+  band : Length
   deriving Repr
 
 /-- One side's edge gap: what the margin leaves after the ink
 and a declared gap, floored at zero, else half the margin. -/
-public def furnEdge (vmargin ink : Sp) (gap : Option Sp) : Sp :=
+public def furnEdge (vmargin ink : Length) (gap : Option Length) : Length :=
   match gap with
   | some g => max 0 (vmargin - ink - g)
   | none => vmargin / 2
 
-public def furnitureBand (vmargin ink : Sp) (gap : Option Sp) : FurnBand :=
+public def furnitureBand (vmargin ink : Length) (gap : Option Length) : FurnBand :=
   { edge := furnEdge vmargin ink gap
     band := max 0 (furnEdge vmargin ink gap + ink + gap.getD inkClearance - vmargin) }
 
-public def furnHeadY (b : FurnBand) (ascent : Sp) : Sp := b.edge + ascent
+public def furnHeadY (b : FurnBand) (ascent : Length) : Length := b.edge + ascent
 
-public def furnFootY (b : FurnBand) (pageH descent : Sp) : Sp := pageH - b.edge - descent
+public def furnFootY (b : FurnBand) (pageH descent : Length) : Length := pageH - b.edge - descent
 
 /-- The foot line's baseline under a declared `\footskip`, baseline to
 baseline below the text area's floor (ltpage.dtx, ltoutput.dtx). -/
-public def latexFootY (g : Geom) (footskip : Sp) : Sp := g.bodyBottom + footskip
+public def latexFootY (g : Geom) (footskip : Length) : Length := g.bodyBottom + footskip
 
-private theorem furn_reserves (vm ink req edge : Int) :
+private theorem furn_reserves (vm ink req edge : Length) :
     edge + ink + req ≤ vm + max 0 (edge + ink + req - vm) := by
-  omega
+  length_omega
 
-private theorem furn_reserves_below (pageH vm ink req edge band : Int)
+private theorem furn_reserves_below (pageH vm ink req edge band : Length)
     (h : edge + ink + req ≤ vm + band) :
     pageH - vm - band + ink + req ≤ pageH - edge := by
-  omega
+  length_omega
 
-public theorem furniture_band_reserves (vmargin ink : Sp) (gap : Option Sp) :
+public theorem furniture_band_reserves (vmargin ink : Length) (gap : Option Length) :
     (furnitureBand vmargin ink gap).edge + ink + gap.getD inkClearance
       ≤ vmargin + (furnitureBand vmargin ink gap).band := by
   simp only [furnitureBand]
   exact furn_reserves vmargin ink (gap.getD inkClearance) (furnEdge vmargin ink gap)
 
-public theorem bodyTop_clears_head (g : Geom) (ink : Sp) (gap : Option Sp)
+public theorem bodyTop_clears_head (g : Geom) (ink : Length) (gap : Option Length)
     (h : g.headBand = (furnitureBand g.vmargin ink gap).band) :
     (furnitureBand g.vmargin ink gap).edge + ink + gap.getD inkClearance ≤ g.bodyTop := by
   simp only [Geom.bodyTop]
   rw [h]
   exact furniture_band_reserves g.vmargin ink gap
 
-public theorem bodyBottom_clears_footer (g : Geom) (ink : Sp) (gap : Option Sp)
+public theorem bodyBottom_clears_footer (g : Geom) (ink : Length) (gap : Option Length)
     (h : g.footBand = (furnitureBand g.bottomMargin ink gap).band) :
     g.bodyBottom + ink + gap.getD inkClearance
       ≤ g.pageH - (furnitureBand g.bottomMargin ink gap).edge := by
@@ -149,15 +172,15 @@ public theorem bodyBottom_clears_footer (g : Geom) (ink : Sp) (gap : Option Sp)
     (furnitureBand g.bottomMargin ink gap).edge (furnitureBand g.bottomMargin ink gap).band
     (furniture_band_reserves g.bottomMargin ink gap)
 
-private theorem furn_sides (pageH vm bm a d he hb fe fb : Int) :
+private theorem furn_sides (pageH vm bm a d he hb fe fb : Length) :
     (he + a) - a = he ∧ pageH - ((pageH - fe - d) + d) = fe ∧
     (vm + hb) - ((he + a) + d) = vm + hb - he - a - d ∧
     ((pageH - fe - d) - a) - (pageH - bm - fb) = bm + fb - fe - a - d := by
-  omega
+  length_omega
 
 /-- Each side's furniture stands in its own margin's band: the ink its edge from the page's edge,
 the gap to the body its margin and band less the edge and the ink. -/
-public theorem furniture_sides (g : Geom) (a d : Sp) (hb fb : FurnBand)
+public theorem furniture_sides (g : Geom) (a d : Length) (hb fb : FurnBand)
     (hh : g.headBand = hb.band) (hf : g.footBand = fb.band) :
     furnHeadY hb a - a = hb.edge ∧ g.pageH - (furnFootY fb g.pageH d + d) = fb.edge ∧
     g.bodyTop - (furnHeadY hb a + d) = g.vmargin + hb.band - hb.edge - a - d ∧
@@ -165,7 +188,7 @@ public theorem furniture_sides (g : Geom) (a d : Sp) (hb fb : FurnBand)
   simp only [furnHeadY, furnFootY, Geom.bodyTop, Geom.bodyBottom, hh, hf]
   exact furn_sides g.pageH g.vmargin g.bottomMargin a d hb.edge hb.band fb.edge fb.band
 
-public theorem furniture_symmetric (g : Geom) (a d : Sp) (b : FurnBand)
+public theorem furniture_symmetric (g : Geom) (a d : Length) (b : FurnBand)
     (hh : g.headBand = b.band) (hf : g.footBand = b.band) (hm : g.bottomMargin = g.vmargin) :
     furnHeadY b a - a = g.pageH - (furnFootY b g.pageH d + d) ∧
     g.bodyTop - (furnHeadY b a + d) =
@@ -174,28 +197,28 @@ public theorem furniture_symmetric (g : Geom) (a d : Sp) (b : FurnBand)
   rw [hm] at h4
   exact ⟨h1.trans h2.symm, h3.trans h4.symm⟩
 
-private theorem furn_gap_exact (vm ink g : Int) :
+private theorem furn_gap_exact (vm ink g : Length) :
     (vm + max 0 (max 0 (vm - ink - g) + ink + g - vm))
       - (max 0 (vm - ink - g) + ink) = g := by
-  omega
+  length_omega
 
-public theorem furniture_gap_exact (vmargin ink gap : Sp) :
+public theorem furniture_gap_exact (vmargin ink gap : Length) :
     (vmargin + (furnitureBand vmargin ink (some gap)).band)
       - ((furnitureBand vmargin ink (some gap)).edge + ink) = gap := by
   simp only [furnitureBand, furnEdge, Option.getD]
   exact furn_gap_exact vmargin ink gap
 
 /-- The ink gap of a declared `\headsep`, which LaTeX measures from the header's baseline. -/
-public def furnGapOfSep (sep descent : Sp) : Sp := sep - descent
+public def furnGapOfSep (sep descent : Length) : Length := sep - descent
 
 /-- The inverse of `furnGapOfSep`. -/
-public def furnSepOfGap (gap descent : Sp) : Sp := gap + descent
+public def furnSepOfGap (gap descent : Length) : Length := gap + descent
 
-private theorem furn_roundtrip (sep d vm ink : Int) (h : ink + (sep - d) ≤ vm) :
+private theorem furn_roundtrip (sep d vm ink : Length) (h : ink + (sep - d) ≤ vm) :
     (sep - d) + d = sep ∧ max 0 (vm - ink - (sep - d)) + ink + (sep - d) = vm := by
-  omega
+  length_omega
 
-public theorem geometry_roundtrip (sep descent vmargin ink : Sp)
+public theorem geometry_roundtrip (sep descent vmargin ink : Length)
     (h : ink + furnGapOfSep sep descent ≤ vmargin) :
     furnSepOfGap (furnGapOfSep sep descent) descent = sep ∧
     (furnitureBand vmargin ink (some (furnGapOfSep sep descent))).edge + ink +
@@ -203,80 +226,80 @@ public theorem geometry_roundtrip (sep descent vmargin ink : Sp)
   simp only [furnGapOfSep, furnSepOfGap, furnitureBand, furnEdge] at h ⊢
   exact furn_roundtrip sep descent vmargin ink h
 
-public def Geom.textHeight (g : Geom) : Sp :=
+public def Geom.textHeight (g : Geom) : Length :=
   g.frameTextHeight.getD (g.pageH - g.vmargin - g.bottomMargin)
 
-public def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Sp) : Sp :=
+public def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Length) : Length :=
   match side with
   | .left => Ir.footline.left
   | .right => g.pageW - Ir.footline.right - w
 
-public theorem bandSlotX_right_pinned (g : Geom) (w : Sp) :
+public theorem bandSlotX_right_pinned (g : Geom) (w : Length) :
     bandSlotX g .right w + w = g.pageW - Ir.footline.right := by
-  have key : ∀ a b c : Int, a - b - c + c = a - b := by intro a b c; omega
+  have key : ∀ a b c : Length, a - b - c + c = a - b := by intro a b c; length_omega
   simp only [bandSlotX]
   exact key g.pageW Ir.footline.right w
 
-public def footBaseline (pageH d : Sp) : Sp := pageH - Ir.footline.raise - d
+public def footBaseline (pageH d : Length) : Length := pageH - Ir.footline.raise - d
 
 /-- The floor of a frame's text area, `gap` above a footline
 band whose box stands `h` above and `d` below its baseline. -/
-public def footFloor (pageH gap h d : Sp) : Sp := footBaseline pageH d - h - gap
+public def footFloor (pageH gap h d : Length) : Length := footBaseline pageH d - h - gap
 
-public theorem footFloor_exact (pageH gap h d : Sp) :
+public theorem footFloor_exact (pageH gap h d : Length) :
     footFloor pageH gap h d + gap + h + d + Ir.footline.raise = pageH ∧
       footBaseline pageH d - h - footFloor pageH gap h d = gap := by
-  have key : ∀ H g h d r : Int, H - r - d - h - g + g + h + d + r = H ∧
-      H - r - d - h - (H - r - d - h - g) = g := by intros; omega
+  have key : ∀ H g h d r : Length, H - r - d - h - g + g + h + d + r = H ∧
+      H - r - d - h - (H - r - d - h - g) = g := by intros; length_omega
   exact key pageH gap h d Ir.footline.raise
 
 /-- The floor of a frame's text area: `gap` above the footline box
 where the page carries one, else `gap` above the paper's edge. -/
-public def frameFloor (pageH gap : Sp) : Option (Sp × Sp) → Sp
+public def frameFloor (pageH gap : Length) : Option (Length × Length) → Length
   | some (h, d) => footFloor pageH gap h d
   | none => pageH - gap
 
-public theorem frameFloor_exact (pageH gap : Sp) (box : Option (Sp × Sp)) :
+public theorem frameFloor_exact (pageH gap : Length) (box : Option (Length × Length)) :
     frameFloor pageH gap box + gap +
       (match box with
        | some (h, d) => h + d + Ir.footline.raise
        | none => 0) = pageH := by
   cases box with
   | none =>
-    have key : ∀ H g : Int, H - g + g + 0 = H := by intros; omega
+    have key : ∀ H g : Length, H - g + g + 0 = H := by intros; length_omega
     exact key pageH gap
   | some hd =>
     obtain ⟨h, d⟩ := hd
-    have key : ∀ H g h d r : Int, H - r - d - h - g + g + (h + d + r) = H := by intros; omega
+    have key : ∀ H g h d r : Length, H - r - d - h - g + g + (h + d + r) = H := by intros; length_omega
     exact key pageH gap h d Ir.footline.raise
 
 
 /-- Whether a box `w` wide whose left edge stands at `x` lies on the
 medium, which runs from `-bleed` to `pageW + bleed` in trim space. -/
-public def Geom.onMedium (g : Geom) (x w : Sp) : Bool :=
+public def Geom.onMedium (g : Geom) (x w : Length) : Bool :=
   -g.bleed ≤ x && x + w ≤ g.pageW + g.bleed
 
 /-- How far off the medium a box reaches; zero when it lies on it. -/
-public def Geom.offMedium (g : Geom) (x w : Sp) : Sp :=
+public def Geom.offMedium (g : Geom) (x w : Length) : Length :=
   max 0 (max (x + w - (g.pageW + g.bleed)) (-g.bleed - x))
 
-public theorem offMedium_agree (g : Geom) (x w : Sp) :
+public theorem offMedium_agree (g : Geom) (x w : Length) :
     g.offMedium x w = 0 ↔ g.onMedium x w = true := by
-  have key : ∀ b pw x w : Int,
+  have key : ∀ b pw x w : Length,
       max 0 (max (x + w - (pw + b)) (-b - x)) = 0 ↔
         ((-b ≤ x && x + w ≤ pw + b) = true) := by
     intro b pw x w
     simp only [Bool.and_eq_true, decide_eq_true_eq]
-    omega
+    length_omega
   exact key g.bleed g.pageW x w
 
 public theorem slides_lines_in_band :
     ∀ r ∈ Ir.slidesStages,
-      10 ≤ (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
-      (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
+      (10 : Int) ≤ (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
+      (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ (20 : Int) := by
   decide
 
-public theorem slides_lines_survive_bands (a d f : Sp)
+public theorem slides_lines_survive_bands (a d f : Length)
     (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
     (g : Geom)
     (hg : g.pageH ∈ Ir.slidesStages.map (·.2.2))
@@ -284,32 +307,21 @@ public theorem slides_lines_survive_bands (a d f : Sp)
     (hhb : g.headBand = (furnitureBand g.vmargin (a + d) none).band)
     (hfb : g.footBand = (furnitureBand g.vmargin f none).band) :
     0 < g.bodyBottom - g.bodyTop ∧
-    10 ≤ (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ∧
-    (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ≤ 20 := by
-  have hvm : Ir.slidesVMargin = 1730150 := by decide
-  have hfs : Ir.slidesFontSize = 720896 := by decide
-  have hld : leadingFor Ir.slidesFontSize = 865075 := by decide
-  have hls : inkClearance = 65536 := by decide
+    (10 : Int) ≤ (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ∧
+    (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ≤ (20 : Int) := by
+  have hvm : Ir.slidesVMargin.units = 1730150 := by decide
+  have hfs : Ir.slidesFontSize.units = 720896 := by decide
+  have hld : (leadingFor Ir.slidesFontSize).units = 865075 := by decide
+  have hls : inkClearance.units = 65536 := by decide
   have hrange : ∀ r ∈ Ir.slidesStages,
-      16719420 ≤ r.2.2 ∧ r.2.2 ≤ 19505990 := by decide
-  have ⟨r, hr, heq⟩ := Array.mem_map.mp hg
-  have hH : 16719420 ≤ g.pageH ∧ g.pageH ≤ 19505990 := heq ▸ hrange r hr
-  have key : ∀ a d f hb fb H : Int,
-      a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
-      16719420 ≤ H → H ≤ 19505990 →
-      hb = max 0 (1730150 / 2 + (a + d) + 65536 - 1730150) →
-      fb = max 0 (1730150 / 2 + f + 65536 - 1730150) →
-      0 < H - 1730150 - fb - (1730150 + hb) ∧
-      10 ≤ (H - 1730150 - fb - (1730150 + hb)) / 865075 ∧
-      (H - 1730150 - fb - (1730150 + hb)) / 865075 ≤ 20 := by
-    intro a d f hb fb H hh hf hlo hhi hhb hfb
-    omega
-  rw [hfs] at hh hf
-  simp only [furnitureBand, furnEdge, Option.getD, hls, hv, hvm] at hhb hfb
-  rw [hld]
-  simp only [Geom.bodyBottom, Geom.bodyTop, Geom.bottomMargin, hm, Option.getD_none]
-  rw [hv, hvm]
-  exact key a d f g.headBand g.footBand g.pageH hh hf hH.1 hH.2 hhb hfb
+      16719420 ≤ r.2.2.units ∧ r.2.2.units ≤ 19505990 := by decide
+  obtain ⟨r, hr, heq⟩ := Array.mem_map.mp hg
+  have hH : 16719420 ≤ g.pageH.units ∧ g.pageH.units ≤ 19505990 := heq ▸ hrange r hr
+  simp only [furnitureBand, furnEdge, Option.getD, hv] at hhb hfb
+  simp only [Geom.bodyBottom, Geom.bodyTop, Geom.bottomMargin, hm, Option.getD_none, hv]
+  length_units
+  simp only [hvm, hfs, hld, hls] at *
+  omega
 
 /-- How a page distributes its leftover vertical space: thousandths of a fil
 above and below the content, and whether a body `\vfill` joins them (`joins`). -/
@@ -326,12 +338,12 @@ public def VDist.golden : VDist := ⟨3618, 2000, false⟩
 
 /-- The shift of a line with `k` of its page's `n` fil units above it,
 as a share of the leftover; content taller than the area stays put. -/
-public def filShare (leftover : Sp) (k n : Nat) : Sp :=
+public def filShare (leftover : Length) (k n : Nat) : Length :=
   if leftover ≤ 0 then 0
   else if n = 0 then 0
   else leftover * k / n
 
-public theorem filShare_sound (l : Sp) (k k' n : Nat) (hk : k ≤ k') (hk' : k' ≤ n) :
+public theorem filShare_sound (l : Length) (k k' n : Nat) (hk : k ≤ k') (hk' : k' ≤ n) :
     0 ≤ filShare l k n ∧ (0 ≤ l → filShare l k' n ≤ l) ∧
     filShare l k n ≤ filShare l k' n := by
   unfold filShare
@@ -340,53 +352,51 @@ public theorem filShare_sound (l : Sp) (k k' n : Nat) (hk : k ≤ k') (hk' : k' 
   · by_cases hn : n = 0
     · simp [hl, hn]
     · have hnn : (0 : Int) < (n : Int) := by exact_mod_cast Nat.pos_of_ne_zero hn
-      have hl0 : (0 : Int) < l := Int.not_le.mp hl
+      have hl0 : (0 : Int) < l.units := by length_omega
       simp only [hl, hn, ite_false]
+      length_units
       refine ⟨?_, fun _ => ?_, ?_⟩
       · exact Int.ediv_nonneg (Int.mul_nonneg (by omega) (Int.natCast_nonneg _)) (by omega)
-      · calc l * (k' : Int) / (n : Int)
-            ≤ l * (n : Int) / (n : Int) :=
+      · calc l.units * (k' : Int) / (n : Int)
+            ≤ l.units * (n : Int) / (n : Int) :=
               Int.ediv_le_ediv hnn
                 (Int.mul_le_mul_of_nonneg_left (by exact_mod_cast hk') (by omega))
-          _ = l := Int.mul_ediv_cancel l (by omega)
+          _ = l.units := Int.mul_ediv_cancel _ (by omega)
       · exact Int.ediv_le_ediv hnn
           (Int.mul_le_mul_of_nonneg_left (by exact_mod_cast hk) (by omega))
 
-public def VDist.aboveShare (d : VDist) (leftover : Sp) : Sp :=
+public def VDist.aboveShare (d : VDist) (leftover : Length) : Length :=
   filShare leftover d.above (d.above + d.below)
 
-public theorem VDist.split_exact (d : VDist) (l : Int) :
+public theorem VDist.split_exact (d : VDist) (l : Length) :
     0 ≤ d.aboveShare l ∧ (0 ≤ l → d.aboveShare l ≤ l) ∧
     d.aboveShare l + (l - d.aboveShare l) = l := by
   have h := filShare_sound l d.above d.above (d.above + d.below)
     (Nat.le_refl _) (Nat.le_add_right _ _)
-  have hcancel : ∀ x y : Int, x + (y - x) = y := by omega
+  have hcancel : ∀ x y : Length, x + (y - x) = y := by intro x y; length_omega
   exact ⟨h.1, h.2.1, hcancel _ _⟩
 
-public theorem VDist.center_is_halving (l : Sp) :
+public theorem VDist.center_is_halving (l : Length) :
     VDist.center.aboveShare l = if l ≤ 0 then 0 else l / 2 := by
   unfold aboveShare filShare center
   split
   · rfl
-  · have h1 : ((1000 : Nat) : Int) = 1000 := rfl
-    have h2 : ((1000 + 1000 : Nat) : Int) = 2000 := rfl
-    have hn : (1000 + 1000 : Nat) = 0 ↔ False := by decide
-    have key : ∀ x : Int, x * 1000 / 2000 = x / 2 := by intro x; omega
-    simp only [hn, ite_false, h1, h2]
-    exact key l
+  · have hn : (1000 + 1000 : Nat) = 0 ↔ False := by decide
+    simp only [hn, ite_false]
+    length_omega
 
-public theorem filShare_half_exact (l : Sp) : filShare l 1 2 = VDist.center.aboveShare l := by
+public theorem filShare_half_exact (l : Length) : filShare l 1 2 = VDist.center.aboveShare l := by
   rw [VDist.center_is_halving]
   unfold filShare
-  split <;> simp
+  split <;> (try simp) ; length_omega
 
-public theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
+public theorem VDist.center_split_exact (l : Length) (h : 0 ≤ l) :
     VDist.center.aboveShare l ≤ l - VDist.center.aboveShare l ∧
-      l - VDist.center.aboveShare l ≤ VDist.center.aboveShare l + 1 := by
-  have key : ∀ x s : Int, 0 ≤ x → s = (if x ≤ 0 then 0 else x / 2) →
-      s ≤ x - s ∧ x - s ≤ s + 1 := by
+      l - VDist.center.aboveShare l ≤ VDist.center.aboveShare l + Length.quantum := by
+  have key : ∀ x s : Length, 0 ≤ x → s = (if x ≤ 0 then 0 else x / 2) →
+      s ≤ x - s ∧ x - s ≤ s + Length.quantum := by
     intro x s hx hs
-    split at hs <;> omega
+    split at hs <;> length_omega
   exact key l _ h (VDist.center_is_halving l)
 
 /-- The distribution a frame's declaration names under
@@ -468,18 +478,18 @@ public structure ActiveDecorations where
 above the baseline, and `thickness` grows upward from it. -/
 public structure DecorationRule where
   color : Ir.Color := Ir.Color.black
-  thickness : Sp := 0
-  raise : Sp := 0
+  thickness : Length := 0
+  raise : Length := 0
   deriving Repr, BEq, Inhabited
 
 /-- Dotted leaders as TeX's `\leaders` sets them: in each box of `box` its gap holds whole a dot,
 the face's full stop's ink as a polygon from the box's edge, the boxes aligned from the line box's
 left edge, which stands `reach` before the gap's end. -/
 public structure LeaderPaint where
-  dot : Array (Sp × Sp)
+  dot : Array (Length × Length)
   color : Ir.Color
-  box : Sp
-  reach : Sp
+  box : Length
+  reach : Length
   deriving Repr, BEq, Inhabited
 
 /-- The decoration slots of runs and spaces: runs defer underline resolution
@@ -495,47 +505,47 @@ public structure Decorations (U : Type := Bool) [Inhabited U] where
 /-- An inline formula's ambient text metrics at `size`
 and its signed outline bounds before the run's raise. -/
 public structure MathLineMetrics where
-  size : Sp
-  ascent : Sp
-  descent : Sp
-  top : Sp
-  bottom : Sp
+  size : Length
+  ascent : Length
+  descent : Length
+  top : Length
+  bottom : Length
   deriving Repr, BEq, Inhabited
 
 /-- A run's line metrics: its face's leaded box, or for math
 the ambient text box with the formula's measured bounds. -/
 public structure RunMetrics where
-  leading : Option Sp := none
+  leading : Option Length := none
   math : Option MathLineMetrics := none
   /-- The height and depth a box declares in place of the run's own (`Ir.InlineBox.height`). -/
-  extent : Option (Sp × Sp) := none
+  extent : Option (Length × Length) := none
   /-- The run sets at its natural width, an `\hbox`'s content TeX packs before its line: font
   expansion leaves it be. -/
   fixed : Bool := false
   deriving Repr, BEq, Inhabited
 
 public inductive Item where
-  | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (metrics : RunMetrics)
-      (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+  | box (w : Length) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+      (glyphs : Array (Nat × Char × Length)) (size : Length) (metrics : RunMetrics)
+      (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
       (attr : Attribution)
   | glue (g : Glue)
   /-- Breakable authored glue with resolved decoration bands. -/
   | decoratedGlue (g : Glue) (decorations : Decorations (Option DecorationRule))
-  | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
-      (glyphs : Array (Nat × Char × Sp))
+  | pen (w : Length) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
+      (glyphs : Array (Nat × Char × Length))
   /-- An unbreakable image box `w` wide standing `h` above the baseline plus `raise`; `store` indexes
   the `Image.Store`, `none` places a placeholder, and `ink` false ships nothing in its box. -/
-  | img (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool) (raise : Sp)
+  | img (store : Option Nat) (w : Length) (h : Length) (ink : Bool) (raise : Length)
   /-- A horizontal rule `w` wide and `thickness` tall, its
   bottom at the baseline plus `raise`; never a breakpoint. -/
-  | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
+  | rule (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color)
   /-- A filled polygon taking no width, its points from where
   it stands and the baseline, y up; never a breakpoint. -/
-  | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
+  | poly (pts : Array (Length × Length)) (color : Ir.Color)
   /-- A band `w` wide and `thickness` tall painted under the line's text, its bottom at the
   baseline plus `raise`: a box's ground; never a breakpoint. -/
-  | mark (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
+  | mark (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color)
   deriving Repr, Inhabited
 
 private def Item.boxChars : Item → List Char
@@ -572,25 +582,25 @@ public def cellCodeBreak (_prev : Option Char) (c : Char) (next : Option Char) :
 public inductive Seg where
   /-- A glyph run: each glyph carries its laid-out advance, `raise` lifts the
   run's baseline, and `attr` names the structure leaf its ink stands for. -/
-  | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (metrics : RunMetrics)
-      (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+  | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Length)
+      (glyphs : Array (Nat × Char × Length)) (size : Length) (metrics : RunMetrics)
+      (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
       (attr : Attribution)
   /-- Horizontal space; `word` marks glue from `interword`,
   a space between two words of one leaf's text. -/
-  | gap (w : Sp) (word : Bool)
+  | gap (w : Length) (word : Bool)
   /-- A set interword or authored gap retaining both decoration bands. -/
-  | decoratedGap (w : Sp) (word : Bool) (decorations : Decorations (Option DecorationRule))
+  | decoratedGap (w : Length) (word : Bool) (decorations : Decorations (Option DecorationRule))
   /-- A text-decoration rule, painted as a generic rule and kept apart by its kind. -/
-  | decoration (kind : Ir.Decoration) (w : Sp) (thickness : Sp) (raise : Sp)
+  | decoration (kind : Ir.Decoration) (w : Length) (thickness : Length) (raise : Length)
       (color : Ir.Color)
   /-- A horizontal rule `w` wide and `thickness` thick, on the baseline plus `raise`. -/
-  | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
+  | rule (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color)
   /-- An image box standing `h` up from the baseline plus `raise`; `store` indexes the backends'
   `Image.Store`, an entry that did not load renders as a placeholder, and `ink` false ships nothing. -/
-  | image (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool) (raise : Sp)
+  | image (store : Option Nat) (w : Length) (h : Length) (ink : Bool) (raise : Length)
   /-- A filled polygon with no width, its points from the pen position and the baseline, y up. -/
-  | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
+  | poly (pts : Array (Length × Length)) (color : Ir.Color)
   deriving Repr, Inhabited
 
 public def Seg.glyphChars : Seg → List Char
@@ -598,16 +608,16 @@ public def Seg.glyphChars : Seg → List Char
   | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => []
 
 public structure LineOut where
-  x : Sp
-  y : Sp
-  size : Sp
+  x : Length
+  y : Length
+  size : Length
   segs : Array Seg
-  setWidth : Sp
+  setWidth : Length
   /-- Baseline-relative extent measured by the placer. -/
-  regionExtent : Option (Sp × Sp) := none
+  regionExtent : Option (Length × Length) := none
   /-- How far the line's first glyph hangs left of the measure
   (character protrusion); `x + hang` is the measure edge. -/
-  hang : Sp := 0
+  hang : Length := 0
   /-- The line's font-expansion factor in per-mille, already applied to every run's width. -/
   expand : Int := 0
   /-- Whether the line is engine-placed running furniture in a margin band. -/
@@ -625,7 +635,7 @@ public structure LineOut where
   pictureLabel : Option LabelAudit.Stamp := none
   /-- How far below its own baseline the line's last baseline
   stands; nonzero only for a display alignment's rows. -/
-  lastBase : Sp := 0
+  lastBase : Length := 0
   /-- Placed by hidden overlay content: the line keeps its place and ships no ink. -/
   hidden : Bool := false
   deriving Repr, Inhabited
@@ -633,10 +643,10 @@ public structure LineOut where
 /-- A filled rectangle behind a page's text, its top-left
 corner at `x`, `y` in layout coordinates (y down). -/
 public structure Fill where
-  x : Sp
-  y : Sp
-  w : Sp
-  h : Sp
+  x : Length
+  y : Length
+  w : Length
+  h : Length
   color : Ir.Color
   deriving Repr, Inhabited
 
@@ -651,7 +661,7 @@ public def effectivePageGround (page epoch : Option Ir.Color) : Option Ir.Color 
 
 /-- The eight printer's cut marks of a `trimW × trimH` trim, each
 extending a trim line into the bleed and ending `gap` before the trim. -/
-public def cutMarks (trimW trimH bleed gap thick : Sp) (color : Ir.Color) : Array Fill :=
+public def cutMarks (trimW trimH bleed gap thick : Length) (color : Ir.Color) : Array Fill :=
   let hw := thick / 2
   let len := bleed - gap
   #[
@@ -664,30 +674,16 @@ public def cutMarks (trimW trimH bleed gap thick : Sp) (color : Ir.Color) : Arra
     ⟨-bleed, trimH - hw, len, 2 * hw, color⟩,
     ⟨trimW + gap, trimH - hw, len, 2 * hw, color⟩]
 
-private theorem cutmarks_trim_arith (W H t : Int) :
-    2 * -(t / 2) + 2 * (t / 2) = 0 ∧
-    2 * (W - t / 2) + 2 * (t / 2) = 2 * W ∧
-    2 * (H - t / 2) + 2 * (t / 2) = 2 * H := by omega
-
-public theorem cutmarks_on_trim_exact (W H b g t : Int) (c : Ir.Color) :
+public theorem cutmarks_on_trim_exact (W H b g t : Length) (c : Ir.Color) :
     ∀ f ∈ cutMarks W H b g t c,
       2 * f.x + f.w = 0 ∨ 2 * f.x + f.w = 2 * W ∨
       2 * f.y + f.h = 0 ∨ 2 * f.y + f.h = 2 * H := by
   intro f hf
-  have h := cutmarks_trim_arith W H t
   simp only [cutMarks, List.mem_toArray, List.mem_cons, List.not_mem_nil,
     or_false] at hf
-  rcases hf with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
-  · exact Or.inl h.1
-  · exact Or.inl h.1
-  · exact Or.inr (Or.inl h.2.1)
-  · exact Or.inr (Or.inl h.2.1)
-  · exact Or.inr (Or.inr (Or.inl h.1))
-  · exact Or.inr (Or.inr (Or.inl h.1))
-  · exact Or.inr (Or.inr (Or.inr h.2.2))
-  · exact Or.inr (Or.inr (Or.inr h.2.2))
+  rcases hf with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> length_omega
 
-private theorem cutmarks_bleed_arith (W H b g t : Int)
+private theorem cutmarks_bleed_arith (W H b g t : Length)
     (hW : 0 ≤ W) (hH : 0 ≤ H) (hg : 0 ≤ g) (hgb : g ≤ b) (htg : t ≤ 2 * g) :
     ((-b ≤ -(t / 2) ∧ -(t / 2) + 2 * (t / 2) ≤ W + b ∧
       -b ≤ -b ∧ -b + (b - g) ≤ H + b) ∧ -b + (b - g) ≤ 0) ∧
@@ -705,9 +701,9 @@ private theorem cutmarks_bleed_arith (W H b g t : Int)
       -b ≤ H - t / 2 ∧ H - t / 2 + 2 * (t / 2) ≤ H + b) ∧ -b + (b - g) ≤ 0) ∧
     ((-b ≤ W + g ∧ W + g + (b - g) ≤ W + b ∧
       -b ≤ H - t / 2 ∧ H - t / 2 + 2 * (t / 2) ≤ H + b) ∧ W ≤ W + g) := by
-  omega
+  length_omega
 
-public theorem cutmarks_in_bleed_covers (W H b g t : Int) (c : Ir.Color)
+public theorem cutmarks_in_bleed_covers (W H b g t : Length) (c : Ir.Color)
     (hW : 0 ≤ W) (hH : 0 ≤ H) (hg : 0 ≤ g) (hgb : g ≤ b) (htg : t ≤ 2 * g) :
     ∀ f ∈ cutMarks W H b g t c,
       (-b ≤ f.x ∧ f.x + f.w ≤ W + b ∧ -b ≤ f.y ∧ f.y + f.h ≤ H + b) ∧
@@ -726,12 +722,12 @@ public theorem cutmarks_in_bleed_covers (W H b g t : Int) (c : Ir.Color)
   · exact ⟨h.2.2.2.2.2.2.1.1, Or.inl h.2.2.2.2.2.2.1.2⟩
   · exact ⟨h.2.2.2.2.2.2.2.1, Or.inr (Or.inl h.2.2.2.2.2.2.2.2)⟩
 
-private theorem cutmarks_flip_arith (W b g d : Int) :
+private theorem cutmarks_flip_arith (W b g d : Length) :
     W - d = W - -d - 2 * d ∧ -d = W - (W - d) - 2 * d ∧
     W + g = W - -b - (b - g) ∧ -b = W - (W + g) - (b - g) := by
-  omega
+  length_omega
 
-public theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
+public theorem cutmarks_symmetric_mem (W H b g t : Length) (c : Ir.Color) :
     ∀ f ∈ cutMarks W H b g t c,
       ∃ f' ∈ cutMarks W H b g t c,
         f'.x = W - f.x - f.w ∧ f'.y = f.y ∧ f'.w = f.w ∧ f'.h = f.h := by
@@ -798,22 +794,22 @@ public structure InkOut where
   anchors : Array String := #[]
   deriving Repr, Inhabited
 
-@[expose] public def InkOut.shiftY (d : Sp) (k : InkOut) : InkOut :=
+@[expose] public def InkOut.shiftY (d : Length) (k : InkOut) : InkOut :=
   { k with place := { k.place with dy := k.place.dy + d } }
 
-@[expose] public def InkOut.shiftX (d : Sp) (k : InkOut) : InkOut :=
+@[expose] public def InkOut.shiftX (d : Length) (k : InkOut) : InkOut :=
   { k with place := { k.place with dx := k.place.dx + d } }
 
 public theorem InkOut.shiftY_zero_id (k : InkOut) : k.shiftY 0 = k := by
   simp [InkOut.shiftY]
 
-public theorem InkOut.shiftY_add_exact (k : InkOut) (a b : Sp) :
+public theorem InkOut.shiftY_add_exact (k : InkOut) (a b : Length) :
     (k.shiftY a).shiftY b = k.shiftY (a + b) := by
-  simp [InkOut.shiftY, Int.add_assoc]
+  simp [InkOut.shiftY, Length.add_assoc]
 
-public theorem InkOut.shiftY_cancel_id (k : InkOut) (d : Sp) :
+public theorem InkOut.shiftY_cancel_id (k : InkOut) (d : Length) :
     (k.shiftY d).shiftY (-d) = k := by
-  rw [shiftY_add_exact, Int.add_right_neg, shiftY_zero_id]
+  rw [shiftY_add_exact, show d + -d = 0 by length_omega, shiftY_zero_id]
 
 /-- The page boxes an ink's marks claim: each geometry's control hull
 through its frame and placement, padded by half its stroke width. -/
@@ -827,16 +823,16 @@ public def InkOut.claims (k : InkOut) : Array Gfx.Box :=
     | .shading _ _ _ => none
 
 /-- An ink's top-left corner on the page, over the boxes its marks claim, else its placement. -/
-public def InkOut.topLeft (k : InkOut) : Sp × Sp :=
+public def InkOut.topLeft (k : InkOut) : Length × Length :=
   match k.claims[0]? with
   | some b0 => k.claims.foldl (fun (x, y) b => (min x b.1.1, min y b.1.2)) (b0.1.1, b0.1.2)
   | none => (k.place.dx, k.place.dy)
 
 public structure LinkRect where
-  x : Sp
-  y : Sp
-  w : Sp
-  h : Sp
+  x : Length
+  y : Length
+  w : Length
+  h : Length
   target : String
   deriving Repr, BEq, Inhabited
 
@@ -916,7 +912,7 @@ measure: its rank, where it opens, and how far past. -/
 public structure Overrun where
   rank : Nat := 0
   site : Option Span := none
-  excess : Sp := 0
+  excess : Length := 0
   deriving Repr, Inhabited
 
 /-- One declared line that re-flowed: its rank among the paragraph's declared
@@ -1038,7 +1034,7 @@ public structure PageOut where
   foot : Option (Array Ir.BandSlot) := none
   /-- The chrome footer's box, its height above and depth below the
   baseline, measured where the page was built; `none` where `foot` is. -/
-  footBox : Option (Sp × Sp) := none
+  footBox : Option (Length × Length) := none
   /-- The text area the page was built in (`FrameOpening.area`). -/
   frameArea : FrameArea := .margins
   /-- The footer's resolved colour pair from the frame's palette epoch. -/
@@ -1052,7 +1048,7 @@ public structure PageOut where
   among, one per run of fill glue between two boxes. -/
   fils : Nat := 0
   /-- The bottom edge of the page-top chrome bar, when one painted. -/
-  band : Option Sp := none
+  band : Option Length := none
   /-- What hidden overlay content placed, which keeps its place and ships nothing (`shipped`). -/
   hidden : PageHidden := {}
   /-- The anchors a page with no line stands at its top. -/
@@ -1245,10 +1241,10 @@ public structure Out where
   paragraphBreaks : Array ParagraphBreaks := #[]
   /-- Per overlay step of a frame the overflow ladder marked: how far its content
   reached past its text area, and the least gap above its footline its pages left. -/
-  overruns : Array (FrameOrigin × Sp × Sp) := #[]
+  overruns : Array (FrameOrigin × Length × Length) := #[]
   /-- Per marked overlay step whose page could not set it at its glue's
   natural size: the largest distance its content stood past the floor. -/
-  needs : Array (FrameOrigin × Sp) := #[]
+  needs : Array (FrameOrigin × Length) := #[]
   /-- The marked overlay steps that continued on a next page, each once. -/
   spilled : Array FrameOrigin := #[]
   /-- The document outline, one entry per unpinned-nav link in document order. -/
@@ -1377,7 +1373,7 @@ public structure TextStyle where
   hidden : Bool := false
   /-- Where a filling `\hspace` sets dotted leaders: how far before its end the line box's left
   edge stands. -/
-  leaderReach : Option Sp := none
+  leaderReach : Option Length := none
   /-- Inside an unbreakable box (`Ir.Inline.boxed`): no break, hyphen or stretch within it. -/
   boxed : Bool := false
   deriving Repr, BEq, Inhabited
@@ -1513,7 +1509,7 @@ private structure FlattenSt where
   ladder : List (String × Nat) := Ir.sizeScale
   /-- Internal title-part roles whose size and optional
   baseline skip are resolved at the slot boundary. -/
-  roleMetrics : List (String × (Sp × Option Sp)) := []
+  roleMetrics : List (String × (Length × Option Length)) := []
   ctr : LeafCtr := .fixed .unattributed
   /-- The overlay step this page sets, which `Ir.altShowsFirst` reads; 1 on unstepped pages. -/
   step : Nat := 1
@@ -1611,8 +1607,8 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
     { sty with fontSize := some size, leading := some leading, step := none }
 
 /-- The leading the style's named size step sets on `base` (`Ir.stepLead`); `none` under no step. -/
-private def TextStyle.stepLead (sty : TextStyle) (skips : List (String × Nat)) (base : Sp) :
-    Option Sp :=
+private def TextStyle.stepLead (sty : TextStyle) (skips : List (String × Nat)) (base : Length) :
+    Option Length :=
   sty.step.bind (Ir.stepLead skips · base)
 
 private theorem weight_agree (ladder : List (String × Nat)) (sty : TextStyle)
@@ -1688,8 +1684,8 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       | some (size, leading) =>
         flatten mathOk noteOk st
           { sty with
-            fontSize := some (.lit { width := Dim.Length.ofSp size })
-            leading := leading.map fun l => .lit { width := Dim.Length.ofSp l } }
+            fontSize := some (.lit { width := Dim.SymLength.ofLength size })
+            leading := leading.map fun l => .lit { width := Dim.SymLength.ofLength l } }
           body
       | none => flatten mathOk noteOk st sty body
   | .link url body => flatten mathOk noteOk st (sty.linked url) body
@@ -2032,31 +2028,31 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
 
 end
 
-private def scaledAt (size : Sp) (font : Font) (units : Nat) : Sp :=
-  (units * size.toNat) / font.unitsPerEm
+private def scaledAt (size : Length) (font : Font) (units : Nat) : Length :=
+  units * max 0 size / font.unitsPerEm
 
-private def glyphOf (size : Sp) (font : Font) (c : Char) : Option (Nat × Char × Sp) :=
+private def glyphOf (size : Length) (font : Font) (c : Char) : Option (Nat × Char × Length) :=
   match font.gid c with
   | some g => some (g, c, scaledAt size font (font.widths[g]?.getD 0))
   | none => none
 
 /-- `glyphOf` through the face's small-caps substitution
 when the run is small caps; the char stays as typed. -/
-private def glyphOfSc (smallcaps : Bool) (size : Sp) (font : Font) (c : Char) :
-    Option (Nat × Char × Sp) :=
+private def glyphOfSc (smallcaps : Bool) (size : Length) (font : Font) (c : Char) :
+    Option (Nat × Char × Length) :=
   (font.gid c).map fun g0 =>
     let g := if smallcaps then font.smallCapGid g0 else g0
     (g, c, scaledAt size font (font.widths[g]?.getD 0))
 
-public def hyphenGlyph (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
+public def hyphenGlyph (size : Length) (font : Font) : Array (Nat × Char × Length) :=
   match glyphOf size font '-' with
   | some g => #[g]
   | none => #[]
 
-public def boxWidth (box : Array (Nat × Char × Sp)) : Sp :=
+public def boxWidth (box : Array (Nat × Char × Length)) : Length :=
   box.foldl (fun w g => w + g.2.2) 0
 
-public theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char × Sp) :
+public theorem boxWidth_push (xs : Array (Nat × Char × Length)) (a : Nat × Char × Length) :
     boxWidth (xs.push a) = boxWidth xs + a.2.2 := by
   unfold boxWidth
   rw [Array.foldl_push]
@@ -2065,26 +2061,26 @@ public theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char �
 
 /-- A face's pair kern between two glyphs at `size`; 0
 when kerning is off or the face has no kern data. -/
-public def pairKern (features : Ir.Features) (size : Sp) (font : Font) (g1 g2 : Nat) : Sp :=
+public def pairKern (features : Ir.Features) (size : Length) (font : Font) (g1 g2 : Nat) : Length :=
   (if kernEnabled features then font.kernAdv g1 g2 else 0) * size /
     (font.unitsPerEm : Int)
 
 /-- A glyph's pair kern with its face's space glyph at
 `size`: `(g, space)` when `after`, else `(space, g)`. -/
-public def spacePairKern (features : Ir.Features) (size : Sp) (font : Font)
-    (after : Bool) (g : Nat) : Sp :=
+public def spacePairKern (features : Ir.Features) (size : Length) (font : Font)
+    (after : Bool) (g : Nat) : Length :=
   (if kernEnabled features then font.spaceKernAdv after g else 0) * size /
     (font.unitsPerEm : Int)
 
 /-- The scaled pair kern the next glyph owes against the box's last; 0 at a box head. -/
-public def kernVal (features : Ir.Features) (size : Sp) (font : Font)
-    (box : Array (Nat × Char × Sp)) (g1 : Nat) : Sp :=
+public def kernVal (features : Ir.Features) (size : Length) (font : Font)
+    (box : Array (Nat × Char × Length)) (g1 : Nat) : Length :=
   match box.back? with
   | some (pg, _, _) => pairKern features size font pg g1
   | none => 0
 
 /-- Apply a pair kern to the box's last glyph's advance. -/
-public def kernApply (box : Array (Nat × Char × Sp)) (ks : Sp) : Array (Nat × Char × Sp) :=
+public def kernApply (box : Array (Nat × Char × Length)) (ks : Length) : Array (Nat × Char × Length) :=
   match box.back? with
   | some (pg, pc, padv) => box.pop.push (pg, pc, padv + ks)
   | none => box
@@ -2103,7 +2099,7 @@ private theorem back?_pop_push {α : Type} (xs : Array α) (a : α)
   rw [Option.some_inj.mp hg] at this
   exact this.symm
 
-private theorem kernApply_sourceChars (box : Array (Nat × Char × Sp)) (ks : Sp) :
+private theorem kernApply_sourceChars (box : Array (Nat × Char × Length)) (ks : Length) :
     (kernApply box ks).toList.map (·.2.1) = box.toList.map (·.2.1) := by
   cases hb : box.back? with
   | none => simp [kernApply, hb]
@@ -2116,8 +2112,8 @@ private theorem kernApply_sourceChars (box : Array (Nat × Char × Sp)) (ks : Sp
     rw [hc]
     simp [kernApply, hb]
 
-public theorem kern_measure_exact (box : Array (Nat × Char × Sp))
-    (ks : Sp) (g : Nat × Char × Sp) (h : box.back?.isSome) :
+public theorem kern_measure_exact (box : Array (Nat × Char × Length))
+    (ks : Length) (g : Nat × Char × Length) (h : box.back?.isSome) :
     boxWidth ((kernApply box ks).push g) = boxWidth box + ks + g.2.2 := by
   cases hb : box.back? with
   | none => simp [hb] at h
@@ -2133,7 +2129,7 @@ public theorem kern_measure_exact (box : Array (Nat × Char × Sp))
     rw [boxWidth_push, boxWidth_push, hw]
     change boxWidth box.pop + (padv + ks) + g.2.2
       = boxWidth box.pop + padv + ks + g.2.2
-    rw [Int.add_assoc (boxWidth box.pop) padv ks]
+    rw [Length.add_assoc (boxWidth box.pop) padv ks]
 
 /-- Fixed-width spaces as a fraction of the em, set as kerns rather than looked up as glyphs. -/
 public def fixedSpace (c : Char) : Option (Nat × Nat) :=
@@ -2198,11 +2194,11 @@ private theorem scalarLoop_range_census {β γ : Type} (read : β → List γ)
 
 /-- Flush the shaped buffer, keeping each ownership fragment and its expansion origin. -/
 private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
-    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
-    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
-    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp) :
-    Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) := Id.run do
+    (size : Length) (leading : Option Length) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Length)
+    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Length))
+    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Length) :
+    Array Item × Std.HashMap Nat Length × Array (Nat × Nat) := Id.run do
   if box.isEmpty then return (items, offsets, sources)
   let first := boxOwners[0]?.getD attr
   if boxOwners.all (· == first) then
@@ -2234,10 +2230,10 @@ private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
     offsets, sources)
 
 private theorem flushWord_boxChars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
-    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
-    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
-    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp) :
+    (size : Length) (leading : Option Length) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Length)
+    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Length))
+    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Length) :
     (flushWord fontIdx color link size leading decorations ground attr items offsets sources
       box boxOwners boxSources w).1.toList.flatMap Item.boxChars =
       items.toList.flatMap Item.boxChars ++ box.toList.map (·.2.1) := by
@@ -2250,20 +2246,20 @@ private theorem flushWord_boxChars (fontIdx : Nat) (color : Ir.Color) (link : Op
   · split
     · simp [Item.boxChars]
     · apply Loop.bind_of_inv
-        (P := fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
-            Sp × Array (Nat × Char × Sp) × Sp × Attribution =>
+        (P := fun st : Array Item × Std.HashMap Nat Length × Array (Nat × Nat) ×
+            Length × Array (Nat × Char × Length) × Length × Attribution =>
           st.1.toList.flatMap Item.boxChars ++ st.2.2.2.2.1.toList.map (·.2.1) =
             items.toList.flatMap Item.boxChars ++ box.toList.map (·.2.1))
-        (Q := fun out : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) =>
+        (Q := fun out : Array Item × Std.HashMap Nat Length × Array (Nat × Nat) =>
           out.1.toList.flatMap Item.boxChars =
             items.toList.flatMap Item.boxChars ++ box.toList.map (·.2.1))
       · refine Eq.trans (b := items.toList.flatMap Item.boxChars ++ [] ++
           box.zipIdx.toList.flatMap (fun x => [x.1.2.1])) ?_ ?_
         · apply scalarLoop_array_census
-            (fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
-                Sp × Array (Nat × Char × Sp) × Sp × Attribution =>
+            (fun st : Array Item × Std.HashMap Nat Length × Array (Nat × Nat) ×
+                Length × Array (Nat × Char × Length) × Length × Attribution =>
               st.1.toList.flatMap Item.boxChars ++ st.2.2.2.2.1.toList.map (·.2.1))
-            (fun x : (Nat × Char × Sp) × Nat => [x.1.2.1])
+            (fun x : (Nat × Char × Length) × Nat => [x.1.2.1])
           intro x _ st
           rcases st with ⟨is, os, ss, off, run, rw, owner⟩
           dsimp only
@@ -2275,7 +2271,7 @@ private theorem flushWord_boxChars (fontIdx : Nat) (color : Ir.Color) (link : Op
         · simp only [List.append_nil, Array.toList_zipIdx, ← List.map_eq_flatMap]
           congr 1
           simpa only [List.map_map, Function.comp_def] using
-            congrArg (List.map (fun x : Nat × Char × Sp => x.2.1))
+            congrArg (List.map (fun x : Nat × Char × Length => x.2.1))
               (List.zipIdx_map_fst 0 box.toList)
       · intro st hst
         split <;> simpa [Item.boxChars] using hst
@@ -2324,8 +2320,8 @@ private theorem cursorLoop_range_complete {β : Type} (P : β → Prop) (pos : �
     simp [Std.Legacy.Range.size] at hj he
     omega
 
-private theorem glyphOfSc_char (sc : Bool) (size : Sp) (font : Font)
-    (c : Char) (g : Nat × Char × Sp) (h : glyphOfSc sc size font c = some g) :
+private theorem glyphOfSc_char (sc : Bool) (size : Length) (font : Font)
+    (c : Char) (g : Nat × Char × Length) (h : glyphOfSc sc size font c = some g) :
     g.2.1 = c := by
   unfold glyphOfSc at h
   cases hg : font.gid c <;> simp only [hg, Option.map_none, Option.map_some] at h
@@ -2455,12 +2451,12 @@ private theorem cleanLoop_array_census {α β γ : Type} (Clean : β → Prop) (
 buffered glyphs; loss ledgers survive every flush. -/
 private structure WordAcc where
   items : Array Item := #[]
-  offsets : Std.HashMap Nat Sp := {}
+  offsets : Std.HashMap Nat Length := {}
   sources : Array (Nat × Nat) := #[]
-  box : Array (Nat × Char × Sp) := #[]
+  box : Array (Nat × Char × Length) := #[]
   owners : Array Attribution := #[]
   sourceIds : Array Nat := #[]
-  width : Sp := 0
+  width : Length := 0
   missing : Array (Nat × Char) := #[]
   substs : Array (Nat × Char × Nat) := #[]
   sites : GlyphOrigins := #[]
@@ -2472,14 +2468,14 @@ private def WordAcc.Clean (st : WordAcc) : Prop :=
   st.missing = #[] ∧ st.substs = #[]
 
 private def WordAcc.flush (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc) : WordAcc :=
   let (items, offsets, sources) := flushWord fontIdx color link size leading decorations ground attr
     st.items st.offsets st.sources st.box st.owners st.sourceIds st.width
   { st with items, offsets, sources, box := #[], owners := #[], sourceIds := #[], width := 0 }
 
 private theorem WordAcc.flush_chars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc) :
     (st.flush fontIdx color link size leading decorations ground attr).chars = st.chars := by
   simpa [WordAcc.flush, WordAcc.chars] using
@@ -2487,14 +2483,14 @@ private theorem WordAcc.flush_chars (fontIdx : Nat) (color : Ir.Color) (link : O
       st.items st.offsets st.sources st.box st.owners st.sourceIds st.width
 
 private theorem WordAcc.flush_clean (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc) :
     (st.flush fontIdx color link size leading decorations ground attr).Clean ↔ st.Clean := by
   rfl
 
 /-- Append a glyph, keeping missing and substituted glyphs in the loss ledgers. -/
 private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (c : Char) (sourceId : Nat)
     (owner : Attribution) (origin : Option Span) (st : WordAcc) : WordAcc :=
@@ -2522,7 +2518,7 @@ private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option Stri
                      sites := rememberGlyph st.sites .E0405 fontIdx c origin }
 
 private theorem WordAcc.glyph_chars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (c : Char) (sourceId : Nat)
     (owner : Attribution) (origin : Option Span) (st : WordAcc) :
@@ -2558,11 +2554,11 @@ private theorem WordAcc.glyph_chars (fontIdx : Nat) (color : Ir.Color) (link : O
         simp at he
 
 private def WordAcc.letters (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (run : Array Char) (start : Nat)
     (owners : Array Attribution) (origins : Array (Option Span)) (breaks : Array Nat)
-    (hyphW : Sp) (st : WordAcc) : WordAcc := Id.run do
+    (hyphW : Length) (st : WordAcc) : WordAcc := Id.run do
   let mut st := st
   for (c, k) in run.zipIdx do
     if breaks.contains k then
@@ -2574,10 +2570,10 @@ private def WordAcc.letters (fontIdx : Nat) (color : Ir.Color) (link : Option St
   return st
 
 private theorem WordAcc.letters_chars (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (run : Array Char) (start : Nat)
-    (owners : Array Attribution) (origins : Array (Option Span)) (hyphW : Sp) (st : WordAcc) :
+    (owners : Array Attribution) (origins : Array (Option Span)) (hyphW : Length) (st : WordAcc) :
     (st.letters fontIdx color link size leading decorations ground attr smallcaps fs font
       run start owners origins #[] hyphW).Clean →
     st.Clean ∧
@@ -2617,14 +2613,14 @@ private theorem wordItemChars_letters (xs : List Char)
 prices, a scalar the styled face lacks set from the fallback face or dropped. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (explicitBreak : Option Char → Char → Option Char → Option Nat)
-    (size : Sp) (leading : Option Sp) (fontIdx : Nat)
+    (size : Length) (leading : Option Length) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins := Id.run do
+      Std.HashMap String (Array Nat) × Std.HashMap Nat Length × Array (Nat × Nat) × GlyphOrigins := Id.run do
   let mut st : WordAcc := { missing, substs, sites }
   let mut cache := cache
   let hyphW := (hyphenGlyph size font).foldl (fun w (_, _, adv) => w + adv) 0
@@ -2692,7 +2688,7 @@ private def WordAcc.Prefix (chars : Array Char) (missing : Array (Nat × Char))
 
 private theorem wordItems_none_chars (langKey : String)
     (explicitBreak : Option Char → Char → Option Char → Option Nat)
-    (size : Sp) (leading : Option Sp) (fontIdx : Nat)
+    (size : Length) (leading : Option Length) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
@@ -2709,7 +2705,7 @@ private theorem wordItems_none_chars (langKey : String)
     (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat =>
       st.1.Prefix chars missing substs st.2.2 ∧ chars.size ≤ st.2.2)
     (Q := fun out : Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-        Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins =>
+        Std.HashMap String (Array Nat) × Std.HashMap Nat Length × Array (Nat × Nat) × GlyphOrigins =>
       out.2.1 = #[] → out.2.2.1 = #[] →
         missing = #[] ∧ substs = #[] ∧
           out.1.toList.flatMap Item.boxChars = chars.toList.flatMap wordItemChars)
@@ -2812,11 +2808,11 @@ private theorem wordItems_none_chars (langKey : String)
 
 /-- Interword glue: the face's space advance, stretching by half and shrinking
 by a third, as TeX's plain fonts and LuaTeX's OpenType faces set it. -/
-private def interword (size : Sp) (font : Font) : Glue :=
+private def interword (size : Length) (font : Font) : Glue :=
   let w := scaledAt size font font.spaceAdvance
   { width := w, stretch := w / 2, shrink := w / 3, word := true }
 
-private theorem interword_word_exact (size : Sp) (font : Font) :
+private theorem interword_word_exact (size : Length) (font : Font) :
     (interword size font).word = true := rfl
 
 /-- The engine's ragged setting as an item transform: interword glue keeps its
@@ -2836,7 +2832,7 @@ public def raggedItems (items : Array Item) : Array Item :=
 
 /-- Ragged setting for display lines: interword glue gains finite stretch and
 the closing parfill stretches by half the measure, balancing the lines. -/
-public def displayItems (target : Sp) (items : Array Item) : Array Item :=
+public def displayItems (target : Length) (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
     | .glue g =>
@@ -3288,7 +3284,7 @@ public def docFaceKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys true 
   (docFaceKeys doc).map fun (slot, weight, italic) => fs.lookup slot weight italic
 
 /-- One mu: 1/18 of an em at the given size (TeXbook p. 168). -/
-private def muAt (size : Sp) (mu : Int) : Sp :=
+private def muAt (size : Length) (mu : Int) : Length :=
   size * mu / 18
 
 /-- Everything measuring a formula needs: the math face and its constants,
@@ -3301,13 +3297,13 @@ private structure MathEnv where
   color : Ir.Color
   link : Option String
   decorations : Decorations
-  leading : Option Sp
-  base : Sp
+  leading : Option Length
+  base : Length
   /-- Ambient text size, before matching the math face's x-height. -/
-  textBase : Sp
+  textBase : Length
   /-- The surrounding text's scaled vertical metrics, kept as the common strut even for scripts. -/
-  textAscent : Sp
-  textDescent : Sp
+  textAscent : Length
+  textDescent : Length
   ground : Option Ir.Color := none
   /-- The formula's attribution, its one `Struct` leaf, on every box the assembly builds. -/
   attr : Attribution
@@ -3317,46 +3313,46 @@ private structure MathEnv where
 /-- The font environment for measuring and placing a math
 run, its em matching the surrounding face's x-height. -/
 private def MathEnv.forRun (fs : FontSet) (idx : Nat) (font : Font)
-    (consts : MathConsts) (around : Font) (runSize : Sp) : MathEnv :=
+    (consts : MathConsts) (around : Font) (runSize : Length) : MathEnv :=
   { idx, font, consts, fs, color := Ir.Color.black, link := none
     decorations := {}, leading := none, attr := .unattributed
     textBase := runSize
     textAscent := scaledAt runSize around around.ascent.toNat
     textDescent := scaledAt runSize around (-around.descent).toNat
-    base := (Math.mathSize runSize.toNat around.xHeightOptical
+    base := mathLen (Math.mathSize runSize.units.toNat around.xHeightOptical
       around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
 
 /-- Font size at a style: the base for display and text,
 the face's declared percentages for script styles. -/
-private def MathEnv.sizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
-  Math.sizeFor e.consts.scales e.base st
+private def MathEnv.sizeAt (e : MathEnv) (st : Math.MathStyle) : Length :=
+  mathLen (Math.sizeFor e.consts.scales e.base.units st)
 
 /-- A text-sourced math alphabet's size: the surrounding text em on the same script ladder. -/
-private def MathEnv.textSizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
-  Math.sizeFor e.consts.scales e.textBase st
+private def MathEnv.textSizeAt (e : MathEnv) (st : Math.MathStyle) : Length :=
+  mathLen (Math.sizeFor e.consts.scales e.textBase.units st)
 
 /-- A MATH constant in font design units, scaled at a size. -/
-private def MathEnv.constAt (e : MathEnv) (size : Sp) (v : Int) : Sp :=
+private def MathEnv.constAt (e : MathEnv) (size : Length) (v : Int) : Length :=
   v * size / (e.font.unitsPerEm : Int)
 
 /-- A glyph's vertical ink extent `(top, bottom)` at a size,
 from its outline, else the cap height and baseline. -/
-private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :=
+private def MathEnv.glyphExtent (e : MathEnv) (size : Length) (g : Nat) : Length × Length :=
   match e.font.yExtent g with
   | some (lo, hi) =>
     (hi * size / (e.font.unitsPerEm : Int), lo * size / (e.font.unitsPerEm : Int))
   | none => (e.font.capHeight * size / (e.font.unitsPerEm : Int), 0)
 
 /-- Reserve a formula's reach against its ambient strut, independent of the run's raise. -/
-private def MathEnv.metrics (e : MathEnv) (top bottom : Sp) : RunMetrics :=
+private def MathEnv.metrics (e : MathEnv) (top bottom : Length) : RunMetrics :=
   { leading := e.leading, math := some {
       size := e.textBase, ascent := e.textAscent, descent := e.textDescent,
       top, bottom } }
 
 /-- A math run's vertical hull, measured in its actual face;
 an undecodable outline keeps the face's ascent and descent. -/
-private def mathBox (e : MathEnv) (idx : Nat) (w : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (size raise : Sp) : Item :=
+private def mathBox (e : MathEnv) (idx : Nat) (w : Length)
+    (glyphs : Array (Nat × Char × Length)) (size raise : Length) : Item :=
   let font := e.fs.get idx
   let (top, bottom) := glyphs.foldl (fun (top, bottom) (g, _, _) =>
     let (hi, lo) := match font.yExtent g with
@@ -3369,12 +3365,12 @@ private def mathBox (e : MathEnv) (idx : Nat) (w : Sp)
     e.decorations raise e.ground e.attr
 
 /-- A kern in the math stream: width, no glyphs, never a breakpoint. -/
-private def mathKern (e : MathEnv) (size w : Sp) : Item :=
+private def mathKern (e : MathEnv) (size w : Length) : Item :=
   .box w e.idx e.color e.link #[] size (e.metrics 0 0) e.decorations 0 e.ground e.attr
 
 /-- Width of assembled math items, counting a nested construction's
 rule before its rewind kern as line placement does. -/
-public def mathItemsWidth (items : Array Item) : Sp :=
+public def mathItemsWidth (items : Array Item) : Length :=
   items.foldl (fun w it => match it with
     | .box bw _ _ _ _ _ _ _ _ _ _ => w + bw
     | .rule bw _ _ _ => w + bw
@@ -3387,7 +3383,7 @@ by its own face's outline hull; `paintOnly` keeps only filled ink. -/
 private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Bool) :
     Option Ink.Bounds := Id.run do
   let mut bounds : Option Ink.Bounds := none
-  let mut pen : Sp := 0
+  let mut pen : Length := 0
   let add (bounds : Option Ink.Bounds) (b : Ink.Bounds) :=
     let b := if paintOnly then
         { left := min b.left b.right, bottom := min b.bottom b.top,
@@ -3399,7 +3395,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
     | .box w fi _ _ glyphs size metrics _ raise _ _ =>
       if !paintOnly then
         if let some m := metrics.math then
-          bounds := add bounds ⟨pen, raise + m.bottom, pen + w, raise + m.top⟩
+          bounds := add bounds (inkBounds pen (raise + m.bottom) (pen + w) (raise + m.top))
       let font := fs.get fi
       let upem : Int := font.unitsPerEm
       let mut gx := pen
@@ -3408,15 +3404,15 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
         | some b =>
           if !paintOnly || (b.left != b.right && b.bottom != b.top) then
             bounds := add bounds
-              ⟨gx + b.left * size / upem, raise + b.bottom * size / upem,
-                gx + b.right * size / upem, raise + b.top * size / upem⟩
+              (inkBounds (gx + b.left * size / upem) (raise + b.bottom * size / upem)
+                (gx + b.right * size / upem) (raise + b.top * size / upem))
         | none =>
-          bounds := add bounds ⟨gx, raise, gx + adv, raise + font.capHeight * size / upem⟩
+          bounds := add bounds (inkBounds gx raise (gx + adv) (raise + font.capHeight * size / upem))
         gx := gx + adv
       pen := pen + w
     | .rule w t r _ | .mark w t r _ =>
       if !paintOnly || (w != 0 && t != 0) then
-        bounds := add bounds ⟨min pen (pen + w), r, max pen (pen + w), r + t⟩
+        bounds := add bounds (inkBounds (min pen (pen + w)) r (max pen (pen + w)) (r + t))
       pen := pen + w
     | .poly pts _ =>
       -- A clipped polygon may repeat its first vertex, so a distinct one judges its area.
@@ -3426,7 +3422,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
             (b.1 - a.1) * (p.2 - a.2) != (b.2 - a.2) * (p.1 - a.1)
       if !paintOnly || paints then
         for (x, y) in pts do
-          bounds := add bounds ⟨pen + x, y, pen + x, y⟩
+          bounds := add bounds (inkBounds (pen + x) y (pen + x) y)
     | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ _ _ => pure ()
   return bounds
 
@@ -3435,13 +3431,13 @@ private def mathItemsInk (fs : FontSet) (items : Array Item) : Option Ink.Bounds
   mathItemsBounds fs items (paintOnly := true)
 
 /-- The math line's extent, its baseline and spacing items included. -/
-private def mathItemsExtent (fs : FontSet) (items : Array Item) : Sp × Sp :=
+private def mathItemsExtent (fs : FontSet) (items : Array Item) : Length × Length :=
   match mathItemsBounds fs items (paintOnly := false) with
-  | some b => (max 0 b.top, min 0 b.bottom)
+  | some b => (max 0 (mathLen b.top), min 0 (mathLen b.bottom))
   | none => (0, 0)
 
 /-- The same items shifted vertically: every raise moves, no width does. -/
-private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
+private def raiseItems (delta : Length) (items : Array Item) : Array Item :=
   if delta == 0 then items else
   items.map fun it => match it with
     | .box w i c l g s ld u r gr a => .box w i c l g s ld u (r + delta) gr a
@@ -3455,11 +3451,11 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
 
 /-- The zero-size rule a display alignment leaves at its
 last row's baseline, which `LineOut.lastBase` reads. -/
-private def alignRowMark (raise : Sp) (color : Ir.Color) : Item := .rule 0 0 raise color
+private def alignRowMark (raise : Length) (color : Ir.Color) : Item := .rule 0 0 raise color
 
 /-- An invisible box reserving the declared reach exactly. -/
-private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
-  #[.box 0 e.idx e.color e.link #[] 1 (e.metrics (max 0 top) (min 0 bot))
+private def struts (e : MathEnv) (top bot : Length) : Array Item :=
+  #[.box 0 e.idx e.color e.link #[] Length.quantum (e.metrics (max 0 top) (min 0 bot))
     {} 0 e.ground e.attr]
 
 /-- The size ladder a glyph grows through: its vertical variants, or itself. -/
@@ -3473,8 +3469,8 @@ private def variantLadder (e : MathEnv) (g : Nat) : List (Nat × Int) :=
 
 /-- Assemble a laid body between delimiters grown to `target`, each centring its
 ink on the axis; an empty side is a `\nulldelimiterspace` kern when `nullKern`. -/
-private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
-    (target : Sp) (nullKern : Bool) (bItems : Array Item)
+private def delimAssembleTo (e : MathEnv) (size raise : Length) (l r : Option Char)
+    (target : Length) (nullKern : Bool) (bItems : Array Item)
     (missing0 : Array (Nat × Char)) : Array Item × Array (Nat × Char) := Id.run do
   let axis := e.constAt size e.consts.axisHeight
   let (bTop, bBot) := mathItemsExtent e.fs bItems
@@ -3519,7 +3515,7 @@ private def delimAssembleTo (e : MathEnv) (size raise : Sp) (l r : Option Char)
 
 /-- Assemble a laid `\left…\right` body between delimiters grown
 to cover its reach from the axis (TeXbook Appendix G rule 19). -/
-private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
+private def delimAssemble (e : MathEnv) (size raise : Length) (l r : Option Char)
     (bItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) :=
   let axis := e.constAt size e.consts.axisHeight
@@ -3530,19 +3526,19 @@ private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
 
 /-- Assemble laid grid cells as `\halign` does: each column as wide as its widest
 cell, rows a baselineskip plus `\jot` apart, the grid centred on the axis. -/
-private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
+private def gridAssemble (e : MathEnv) (size raise : Length) (kind : Math.GridKind)
     (cells : Array (Array (Array Item))) : Array Item := Id.run do
   let axis := e.constAt size e.consts.axisHeight
   let n := cells.foldl (fun m row => max m row.size) 0
   if n == 0 then
     return #[]
-  let mut colW : Array Sp := Array.replicate n 0
+  let mut colW : Array Length := Array.replicate n 0
   for row in cells do
     for k in [0:row.size] do
       colW := colW.set! k (max colW[k]! (mathItemsWidth row[k]!))
-  let cols : List (Sp × Sp) := (List.range n).map fun k =>
-    (colW[k]!, muAt size (kind.gapAfter k n : Int) + kind.pairSep k n)
-  let total := Math.colOffset cols n
+  let cols : List (Int × Int) := (List.range n).map fun k =>
+    (colW[k]!.units, (muAt size (kind.gapAfter k n : Int) + mathLen (kind.pairSep k n)).units)
+  let total := mathLen (Math.colOffset cols n)
   let bl := leadingFor size
   -- plain.tex's `\lineskip`, size-relative; a `smallmatrix` declares its own (`GridKind.small`).
   let gridSkip := match kind with
@@ -3560,9 +3556,9 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
       let (ct, cb) := mathItemsExtent e.fs cell
-      (max t ct, min b cb)) ((0 : Sp), (0 : Sp))
-  let mut ys : Array Sp := #[]
-  let mut y : Sp := 0
+      (max t ct, min b cb)) ((0 : Length), (0 : Length))
+  let mut ys : Array Length := #[]
+  let mut y : Length := 0
   for i in [0:cells.size] do
     if i > 0 then
       let d := max (pitch + jot)
@@ -3575,11 +3571,11 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   let mut items : Array Item := #[]
   for i in [0:cells.size] do
     let row := cells[i]!
-    let mut cur : Sp := 0
+    let mut cur : Length := 0
     for k in [0:row.size] do
       let cellItems := row[k]!
       let cw := mathItemsWidth cellItems
-      let x := Math.colOffset cols k + (kind.colAlign k).pad colW[k]! cw
+      let x := mathLen (Math.colOffset cols k) + mathLen ((kind.colAlign k).pad colW[k]!.units cw.units)
       items := items.push (mathKern e size (x - cur))
       items := items ++ raiseItems (Δ + ys[i]!) cellItems
       cur := x + cw
@@ -3599,8 +3595,8 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
 constants), with `\nulldelimiterspace` on each side that carries no delimiter. -/
-private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
-    (rule : Option Int) (ndLeft ndRight : Bool)
+private def fracAssemble (e : MathEnv) (size : Length) (display : Bool) (raise : Length)
+    (rule : Option Length) (ndLeft ndRight : Bool)
     (numItems denItems : Array Item) : Array Item :=
   let axis := e.constAt size e.consts.axisHeight
   let θ := max 0 (rule.getD (e.constAt size e.consts.fractionRuleThickness))
@@ -3630,8 +3626,8 @@ private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
   let denW := mathItemsWidth denItems
   let ruleW := max numW denW
   let nd := size * 12 / 100
-  let numPad := Math.ColAlign.pad .center ruleW numW
-  let denPad := Math.ColAlign.pad .center ruleW denW
+  let numPad := mathLen (Math.ColAlign.pad .center ruleW.units numW.units)
+  let denPad := mathLen (Math.ColAlign.pad .center ruleW.units denW.units)
   let bar : Array Item :=
     if θ == 0 then #[] else #[Item.rule ruleW θ (raise + axis - θ / 2) e.color, mathKern e size (-ruleW)]
   (#[mathKern e size (if ndLeft then nd else 0), mathKern e size numPad]
@@ -3643,7 +3639,7 @@ private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
     ++ struts e (raise + u + numTop) (raise - v + denBot)
 
 /-- Assemble a laid radical from the MATH radical constants. -/
-private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
+private def radAssemble (e : MathEnv) (size : Length) (display : Bool) (raise : Length)
     (bItems degItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) :=
   let θ := e.constAt size e.consts.radicalRuleThickness
@@ -3668,8 +3664,8 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
     -- Compare scaled ink heights: a variant's advance can exceed its outline.
     let ladder := (variantLadder e g).map fun (gid, _) =>
       let (top, bot) := e.glyphExtent size gid
-      (gid, top - bot)
-    let (gv, _) := (Math.pickVariant (ruleTop - min 0 bBot) ladder).getD (g, 0)
+      (gid, (top - bot).units)
+    let (gv, _) := (Math.pickVariant (ruleTop - min 0 bBot).units ladder).getD (g, 0)
     let (vTop, vBot) := e.glyphExtent size gv
     let surdW := scaledAt size e.font (e.font.widths[gv]?.getD 0)
     let surdRaise := raise + ruleTop - vTop
@@ -3692,7 +3688,7 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
 
 /-- Assemble a laid accent (TeXbook Appendix G rule 12 over
 the MATH constants), its attachment point on the base's. -/
-private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
+private def accentAssemble (e : MathEnv) (size raise : Length) (mark : Char)
     (stretch : Bool) (bItems : Array Item) (missing0 : Array (Nat × Char)) :
     Array Item × Array (Nat × Char) := Id.run do
   let (bTop, bBot) := mathItemsExtent e.fs bItems
@@ -3746,46 +3742,54 @@ private def cancelInput (e : MathEnv) (st : Math.MathStyle)
   let (top, bot) := mathItemsExtent e.fs body
   let ink := (mathItemsInk e.fs value).getD {}
   let rule := e.constAt size e.consts.overbarRuleThickness
-  { rule := if spec.thick then 2 * rule else rule
-    gap := e.constAt size e.consts.overbarVerticalGap
-    w := mathItemsWidth body, top, bot, vw := mathItemsWidth value
+  { rule := (if spec.thick then 2 * rule else rule).units
+    gap := (e.constAt size e.consts.overbarVerticalGap).units
+    w := (mathItemsWidth body).units, top := top.units, bot := bot.units
+    vw := (mathItemsWidth value).units
     vtop := ink.top, vbot := ink.bottom, vleft := ink.left, vright := ink.right
-    space := e.constAt size e.consts.spaceAfterScript }
+    space := (e.constAt size e.consts.spaceAfterScript).units }
 
 /-- Assemble a laid cancel mark, cancel.sty's four commands, by `Math.cancelGeom`. -/
-private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
     (bItems vItems : Array Item) : Array Item :=
   let size := e.sizeAt st
   let input := cancelInput e st spec bItems vItems
-  let w := input.w
-  let vw := input.vw
+  let w := mathLen input.w
+  let vw := mathLen input.vw
   let g := Math.cancelGeom mark spec.room input
-  let marks := g.polys.map fun pts => Item.poly (pts.map fun (x, y) => (x, y + raise)) ink
+  let shift := mathLen g.shift
+  let valueX := mathLen g.valueX
+  let advance := mathLen g.advance
+  let marks := g.polys.map fun pts =>
+    Item.poly (pts.map fun (x, y) => (mathLen x, mathLen y + raise)) ink
   let (mTop, mBot) := mathItemsExtent e.fs marks
   let raised := raiseItems raise bItems
-  let body := #[mathKern e size g.shift] ++ raised
+  let body := #[mathKern e size shift] ++ raised
   -- Only measured target ink follows the arrow's ray; a glyphless kern is not raised.
-  let vRaise := raise + if input.hasValueInk then g.valueY else 0
+  let vRaise := raise + if input.hasValueInk then mathLen g.valueY else 0
   let value := if vItems.isEmpty then #[] else
     let placed := raiseItems vRaise vItems
-    #[mathKern e size (g.valueX - g.shift - w)] ++ placed
-  let reached := if vItems.isEmpty then g.shift + w else g.valueX + vw
-  let top := max mTop (max (raise + input.top) (if input.hasValueInk then vRaise + input.vtop else raise))
-  let bot := min mBot (min (raise + input.bot) (if input.hasValueInk then vRaise + input.vbot else raise))
+    #[mathKern e size (valueX - shift - w)] ++ placed
+  let reached := if vItems.isEmpty then shift + w else valueX + vw
+  let top := max mTop (max (raise + mathLen input.top)
+    (if input.hasValueInk then vRaise + mathLen input.vtop else raise))
+  let bot := min mBot (min (raise + mathLen input.bot)
+    (if input.hasValueInk then vRaise + mathLen input.vbot else raise))
   let reach := struts e top bot
-  let assembled := ((marks ++ body ++ value).push (mathKern e size (g.advance - reached))) ++ reach
+  let assembled := ((marks ++ body ++ value).push (mathKern e size (advance - reached))) ++ reach
   if !spec.room then assembled else
   -- Reserve both sides by translating the whole assembly, never its target alone.
   let bounds := (mathItemsInk e.fs assembled).getD {}
-  let left := min bounds.left (min g.shift (g.shift + w))
-  let right := max bounds.right (max g.shift (g.shift + w))
+  let left := min bounds.left (min g.shift (g.shift + input.w))
+  let right := max bounds.right (max g.shift (g.shift + input.w))
   let target := input.hasValueInk || vw != 0
-  let left := if target then min left (min g.valueX (g.valueX + vw)) else left
-  let right := if target then max right (max g.valueX (g.valueX + vw)) else right
+  let left := if target then min left (min g.valueX (g.valueX + input.vw)) else left
+  let right := if target then max right (max g.valueX (g.valueX + input.vw)) else right
   let (pad, width) := Math.inkRoom left right g.advance
   if pad == 0 && width == g.advance then assembled else
-    #[mathKern e size pad] ++ assembled ++ #[mathKern e size (width - pad - g.advance)]
+    #[mathKern e size (mathLen pad)] ++ assembled ++
+      #[mathKern e size (mathLen width - mathLen pad - advance)]
 
 /-- A colour switch inside hidden content keeps the hidden paint. -/
 private def keepHidden (cur c : Ir.Color) : Ir.Color :=
@@ -3794,7 +3798,7 @@ private def keepHidden (cur c : Ir.Color) : Ir.Color :=
 mutual
 
 /-- Lay one math list, spacing directly adjacent atoms by their degraded classes. -/
-private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     (cls : List Math.MathClass) (prev : Option Math.MathClass) (acc : MAcc) :
     Math.MList → MAcc
   | .nil => acc
@@ -3826,7 +3830,7 @@ private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
 
 /-- Lay one atom: its nucleus at the current style, then
 its scripts, as limits for a display limit operator. -/
-private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     (x : Math.MItem) (acc : MAcc) : MAcc :=
   match x with
   | .space mu =>
@@ -3870,9 +3874,9 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         (opTop + e.constAt size e.consts.upperLimitGapMin - supBot)
       let low := min (opBot - e.constAt size e.consts.lowerLimitBaselineDropMin)
         (opBot - e.constAt size e.consts.lowerLimitGapMin - subTop)
-      let place (items : Array Item) (itemsW : Sp) (delta : Sp) : Array Item :=
+      let place (items : Array Item) (itemsW : Length) (delta : Length) : Array Item :=
         if items.isEmpty then #[] else
-        let padK := Math.ColAlign.pad .center w itemsW
+        let padK := mathLen (Math.ColAlign.pad .center w.units itemsW.units)
         let shifted := raiseItems delta items
         (#[mathKern e size padK] ++ shifted).push
           (mathKern e size (w - padK - itemsW)) |>.push (mathKern e size (-w))
@@ -3909,7 +3913,7 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         let items := (acc.1 ++ supItems).push (mathKern e size (-supW)) ++ subItems
         (items.push (mathKern e size (max supW subW - subW + spaceAfter)), m2)
 
-private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     (nuc : Math.MNucleus) (acc : MAcc) : MAcc :=
   match nuc with
   | .sym c =>
@@ -3924,7 +3928,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         (acc.1.push (mathBox e fb g.2.2 #[g] size raise), acc.2)
       | none =>
         -- An uncovered alphabet scalar sets its base letter (W0016), else goes missing (E0405).
-        let synth : Option (Nat × (Nat × Char × Sp)) := do
+        let synth : Option (Nat × (Nat × Char × Length)) := do
           let (a, base) ← Math.MathAlphabet.unapply c
           let (bold, italic) := a.synthStyle
           let fi := if bold || italic then e.fs.lookup 0 (if bold then 700 else 400) italic else e.idx
@@ -3952,8 +3956,8 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let mut items := acc.1
     let mut missing := acc.2
     let mut cur := e.idx
-    let mut glyphs : Array (Nat × Char × Sp) := #[]
-    let mut w : Sp := 0
+    let mut glyphs : Array (Nat × Char × Length) := #[]
+    let mut w : Length := 0
     for c in s.toList do
       let hit := match glyphOf size e.font c with
         | some g => some (e.idx, g)
@@ -3986,9 +3990,11 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let (denItems, m2) := layMathTail e fst.fracDen 0
       (Math.degrade den.classes) none (#[], m1) den
     if spec.left.isNone && spec.right.isNone then
-      (acc.1 ++ fracAssemble e size display raise spec.rule true true numItems denItems, m2)
+      (acc.1 ++ fracAssemble e size display raise (spec.rule.map mathLen) true true numItems
+        denItems, m2)
     else
-      let bar := fracAssemble e size display 0 spec.rule spec.left.isNone spec.right.isNone
+      let bar := fracAssemble e size display 0 (spec.rule.map mathLen) spec.left.isNone
+        spec.right.isNone
         numItems denItems
       let (items, missing) := delimAssembleTo e size raise spec.left spec.right
         (size * (if display then 240 else 101) / 100) false bar m2
@@ -4009,13 +4015,14 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
   | .big d step =>
     -- amsmath's `\bBigg@`, set at the text size in every style as lualatex sets it.
     let size := e.base
-    let paren : Sp := match glyphOf size e.font '(' with
+    let paren : Length := match glyphOf size e.font '(' with
       | some (g, _, _) => let (t, b) := e.glyphExtent size g; t - b
       | none => size
     let axis := e.constAt size e.consts.axisHeight
-    let half := Math.bigVcenter paren step / 2
+    let half := mathLen (Math.bigVcenter paren.units step / 2)
     let (items, missing) := delimAssembleTo e size raise d none
-      (Math.bigTarget paren size step) false (struts e (axis + half) (axis - half)) acc.2
+      (mathLen (Math.bigTarget paren.units size.units step)) false
+      (struts e (axis + half) (axis - half)) acc.2
     (acc.1 ++ items, missing)
   | .accent mark stretch body =>
     -- The base sets in the cramped current style (TeXbook Appendix G rule 12).
@@ -4087,7 +4094,7 @@ public theorem patsOf_off (lang : Option String) : patsOf none lang = none := by
 
 /-- A footnote mark's box: its digits as one raised run at the
 scriptsize step of `around`; digits the face lacks return beside it. -/
-private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
+private def markBox (fs : FontSet) (sty : TextStyle) (around : Length)
     (decorations : Decorations) (num : Nat) :
     Item × Array (Nat × Char) := Id.run do
   let attr : Attribution := .noteMark num
@@ -4095,8 +4102,8 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
   let font := fs.get idx
   let markSize := Ir.noteMarkSize around
   let raise := around * Ir.markRaise / 1000
-  let mut gs : Array (Nat × Char × Sp) := #[]
-  let mut w : Sp := 0
+  let mut gs : Array (Nat × Char × Length) := #[]
+  let mut w : Length := 0
   let mut miss : Array (Nat × Char) := #[]
   for c in (toString num).toList do
     match glyphOf markSize font c with
@@ -4127,9 +4134,9 @@ private structure ItemsAcc where
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
   origins : GlyphOrigins := #[]
-  extras : Std.HashMap Nat Sp := {}
+  extras : Std.HashMap Nat Length := {}
   /-- Natural offsets of owner fragments within their original shaped boxes, keyed by item index. -/
-  wordOffsets : Std.HashMap Nat Sp := {}
+  wordOffsets : Std.HashMap Nat Length := {}
   cache : Std.HashMap String (Array Nat) := {}
   /-- The item count just after the last word's items: a space kerns
   against the glyph before it only while nothing has been set since. -/
@@ -4142,7 +4149,7 @@ private structure ItemsAcc where
 
 /-- The pair kern a set glyph declares with its own face's space glyph (luaotfload's
 space kerning), at the box's size; 0 for anything but a box of glyphs. -/
-private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Sp
+private def spaceKern (fs : FontSet) (after : Bool) : Option Item → Length
   | some (.box _ fontIdx _ _ glyphs size _ _ _ _ _) =>
     match (if after then glyphs.back? else glyphs[0]?) with
     | some (g, _, _) => spacePairKern Ir.features size (fs.get fontIdx) after g
@@ -4156,7 +4163,7 @@ private def glyphBox : Option Item → Bool
 
 /-- The items with their final glue `w` wider: a space
 taking the pair kern of the word that follows. -/
-private def widenLast (items : Array Item) (w : Sp) : Array Item :=
+private def widenLast (items : Array Item) (w : Length) : Array Item :=
   if w == 0 then items else
   match items.back? with
   | some (.glue g) => items.set! (items.size - 1) (.glue { g with width := g.width + w })
@@ -4194,20 +4201,20 @@ private def correctItalic (fs : FontSet) (maybe : Bool) (sty : TextStyle)
 
 /-- Resolve the size and baseline skip in force at one token; `none`
 uses the ordinary line-height rule, and `some 0` keeps a zero skip. -/
-private def TextStyle.metricsIn (sty : TextStyle) (base xHeight : Sp)
-    (values : MeasureValues) : Sp × Option Sp :=
-  let basis := base * sty.scale / 1000
-  let xBasis := xHeight * sty.scale / 1000
+private def TextStyle.metricsIn (sty : TextStyle) (base xHeight : Length)
+    (values : MeasureValues) : Length × Option Length :=
+  let basis := base * (sty.scale : Int) / (1000 : Int)
+  let xBasis := xHeight * (sty.scale : Int) / (1000 : Int)
   let size := match sty.fontSize with
-    | some e => max 1 (e.resolveWidth values basis xBasis)
+    | some e => max Length.quantum (e.resolveWidth values basis xBasis)
     | none => basis
   let leading := sty.leading.map fun e => e.resolveWidth values basis xBasis
   (size, leading)
 
 /-- Resolve a style's size and baseline skip against
 the consuming paragraph's measure and text height. -/
-private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Sp) :
-    Sp × Option Sp :=
+private def TextStyle.metrics (sty : TextStyle) (base xHeight textW textH : Length) :
+    Length × Option Length :=
   sty.metricsIn base xHeight (MeasureValues.horizontal textW textH)
 
 /-- Resolve one surrounding text style through the native run
@@ -4216,7 +4223,7 @@ private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (measures : Option MeasureValues) : Option MathEnv := do
   let (idx, font, consts) ← fs.mathFont?
   let sty := styles.foldl (applyStyle geom.scale) {}
-  let xHeight := fs.xHeightAt geom.fontSize
+  let xHeight := xHeightOf fs geom.fontSize
   let values := measures.getD (MeasureValues.horizontal geom.textWidth geom.textHeight)
   let (runSize, _) := sty.metricsIn geom.fontSize xHeight values
   let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
@@ -4226,13 +4233,13 @@ private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
 public def mathEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
   let e ← MathEnv.forStyles geom fs styles measures
-  if e.sizeAt st ≤ 0 then none else some (e.sizeAt st)
+  if e.sizeAt st ≤ 0 then none else some (e.sizeAt st).units
 
 /-- The em of native text-sourced math alphabets. -/
 public def mathTextEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
   let e ← MathEnv.forStyles geom fs styles measures
-  if e.textSizeAt st ≤ 0 then none else some (e.textSizeAt st)
+  if e.textSizeAt st ≤ 0 then none else some (e.textSizeAt st).units
 
 /-- Font-measured cancellation for another backend, resolved through the same
 text-style and math walks as native placement, style history outermost first. -/
@@ -4246,7 +4253,7 @@ public def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     let (vs, _) := layMathTail e (spec.size.style st) 0
       (Math.degrade value.classes) none (#[], missing) value
     let bounds := (mathItemsInk fs bs).getD {}
-    some { em := e.sizeAt st, input := cancelInput e st spec bs vs
+    some { em := (e.sizeAt st).units, input := cancelInput e st spec bs vs
            bodyLeft := bounds.left, bodyRight := bounds.right }
 
 public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
@@ -4262,7 +4269,8 @@ public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     split at h
     · contradiction
     · cases h
-      exact Int.not_le.mp (by assumption)
+      rename_i hn
+      exact Length.not_le.mp hn
 
 /-- A font-boundary projection, not a rule about the IR's attachment geometry. -/
 public theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
@@ -4278,24 +4286,25 @@ public theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
     split at h
     · contradiction
     · cases h
-      simp [mathEm, he, Int.not_le.mp (by assumption)]
+      simp [mathEm, he]
+      length_omega
 
-public def lineThroughRaise (xHeight : Sp) : Sp := max 0 xHeight * 55 / 100
+public def lineThroughRaise (xHeight : Length) : Length := max 0 xHeight * 55 / 100
 
-public theorem lineThroughRaise_exact (xHeight : Int) (h : 0 ≤ xHeight) :
+public theorem lineThroughRaise_exact (xHeight : Length) (h : 0 ≤ xHeight) :
     lineThroughRaise xHeight = xHeight * 55 / 100 := by
   unfold lineThroughRaise
-  have hm : max 0 xHeight = xHeight := by omega
+  have hm : max 0 xHeight = xHeight := by length_omega
   rw [hm]
 
 /-- Resolve a command-entry source against the selected face and local measure. -/
-private def DecorationSource.rule (src : DecorationSource) (base xHeight textW textH : Sp)
+private def DecorationSource.rule (src : DecorationSource) (base xHeight textW textH : Length)
     (fs : FontSet) : DecorationRule :=
-  let basis := base * src.scale / 1000
-  let xBasis := xHeight * src.scale / 1000
+  let basis := base * (src.scale : Int) / (1000 : Int)
+  let xBasis := xHeight * (src.scale : Int) / (1000 : Int)
   let values := MeasureValues.horizontal textW textH
   let size := match src.fontSize with
-    | some e => max 1 (e.resolveWidth values basis xBasis)
+    | some e => max Length.quantum (e.resolveWidth values basis xBasis)
     | none => basis
   let font := fs.get (fs.lookup src.slot src.weight.css src.italic)
   let ex := scaledAt size font font.xHeight.toNat
@@ -4305,20 +4314,21 @@ private def DecorationSource.rule (src : DecorationSource) (base xHeight textW t
 /-- A mark's band at its command-entry face: descender to ascender, as a browser paints an inline
 background. -/
 private def DecorationSource.markRule (src : DecorationSource) (color : Ir.Color)
-    (base xHeight textW textH : Sp) (fs : FontSet) : DecorationRule :=
-  let basis := base * src.scale / 1000
-  let xBasis := xHeight * src.scale / 1000
+    (base xHeight textW textH : Length) (fs : FontSet) : DecorationRule :=
+  let basis := base * (src.scale : Int) / (1000 : Int)
+  let xBasis := xHeight * (src.scale : Int) / (1000 : Int)
   let values := MeasureValues.horizontal textW textH
-  let size := match src.fontSize with
-    | some e => max 1 (e.resolveWidth values basis xBasis)
+  let size : Length := match src.fontSize with
+    | some e => max Length.quantum (e.resolveWidth values basis xBasis)
     | none => basis
   let font := fs.get (fs.lookup src.slot src.weight.css src.italic)
   let upem : Int := max 1 font.unitsPerEm
-  { color, thickness := (font.ascent - font.descent) * size / upem,
-    raise := font.descent * size / upem }
+  let span : Int := font.ascent - font.descent
+  { color, thickness := (span * size / upem : Length),
+    raise := (font.descent * size / upem : Length) }
 
 private def TextStyle.resolvedDecorations (sty : TextStyle)
-    (base xHeight textW textH : Sp) (fs : FontSet) : Decorations :=
+    (base xHeight textW textH : Length) (fs : FontSet) : Decorations :=
   { underline := sty.decorations.underline
     lineThrough := sty.decorations.lineThrough.map
       (·.rule base xHeight textW textH fs)
@@ -4327,13 +4337,13 @@ private def TextStyle.resolvedDecorations (sty : TextStyle)
 
 /-- The per-face underline band for a glyph run or an
 authored space, its bottom measured up from the baseline. -/
-private def underlineRule (font : Font) (size : Sp) (color : Ir.Color) : DecorationRule :=
+private def underlineRule (font : Font) (size : Length) (color : Ir.Color) : DecorationRule :=
   let upem : Int := font.unitsPerEm
   let (pos, thick) := font.band
   let thickness := thick * size / upem
   { color, thickness, raise := pos * size / upem - thickness }
 
-private def Decorations.resolve (d : Decorations) (font : Font) (size : Sp)
+private def Decorations.resolve (d : Decorations) (font : Font) (size : Length)
     (color : Ir.Color) : Decorations (Option DecorationRule) :=
   { underline := if d.underline then some (underlineRule font size color) else none
     lineThrough := d.lineThrough
@@ -4349,12 +4359,12 @@ private def circle16 : Array (Int × Int) :=
 /-- latex.ltx's `\@dottedtocline` leaders, `\leaders\hbox{$\mkern\@dotsep mu\hbox{.}\mkern\@dotsep
 mu$}\hfill` with `\@dotsep` 4.5: a box of a quarter em, the full stop and a quarter em, the dot the
 ellipse its ink's box holds; none where the face has no full stop. -/
-private def leaderPaint (font : Font) (size : Sp) (color : Ir.Color) (reach : Sp) :
+private def leaderPaint (font : Font) (size : Length) (color : Ir.Color) (reach : Length) :
     Option LeaderPaint := do
   let g ← font.gid '.'
   let ink ← font.bounds g
   let upem : Int := font.unitsPerEm
-  let scale (v : Int) : Sp := v * size / upem
+  let scale (v : Int) : Length := v * size / upem
   let adv := scale ((font.widths[g]?.getD 0 : Nat) : Int)
   let (cx, cy) := (size / 4 + scale ((ink.left + ink.right) / 2), scale ((ink.bottom + ink.top) / 2))
   let (rx, ry) := (scale ((ink.right - ink.left) / 2), scale ((ink.top - ink.bottom) / 2))
@@ -4362,7 +4372,7 @@ private def leaderPaint (font : Font) (size : Sp) (color : Ir.Color) (reach : Sp
          box := size / 2 + adv, reach }
 
 private def Item.ofDecoratedGlue (g : Glue) (d : Decorations) (font : Font)
-    (size : Sp) (color : Ir.Color) : Item :=
+    (size : Length) (color : Ir.Color) : Item :=
   if d.underline || d.lineThrough.isSome || d.highlight.isSome || d.leaders.isSome then
     .decoratedGlue g (d.resolve font size color)
   else .glue g
@@ -4378,14 +4388,14 @@ across the ground, and its padding. -/
 private def boxReserve : Nat := 4
 
 /-- A kern `w` wide in a style's face, under its decorations: a box with no glyphs. -/
-private def kernItem (fs : FontSet) (sty : TextStyle) (size xHeight textW textH w : Sp) : Item :=
+private def kernItem (fs : FontSet) (sty : TextStyle) (size xHeight textW textH w : Length) : Item :=
   let (sz, _) := sty.metrics size xHeight textW textH
   .box w (fs.lookup sty.slot sty.weight.css sty.italic) sty.paint sty.link #[] sz {}
     (sty.resolvedDecorations size xHeight textW textH fs) 0 sty.ground .unattributed
 
 /-- An item raised by `r`; with `flat` a run claims no extent, the box's declared one standing for
 it. -/
-private def raiseItem (r : Sp) (flat : Bool) : Item → Item
+private def raiseItem (r : Length) (flat : Bool) : Item → Item
   | .box w idx color link glyphs size metrics decorations raise ground attr =>
     .box w idx color link glyphs size (if flat then { metrics with extent := some (0, 0) } else metrics)
       decorations (raise + r) ground attr
@@ -4411,14 +4421,14 @@ private def fixRun : Item → Item
 
 /-- The natural width, height and depth TeX's `\hbox` gives a run of items, its glyphs measured by
 their outlines and a run whose box declares its extent by that extent. -/
-private def itemsBox (fs : FontSet) (items : Array Item) : Sp × Sp × Sp :=
+private def itemsBox (fs : FontSet) (items : Array Item) : Length × Length × Length :=
   items.foldl (fun (w, h, d) it => match it with
     | .box bw idx _ _ glyphs sz metrics _ raise _ _ =>
       match metrics.extent with
       | some (eh, ed) => (w + bw, max h eh, max d ed)
       | none =>
         let font := fs.get idx
-        let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
+        let sc (v : Int) : Length := v * sz / (font.unitsPerEm : Int)
         let (h, d) := glyphs.foldl (fun (h, d) (g, _) =>
           let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
           (max h (sc hi + raise), max d (-(sc lo) - raise))) (h, d)
@@ -4433,21 +4443,21 @@ private def itemsBox (fs : FontSet) (items : Array Item) : Sp × Sp × Sp :=
 
 /-- A box's content set as its box declares: raised, its extent the declared one where given, its
 reserved paint items and its closing ones set from the content's measure. -/
-private def closeBox (fs : FontSet) (size xHeight textW textH : Sp) (acc : ItemsAcc)
+private def closeBox (fs : FontSet) (size xHeight textW textH : Length) (acc : ItemsAcc)
     (ob : OpenBox) : ItemsAcc := Id.run do
   let sty := ob.style
   let (sz, _) := sty.metrics size xHeight textW textH
-  let xh := xHeight * sz / max size 1
+  let xh := xHeight.mulDiv sz (max size Length.quantum)
   let first := ob.start + boxReserve
   let (w0, h0, d0) := itemsBox fs (acc.items.extract first acc.items.size)
   let values := MeasureValues.horizontal textW textH
   let find : Ir.BoxMeasure → Dim.SymGlue
     | .page m => values.find m
-    | .height => { width := .ofSp h0 }
-    | .depth => { width := .ofSp d0 }
-    | .width => { width := .ofSp w0 }
-    | .totalHeight => { width := .ofSp (h0 + d0) }
-  let len (e : Affine Ir.BoxMeasure) : Sp := (e.eval find).width.resolve sz xh
+    | .height => { width := .ofLength h0 }
+    | .depth => { width := .ofLength d0 }
+    | .width => { width := .ofLength w0 }
+    | .totalHeight => { width := .ofLength (h0 + d0) }
+  let len (e : Affine Ir.BoxMeasure) : Length := (e.eval find).width.resolve sz xh
   let b := ob.box
   let r := len b.raise
   let p := if b.ground.isSome || b.frame.isSome then b.pad.width.resolve sz xh else 0
@@ -4456,7 +4466,7 @@ private def closeBox (fs : FontSet) (size xHeight textW textH : Sp) (acc : Items
   let frame := b.frame.map fun f => match f with
     | .ink => sty.paint
     | .color c _ => paint c
-  let kern (w : Sp) : Item := kernItem fs sty size xHeight textW textH w
+  let kern (w : Length) : Item := kernItem fs sty size xHeight textW textH w
   let win := w0 + 2 * p
   let full := h0 + d0 + 2 * p + 2 * t
   let base := r - d0 - p - t
@@ -4489,8 +4499,8 @@ private def closeBox (fs : FontSet) (size xHeight textW textH : Sp) (acc : Items
 
 /-- One flatten token into the accumulator: its ink becomes
 items, an entry in `dropped`, or a note body carried whole. -/
-private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
     (anchors : Array (String × Nat)) (origins : Array (Option Span))
     (source : Option Span) : ItemsAcc :=
@@ -4619,7 +4629,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let values := MeasureValues.horizontal textW textH
     let g := e.eval values.find
     let (sz, _) := sty.metrics size xHeight textW textH
-    let xh := xHeight * sz / max size 1
+    let xh := xHeight.mulDiv sz (max size Length.quantum)
     let glue := g.resolve sz xh
     let items := if keep then
         (acc.items.push (.rule 0 0 0 Ir.Color.black)).push unbreakable
@@ -4640,7 +4650,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   | .rule sty width height raise =>
     let values := MeasureValues.horizontal textW textH
     let (fs, _) := sty.metrics size xHeight textW textH
-    let xh := xHeight * fs / max size 1
+    let xh := xHeight.mulDiv fs (max size Length.quantum)
     let w := width.resolveWidth values fs xh
     let h := height.resolveWidth values fs xh
     let r := raise.resolveWidth values fs xh
@@ -4670,7 +4680,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let (w, h) :=
       if src.startsWith Ir.picSrcPrefix && spec.width.isNone &&
           spec.height.isNone && w > textW && w > 0 then
-        (textW, textW * h / w)
+        (textW, textW.mulDiv h w)
       else (w, h)
     { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h) ink 0) }
   | .brk extra =>
@@ -4683,8 +4693,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
 
 /-- Adjacent word tokens of one complete style shape and hyphenate
 as one input; spaces and other tokens flush the word. -/
-private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (toks : Array Tk) : ItemsAcc := Id.run do
   let step (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
       (anchors : Array (String × Nat)) (origins : Array (Option Span))
@@ -4744,15 +4754,15 @@ private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
 
 /-- Inlines to breakable items, with every loss the fold ledgered rendered as
 its diagnostic and the extra space each forced break asks for (`\\[1ex]`). -/
-private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Length)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
-    (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
+    (textW : Length := 0) (textH : Length := 0) (noteOk : Bool := false)
     (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
-    (roleMetrics : List (String × (Sp × Option Sp)) := []) (steps : Nat := 0) :
+    (roleMetrics : List (String × (Length × Option Length)) := []) (steps : Nat := 0) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
-      Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) ×
-      Std.HashMap Nat Sp × Array (String × Nat) × Array (Nat × Span) := Id.run do
+      Std.HashMap Nat Length × Array (Nat × Nat × Array Inline × Option Nat) ×
+      Std.HashMap Nat Length × Array (String × Nat) × Array (Nat × Span) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step, steps := steps }
     baseStyle xs
@@ -4936,8 +4946,8 @@ private theorem flatten_sourceChars (mathOk noteOk : Bool) (st : FlattenSt)
     flattenList_sourceChars mathOk noteOk sty xs.toList st
       (fun x hx => hp x (by simpa using hx))
 
-private theorem itemsOfToks_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfToks_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (toks : Array Tk) (h : ∀ tk ∈ toks, tk.Plain) :
     (itemsOfToks pats size xHeight fs imgs textW textH acc toks).notes = acc.notes := by
   unfold itemsOfToks
@@ -4978,11 +4988,11 @@ private theorem itemsOfToks_plainNotes (pats : Option Hyphen.Patterns) (size xHe
     | none => exact hst
     | some prev => rcases prev with ⟨sty, word, attr⟩; exact hst
 
-private theorem itemsOfInlines_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+private theorem itemsOfInlines_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Length)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
-    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) (hp : PlainInlines xs) :
+    (textW textH : Length) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat) (hp : PlainInlines xs) :
     (itemsOfInlines pats size xHeight fs baseStyle xs cache ctr imgs textW textH
       noteOk ladder step roleMetrics steps).2.2.2.2.1 = #[] := by
   have ht := flatten_plain fs.mathFont?.isSome noteOk
@@ -4994,7 +5004,7 @@ private theorem itemsOfInlines_plainNotes (pats : Option Hyphen.Patterns) (size 
   simp only [itemsOfInlines]
   repeat first | exact hn | split
 
-private theorem widenLast_boxChars (items : Array Item) (w : Sp) :
+private theorem widenLast_boxChars (items : Array Item) (w : Length) :
     (widenLast items w).toList.flatMap Item.boxChars =
       items.toList.flatMap Item.boxChars := by
   unfold widenLast
@@ -5025,13 +5035,13 @@ private def ItemsAcc.chars (a : ItemsAcc) : List Char :=
   a.items.toList.flatMap Item.boxChars
 
 private theorem decoratedGlue_boxChars (g : Glue) (d : Decorations)
-    (font : Font) (size : Sp) (color : Ir.Color) :
+    (font : Font) (size : Length) (color : Ir.Color) :
     (Item.ofDecoratedGlue g d font size color).boxChars = [] := by
   unfold Item.ofDecoratedGlue
   split <;> rfl
 
-private theorem itemsOfTok_none_chars (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfTok_none_chars (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
     (anchors : Array (String × Nat)) (origins : Array (Option Span))
     (source : Option Span) (ht : tk.TextSource) :
@@ -5131,8 +5141,8 @@ private theorem tokenLoop_census (toks : Array Tk) (acc : ItemsAcc)
       (read := fun st : TokenState => st.1.chars ++ pendingItemChars st.2.1)
       (emit := Tk.itemChars) f toks (acc, none, #[], #[], [], #[]) trivial step
 
-private theorem itemsOfTok_none_chars_before (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfTok_none_chars_before (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (n : Nat) (tk : Tk) (owners : Array Attribution)
     (anchors : Array (String × Nat)) (origins : Array (Option Span))
     (source : Option Span) (ht : tk.TextSource) :
@@ -5142,8 +5152,8 @@ private theorem itemsOfTok_none_chars_before (size xHeight : Sp)
   itemsOfTok_none_chars size xHeight fs imgs textW textH { acc with before := n } tk owners
     anchors origins source ht
 
-private theorem itemsOfToks_none_chars (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfToks_none_chars (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (toks : Array Tk) (ht : ∀ tk ∈ toks, tk.TextSource) :
     let out := itemsOfToks none size xHeight fs imgs textW textH acc toks
     out.Clean → acc.Clean ∧
@@ -5332,12 +5342,12 @@ private theorem toks_itemChars_inkCensus (ts : List Tk) (ht : ∀ tk ∈ ts, tk.
       (ts.flatMap Tk.sourceChars).filter inkScalar from
       ih (fun t h => ht t (by simp [h]))]
 
-private theorem itemsOfToks_flatten_none_chars (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfToks_flatten_none_chars (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr)
     (baseStyle : TextStyle) (xs : Array Inline) (noteOk : Bool)
     (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat)
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat)
     (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false) :
     let st := flatten (fs.mathFont?.isSome) noteOk
       { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
@@ -5389,10 +5399,10 @@ private theorem clean_of_diagnostic_maps (acc : ItemsAcc) (ds : Array Diag)
       exact Or.inl (Or.inr ⟨x, hx, rfl⟩))).2 (hs x)
 
 private theorem itemsOfInlines_noLoss_clean
-    (size xHeight : Sp) (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
+    (size xHeight : Length) (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
-    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) :
+    (textW textH : Length) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat) :
     let st := flatten (fs.mathFont?.isSome) noteOk
       { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
         steps := steps } baseStyle xs
@@ -5412,11 +5422,11 @@ private theorem itemsOfInlines_noLoss_clean
     exact clean_of_diagnostic_maps _ _ _ _ _ (fun _ => rfl) (fun _ => rfl) h
 
 private theorem itemsOfInlines_itemChars
-    (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (pats : Option Hyphen.Patterns) (size xHeight : Length)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
-    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) :
+    (textW textH : Length) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat) :
     (itemsOfInlines pats size xHeight fs baseStyle xs cache ctr imgs textW textH
       noteOk ladder step roleMetrics steps).1.toList.flatMap Item.boxChars =
     (itemsOfToks pats size xHeight fs imgs textW textH { cache := cache }
@@ -5429,12 +5439,12 @@ private theorem itemsOfInlines_itemChars
   · split <;> simp [ItemsAcc.chars, Item.boxChars]
   · simp [ItemsAcc.chars, Item.boxChars]
 
-private theorem itemsOfInlines_none_chars (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfInlines_none_chars (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr)
     (baseStyle : TextStyle) (xs : Array Inline) (noteOk : Bool)
     (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat)
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat)
     (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false)
     (hd : ∀ d ∈ (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs
       textW textH noteOk ladder step roleMetrics steps).2.1,
@@ -5460,12 +5470,12 @@ public def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   | _ => false
 
 public structure Measure where
-  natural : Sp := 0
-  stretch : Sp := 0
-  shrink : Sp := 0
+  natural : Length := 0
+  stretch : Length := 0
+  shrink : Length := 0
   fil : Bool := false
   /-- Total width of the line's font boxes and its hyphen, which font expansion may rescale. -/
-  boxW : Sp := 0
+  boxW : Length := 0
 
 /-- Font expansion bound, per mille of a glyph's width: microtype's
 default `stretch = 20`, `shrink = 20` (microtype.sty). -/
@@ -5532,7 +5542,7 @@ public theorem protrusionLR_covers (c : Char) :
 
 /-- How far the line `[a:j)` may hang left of the
 measure: its first glyph's left protrusion, in sp. -/
-public def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
+public def protrudeLeft (items : Array Item) (a j : Nat) : Length := Id.run do
   for k in [a:j] do
     match items[k]? with
     | some (.box _ _ _ _ glyphs _ _ _ _ _ _) =>
@@ -5544,7 +5554,7 @@ public def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
 
 /-- How far the line breaking at `j` may hang right of the measure:
 its last glyph's right protrusion, the break's own hyphen first. -/
-public def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
+public def protrudeRight (items : Array Item) (a j : Nat) : Length := Id.run do
   if let some (.pen _ _ _ _ _ glyphs) := items[j]? then
     if let some (_, c, adv) := glyphs.back? then
       return adv * (protrusionLR c).2 / 1000
@@ -5559,8 +5569,8 @@ public def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
 
 /-- The largest right overhang any break in `items` can grant,
 by which `kp`'s deactivation slackens under protrusion. -/
-public def maxProtrudeRight (items : Array Item) : Sp := Id.run do
-  let mut best : Sp := 0
+public def maxProtrudeRight (items : Array Item) : Length := Id.run do
+  let mut best : Length := 0
   for it in items do
     match it with
     | .box _ _ _ _ glyphs _ _ _ _ _ _ =>
@@ -5609,19 +5619,19 @@ public def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
 
 /-- What a `Measure`'s font boxes may stretch or
 shrink beyond the glue, in sp; zero on a fil line. -/
-public def Measure.ex (m : Measure) (expand : Bool) : Sp :=
+public def Measure.ex (m : Measure) (expand : Bool) : Length :=
   if expand && !m.fil then m.boxW * expandLimit / 1000 else 0
 
 public def overfullDemerits : Int := 100000000
 
 /-- What an overfull line costs: `overfullDemerits` and as much again per whole point
 it overhangs, so it ends at its first break past its unbreakable run (tex.web §854). -/
-public def overfullCost (overhang : Sp) : Int :=
+public def overfullCost (overhang : Length) : Int :=
   overfullDemerits * (1 + overhang / Dim.pt 1) -- per point: TeX reports an overfull box in pt (tex.web §663)
 
 /-- Demerits of one candidate line, the badness denominators grown by
 font expansion (`Measure.ex`); under `fil` only shrink is priced. -/
-public def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat)
+public def lineDemerits (items : Array Item) (m : Measure) (target : Length) (j : Nat)
     (expand : Bool := false) (fil : Bool := false) : Int :=
   let ex := m.ex expand
   let delta := target - m.natural
@@ -5672,26 +5682,26 @@ public def oneWordLine (items : Array Item) (a j : Nat) : Bool :=
 
 /-- Prefix sums over item width, stretch, shrink, fil and forced counts, one slot past the end. -/
 public structure KpSums where
-  w : Array Sp
-  s : Array Sp
-  k : Array Sp
+  w : Array Length
+  s : Array Length
+  k : Array Length
   f : Array Nat
   forced : Array Nat
   /-- Prefix sums of font-box widths, scaled once at the read. -/
-  b : Array Sp
+  b : Array Length
   /-- The stretch every line carries besides its own glue, TeX's
   background (tex.web §827); zero but in a narrowed table cell. -/
-  bg : Sp := 0
+  bg : Length := 0
 
 public def kpSums (items : Array Item) : KpSums := Id.run do
   let n := items.size
-  let mut pw : Array Sp := Array.mkEmpty (n + 1)
-  let mut ps : Array Sp := Array.mkEmpty (n + 1)
-  let mut pk : Array Sp := Array.mkEmpty (n + 1)
+  let mut pw : Array Length := Array.mkEmpty (n + 1)
+  let mut ps : Array Length := Array.mkEmpty (n + 1)
+  let mut pk : Array Length := Array.mkEmpty (n + 1)
   let mut pf : Array Nat := Array.mkEmpty (n + 1)
   let mut pforced : Array Nat := Array.mkEmpty (n + 1)
-  let mut pb : Array Sp := Array.mkEmpty (n + 1)
-  let mut btot : Sp := 0
+  let mut pb : Array Length := Array.mkEmpty (n + 1)
+  let mut btot : Length := 0
   pw := pw.push 0
   ps := ps.push 0
   pk := pk.push 0
@@ -5699,7 +5709,7 @@ public def kpSums (items : Array Item) : KpSums := Id.run do
   pforced := pforced.push 0
   pb := pb.push 0
   for k in [0:n] do
-    let (dw, dst, dsh, dfil, db) : Sp × Sp × Sp × Nat × Sp := match items[k]! with
+    let (dw, dst, dsh, dfil, db) : Length × Length × Length × Nat × Length := match items[k]! with
       | .box w _ _ _ _ _ metrics _ _ _ _ => (w, 0, 0, 0, if metrics.fixed then 0 else w)
       | .img _ w _ _ _ => (w, 0, 0, 0, 0)
       | .rule w _ _ _ | .mark w _ _ _ => (w, 0, 0, 0, 0)
@@ -5720,7 +5730,7 @@ public def kpSums (items : Array Item) : KpSums := Id.run do
 plus the broken penalty's width, less the protrusion term. -/
 public def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat)
     (protrude : Bool := false) : Measure :=
-  let penW : Sp := match items[j]? with
+  let penW : Length := match items[j]? with
     | some (.pen w _ _ _ _ _) => w
     | _ => 0
   let m : Measure :=
@@ -5775,7 +5785,7 @@ private def kpStart (items : Array Item) (p : Nat) : Nat :=
   lineStart items (if p == items.size then 0 else p + 1)
 
 private def kpCandidate (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil runt : Bool)
+    (target slack : Length) (protrude expand fil runt : Bool)
     (best : Array (Option KpEntry)) (j p : Nat) (c : KpCandidates) : KpCandidates := Id.run do
   let n := items.size
   if p == n || p < j then
@@ -5846,7 +5856,7 @@ private def KpCandidates.Valid (items : Array Item) (best : Array (Option KpEntr
   (∀ p ∈ c.survivors, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
 
 private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates) (hc : c.Valid items best j)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) :
     (kpCandidate items sums target slack protrude expand fil runt best j p c).Valid items best j := by
@@ -5880,7 +5890,7 @@ private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
     · exact hc
 
 private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates) (hj : j < items.size)
     (hc : c.Valid items best j)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
@@ -5920,7 +5930,7 @@ private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
     · exact Or.inl ⟨p, Array.mem_push_self, hpg⟩
 
 private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
@@ -5946,7 +5956,7 @@ private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
     · simp [hg] at ha
 
 private theorem kpScan_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j : Nat) (ps : List Nat) : ∀ c,
     c.Valid items best j →
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
@@ -5962,7 +5972,7 @@ private theorem kpScan_valid (items : Array Item) (sums : KpSums)
       (fun q hq => hp q (by simp [hq]))
 
 private theorem kpScan_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j : Nat) (hj : j < items.size)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (ps : List Nat) : ∀ c,
@@ -5988,7 +5998,7 @@ private theorem kpScan_good (items : Array Item) (sums : KpSums)
       · exact Or.inr ⟨q, hq, hqg⟩
 
 private theorem kpScan_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j : Nat) (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (ps : List Nat) : ∀ c,
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
@@ -6120,7 +6130,7 @@ private theorem kpClose_here (j : Nat) (best : Array (Option KpEntry))
   exact hh
 
 private def kpPosition (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil runt : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
+    (target slack : Length) (protrude expand fil runt : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
   if !canBreakAt items j then return st
   let mut c : KpCandidates := {}
   for p in st.active do
@@ -6132,7 +6142,7 @@ private theorem kpCandidates_empty (items : Array Item) (best : Array (Option Kp
   simp [KpCandidates.Valid]
 
 private theorem kpPosition_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j) :
     (kpPosition items sums target slack protrude expand fil runt j st).Valid items (j+1) := by
   by_cases hb : canBreakAt items j = true
@@ -6146,7 +6156,7 @@ private theorem kpPosition_valid (items : Array Item) (sums : KpSums)
       fun p hp => ⟨(hs.2 p hp).1.imp_right (by omega), (hs.2 p hp).2⟩⟩
 
 private theorem kpPosition_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : ∃ p ∈ st.active, kpStart items p < items.size) :
@@ -6164,7 +6174,7 @@ private theorem kpPosition_good (items : Array Item) (sums : KpSums)
       pure, Id.run] using hg
 
 private theorem kpPosition_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j)
     (hb : canBreakAt items j = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
@@ -6208,14 +6218,14 @@ private theorem kpInit_valid (items : Array Item) :
     simp [kpInit]
 
 private def kpForward (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil runt : Bool) (count : Nat) : KpState := Id.run do
+    (target slack : Length) (protrude expand fil runt : Bool) (count : Nat) : KpState := Id.run do
   let mut st := kpInit items.size
   for j in [0:count] do
     st := kpPosition items sums target slack protrude expand fil runt j st
   return st
 
 private theorem kpForward_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (count : Nat) (hc : count ≤ items.size) :
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (count : Nat) (hc : count ≤ items.size) :
     (kpForward items sums target slack protrude expand fil runt count).Valid items count := by
   simp only [kpForward, bind, pure, Id.run, Std.Legacy.Range.forIn_eq_forIn_range']
   simpa only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, pure, Id.run,
@@ -6226,7 +6236,7 @@ private theorem kpForward_valid (items : Array Item) (sums : KpSums)
       (fun i _ hi st hs => kpPosition_valid _ _ _ _ _ _ _ _ _ (by omega) hs)
 
 private theorem kpForward_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (count : Nat) (hc : count ≤ items.size)
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (count : Nat) (hc : count ≤ items.size)
     (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : kpStart items items.size < items.size) :
     ∃ p ∈ (kpForward items sums target slack protrude expand fil runt count).active,
@@ -6243,7 +6253,7 @@ private theorem kpForward_good (items : Array Item) (sums : KpSums)
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run] using h.2
 
 private theorem kpForward_succ (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (count : Nat) :
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool} (count : Nat) :
     kpForward items sums target slack protrude expand fil runt (count+1) =
       kpPosition items sums target slack protrude expand fil runt count
         (kpForward items sums target slack protrude expand fil runt count) := by
@@ -6266,7 +6276,7 @@ private theorem kpForward_succ (items : Array Item) (sums : KpSums)
   simp only [List.foldl_append, List.foldl_cons, List.foldl_nil, pure]
 
 private theorem kpForward_last (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool}
+    (target slack : Length) (protrude expand fil : Bool) {runt : Bool}
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : kpStart items items.size < items.size) :
@@ -6468,7 +6478,7 @@ private theorem kpSums_forced_zero (items : Array Item)
     (hf : ∀ k, k+1 < items.size → isForced items k = false) :
     (kpSums items).forced.size = items.size+1 ∧
       ∀ j, j < items.size → ((kpSums items).forced.getD j 0) = 0 := by
-  let P := fun t (st : Array Sp × Array Sp × Array Sp × Array Nat × Array Nat × Array Sp × Sp) =>
+  let P := fun t (st : Array Length × Array Length × Array Length × Array Nat × Array Nat × Array Length × Length) =>
     st.2.2.2.2.1.size = t+1 ∧ ∀ j, j < st.2.2.2.2.1.size → j < items.size →
       (st.2.2.2.2.1.getD j 0) = 0
   unfold kpSums
@@ -6539,24 +6549,24 @@ private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List N
 
 /-- Optimal breakpoints [KnuthPlass1981] by dynamic programming over break
 positions, with prefix-sum line measures and an active list. -/
-public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :
+public def kp (items : Array Item) (target : Length) (protrude : Bool := false)
+    (expand : Bool := false) (bg : Length := 0) (fil : Bool := false) (runt : Bool := false) :
     Array Nat :=
   let sums := { kpSums items with bg := bg }
-  let slack : Sp := if protrude then maxProtrudeRight items else 0
+  let slack : Length := if protrude then maxProtrudeRight items else 0
   let st := kpForward items sums target slack protrude expand fil runt items.size
   match (st.best.getD (items.size-1) none) with
   | none => #[]
   | some _ => kpBack items.size st.best (items.size-1)
 
-private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand : Bool)
-    (bg : Sp) (fil : Bool) {runt : Bool}
+private theorem kp_boxChars (items : Array Item) (target : Length) (protrude expand : Bool)
+    (bg : Length) (fil : Bool) {runt : Bool}
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ k, k+1 < items.size → isForced items k = false) :
     (breakSpans items (kp items target protrude expand bg fil runt).toList).1 =
       items.toList.flatMap Item.boxChars := by
   let sums := { kpSums items with bg := bg }
-  let slack : Sp := if protrude then maxProtrudeRight items else 0
+  let slack : Length := if protrude then maxProtrudeRight items else 0
   let st := kpForward items sums target slack protrude expand fil runt items.size
   have ht := (kpForward_valid items sums target slack protrude expand fil (runt := runt) items.size
     (Nat.le_refl _)).1
@@ -6594,8 +6604,8 @@ public def pretolerance : Nat := 100
 
 /-- Two-pass breaking as TeX's: a hyphenless pass whose breaks stand
 when every line is within `pretolerance`, else the hyphenating pass. -/
-public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :
+public def kpTwoPass (items : Array Item) (target : Length) (protrude : Bool := false)
+    (expand : Bool := false) (bg : Length := 0) (fil : Bool := false) (runt : Bool := false) :
     Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
@@ -6626,37 +6636,37 @@ public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := fals
 
 /-- The uniform expansion factor a set line applies to its font boxes, in per
 mille: fonts absorb the line's delta up to `expandLimit`, glue the rest. -/
-public def expandFactor (delta boxW : Int) : Int :=
+public def expandFactor (delta boxW : Length) : Int :=
   if boxW > 0 && delta != 0 then
-    min (max (delta * 1000 / boxW) (-(expandLimit : Int))) (expandLimit : Int)
+    min (max (1000 * delta / boxW) (-(expandLimit : Int))) (expandLimit : Int)
   else 0
 
-public theorem expandFactor_bounded (delta boxW : Int) :
+public theorem expandFactor_bounded (delta boxW : Length) :
     -(expandLimit : Int) ≤ expandFactor delta boxW ∧
       expandFactor delta boxW ≤ (expandLimit : Int) := by
   unfold expandFactor expandLimit
   split <;> omega
 
 /-- A font box's coordinate under the line's per-mille expansion. -/
-private def expandCoord (f x : Int) : Int := x + x * f / 1000
+private def expandCoord (f : Int) (x : Length) : Length := x + x * f / 1000
 
 /-- Expansion of a fragment measured from its original shaping origin. -/
-public def expandSpan (f offset width : Int) : Int :=
+public def expandSpan (f : Int) (offset width : Length) : Length :=
   expandCoord f (offset + width) - expandCoord f offset
 
-public theorem expandSpan_add_exact (f offset a b : Int) :
+public theorem expandSpan_add_exact (f : Int) (offset a b : Length) :
     expandSpan f offset a + expandSpan f (offset + a) b =
       expandSpan f offset (a + b) := by
   unfold expandSpan
-  simp only [Int.add_assoc]
-  omega
+  rw [Length.add_assoc]
+  length_omega
 
 /-- Set a word's box, split only where local rounding
 would differ from the original shaping origin. -/
-private def setWordBox (segs : Array Seg) (f offset w : Sp)
+private def setWordBox (segs : Array Seg) (f : Int) (offset w : Length)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (glyphs : Array (Nat × Char × Length)) (size : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution) : Array Seg := Id.run do
   let width := expandSpan f offset w
   if f == 0 || offset == 0 || glyphs.isEmpty then
@@ -6664,9 +6674,9 @@ private def setWordBox (segs : Array Seg) (f offset w : Sp)
       (.run fontIdx color link width glyphs size leading decorations raise ground attr)
   let mut segs := segs
   let mut run := #[]
-  let mut dx := 0
-  let mut startDx := 0
-  let mut startX := 0
+  let mut dx : Length := 0
+  let mut startDx : Length := 0
+  let mut startX : Length := 0
   for g in glyphs do
     let x := expandCoord f (offset + dx) - expandCoord f offset
     if !run.isEmpty && startX + expandCoord f (dx - startDx) != x then
@@ -6680,10 +6690,10 @@ private def setWordBox (segs : Array Seg) (f offset w : Sp)
   return segs.push
     (.run fontIdx color link (width - startX) run size leading decorations raise ground attr)
 
-private theorem setWordBox_glyphChars (segs : Array Seg) (f offset w : Sp)
+private theorem setWordBox_glyphChars (segs : Array Seg) (f : Int) (offset w : Length)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (glyphs : Array (Nat × Char × Length)) (size : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution) :
     (setWordBox segs f offset w fontIdx color link glyphs size leading decorations raise ground attr).toList.flatMap
       Seg.glyphChars = segs.toList.flatMap Seg.glyphChars ++ glyphs.toList.map (·.2.1) := by
@@ -6692,7 +6702,7 @@ private theorem setWordBox_glyphChars (segs : Array Seg) (f offset w : Sp)
   split
   · simp [Seg.glyphChars]
   · apply Loop.bind_of_inv
-      (P := fun st : Array Seg × Array (Nat × Char × Sp) × Sp × Sp × Sp =>
+      (P := fun st : Array Seg × Array (Nat × Char × Length) × Length × Length × Length =>
         st.1.toList.flatMap Seg.glyphChars ++ st.2.1.toList.map (·.2.1) =
           segs.toList.flatMap Seg.glyphChars ++ glyphs.toList.map (·.2.1))
       (Q := fun out : Array Seg => out.toList.flatMap Seg.glyphChars =
@@ -6700,9 +6710,9 @@ private theorem setWordBox_glyphChars (segs : Array Seg) (f offset w : Sp)
     · simpa only [Array.toList_empty, List.map_nil, List.append_nil,
         ← List.map_eq_flatMap] using
         scalarLoop_array_census
-          (fun st : Array Seg × Array (Nat × Char × Sp) × Sp × Sp × Sp =>
+          (fun st : Array Seg × Array (Nat × Char × Length) × Length × Length × Length =>
             st.1.toList.flatMap Seg.glyphChars ++ st.2.1.toList.map (·.2.1))
-          (fun g : Nat × Char × Sp => [g.2.1]) _ glyphs (segs, #[], 0, 0, 0)
+          (fun g : Nat × Char × Length => [g.2.1]) _ glyphs (segs, #[], 0, 0, 0)
           (by
             intro g _ st
             rcases st with ⟨ss, run, dx, startDx, startX⟩
@@ -6722,7 +6732,7 @@ private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bo
     | _ => pure ()
   return false
 
-private def trimLineGaps (segs : Array Seg) (width : Sp) : Array Seg × Sp := Id.run do
+private def trimLineGaps (segs : Array Seg) (width : Length) : Array Seg × Length := Id.run do
   let mut segs := segs
   let mut width := width
   repeat
@@ -6733,7 +6743,7 @@ private def trimLineGaps (segs : Array Seg) (width : Sp) : Array Seg × Sp := Id
     | _ => break
   return (segs, width)
 
-private theorem trimLineGaps_mem (segs : Array Seg) (width : Sp) :
+private theorem trimLineGaps_mem (segs : Array Seg) (width : Length) :
     ∀ s ∈ (trimLineGaps segs width).1, s ∈ segs := by
   unfold trimLineGaps
   simp only [Id.run, bind, pure]
@@ -6762,7 +6772,7 @@ decreasing_by
     simp only [Array.size_pop]
     omega
 
-private theorem trimLineGaps_glyphChars (segs : Array Seg) (width : Sp) :
+private theorem trimLineGaps_glyphChars (segs : Array Seg) (width : Length) :
     (trimLineGaps segs width).1.toList.flatMap Seg.glyphChars =
       segs.toList.flatMap Seg.glyphChars := by
   unfold trimLineGaps
@@ -6801,21 +6811,21 @@ decreasing_by
 /-- The width glue `g` sets at on a justified line whose natural width falls `delta` short of
 its target (past it where negative): an equal share of `delta` on fil glue when the line has
 any, else a share by stretch, or by shrink capped at the line's. -/
-private def GlueSet.width (justify : Bool) (delta : Sp) (fils : Nat) (m : Measure) (g : Glue) : Sp :=
+private def GlueSet.width (justify : Bool) (delta : Length) (fils : Nat) (m : Measure) (g : Glue) : Length :=
   if !justify || delta == 0 then g.width
   else if delta > 0 then
     if fils > 0 then
       if g.fil then g.width + delta / fils else g.width
-    else if m.stretch > 0 then g.width + delta * g.stretch / m.stretch
+    else if m.stretch > 0 then g.width + delta.mulDiv g.stretch m.stretch
     else g.width
-  else if m.shrink > 0 then g.width + max delta (-m.shrink) * g.shrink / m.shrink
+  else if m.shrink > 0 then g.width + (max delta (-m.shrink)).mulDiv g.shrink m.shrink
   else g.width
 
 private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
-    (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp) :
-    Array Seg × Sp := Id.run do
+    (delta : Length) (f : Int) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Length) :
+    Array Seg × Length := Id.run do
   let mut segs : Array Seg := #[]
-  let mut width : Sp := 0
+  let mut width : Length := 0
   for k in [a:j] do
     match items[k]! with
     | .box w fontIdx color link glyphs size leading decorations raise ground attr =>
@@ -6853,7 +6863,7 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
         | .run _ _ _ _ _ sz ld decorations _ gr _ =>
           if sz != 0 then (sz, ld, decorations, gr) else acc
         | _ => acc)
-        ((0 : Sp), ({} : RunMetrics), ({} : Decorations), (none : Option Ir.Color))
+        ((0 : Length), ({} : RunMetrics), ({} : Decorations), (none : Option Ir.Color))
       segs := segs.push
         (.run fontIdx color none w glyphs inherited.1 inherited.2.1
           inherited.2.2.1 0 inherited.2.2.2 .hyphen)
@@ -6861,7 +6871,7 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
   return trimLineGaps segs width
 
 private theorem setLineSegments_glyphChars (items : Array Item) (a j : Nat) (m : Measure)
-    (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp) :
+    (delta : Length) (f : Int) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Length) :
     (setLineSegments items a j m delta f justify fils wordOffsets).1.toList.flatMap Seg.glyphChars =
       (List.range' a (j-a)).flatMap (fun k => (items.getD k default).boxChars) ++
       (match items[j]? with
@@ -6870,17 +6880,17 @@ private theorem setLineSegments_glyphChars (items : Array Item) (a j : Nat) (m :
   unfold setLineSegments
   dsimp only
   apply Loop.bind_of_inv
-    (P := fun st : Array Seg × Sp =>
+    (P := fun st : Array Seg × Length =>
       st.1.toList.flatMap Seg.glyphChars =
         (List.range' a (j-a)).flatMap (fun k => (items.getD k default).boxChars))
-    (Q := fun out : Array Seg × Sp => out.1.toList.flatMap Seg.glyphChars =
+    (Q := fun out : Array Seg × Length => out.1.toList.flatMap Seg.glyphChars =
       (List.range' a (j-a)).flatMap (fun k => (items.getD k default).boxChars) ++
       (match items[j]? with
         | some (.pen _ _ _ _ _ glyphs) => glyphs.toList.map (·.2.1)
         | _ => []))
   · simpa only [Array.toList_empty, List.flatMap_nil, List.nil_append] using
       scalarLoop_range_census
-        (fun st : Array Seg × Sp => st.1.toList.flatMap Seg.glyphChars)
+        (fun st : Array Seg × Length => st.1.toList.flatMap Seg.glyphChars)
         (fun k => (items.getD k default).boxChars) _ a j (#[], 0)
         (by
           intro k _ _ st
@@ -6918,10 +6928,10 @@ private theorem noGlyph_getD (items : Array Item)
   · simp only [getElem!_neg items k hk]
     rfl
 
-private theorem setWordBox_noGlyph (segs : Array Seg) (f offset w : Sp)
+private theorem setWordBox_noGlyph (segs : Array Seg) (f : Int) (offset w : Length)
     (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (glyphs : Array (Nat × Char × Sp)) (size : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (glyphs : Array (Nat × Char × Length)) (size : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution) (hg : glyphs = #[]) (hs : ∀ s ∈ segs, s.NoGlyph) :
     ∀ s ∈ setWordBox segs f offset w fontIdx color link glyphs size leading
       decorations raise ground attr, s.NoGlyph := by
@@ -6933,15 +6943,15 @@ private theorem setWordBox_noGlyph (segs : Array Seg) (f offset w : Sp)
   · rfl
 
 private theorem setLineSegments_noGlyph (items : Array Item) (a j : Nat) (m : Measure)
-    (delta f : Sp) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Sp)
+    (delta : Length) (f : Int) (justify : Bool) (fils : Nat) (wordOffsets : Std.HashMap Nat Length)
     (h : ∀ it ∈ items, it.NoGlyph) :
     ∀ s ∈ (setLineSegments items a j m delta f justify fils wordOffsets).1,
       s.NoGlyph := by
   unfold setLineSegments
-  refine Loop.bind_of_inv (P := fun st : Array Seg × Sp => ∀ s ∈ st.1, s.NoGlyph)
-    (Q := fun st : Array Seg × Sp => ∀ s ∈ st.1, s.NoGlyph) _ _ ?_ ?_
+  refine Loop.bind_of_inv (P := fun st : Array Seg × Length => ∀ s ∈ st.1, s.NoGlyph)
+    (Q := fun st : Array Seg × Length => ∀ s ∈ st.1, s.NoGlyph) _ _ ?_ ?_
   · apply Loop.forIn_range_inv
-      (P := fun st : Array Seg × Sp => ∀ s ∈ st.1, s.NoGlyph)
+      (P := fun st : Array Seg × Length => ∀ s ∈ st.1, s.NoGlyph)
     · simp
     · intro k _ _ st hs
       have hi := noGlyph_getD items h k
@@ -6968,14 +6978,14 @@ private theorem setLineSegments_noGlyph (items : Array Item) (a j : Nat) (m : Me
 
 private structure LineSetting where
   measured : Measure
-  delta : Sp
+  delta : Length
   factor : Int
   fils : Nat
   overfull : Bool
-  hang : Sp
+  hang : Length
 
-private def lineSetting (items : Array Item) (a j : Nat) (target : Sp)
-    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp) :
+private def lineSetting (items : Array Item) (a j : Nat) (target : Length)
+    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Length) :
     LineSetting := Id.run do
   let m := measure items a j
   -- Protrusion: the line sets against the enlarged target; the caller shifts it by the hang.
@@ -6984,7 +6994,7 @@ private def lineSetting (items : Array Item) (a j : Nat) (target : Sp)
   let target := target + leftHang + (if doProt then protrudeRight items a j else 0)
   let delta := target - m.natural
   let f : Int := if expand && justify && !m.fil then expandFactor delta m.boxW else 0
-  let mut boxTaken : Sp := 0
+  let mut boxTaken : Length := 0
   if f != 0 then
     for k in [a:j] do
       if let some (.box w _ _ _ _ _ _ _ _ _ _) := items[k]? then
@@ -7007,17 +7017,17 @@ private def lineSetting (items : Array Item) (a j : Nat) (target : Sp)
   let fils := if explicitFils > 0 then explicitFils else allFils
   return { measured := m, delta, factor := f, fils, overfull, hang := leftHang }
 
-private def setLine (items : Array Item) (a j : Nat) (target : Sp)
+private def setLine (items : Array Item) (a j : Nat) (target : Length)
     (justify : Bool) (protrude : Bool := false) (expand : Bool := false)
-    (wordOffsets : Std.HashMap Nat Sp := {}) :
-    Array Seg × Sp × Bool × Sp × Int :=
+    (wordOffsets : Std.HashMap Nat Length := {}) :
+    Array Seg × Length × Bool × Length × Int :=
   let setting := lineSetting items a j target justify protrude expand wordOffsets
   let (segs, width) := setLineSegments items a j setting.measured setting.delta
     setting.factor justify setting.fils wordOffsets
   (segs, width, setting.overfull, setting.hang, setting.factor)
 
-private theorem setLine_noGlyph (items : Array Item) (a j : Nat) (target : Sp)
-    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp)
+private theorem setLine_noGlyph (items : Array Item) (a j : Nat) (target : Length)
+    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Length)
     (h : ∀ it ∈ items, it.NoGlyph) :
     ∀ s ∈ (setLine items a j target justify protrude expand wordOffsets).1,
       s.NoGlyph := by
@@ -7026,26 +7036,26 @@ private theorem setLine_noGlyph (items : Array Item) (a j : Nat) (target : Sp)
 /-- One set footnote: its lines with `y` from the note block's top, and the block's total height. -/
 private structure NoteBlock where
   lines : Array LineOut
-  height : Sp
+  height : Length
   /-- The last line's ink below its baseline, which a frame's note box hangs below the floor. -/
-  depth : Sp := 0
+  depth : Length := 0
   deriving Repr, Inhabited
 
 /-- A rule's reach about its box's lines, resolved in the title's
 font: `height` above the box's last baseline and `depth` below it. -/
 private structure EdgeReach where
-  height : Sp
-  depth : Sp
+  height : Length
+  depth : Length
   continued : Bool := false
 
 /-- A block link, or a painted colour box whose paint reaches
 `pad` beyond its lines (beamer's `beamercolorbox`). -/
 private inductive RegionKind where
   | link (target : String)
-  | surface (color : Ir.Color) (pad x w : Sp) (anchored : Bool)
+  | surface (color : Ir.Color) (pad x w : Length) (anchored : Bool)
   /-- A rule a block template sets beside a box (`Ir.BlockEdge`), painted
   `x`..`x + w` from the box's top to its last line's bottom; it spaces nothing. -/
-  | edge (color : Ir.Color) (x w inset : Sp) (reach : Option EdgeReach)
+  | edge (color : Ir.Color) (x w inset : Length) (reach : Option EdgeReach)
   /-- Invisible overlay content on a step it does not show: what it places keeps its place and
   ships nothing. -/
   | hidden
@@ -7065,13 +7075,13 @@ private structure RegionStart where
 /-- The baseline a list ends on, as TeX's `\prevdepth` reads it, tied to the
 element beside which it was read so shrink and distribution carry it. -/
 private inductive BaseAnchor where
-  | line (i : Nat) (offset : Sp)
-  | ink (i : Nat) (offset : Sp)
+  | line (i : Nat) (offset : Length)
+  | ink (i : Nat) (offset : Length)
 
-private def BaseAnchor.read (p : PageOut) (y : Sp) : Option BaseAnchor :=
-  let inkBottom (k : InkOut) : Sp := k.claims.foldl (fun m b => max m b.2.2) k.place.dy
+private def BaseAnchor.read (p : PageOut) (y : Length) : Option BaseAnchor :=
+  let inkBottom (k : InkOut) : Length := k.claims.foldl (fun m b => max m b.2.2) k.place.dy
   -- The cursor on a line's baseline stands on its last row (`LineOut.lastBase`).
-  let onLine (l : LineOut) : Sp := y - l.y + (if l.y == y then l.lastBase else 0)
+  let onLine (l : LineOut) : Length := y - l.y + (if l.y == y then l.lastBase else 0)
   match p.lines.back?, p.inks.back? with
   | some l, some k =>
     if l.y != y && l.y < inkBottom k then some (.ink (p.inks.size - 1) (y - k.place.dy))
@@ -7086,7 +7096,7 @@ private def BaseAnchor.afterPage (a : BaseAnchor) (p : PageOut) : BaseAnchor :=
   | .ink i o => .ink (p.inks.size + i) o
 
 private def BaseAnchor.y (a : BaseAnchor) (lines : Array LineOut) (inks : Array InkOut) :
-    Option Sp :=
+    Option Length :=
   match a with
   | .line i o => (lines[i]?).map (·.y + o)
   | .ink i o => (inks[i]?).map (·.place.dy + o)
@@ -7097,7 +7107,7 @@ private structure RegionSpan where
   hidden : Bool := false
   first : Bool
   /-- Glue inside the box after its last line, which a TeX box keeps. -/
-  tail : Sp := 0
+  tail : Length := 0
   lineStart : Nat
   lineEnd : Nat
   fillStart : Nat
@@ -7107,8 +7117,8 @@ private structure RegionSpan where
   /-- The baseline its list closed on, where it closed in the flow. -/
   base : Option BaseAnchor := none
 
-private def RegionStart.close (s : RegionStart) (p : PageOut) (tail : Sp := 0)
-    (base : Option Sp := none) : RegionSpan :=
+private def RegionStart.close (s : RegionStart) (p : PageOut) (tail : Length := 0)
+    (base : Option Length := none) : RegionSpan :=
   { kind := s.kind, depth := s.depth, hidden := s.hidden, first := s.first, tail := tail
     lineStart := s.lines, lineEnd := p.lines.size
     fillStart := s.fills, fillEnd := p.fills.size
@@ -7119,12 +7129,12 @@ private def RegionStart.nextPage (s : RegionStart) : RegionStart :=
   { s with lines := 0, fills := 0, inks := 0, first := false, begun := false }
 
 private structure RegionBox where
-  x0 : Sp
-  y0 : Sp
-  x1 : Sp
-  y1 : Sp
+  x0 : Length
+  y0 : Length
+  x1 : Length
+  y1 : Length
 
-private def addRegionBox (box : Option RegionBox) (x0 y0 x1 y1 : Sp) : Option RegionBox :=
+private def addRegionBox (box : Option RegionBox) (x0 y0 x1 y1 : Length) : Option RegionBox :=
   match box with
   | none => some { x0 := min x0 x1, y0 := min y0 y1, x1 := max x0 x1, y1 := max y0 y1 }
   | some b => some { x0 := min b.x0 (min x0 x1), y0 := min b.y0 (min y0 y1),
@@ -7180,15 +7190,15 @@ private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
 
 /-- Where a rule reaching by its box's lines stands, its
 top and bottom; nothing where that leaves no room. -/
-public def edgeLinesSpan (firstY firstAbove lastY lastBelow height depth : Int) :
-    Option (Int × Int) :=
+public def edgeLinesSpan (firstY firstAbove lastY lastBelow height depth : Length) :
+    Option (Length × Length) :=
   let top := firstY - firstAbove - lastBelow - height
   let bottom := lastY + depth
   if bottom ≤ top then none else some (top, bottom)
 
 public theorem edgeLinesSpan_centred_exact (firstY firstAbove lastY lastBelow height depth
-    lead cap e : Int) (hs : firstAbove + lastBelow = lead + e) (hr : depth - height = lead - cap)
-    (top bottom : Int)
+    lead cap e : Length) (hs : firstAbove + lastBelow = lead + e) (hr : depth - height = lead - cap)
+    (top bottom : Length)
     (hf : edgeLinesSpan firstY firstAbove lastY lastBelow height depth = some (top, bottom)) :
     top + bottom = (firstY - cap) + lastY - e := by
   unfold edgeLinesSpan at hf
@@ -7196,17 +7206,17 @@ public theorem edgeLinesSpan_centred_exact (firstY firstAbove lastY lastBelow he
   split at hf
   · cases hf
   · simp only [Option.some.injEq, Prod.mk.injEq] at hf
-    omega
+    length_omega
 
 /-- Where the body's part of a rule beside the whole block stands, from `height` below the
 title's last baseline to `depth` below the block's; nothing where that leaves no room. -/
-public def edgeLinesFrom (aboveY lastY height depth : Int) : Option (Int × Int) :=
+public def edgeLinesFrom (aboveY lastY height depth : Length) : Option (Length × Length) :=
   let top := aboveY + height
   let bottom := lastY + depth
   if bottom ≤ top then none else some (top, bottom)
 
 public theorem edgeLinesFrom_abuts_exact (firstY firstAbove titleY titleBelow lastY height depth
-    t1 b1 t2 b2 : Int)
+    t1 b1 t2 b2 : Length)
     (h1 : edgeLinesSpan firstY firstAbove titleY titleBelow height depth = some (t1, b1))
     (h2 : edgeLinesFrom titleY lastY depth depth = some (t2, b2)) :
     b1 = t2 ∧ b2 = lastY + depth := by
@@ -7218,7 +7228,7 @@ public theorem edgeLinesFrom_abuts_exact (firstY firstAbove titleY titleBelow la
   · split at h2
     · cases h2
     · simp only [Option.some.injEq, Prod.mk.injEq] at h1 h2
-      omega
+      length_omega
 
 /-- Whether the span is the body's part of a rule beside the whole block (`EdgeReach.continued`). -/
 private def RegionSpan.continuesRule (s : RegionSpan) : Bool :=
@@ -7229,7 +7239,7 @@ private def RegionSpan.continuesRule (s : RegionSpan) : Bool :=
 /-- The baseline a region's list ends on: where it closed in
 the flow, or its lowest line's on a page it continues past. -/
 private def RegionSpan.lastBaseline (s : RegionSpan) (lines : Array LineOut)
-    (inks : Array InkOut) : Option Sp :=
+    (inks : Array InkOut) : Option Length :=
   match s.base with
   | some a => a.y lines inks
   | none => (lines.extract s.lineStart s.lineEnd).foldl
@@ -7256,7 +7266,7 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
   | .edge color x w _ (some r) =>
     if r.continued then
-      let start : Option (Sp × Sp) :=
+      let start : Option (Length × Length) :=
         if s.first && 0 < s.lineStart then (lines[s.lineStart - 1]?).map fun l => (l.y, r.height)
         else (lines.extract s.lineStart s.lineEnd)[0]?.map fun l =>
           (l.y - (l.regionExtent.getD (0, 0)).1, 0)
@@ -7316,7 +7326,7 @@ private def joinRuleParts (fills : Array (RegionSpan × Fill)) : Array (RegionSp
 
 /-- The lowest y body ink may reach on a page carrying `h` of note ink: the
 note block and the `\skip\footins` gap, less `hang`, come out of `bottom`. -/
-private def noteFloor (bottom footins h : Sp) (hang : Sp := 0) : Sp :=
+private def noteFloor (bottom footins h : Length) (hang : Length := 0) : Length :=
   if h == 0 then bottom else bottom + hang - h - footins
 
 
@@ -7341,10 +7351,10 @@ public inductive Spacing.Band where
 /-- A column's final baseline and the lower bounds spacing
 reads: clearance, leading and measured box depth. -/
 public structure Spacing.Tail where
-  y : Sp
-  depth : Sp
-  below : Sp
-  boxDepth : Sp
+  y : Length
+  depth : Length
+  below : Length
+  boxDepth : Length
   band : Spacing.Band
 
 /-- The common tail of neighbouring columns; a mixed row is
@@ -7364,14 +7374,14 @@ public theorem Spacing.Tail.join_covers (a b : Spacing.Tail) :
     b.y + b.below ≤ (a.join b).y + (a.join b).below ∧
     a.y + a.boxDepth ≤ (a.join b).y + (a.join b).boxDepth ∧
     b.y + b.boxDepth ≤ (a.join b).y + (a.join b).boxDepth := by
-  simp only [Spacing.Tail.join, Sp]
-  omega
+  simp only [Spacing.Tail.join]
+  length_omega
 
 public theorem Spacing.Tail.join_boxDepth_exact (a b : Spacing.Tail) :
     (a.join b).y + (a.join b).boxDepth =
       max (a.y + a.boxDepth) (b.y + b.boxDepth) := by
-  simp only [Spacing.Tail.join, Sp]
-  omega
+  simp only [Spacing.Tail.join]
+  length_omega
 
 public theorem Spacing.Tail.join_box_exact (a b : Spacing.Tail)
     (h : a.band = .box ∨ b.band = .box) :
@@ -7388,16 +7398,16 @@ public theorem Spacing.Tail.join_comm (a b : Spacing.Tail) :
     a.join b = b.join a := by
   simp only [Spacing.Tail.join]
   congr 1
-  · simp only [Sp]; omega
-  · simp only [Sp]; omega
-  · simp only [Sp]; omega
-  · simp only [Sp]; omega
+  · length_omega
+  · length_omega
+  · length_omega
+  · length_omega
   · split <;> split <;> simp_all
 
 public theorem Spacing.Tail.join_id (a : Spacing.Tail) : a.join a = a := by
   cases a
   simp only [Spacing.Tail.join, ↓reduceIte]
-  congr 1 <;> simp only [Sp] <;> omega
+  congr 1 <;> length_omega
 
 public theorem Spacing.Tail.join_assoc (a b c : Spacing.Tail) :
     (a.join b).join c = a.join (b.join c) := by
@@ -7406,33 +7416,33 @@ public theorem Spacing.Tail.join_assoc (a b c : Spacing.Tail) :
   rcases c with ⟨cy, cd, cl, ci, cb⟩
   simp only [Spacing.Tail.join]
   congr 1
-  · simp only [Sp]; omega
-  · simp only [Sp]; omega
-  · simp only [Sp]; omega
-  · simp only [Sp]; omega
+  · length_omega
+  · length_omega
+  · length_omega
+  · length_omega
   · cases ab <;> cases bb <;> cases cb <;> decide
 
 /-- Repeated furniture and the spacing reference below it. -/
 private structure Spacing.Chrome where
   lines : Array LineOut
   fills : Array Fill
-  y : Sp
-  depth : Sp
-  below : Sp
+  y : Length
+  depth : Length
+  below : Length
   band : Spacing.Band
-  header : Option Sp
+  header : Option Length
 
 /-- Page assembly state, set as a line is: lines are boxes,
 skips are glue, and `y` is the last baseline at natural glue. -/
 public structure Spacing.Page where
   private mk ::
   private geom : Geom
-  private ascent : Sp
-  private descent : Sp
+  private ascent : Length
+  private descent : Length
   /-- Body cap height in sp, a line's height as TeX measures it from its glyphs. -/
-  private capHeight : Sp
+  private capHeight : Length
   /-- Body x-height in sp, so `ex` tokens resolve against the real font. -/
-  private xHeight : Sp := 0
+  private xHeight : Length := 0
   /-- Authored picture openings keyed by the PDF structure leaf. -/
   private pictureSpans : Array (Nat × Span) := #[]
   private pages : Array PageOut := #[]
@@ -7440,19 +7450,19 @@ public structure Spacing.Page where
   /-- Page-local lifecycle declarations, recorded and advanced once by `finishPage`. -/
   private pageState : Ir.PageState := {}
   /-- Baseline of the last line placed, at natural glue. -/
-  private y : Sp := 0
+  private y : Length := 0
   /-- Ink depth of the last line placed (metric descent per run). -/
-  private prevDepth : Sp := 0
+  private prevDepth : Length := 0
   /-- The last set line's depth as TeX's box has it, keyed by the baseline
   and `prevDepth` it was committed with (`Spacing.Page.boxDepth`). -/
-  private lastInk : Option (Sp × Sp × Sp) := none
+  private lastInk : Option (Length × Length × Length) := none
   /-- Leaded below of the last line placed (`LineBox.below`). -/
-  private prevBelow : Sp := 0
+  private prevBelow : Length := 0
   /-- The preceding band's spacing reference, surviving column and slot restoration. -/
   private prevBand : Spacing.Band := .text
   /-- Where the last text line's content ends, from the left margin:
   TeX's `\predisplaysize` (tex.web §1146); `none` after anything else. -/
-  private lineEnd : Option Sp := none
+  private lineEnd : Option Length := none
   /-- The band at `y` is display math, so the next interline glue is TeX's (`texBaselineGap`). -/
   private texAfter : Bool := false
   /-- The band at `y` is a frame content's opening `\vbox{}`, so the
@@ -7463,23 +7473,23 @@ public structure Spacing.Page where
   /-- Vertical glue since the last line, not yet laid. -/
   private skip : Glue := {}
   /-- Per line of the current page: total shrink in the glue above it. -/
-  private shrinkAbove : Array Sp := #[]
+  private shrinkAbove : Array Length := #[]
   /-- Per fill and path: the shrink of the glue preceding it. -/
-  private fillShrinkAbove : Array Sp := #[]
-  private inkShrinkAbove : Array Sp := #[]
-  private fillStretchAbove : Array Sp := #[]
-  private inkStretchAbove : Array Sp := #[]
+  private fillShrinkAbove : Array Length := #[]
+  private inkShrinkAbove : Array Length := #[]
+  private fillStretchAbove : Array Length := #[]
+  private inkStretchAbove : Array Length := #[]
   private fillFilsAbove : Array Nat := #[]
   private inkFilsAbove : Array Nat := #[]
   /-- Total shrink in the glue laid on the current page. -/
-  private pageShrink : Sp := 0
+  private pageShrink : Length := 0
   /-- Per line of the current page: total finite stretch in
   the glue above it, which a `\flushbottom` page spends. -/
-  private stretchAbove : Array Sp := #[]
+  private stretchAbove : Array Length := #[]
   /-- Total finite stretch in the glue laid on the current page. -/
-  private pageStretch : Sp := 0
+  private pageStretch : Length := 0
   /-- How far the current page overflows at natural glue. -/
-  private needed : Sp := 0
+  private needed : Length := 0
   /-- The box that last strictly increased `needed`. -/
   private neededSource : Option Span := none
   /-- Source of the line awaiting the fit and commit door. -/
@@ -7502,7 +7512,7 @@ public structure Spacing.Page where
   private ignoreDepth : Bool := false
   /-- The extra space the first box below an anchor takes when it is a
   row of columns: `\lineskip`, or nothing after `\nointerlineskip`. -/
-  private colAnchor : Option Sp := none
+  private colAnchor : Option Length := none
   /-- A float group is being replayed on the page that holds it whole
   (`runFloat`): a line that does not fit commits instead of breaking. -/
   private noBreak : Bool := false
@@ -7520,7 +7530,7 @@ public structure Spacing.Page where
   private curFoot : Option (Array Ir.BandSlot) := none
   private curFootLook : Option Ir.TitledLook := none
   /-- The bottom edge of the open page's `.titleBar` fill, for `PageOut.band`. -/
-  private curBand : Option Sp := none
+  private curBand : Option Length := none
   /-- The displayed counter of the frame opened by `.frameOpen`. -/
   private curFrame : Option Nat := none
   /-- The label of the frame opened by `.frameOpen` (`FrameOpening.label`). -/
@@ -7531,13 +7541,13 @@ public structure Spacing.Page where
   private curStage : Bool := false
   /-- The footline band's box for pages closed from here on, the one
   value the text-area floor and the band's baseline both read. -/
-  private footBox : Option (Sp × Sp) := none
+  private footBox : Option (Length × Length) := none
   /-- The text area of the open frame (`FrameOpening.area`),
   from its `.frameOpen` to its `.frameClose`. -/
   private frameArea : FrameArea := .margins
   /-- The declared gap between the footline's ink and the
   text area, else beamer's 4 pt (`Ir.footline.sep`). -/
-  private footGap : Sp := Ir.footline.sep
+  private footGap : Length := Ir.footline.sep
   /-- Something the next band is spaced below opened on this page though `cur` may hold none of it:
   a frame's body (`openBody`), or the page another column's flow holds for a later column. -/
   private opened : Bool := false
@@ -7550,8 +7560,8 @@ public structure Spacing.Page where
   /-- The open frame has already been reported once (W0384). -/
   private spillWarned : Bool := false
   /-- The overflow ladder's records (`Out.overruns`), per overlay step of a frame it marked. -/
-  private overruns : Array (FrameOrigin × Sp × Sp) := #[]
-  private needs : Array (FrameOrigin × Sp) := #[]
+  private overruns : Array (FrameOrigin × Length × Length) := #[]
+  private needs : Array (FrameOrigin × Length) := #[]
   private spilled : Array FrameOrigin := #[]
   /-- The open frame's overflow policy (`FrameOpening.fit`). -/
   private curFit : FrameFitMode := .spill
@@ -7569,40 +7579,40 @@ public structure Spacing.Page where
   /-- Anchors owed to the next committed line. -/
   private pendingAnchors : Array String := #[]
   /-- The resolved `\skip\footins` gap for this run. -/
-  private footins : Sp := 0
+  private footins : Length := 0
   /-- The footnote rule's ink colour: the design's `fg`. -/
   private noteInk : Ir.Color := Ir.Color.black
   /-- The last pending note's ink below its last baseline (`NoteBlock.depth`). -/
-  private notesDepth : Sp := 0
+  private notesDepth : Length := 0
   /-- Footnote lines committed to the open page, y relative to the
   note block's top; a note enters only through `attachNotes`. -/
   private pendingNotes : Array LineOut := #[]
   /-- Total height of the pending note block, which the
   fit test in `placeLine` reserves above `bodyBottom`. -/
-  private notesH : Sp := 0
+  private notesH : Length := 0
   private diags : Array Diag := #[]
   private paragraphBreaks : Array ParagraphBreaks := #[]
   /-- Per located overfull line's census key, its detail's lead and the furthest it ran, which
   the postlude states once (`mergeOverfull`). -/
-  private overfullMost : Std.HashMap String (String × Sp) := {}
+  private overfullMost : Std.HashMap String (String × Length) := {}
 
 private abbrev B := Spacing.Page
 
 /-- Insets belong to the enclosing regions, not to a
 line's font; a fresh fragment owes its top inset once. -/
-private def Spacing.Page.surfaceTop (b : B) : Sp :=
+private def Spacing.Page.surfaceTop (b : B) : Length :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + if s.begun then 0 else pad
     | .link _ | .edge .. | .hidden => total) 0
 
-private def Spacing.Page.surfaceBottom (b : B) : Sp :=
+private def Spacing.Page.surfaceBottom (b : B) : Length :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + pad
     | .link _ | .edge .. | .hidden => total) 0
 
 /-- The floor of the text area on the page being built: beamer's `\footheight` floor in its
 text area or above a footline, the paper's edge on a plain frame, else `Geom.bodyBottom`. -/
-private def Spacing.Page.bottom (b : B) : Sp :=
+private def Spacing.Page.bottom (b : B) : Length :=
   match b.frameArea with
   | .text => frameFloor b.geom.pageH b.footGap b.footBox
   | .paper => b.geom.pageH
@@ -7612,12 +7622,12 @@ private def Spacing.Page.bottom (b : B) : Sp :=
 
 /-- The gap above a page's note block: LaTeX's `\skip\footins`,
 none in beamer's text area (beamerbaseframesize.sty). -/
-private def Spacing.Page.noteGap (b : B) : Sp :=
+private def Spacing.Page.noteGap (b : B) : Length :=
   if b.frameArea == .margins then b.footins else 0
 
 /-- How far a page's note block hangs below its floor: nothing
 on LaTeX's page, the notes' last depth in beamer's text area. -/
-private def Spacing.Page.noteHang (b : B) (depth : Option Sp := none) : Sp :=
+private def Spacing.Page.noteHang (b : B) (depth : Option Length := none) : Length :=
   if b.frameArea == .margins then 0 else depth.getD b.notesDepth
 
 /-- Nothing stands on the page that the next band must be spaced below. -/
@@ -7659,7 +7669,7 @@ private theorem modify_push_last {α : Type} (a : Array α) (x : α) (g : α →
 
 /-- Attach a committed line's notes to the open page, each note whole. -/
 private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
-  let acc := notes.foldl (fun (acc : Array LineOut × Sp × Sp) nb =>
+  let acc := notes.foldl (fun (acc : Array LineOut × Length × Length) nb =>
       (acc.1 ++ nb.lines.map (fun l => { l with y := l.y + acc.2.1 }), acc.2.1 + nb.height,
         nb.depth))
     (b.pendingNotes, b.notesH, b.notesDepth)
@@ -7672,7 +7682,7 @@ private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
     ∃ l' ∈ (b.attachNotes ns).pendingNotes, l'.segs = l.segs := by
   obtain ⟨j, hj, hje⟩ := Array.mem_iff_getElem.mp hnb
   exact Array.foldl_induction
-    (motive := fun n (acc : Array LineOut × Sp × Sp) => j < n →
+    (motive := fun n (acc : Array LineOut × Length × Length) => j < n →
       ∃ l' ∈ acc.1, l'.segs = l.segs)
     (fun h => absurd h (Nat.not_lt_zero j))
     (fun i acc ih hji => by
@@ -7714,40 +7724,40 @@ private theorem note_whole (b : B) :
 
 /-- The depth of the band at `y` as TeX's box has it: the last set line's
 deepest glyph while that line is the band, else the band's own depth. -/
-private def Spacing.Page.boxDepth (b : B) : Sp :=
+private def Spacing.Page.boxDepth (b : B) : Length :=
   match b.lastInk with
   | some (y, d, ink) => if y == b.y && d == b.prevDepth then ink else b.prevDepth
   | none => b.prevDepth
 
 /-- Record the band just committed as a set line whose box is `ink` deep. -/
-private def Spacing.Page.keepInk (b : B) (ink : Sp) : B :=
+private def Spacing.Page.keepInk (b : B) (ink : Length) : B :=
   { b with lastInk := some (b.y, b.prevDepth, ink) }
 
 /-- Record what the line just set leaves the next one: `texAfter`, `dispShort` and `lineEnd`. -/
-private def Spacing.Page.displayState (b : B) (tex : Bool) (lineEnd : Option Sp) : B :=
+private def Spacing.Page.displayState (b : B) (tex : Bool) (lineEnd : Option Length) : B :=
   { b with texAfter := tex, lineEnd := lineEnd }
 
 /-- TeX's choice of skip above a display (tex.web §1203), joined
 to the pending glue and remembered for the skip below. -/
-private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Sp) : B :=
+private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Length) : B :=
   let long := dj.ctx.align ||
     (if dj.ctx.inPar then (b.lineEnd.map fun e => decide (left ≤ e + 2 * size)).getD true
      else dj.emptyLine && decide (left ≤ 2 * size))
   { b with skip := b.skip.add (if long then dj.above else dj.aboveShort), dispShort := !long }
 
-private theorem keepInk_boxDepth_exact (b : B) (d : Sp) : (b.keepInk d).boxDepth = d := by
+private theorem keepInk_boxDepth_exact (b : B) (d : Length) : (b.keepInk d).boxDepth = d := by
   simp [Spacing.Page.keepInk, Spacing.Page.boxDepth]
 
 /-- Where the page's content ends, the one site the vertical distribution reads:
 the last box's bottom, its depth and `owed`, less the shrink the page gave. -/
-private def Spacing.Page.contentEnd (b : B) (owed : Sp) : Sp :=
+private def Spacing.Page.contentEnd (b : B) (owed : Length) : Length :=
   b.y + (if b.geom.topskip.isSome || (b.opened && b.pinnedLines == 0) then b.boxDepth
     else b.prevDepth) + owed -
     (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0)
 
 /-- What the content keeps below its last box at a declared page boundary: the pending
 glue, or on a TeX page with none, the last box's cancelled depth (latex.ltx). -/
-private def Spacing.Page.closingOwed (b : B) : Sp :=
+private def Spacing.Page.closingOwed (b : B) : Length :=
   if b.geom.topskip.isSome && b.skip.width == 0 && b.skip.stretch == 0 && !b.skip.fil
   then -b.boxDepth else b.skip.width
 
@@ -7757,14 +7767,14 @@ private theorem closingOwed_cancel_exact (b : B) (ht : b.geom.topskip.isSome = t
       b.y - (if b.needed > 0 && b.pageShrink > 0 then b.needed else 0) := by
   simp only [Spacing.Page.contentEnd, Spacing.Page.closingOwed, ht, hw, hs, hf]
   simp
-  omega
+  length_omega
 
 /-- The end a PDF page's distribution must clear:
 its ordinary box end and any painted surface end. -/
-public def regionContentEnd (ordinary : Sp) (painted : Option Sp) : Sp :=
+public def regionContentEnd (ordinary : Length) (painted : Option Length) : Length :=
   max ordinary (painted.getD ordinary)
 
-public theorem regionContentEnd_covers (ordinary painted : Sp) :
+public theorem regionContentEnd_covers (ordinary painted : Length) :
     ordinary ≤ regionContentEnd ordinary (some painted) ∧
       painted ≤ regionContentEnd ordinary (some painted) :=
   ⟨Int.le_max_left .., Int.le_max_right ..⟩
@@ -7772,7 +7782,7 @@ public theorem regionContentEnd_covers (ordinary painted : Sp) :
 /-- The painted surface end of the page's open and closed
 fragments, measured after shrink and before distribution. -/
 private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
-    (fills : Array Fill) (inks : Array InkOut) : Option Sp :=
+    (fills : Array Fill) (inks : Array InkOut) : Option Length :=
   let spans := b.closedRegions ++ b.openRegions.map (fun start => start.close b.cur)
   -- The body's part of a rule beside the whole block holds no room of the page's.
   (regionFills spans lines fills inks).foldl (fun edge (s, f) =>
@@ -7786,8 +7796,8 @@ private def frameWho (label : Option String) : String :=
 
 /-- W0384: the frame is `o` taller than its page and continues
 on the next; `also` adds another step's overhang. -/
-public def continuedDiag (label : Option String) (span : Option Span) (o : Sp)
-    (also : Option Sp := none) : Diag :=
+public def continuedDiag (label : Option String) (span : Option Span) (o : Length)
+    (also : Option Length := none) : Diag :=
   Diag.of .W0384
     ("a frame is taller than its page; it continues on the next page" ++
       match also with
@@ -7796,44 +7806,44 @@ public def continuedDiag (label : Option String) (span : Option Span) (o : Sp)
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
     (subject := label)
-    (detail := some (s!"{frameWho label}: {o.toPtString}pt taller" ++
+    (detail := some (s!"{frameWho label}: {o.toBpString}pt taller" ++
       match also with
-      | some p => s!", {p.toPtString}pt past on another step"
+      | some p => s!", {p.toBpString}pt past on another step"
       | none => ""))
 
 /-- W0400: the frame stands `o` past its text area, in the gap below it. -/
-public def overfullDiag (label : Option String) (span : Option Span) (o : Sp) : Diag :=
+public def overfullDiag (label : Option String) (span : Option Span) (o : Length) : Diag :=
   Diag.of .W0400 (subject := label)
     "a frame stands past its text area, in the gap below it"
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept a break")
-    (detail := some s!"{frameWho label}: {o.toPtString}pt past")
+    (detail := some s!"{frameWho label}: {o.toBpString}pt past")
 
 /-- A W0358 named at a frame's site, joined by the frame's overhang `o` past its text area on
 another overlay step, whose W0400 it carries. -/
-public def boxPastJoined (d : Diag) (o : Sp) : Diag :=
+public def boxPastJoined (d : Diag) (o : Length) : Diag :=
   { d with message := d.message ++
              ", and on another overlay step the frame stands past its text area, in the gap below it"
-           detail := d.detail.map (· ++ s!", {o.toPtString}pt past on another step")
+           detail := d.detail.map (· ++ s!", {o.toBpString}pt past on another step")
            carries := d.carries ++ [.W0400] }
 
 /-- W0372: a note block pushes its band `over` past the page's floor. -/
-private def noteOverrunDiag (over : Sp) : Diag :=
+private def noteOverrunDiag (over : Length) : Diag :=
   Diag.of .W0372 "a footnote is taller than the text block; it overruns its page"
     (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
-    (detail := some s!"{over.toPtString}pt taller")
+    (detail := some s!"{over.toBpString}pt taller")
 
 /-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
 it stood overfull, W0384 where it continued, nothing where it fit. -/
 public def fitDiag (fit : Ir.FrameFit) (label : Option String) (span : Option Span)
-    (also : Option Sp := none) : Option Diag :=
+    (also : Option Length := none) : Option Diag :=
   match fit with
   | .overfull o => some (overfullDiag label span o)
   | .continued o => some (continuedDiag label span o also)
   | .natural | .shrunk => none
 
 public theorem frameFit_accounts (fit : Ir.FrameFit) (label : Option String)
-    (span : Option Span) (also : Option Sp) :
+    (span : Option Span) (also : Option Length) :
     (fitDiag fit label span also).map (·.kind) =
       match fit with
       | .overfull _ => some .W0400
@@ -7847,7 +7857,7 @@ private def Spacing.Page.ladder (b : B) : Bool :=
 
 /-- The ladder's record of a marked frame step whose page could not
 set it at natural glue: how far its content stood past the floor. -/
-private def Spacing.Page.neededOverrun (b : B) : Array (FrameOrigin × Sp) :=
+private def Spacing.Page.neededOverrun (b : B) : Array (FrameOrigin × Length) :=
   match b.ladder, b.curFrameOrigin with
   | true, some origin =>
     if 0 < b.needed then
@@ -7880,24 +7890,24 @@ private def pageHidden (spans : Array RegionSpan) (lines : Array LineOut) (bodyF
 
 /-- Close the current page: an overflow within shrink is set to fit, the leftover is distributed,
 `owed` is the pending glue the content keeps, and `flush` sets a `\flushbottom` break. -/
-private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := false) : B :=
+private def Spacing.Page.finishPage (b : B) (owed : Length := 0) (flush : Bool := false) : B :=
   let lines := if b.needed > 0 && b.pageShrink > 0 then
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
-        { l with y := l.y - above * b.needed / b.pageShrink }
+        { l with y := l.y - above.mulDiv b.needed b.pageShrink }
     else b.cur.lines
   let fills := if b.needed > 0 && b.pageShrink > 0 then
       b.cur.fills.mapIdx fun i f =>
-        { f with y := f.y - b.fillShrinkAbove.getD i 0 * b.needed / b.pageShrink }
+        { f with y := f.y - (b.fillShrinkAbove.getD i 0).mulDiv b.needed b.pageShrink }
     else b.cur.fills
   let inks := if b.needed > 0 && b.pageShrink > 0 then
       b.cur.inks.mapIdx fun i k =>
-        k.shiftY (-(b.inkShrinkAbove.getD i 0 * b.needed / b.pageShrink))
+        k.shiftY (-((b.inkShrinkAbove.getD i 0).mulDiv b.needed b.pageShrink))
     else b.cur.inks
   let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
       "a page set short of its height: its skips gave part of their shrink"
       (span := b.neededSource)
-      (detail := some (s!"page {b.pages.size + 1}: {b.needed / 65536}pt short, its skips gave " ++
-        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")))
+      (detail := some (s!"page {b.pages.size + 1}: {b.needed / pt 1}pt short, its skips gave " ++ -- in points
+        s!"{100 * b.needed / b.pageShrink}% of their {b.pageShrink / pt 1}pt of shrink"))) -- in points
     else b.diags
   -- Fil glue owns the leftover where any stands (`filShare`); else the ratio (`VDist`) splits it.
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
@@ -7918,17 +7928,17 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
         && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then
       (lines.mapIdx fun i l =>
         if i < b.pinnedLines then l
-        else { l with y := l.y + b.stretchAbove.getD i 0 * lo / b.pageStretch },
-       b.stretchAbove.back?.getD 0 * lo / b.pageStretch)
+        else { l with y := l.y + (b.stretchAbove.getD i 0).mulDiv lo b.pageStretch },
+       (b.stretchAbove.back?.getD 0).mulDiv lo b.pageStretch)
     else
       let d := b.vdist.aboveShare leftover
       (if d == 0 then lines else
         lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + d },
        d)
-  let riderShift (stretch : Sp) (fils : Nat) : Sp :=
+  let riderShift (stretch : Length) (fils : Nat) : Length :=
     if pageFils > 0 then filShare leftover (b.vdist.filAbove fils) (b.vdist.filTotal pageFils)
     else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
-        && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then stretch * lo / b.pageStretch
+        && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then stretch.mulDiv lo b.pageStretch
     else delta
   let bodyFills := fills.mapIdx fun i f =>
     if i < b.pinnedFills then f
@@ -7977,14 +7987,14 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
            pendingNotes := #[], notesH := 0, notesDepth := 0, opened := false, freshStart := false,
            rewound := false, diags := diags, needs := b.neededOverrun }
 
-private theorem finishPage_lifecycle_projects (b : B) (owed : Sp) (flush : Bool) :
+private theorem finishPage_lifecycle_projects (b : B) (owed : Length) (flush : Bool) :
     ((b.finishPage owed flush).pages.back?.map (·.pageState)) = some b.pageState ∧
       (b.finishPage owed flush).pageState = b.pageState.ship := by
   constructor
   · simp [Spacing.Page.finishPage]
   · rfl
 
-private theorem finishPage_frame_projects (b : B) (owed : Sp) (flush : Bool) :
+private theorem finishPage_frame_projects (b : B) (owed : Length) (flush : Bool) :
     ((b.finishPage owed flush).pages.back?.map
       (fun p => (p.frameOrigin, p.frame, p.foot))) =
         some (b.curFrameOrigin, b.curFrame, b.curFoot) ∧
@@ -7994,7 +8004,7 @@ private theorem finishPage_frame_projects (b : B) (owed : Sp) (flush : Bool) :
   exact ⟨by simp [Spacing.Page.finishPage], rfl, rfl, rfl⟩
 
 /-- A page closed with the anchors still pending standing on it. -/
-private theorem landTrailing_finishPage_pages (b : B) (o : Sp) (f : Bool) :
+private theorem landTrailing_finishPage_pages (b : B) (o : Length) (f : Bool) :
     ∃ P, (b.finishPage o f).pages = b.pages.push P ∧
       (landTrailing (b.finishPage o f)).pages = b.pages.push (P.landAnchors b.pendingAnchors) :=
   ⟨_, rfl, by simp only [landTrailing, Spacing.Page.finishPage, Array.size_push,
@@ -8008,8 +8018,8 @@ private theorem map_segs_mapIdx (xs : Array LineOut) (f : Nat → LineOut → Li
   · intro i h1 h2
     simp [hf]
 
-private theorem map_segs_zip (xs : Array LineOut) (sh : Array Sp)
-    (hsz : sh.size = xs.size) (f : LineOut × Sp → LineOut)
+private theorem map_segs_zip (xs : Array LineOut) (sh : Array Length)
+    (hsz : sh.size = xs.size) (f : LineOut × Length → LineOut)
     (hf : ∀ p, (f p).segs = p.1.segs) :
     ((xs.zip sh).map f).map (·.segs) = xs.map (·.segs) := by
   apply Array.ext
@@ -8017,7 +8027,7 @@ private theorem map_segs_zip (xs : Array LineOut) (sh : Array Sp)
   · intro i h1 h2
     simp [hf]
 
-private theorem footnote_with_mark (b : B) (owed : Sp) (flush : Bool)
+private theorem footnote_with_mark (b : B) (owed : Length) (flush : Bool)
     (hs : b.shrinkAbove.size = b.cur.lines.size) :
     ((b.finishPage owed flush).pages.back?.map fun p => p.lines.map (·.segs)) =
       some (b.cur.lines.map (·.segs) ++ b.noteLines.map (·.segs)) := by
@@ -8063,8 +8073,8 @@ private theorem map_sourceSegs_mapIdx (xs : Array LineOut)
   · intro i h1 h2
     simp [hf]
 
-private theorem map_sourceSegs_zip (xs : Array LineOut) (sh : Array Sp)
-    (hsz : sh.size = xs.size) (f : LineOut × Sp → LineOut)
+private theorem map_sourceSegs_zip (xs : Array LineOut) (sh : Array Length)
+    (hsz : sh.size = xs.size) (f : LineOut × Length → LineOut)
     (hf : ∀ p, (f p).sourceSegs = p.1.sourceSegs) :
     ((xs.zip sh).map f).map LineOut.sourceSegs = xs.map LineOut.sourceSegs := by
   apply Array.ext
@@ -8072,7 +8082,7 @@ private theorem map_sourceSegs_zip (xs : Array LineOut) (sh : Array Sp)
   · intro i h1 h2
     simp [hf]
 
-private theorem finishPage_sourceSegs (b : B) (owed : Sp) (flush : Bool)
+private theorem finishPage_sourceSegs (b : B) (owed : Length) (flush : Bool)
     (hs : b.shrinkAbove.size = b.cur.lines.size) :
     ((b.finishPage owed flush).pages.back?.map fun p => p.lines.map LineOut.sourceSegs) =
       some (b.cur.lines.map LineOut.sourceSegs ++ b.noteLines.map LineOut.sourceSegs) := by
@@ -8110,7 +8120,7 @@ private theorem Spacing.Page.SourceBound.of_eq {n : Nat} {b b' : B} (hb : b.Sour
   · simpa only [hp] using hb.pages
   · simpa only [hc] using hs.trans hb.ledger
 
-private theorem sourceBound_finishPage {n : Nat} (b : B) (owed : Sp) (flush : Bool)
+private theorem sourceBound_finishPage {n : Nat} (b : B) (owed : Length) (flush : Bool)
     (hb : b.SourceBound n) : (b.finishPage owed flush).SourceBound n := by
   refine ⟨by simp [Spacing.Page.finishPage], ?_, rfl, hb.chrome, rfl⟩
   intro p hp l hl
@@ -8160,17 +8170,17 @@ private def Spacing.Page.reopenChrome (b : B) : B :=
 
 /-- moloch's frametitle box height: the last title baseline plus the padding
 below it, or the title's own depth where deeper (beamerouterthememoloch.dtx). -/
-public def frameBarHeight (pad lastBaseline depth : Int) : Int :=
+public def frameBarHeight (pad lastBaseline depth : Length) : Length :=
   lastBaseline + max pad depth
 
-public theorem frameBar_exact (pad strut depth : Int) (h : depth ≤ pad) :
+public theorem frameBar_exact (pad strut depth : Length) (h : depth ≤ pad) :
     frameBarHeight pad (pad + strut) depth = 2 * pad + strut := by
   simp only [frameBarHeight]
-  omega
+  length_omega
 
 /-- How far below its text area a frame's ink may reach before the footline's:
 beamer's `\footheight` gap in its text area with no notes pending, else nothing. -/
-private def Spacing.Page.clearance (b : B) : Sp :=
+private def Spacing.Page.clearance (b : B) : Length :=
   if b.notesH > 0 || !b.pendingNotes.isEmpty then 0 else
   match b.frameArea with
   | .text => b.footGap
@@ -8178,7 +8188,7 @@ private def Spacing.Page.clearance (b : B) : Sp :=
 
 /-- Whether the open frame stands a line `beyond` past its text
 area overfull on its page, as the ladder's fit mode allows. -/
-private def Spacing.Page.overhangs (b : B) (beyond : Sp) : Bool :=
+private def Spacing.Page.overhangs (b : B) (beyond : Length) : Bool :=
   b.frameBreak == some false &&
     match b.curFit with
     | .measure => true
@@ -8187,7 +8197,7 @@ private def Spacing.Page.overhangs (b : B) (beyond : Sp) : Bool :=
 
 /-- The ladder's record of how far a marked frame step's content
 reached past its text area, and the least clearance its pages left. -/
-private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
+private def Spacing.Page.noteOverrun (b : B) (over : Length) : B :=
   { b with overruns := if over ≤ 0 then b.overruns else
       match b.ladder, b.curFrameOrigin with
       | true, some origin =>
@@ -8199,7 +8209,7 @@ private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
 /-- What a band no break can help leaves past the page's floor, named once: a note block that alone
 pushes it past (W0372), else its own ink past the page's shrink, recorded by the ladder within its
 clearance and named W0358 beyond it; a float's replay, named whole by `runFloat`, names nothing. -/
-private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Sp) : B :=
+private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Length) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
   let beyond := over - b.pageShrink
   let own := y + inkBelow - b.bottom - b.pageShrink
@@ -8214,14 +8224,14 @@ private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Sp) : B :=
       "a box is taller than the text block; it overruns its page"
       (span := b.lastSource <|> b.frameSource) (subject := b.curFrameLabel)
       (help := "shrink the box, or raise the text height (\\page{ vmargin = ... })")
-      (detail := some s!"{who}{own.toPtString}pt taller"))
+      (detail := some s!"{who}{own.toBpString}pt taller"))
     else none
   { b with diags := (named.map b.diags.push).getD b.diags
            overruns := if recorded then (b.noteOverrun beyond).overruns else b.overruns }
 
 /-- W0384: a frame not declared `[allowframebreaks]` is `over` taller than its page
 and continues; a marked frame records its step instead, and flow is silent. -/
-private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
+private def Spacing.Page.warnSpill (b : B) (over : Length) : B :=
   match b.frameBreak, b.spillWarned with
   | some false, false =>
     match b.curFit, b.curFrameOrigin with
@@ -8232,25 +8242,25 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
     | _, some o => { b with spilled := b.spilled.push o, spillWarned := true }
   | _, _ => b
 
-@[simp] private theorem warnSpill_pages (b : B) (o : Sp) :
+@[simp] private theorem warnSpill_pages (b : B) (o : Length) :
     (b.warnSpill o).pages = b.pages := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals rfl
 
-@[simp] private theorem warnSpill_geom (b : B) (o : Sp) :
+@[simp] private theorem warnSpill_geom (b : B) (o : Length) :
     (b.warnSpill o).geom = b.geom := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals rfl
 
-@[simp] private theorem warnSpill_docBg (b : B) (o : Sp) :
+@[simp] private theorem warnSpill_docBg (b : B) (o : Length) :
     (b.warnSpill o).docBg = b.docBg := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals rfl
 
-private theorem warnSpill_accounts (b : B) (o : Sp) :
+private theorem warnSpill_accounts (b : B) (o : Length) :
     (b.warnSpill o).diags.size + (b.warnSpill o).spilled.size =
       b.diags.size + b.spilled.size +
         (if b.frameBreak = some false ∧ b.spillWarned = false then 1 else 0) := by
@@ -8267,7 +8277,7 @@ private def Spacing.Page.flushes (b : B) : Bool :=
 
 /-- Close an overfull page mid-frame and repeat the frame's chrome and
 ground on the next; `over` is how far the band that did not fit reached. -/
-private def Spacing.Page.spillPage (b : B) (over : Sp := 0) : B :=
+private def Spacing.Page.spillPage (b : B) (over : Length := 0) : B :=
   { (b.finishPage (flush := b.flushes)).reopenChrome.warnSpill over with pageBg := b.pageBg }
 
 @[simp] private theorem reopenChrome_pages (b : B) :
@@ -8275,12 +8285,12 @@ private def Spacing.Page.spillPage (b : B) (over : Sp := 0) : B :=
   unfold Spacing.Page.reopenChrome
   split <;> rfl
 
-@[simp] private theorem spillPage_pages (b : B) (o : Sp) :
+@[simp] private theorem spillPage_pages (b : B) (o : Length) :
     (b.spillPage o).pages = (b.finishPage 0 b.flushes).pages := by
   unfold Spacing.Page.spillPage
   simp
 
-private theorem spillPage_frame_projects (b : B) (over : Sp) :
+private theorem spillPage_frame_projects (b : B) (over : Length) :
     ((b.spillPage over).pages.back?.map
       (fun p => (p.frameOrigin, p.frame, p.foot))) =
         some (b.curFrameOrigin, b.curFrame, b.curFoot) ∧
@@ -8299,7 +8309,7 @@ private def Spacing.Page.hiding (b : B) : Bool := b.openRegions.any (·.kind mat
 /-- Paint joining the open page with no vertical negotiation, behind its lines, at `shrink`
 and `fils` or the page's own. -/
 private def Spacing.Page.pushSibling (b : B) (fills : Array Fill := #[])
-    (inks : Array InkOut := #[]) (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
+    (inks : Array InkOut := #[]) (shrink : Option Length := none) (fils : Option Nat := none) : B :=
   { b with cur := { b.cur with fills := b.cur.fills ++ fills, inks := b.cur.inks ++ inks }
            fillShrinkAbove := b.fillShrinkAbove ++ .replicate fills.size (shrink.getD b.pageShrink)
            inkShrinkAbove := b.inkShrinkAbove ++ .replicate inks.size (shrink.getD b.pageShrink)
@@ -8310,10 +8320,10 @@ private def Spacing.Page.pushSibling (b : B) (fills : Array Fill := #[])
 
 /-- A picture's label lines as riders sharing the last baseline, on the picture's own shrink and
 fils. -/
-private def Spacing.Page.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) (fils : Nat) :
+private def Spacing.Page.pushLabels (b : B) (ls : Array LineOut) (shrink : Length) (fils : Nat) :
     B :=
   let shown := ls.map fun l => { l with hidden := l.hidden || b.hiding }
-  let lineShrinks : Array Sp := .replicate ls.size shrink
+  let lineShrinks : Array Length := .replicate ls.size shrink
   let lineFils : Array Nat := .replicate ls.size fils
   { b with cur := { b.cur with lines := b.cur.lines ++ shown }
            shrinkAbove := b.shrinkAbove ++ lineShrinks
@@ -8321,8 +8331,8 @@ private def Spacing.Page.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) (
            filsAbove := b.filsAbove ++ lineFils
            lastInk := if ls.isEmpty then b.lastInk else none }
 
-private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
-    (ruleLine : Bool) (consume : Bool) (overflow : Sp) : B :=
+private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Length)
+    (ruleLine : Bool) (consume : Bool) (overflow : Length) : B :=
   -- The page's shrink ledger is kept here alone; a line opening a page owes none.
   let above := if consume then b.pageShrink + b.skip.shrink else 0
   let stretch := if consume then b.pageStretch + b.skip.stretch else 0
@@ -8356,14 +8366,14 @@ private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
            skip := {} }
 
 private theorem doc_geometry_uniform (b : B) (fills : Array Fill) (inks : Array InkOut)
-    (shrink : Option Sp) (fils : Option Nat) (ls : Array LineOut) (sh : Sp) (fl : Nat)
-    (line : LineOut) (depth below : Sp) (ruleLine consume : Bool) (overflow : Sp) :
+    (shrink : Option Length) (fils : Option Nat) (ls : Array LineOut) (sh : Length) (fl : Nat)
+    (line : LineOut) (depth below : Length) (ruleLine consume : Bool) (overflow : Length) :
     b.finishPage.geom = b.geom ∧ (b.pushSibling fills inks shrink fils).geom = b.geom ∧
       (b.pushLabels ls sh fl).geom = b.geom ∧
       (b.commit line depth below ruleLine consume overflow).geom = b.geom :=
   ⟨rfl, rfl, rfl, rfl⟩
 
-public def Seg.advance : Seg → Sp
+public def Seg.advance : Seg → Length
   | .run _ _ _ w .. => w
   | .gap w _ => w
   | .decoratedGap w _ _ => w
@@ -8516,43 +8526,42 @@ public def Seg.isMath : Seg → Bool
 (CSS 2.1 §10.8.1), enlarged by math construction bounds. -/
 public structure LineBox where
   /-- Box top above the baseline: leaded metric ascent. -/
-  above : Sp
+  above : Length
   /-- Box bottom below the baseline: leaded metric descent. -/
-  below : Sp
+  below : Length
   /-- Ink above the baseline (cap height per run). -/
-  inkAbove : Sp
+  inkAbove : Length
   /-- Ink below the baseline (descent per run). -/
-  inkBelow : Sp
+  inkBelow : Length
   deriving Repr
 
 /-- A line's glyph box raised to a table row's strut, whichever reaches further above and below. -/
-public def strutInk (ink : Sp × Sp) (s : Sp × Sp) : Sp × Sp :=
+public def strutInk (ink : Length × Length) (s : Length × Length) : Length × Length :=
   (max ink.1 s.1, max ink.2 s.2)
 
 /-- TeX's box of a table row: latex.ltx's `\@arstrut` or
 the glyphs, whichever reaches further, with no leading. -/
-public def strutBox (ink : Sp × Sp) (s : Sp × Sp) : LineBox :=
+public def strutBox (ink : Length × Length) (s : Length × Length) : LineBox :=
   let k := strutInk ink s
   { above := k.1, below := k.2, inkAbove := k.1, inkBelow := k.2 }
 
-public theorem strutBox_exact (ink : Sp × Sp) (h d : Sp)
+public theorem strutBox_exact (ink : Length × Length) (h d : Length)
     (hh : ink.1 ≤ h) (hd : ink.2 ≤ d) :
     strutBox ink (h, d) = { above := h, below := d, inkAbove := h, inkBelow := d } := by
   simp only [strutBox, strutInk]
-  rw [Int.max_eq_right hh, Int.max_eq_right hd]
+  rw [Length.max_eq_right hh, Length.max_eq_right hd]
 
 /-- CSS 2.1 §10.8.1's half-leading over one (ascent, descent, leading): the leading
 less the metric extent, split into integer halves that sum back exactly. -/
-public def leadedBox (ascent descent leading : Sp) : Sp × Sp :=
+public def leadedBox (ascent descent leading : Length) : Length × Length :=
   (ascent + (leading - (ascent + descent)) / 2,
    leading - ascent - (leading - (ascent + descent)) / 2)
 
-public theorem baselines_on_grid (ascent descent leading : Int) :
+public theorem baselines_on_grid (ascent descent leading : Length) :
     (leadedBox ascent descent leading).1 + (leadedBox ascent descent leading).2
       = leading := by
-  show ascent + (leading - (ascent + descent)) / 2
-    + (leading - ascent - (leading - (ascent + descent)) / 2) = leading
-  omega
+  simp only [leadedBox]
+  length_omega
 
 private def mergeLineBox (acc : Option LineBox) (box : LineBox) : Option LineBox :=
   match acc with
@@ -8560,7 +8569,7 @@ private def mergeLineBox (acc : Option LineBox) (box : LineBox) : Option LineBox
   | some a => some ⟨max a.above box.above, max a.below box.below,
       max a.inkAbove box.inkAbove, max a.inkBelow box.inkBelow⟩
 
-private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat) (lead : Option Sp)
+private def lineBoxStep (fs : FontSet) (nominal : Length) (leadFactor : Nat) (lead : Option Length)
     (acc : Option LineBox) : Seg → Option LineBox
   | .run idx _ _ _ _ sz metrics _ raise _ _ =>
     match metrics.extent, metrics.math with
@@ -8591,25 +8600,25 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat) (lead :
 
 /-- A line's vertical extent: each run's leaded metric box at its paragraph's leading in
 its size's proportion (`Ir.runLead`), plus the paragraph's strut on a line of text. -/
-public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
-    (leadFactor : Nat) (size : Sp) (segs : Array Seg) (lead : Option Sp := none) :
+public def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Length)
+    (leadFactor : Nat) (size : Length) (segs : Array Seg) (lead : Option Length := none) :
     LineBox :=
   let nominal := if size == 0 then fontSize else size
   let customLeading := segs.any Seg.hasLeading
   let init : Option LineBox :=
     if customLeading then none
     else if segs.isEmpty || segs.any Seg.isRun then
-      let strut := leadedBox (bodyAscent * nominal / fontSize)
-        (bodyDescent * nominal / fontSize) (Ir.stepSkip lead nominal leadFactor)
-      some ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
-        bodyDescent * nominal / fontSize⟩
+      let strut := leadedBox (bodyAscent.mulDiv nominal fontSize)
+        (bodyDescent.mulDiv nominal fontSize) (Ir.stepSkip lead nominal leadFactor)
+      some ⟨strut.1, strut.2, bodyCap.mulDiv nominal fontSize,
+        bodyDescent.mulDiv nominal fontSize⟩
     else none
   let measured := segs.foldl (lineBoxStep fs nominal leadFactor lead) init
   measured.getD ⟨0, 0, 0, 0⟩
 
 public theorem line_box_glyph_free (fs : FontSet)
-    (fontSize bodyAscent bodyCap bodyDescent : Sp) (leadFactor : Nat)
-    (size : Sp) (segs : Array Seg) (lead : Option Sp := none) :
+    (fontSize bodyAscent bodyCap bodyDescent : Length) (leadFactor : Nat)
+    (size : Length) (segs : Array Seg) (lead : Option Length := none) :
     lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size
         (segs.map Seg.stripGlyphs) lead =
       lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size segs lead := by
@@ -8641,15 +8650,15 @@ public theorem line_box_glyph_free (fs : FontSet)
 
 /-- The box TeX builds around a set line, read from the glyphs' outlines:
 the tallest glyph above the baseline and the deepest below it. -/
-public def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
-  segs.foldl (fun (acc : Sp × Sp) s => match s with
+public def segsInk (fs : FontSet) (segs : Array Seg) : Length × Length :=
+  segs.foldl (fun (acc : Length × Length) s => match s with
     | .run idx _ _ _ glyphs sz metrics _ raise _ _ =>
       match metrics.extent with
       | some (h, d) => (max acc.1 h, max acc.2 d)
       | none =>
         let font := fs.get idx
-        let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
-        glyphs.foldl (fun (acc : Sp × Sp) (g, _) =>
+        let sc (v : Int) : Length := v * sz / (font.unitsPerEm : Int)
+        glyphs.foldl (fun (acc : Length × Length) (g, _) =>
           let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
           (max acc.1 (sc hi + raise), max acc.2 (-(sc lo) - raise))) acc
     | .image _ _ h _ r => (max acc.1 (h + r), max acc.2 (-r))
@@ -8667,8 +8676,8 @@ public def ruleOnly (segs : Array Seg) : Bool :=
 
 /-- The metric interline rule: the previous line's leaded below plus this line's
 leaded above (CSS 2.1 §10.8.1), measured to a rule-only neighbour's ink edges. -/
-public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Sp)
-    (ruleLine : Bool) (box : LineBox) : Sp :=
+public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Length)
+    (ruleLine : Bool) (box : LineBox) : Length :=
   match prev, ruleLine with
   | .text, false | .box, false => prevBelow + box.above
   | .text, true => box.inkAbove
@@ -8676,7 +8685,7 @@ public def interlineFor (prev : Spacing.Band) (prevDepth prevBelow : Sp)
 
 /-- Inline math keeps the leading while the measured outlines fit, else
 reserves their combined reach as TeX's interline test does (tex.web §679). -/
-public def inlineMathGap (math : Bool) (normal depth height : Sp) : Sp :=
+public def inlineMathGap (math : Bool) (normal depth height : Length) : Length :=
   if math then max normal (depth + height) else normal
 
 private def Spacing.Page.previousMath (b : B) : Bool :=
@@ -8685,123 +8694,122 @@ private def Spacing.Page.previousMath (b : B) : Bool :=
 /-- Ordinary text keeps its metric rhythm; at a boundary
 touching inline math, the neighbouring ink also clears. -/
 private def Spacing.Page.textGap (b : B) (box : LineBox)
-    (math : Bool) (height : Sp) : Sp :=
+    (math : Bool) (height : Length) : Length :=
   inlineMathGap (math || b.previousMath) (b.prevBelow + box.above) b.boxDepth height
 
 private def Spacing.Page.peerGap (b : B) (box : LineBox)
-    (ruleLine math : Bool) (height : Sp) : Sp :=
+    (ruleLine math : Bool) (height : Length) : Length :=
   match b.prevBand, ruleLine with
   | .text, false => b.textGap box math height
   | _, _ => interlineFor b.prevBand b.prevDepth b.prevBelow ruleLine box
 
 /-- Reserve painted reach below a baseline in both the ink and leaded depths. -/
-public def reserveBelow (depth below reach : Sp) : Sp × Sp :=
+public def reserveBelow (depth below reach : Length) : Length × Length :=
   (max depth reach, max below reach)
 
 /-- A placement-coordinate fact of the artifact. -/
-public theorem reserveBelow_covers (depth below reach : Sp) :
+public theorem reserveBelow_covers (depth below reach : Length) :
     depth ≤ (reserveBelow depth below reach).1 ∧
     below ≤ (reserveBelow depth below reach).2 ∧
     reach ≤ (reserveBelow depth below reach).1 ∧
     reach ≤ (reserveBelow depth below reach).2 :=
-  ⟨Int.le_max_left .., Int.le_max_left .., Int.le_max_right .., Int.le_max_right ..⟩
+  ⟨Length.le_max_left .., Length.le_max_left .., Length.le_max_right .., Length.le_max_right ..⟩
 
 /-- A placement-coordinate contract of the artifact: a rule
 after a completed box clears its whole painted reach. -/
-public theorem closed_box_rule_covers (y depth below reach skip : Int)
+public theorem closed_box_rule_covers (y depth below reach skip : Length)
     (box : LineBox) (hskip : 0 ≤ skip) :
     y + reach ≤ y + skip +
       interlineFor .box (reserveBelow depth below reach).1
         (reserveBelow depth below reach).2 true box - box.inkAbove := by
   simp only [interlineFor, reserveBelow]
-  omega
+  length_omega
 
 /-- TeX's baseline distance between two boxes (tex.web §679): `\baselineskip` when the
 boxes stay `\lineskiplimit` apart, else their extents with `\lineskip` between. -/
-public def texBaselineGap (bs pd h : Sp) : Sp :=
+public def texBaselineGap (bs pd h : Length) : Length :=
   if pd + h ≤ bs then bs else pd + inkClearance + h
 
-public theorem texBaselineGap_between (bs pd h : Int) :
+public theorem texBaselineGap_between (bs pd h : Length) :
     bs ≤ texBaselineGap bs pd h ∧ pd + h ≤ texBaselineGap bs pd h := by
   unfold texBaselineGap
   split
   · have hle : pd + h ≤ bs := ‹_›
-    exact ⟨Int.le_refl bs, hle⟩
+    exact ⟨Length.le_refl bs, hle⟩
   · have hgt : ¬ (pd + h ≤ bs) := ‹_›
-    show bs ≤ pd + 65536 + h ∧ pd + h ≤ pd + 65536 + h
-    omega
+    have hc : (0 : Length) ≤ inkClearance := by decide
+    length_omega
 
 /-- TeX's interline rule for a box `h` tall below a box of depth `pd`,
 as the distance from the upper baseline to the lower box's top. -/
-public def texBoxTop (bs pd h : Sp) : Sp := texBaselineGap bs pd h - h
+public def texBoxTop (bs pd h : Length) : Length := texBaselineGap bs pd h - h
 
-public theorem texBoxTop_between (bs pd h : Int) :
+public theorem texBoxTop_between (bs pd h : Length) :
     pd ≤ texBoxTop bs pd h ∧ bs - h ≤ texBoxTop bs pd h := by
   have := texBaselineGap_between bs pd h
   unfold texBoxTop
-  omega
+  length_omega
 
 /-- A placement-coordinate bound of the artifact, over
 the additive placement and distribution steps. -/
-public theorem frame_opening_paint_covers (header origin pd bs h size leftover : Int)
+public theorem frame_opening_paint_covers (header origin pd bs h size leftover : Length)
     (keys : Ir.FrameKeys) (valign : VAlign) (hheader : header ≤ origin) (hpd : 0 ≤ pd) :
     header + frameBodySkip true valign size ≤
       origin + frameBodySkip true valign size + texBoxTop bs pd h +
         (VDist.of keys valign).aboveShare leftover := by
   have hbox := (texBoxTop_between bs pd h).1
-  have hshare : (0 : Int) ≤ (VDist.of keys valign).aboveShare leftover :=
+  have hshare : (0 : Length) ≤ (VDist.of keys valign).aboveShare leftover :=
     (VDist.split_exact (VDist.of keys valign) leftover).1
-  omega
+  length_omega
 
-public theorem title_bars_symmetric (skip prevDepth prevBelow : Int)
-    (above below inkAbove inkBelow : Int) :
+public theorem title_bars_symmetric (skip prevDepth prevBelow : Length)
+    (above below inkAbove inkBelow : Length) :
     skip + interlineFor .rule prevDepth prevBelow false
         ⟨above, below, inkAbove, inkBelow⟩ - inkAbove - prevDepth = skip ∧
     skip + interlineFor .text prevDepth prevBelow true
         ⟨above, below, inkAbove, inkBelow⟩ - inkAbove = skip := by
   simp only [interlineFor]
-  constructor <;> omega
+  constructor <;> length_omega
 
-public theorem bars_clear_descenders (body descMilli : Int)
+public theorem bars_clear_descenders (body : Length) (descMilli : Int)
     (hb : Dim.pt 1 ≤ body) -- 1 pt: the rhythm family's floor hypothesis, not a design value
     (hm : descMilli ≤ 1000) :
     Ir.scaleStepIn Ir.sizeScale body "LARGE" * descMilli / 1000
       < 3 * Ir.rhythmQuantum body := by
-  have hb' : (65536 : Int) ≤ body := hb
-  have hL : ((Ir.sizeScale.lookup "LARGE").getD 1000 : Int) = 1728 := by decide
-  have hstep : Ir.scaleStepIn Ir.sizeScale body "LARGE" = body * 1728 / 1000 := by
+  have hp : (65536 : Int) ≤ (Dim.pt 1).units := by decide -- the floor in base units
+  have hb' : (65536 : Int) ≤ body.units := Int.le_trans hp hb
+  have hstep : (Ir.scaleStepIn Ir.sizeScale body "LARGE").units = body.units * 1728 / 1000 := by
     unfold Ir.scaleStepIn
-    rw [hL]
-  rw [hstep]
-  have ht : (0 : Int) ≤ body * 1728 / 1000 := by omega
-  have h1 : body * 1728 / 1000 * descMilli ≤ body * 1728 / 1000 * 1000 :=
+    rw [Ir.sizeScale_LARGE_exact]
+    rfl
+  have hq : (Ir.rhythmQuantum body).units = body.units * 1200 / 1000 * 1000 / 1000 / 2 := by
+    simp only [Ir.rhythmQuantum, Ir.leadingFor, Ir.leadingMilli]
+    length_units
+    rfl
+  length_units
+  rw [hstep, hq]
+  have ht : (0 : Int) ≤ body.units * 1728 / 1000 := by omega
+  have h1 : body.units * 1728 / 1000 * descMilli ≤ body.units * 1728 / 1000 * 1000 :=
     Int.mul_le_mul_of_nonneg_left hm ht
-  have h2 : body * 1728 / 1000 * descMilli / 1000
-      ≤ body * 1728 / 1000 * 1000 / 1000 :=
+  have h2 : body.units * 1728 / 1000 * descMilli / 1000
+      ≤ body.units * 1728 / 1000 * 1000 / 1000 :=
     Int.ediv_le_ediv (by decide) h1
-  have h3 : body * 1728 / 1000 * 1000 / 1000 = body * 1728 / 1000 :=
-    Int.mul_ediv_cancel _ (by decide)
-  calc body * 1728 / 1000 * descMilli / 1000
-      ≤ body * 1728 / 1000 * 1000 / 1000 := h2
-    _ = body * 1728 / 1000 := h3
-    _ < 3 * Ir.rhythmQuantum body := by
-        simp only [Ir.rhythmQuantum, Ir.leadingFor, Ir.leadingMilli]
-        omega
+  omega
 
 /-- The body strut's leaded depth at the body size, which a box on a baseline leaves pending. -/
-private def Spacing.Page.strutBelow (fs : FontSet) (b : B) : Sp :=
+private def Spacing.Page.strutBelow (fs : FontSet) (b : B) : Length :=
   (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading
     b.geom.fontSize #[]).below
 
 /-- An empty box at `y`, TeX's `\vbox{}`: the next band
 is spaced below it as below a box of depth zero. -/
-private def Spacing.Page.anchorAt (fs : FontSet) (b : B) (y : Sp) : B :=
+private def Spacing.Page.anchorAt (fs : FontSet) (b : B) (y : Length) : B :=
   { b with y := y, prevDepth := 0, prevBelow := b.strutBelow fs, prevBand := .text,
            lastInk := some (y, 0, 0) }
 
 /-- Open a frame's content as beamer's `\vskip-\parskip\vbox{}` does: an
 empty box below the title box or bar, the declared skip `g` pending. -/
-private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Option Sp) : B :=
+private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Option Length) : B :=
   let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
   let opened := { b with y := if b.cur.lines.isEmpty then barBottom
                              else max (b.y + box.getD b.prevDepth) barBottom
@@ -8821,7 +8829,7 @@ private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Optio
                header := opened.curBand } }
 
 private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : Glue)
-    (box : Option Sp) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Sp) (flush : Bool) :
+    (box : Option Length) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Length) (flush : Bool) :
     let opened := b.openBody fs g box
     let resumed := (opened.finishPage owed flush).reopenChrome
     resumed.y = opened.y + opened.skip.width ∧
@@ -8833,13 +8841,13 @@ private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : G
 
 /-- The pending skip a fresh page keeps: all of it after `\vspace*`'s
 zero rule or a fil, else none, as TeX discards glue at a page top. -/
-private def Spacing.Page.topKept (b : B) : Sp := if b.anchored || b.skip.fil then b.skip.width else 0
+private def Spacing.Page.topKept (b : B) : Length := if b.anchored || b.skip.fil then b.skip.width else 0
 
 /-- The fit-or-spill skeleton bands take: `place b y consume over` sets one at `y` on a fresh
 page, within the page's shrink, under `noBreak`, or on a blank opened page where `holdsBlank`;
 else overfull where the ladder allows, else after a break, `settle` judging what stands unfitted. -/
-private def Spacing.Page.fitWith (b : B) (place : B → Sp → Bool → Sp → B)
-    (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
+private def Spacing.Page.fitWith (b : B) (place : B → Length → Bool → Length → B)
+    (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
     (holdsBlank : Bool) : B :=
   if b.fresh then
     settle (place b (firstY b + b.surfaceTop) false 0) (firstY b + b.surfaceTop)
@@ -8866,20 +8874,20 @@ private def Spacing.Page.fitWith (b : B) (place : B → Sp → Bool → Sp → B
           (inkBelow + s.surfaceBottom)).noteOverrun (overflow - above)
 
 /-- A line committed by `fitWith`, its notes attached where it lands. -/
-private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
-    (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
+private def Spacing.Page.fitCommit (b : B) (mk : Length → LineOut) (firstY stepY retryY : B → Length)
+    (depth below : Length) (rl : Bool) (inkBelow bottom : Length)
     (notes : Array NoteBlock := #[]) : B :=
   b.fitWith (fun b y consume over => (b.commit (mk y) depth below rl consume over).attachNotes notes)
     Spacing.Page.warnOverrun firstY stepY retryY inkBelow bottom true
 
 /-- TeX's interline rule for the first box below `\vspace*`'s zero
 rule, from the depth saved before the rule (latex.ltx `\@vspacer`). -/
-public def anchorRise (ignore : Bool) (lead depth h : Sp) : Sp :=
+public def anchorRise (ignore : Bool) (lead depth h : Length) : Length :=
   if ignore then h else if 0 ≤ lead - depth - h then lead - depth else h + inkClearance
 
 /-- The first baseline of a fresh page below the text area's top: TeX's `\topskip`
 rule on a TeX page, the engine's metric rule on a frame page, past the skip kept. -/
-private def Spacing.Page.freshBaseline (b : B) (ink : Sp) (box : LineBox) (lead : Sp) : Sp :=
+private def Spacing.Page.freshBaseline (b : B) (ink : Length) (box : LineBox) (lead : Length) : Length :=
   b.geom.bodyTop + (match b.geom.topskip with
     | some t => if b.anchored || b.skip.fil then
         t + (match b.colAnchor with
@@ -8889,20 +8897,20 @@ private def Spacing.Page.freshBaseline (b : B) (ink : Sp) (box : LineBox) (lead 
     | none => max b.ascent box.above) + b.topKept
 
 /-- A line's TeX box: its glyphs', and at least its `\strutbox` of `\baselineskip` `s`. -/
-private def lineStrutInk (strut : Option Sp) (ink : Sp × Sp) : Sp × Sp :=
+private def lineStrutInk (strut : Option Length) (ink : Length × Length) : Length × Length :=
   match strut with
   | some s => strutInk ink (s * 7 / 10, s * 3 / 10)
   | none => ink
 
 /-- Place one line: its box follows the tallest run on it, its baseline distance the
 interline rule, and a line that does not fit opens the next page (`fitCommit`). -/
-private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
-    (w : Sp) (hang : Sp := 0) (expand : Int := 0)
+private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Length) (size : Length) (segs : Array Seg)
+    (w : Length) (hang : Length := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
-    (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
+    (leaf : Option Nat := none) (firstBaseline : Option Length := none)
     (display : Option DisplayJob := none) (opens : Bool := false)
-    (anchors : Array String := #[]) (paintPadding : Option Sp := none)
-    (stepLead : Option Sp := none) (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none) : B :=
+    (anchors : Array String := #[]) (paintPadding : Option Length := none)
+    (stepLead : Option Length := none) (rowStrut : Option (Length × Length) := none) (strut : Option Length := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs stepLead
   -- A zero-width strut counts in TeX's box, so the ink is read before the filter below.
@@ -8922,7 +8930,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     | none => strut
   let tex := lineStrutInk strut ink
   let rl := ruleOnly segs
-  let lastBase : Sp := match display with
+  let lastBase : Length := match display with
     | some dj =>
       if !dj.ctx.align then 0 else
       segs.foldl (fun m s => match s with
@@ -8937,7 +8945,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   let need := if notes.isEmpty then 0
     else notes.foldl (fun s nb => s + nb.height) 0
   let bottom := noteFloor b.bottom b.noteGap (b.notesH + need) (b.noteHang (notes.back?.map (·.depth)))
-  let mk (y : Sp) : LineOut :=
+  let mk (y : Length) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       regionExtent := some tex
       hang := hang, expand := expand, counted := counted, leaf := leaf, anchors := anchors
@@ -8945,7 +8953,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   let lead := Ir.stepSkip stepLead (if size == 0 then b.geom.fontSize else size)
     b.geom.leading
   -- TeX's interline glue around display math and below a colour box's top; else the metric rule.
-  let gap (b : B) : Sp := match paintPadding, display, opens with
+  let gap (b : B) : Length := match paintPadding, display, opens with
     | some pad, _, _ =>
       texBoxTop (Ir.leadingFor b.geom.fontSize b.geom.leading) b.boxDepth
         (ink.1 + ink.2 + 2 * pad) + ink.1
@@ -8969,13 +8977,13 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     box.inkBelow box.below rl box.inkBelow bottom notes).keepInk tex.2).displayState
       display.isSome (if display.isSome then none else some (x + w - b.geom.hmargin))
 
-private theorem sourceBound_warnSpill {n : Nat} (b : B) (over : Sp)
+private theorem sourceBound_warnSpill {n : Nat} (b : B) (over : Length)
     (hb : b.SourceBound n) : (b.warnSpill over).SourceBound n := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals exact hb.of_eq rfl rfl rfl rfl rfl
 
-private theorem sourceBound_spillPage {n : Nat} (b : B) (over : Sp)
+private theorem sourceBound_spillPage {n : Nat} (b : B) (over : Length)
     (hb : b.SourceBound n) : (b.spillPage over).SourceBound n := by
   have hf := sourceBound_finishPage b 0 b.flushes hb
   have hr : (b.finishPage 0 b.flushes).reopenChrome.SourceBound n := by
@@ -8983,7 +8991,7 @@ private theorem sourceBound_spillPage {n : Nat} (b : B) (over : Sp)
   exact (sourceBound_warnSpill _ over hr).of_eq rfl rfl rfl rfl rfl
 
 private theorem sourceBound_commit {n : Nat} (b : B) (l : LineOut)
-    (depth below : Sp) (rl consume : Bool) (over : Sp)
+    (depth below : Length) (rl consume : Bool) (over : Length)
     (hb : b.SourceBound n) (hl : l.SourceBound n) :
     (b.commit l depth below rl consume over).SourceBound n := by
   refine ⟨?_, hb.pages, hb.notes, hb.chrome, ?_⟩
@@ -8994,17 +9002,17 @@ private theorem sourceBound_commit {n : Nat} (b : B) (l : LineOut)
     · exact hl
   · simpa only [Spacing.Page.commit, Array.size_push] using congrArg (· + 1) hb.ledger
 
-private theorem sourceBound_noteOverrun {n : Nat} (b : B) (o : Sp)
+private theorem sourceBound_noteOverrun {n : Nat} (b : B) (o : Length)
     (hb : b.SourceBound n) : (b.noteOverrun o).SourceBound n :=
   hb.of_eq rfl rfl rfl rfl rfl
 
-private theorem sourceBound_warnOverrun {n : Nat} (b : B) (y d : Sp)
+private theorem sourceBound_warnOverrun {n : Nat} (b : B) (y d : Length)
     (hb : b.SourceBound n) : (b.warnOverrun y d).SourceBound n :=
   hb.of_eq rfl rfl rfl rfl rfl
 
-private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (hb : b.SourceBound n) (hl : ∀ y, (mk y).SourceBound n) :
+private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (hb : b.SourceBound n) (hl : ∀ y, (mk y).SourceBound n) :
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom #[]).SourceBound n := by
   simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, attachNotes_empty_id]
   split
@@ -9025,20 +9033,20 @@ private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
           · exact sourceBound_warnOverrun _ _ _
               (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
 
-private theorem sourceBound_keepInk {n : Nat} (b : B) (d : Sp)
+private theorem sourceBound_keepInk {n : Nat} (b : B) (d : Length)
     (hb : b.SourceBound n) : (b.keepInk d).SourceBound n :=
   hb.of_eq rfl rfl rfl rfl rfl
 
 private theorem sourceBound_displayState {n : Nat} (b : B) (tex : Bool)
-    (lineEnd : Option Sp) (hb : b.SourceBound n) :
+    (lineEnd : Option Length) (hb : b.SourceBound n) :
     (b.displayState tex lineEnd).SourceBound n :=
   hb.of_eq rfl rfl rfl rfl rfl
 
-private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (counted : Bool)
-    (leaf : Option Nat) (firstBaseline : Option Sp) (display : Option DisplayJob)
-    (opens : Bool) (anchors : Array String) (paintPadding : Option Sp)
-    (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) (hb : b.SourceBound n)
+private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (counted : Bool)
+    (leaf : Option Nat) (firstBaseline : Option Length) (display : Option DisplayJob)
+    (opens : Bool) (anchors : Array String) (paintPadding : Option Length)
+    (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length) (hb : b.SourceBound n)
     (hl : (∃ k, leaf = some k ∧ k < n) ∨ ∀ s ∈ segs, s.NoGlyph) :
     (b.placeLine fs x size segs w hang ex #[] counted leaf firstBaseline display opens
       anchors paintPadding step rs strut).SourceBound n := by
@@ -9052,8 +9060,8 @@ private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size :
     · exact Or.inl hl
     · exact Or.inr fun s hs => hl s (Array.mem_of_mem_filter hs)
 
-private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (firstBaseline : Option Sp)
+private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (firstBaseline : Option Length)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hpr : b.prevBand = .text) (hrl : ruleOnly segs = false)
     (hnn : b.notesH = 0) (hid : b.ignoreDepth = false) (htx : b.texAfter = false)
@@ -9081,12 +9089,12 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
   simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn, noteFloor,
     htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
-    ite_true, Int.add_zero, beq_self_eq_true]
+    ite_true, Length.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, Spacing.Page.commit, attachNotes_empty_id]
   simp [Array.back?_push]
 
-private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) (hf : b.fresh = true) :
+private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w : Length) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
       some (b.freshBaseline (segsInk fs segs).1
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
@@ -9102,8 +9110,8 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnOverrun,
     Array.back?_push]
 
-private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) (lf : Option Nat) (hf : b.fresh = true) :
+private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w : Length) (lf : Option Nat) (hf : b.fresh = true) :
     (b.placeLine fs x size segs w (leaf := lf)).cur.lines.back?.map (·.leaf) = some lf := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
@@ -9114,15 +9122,15 @@ private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
   simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnOverrun,
     Array.back?_push]
 
-private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (step : Option Sp := none) :
+private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (step : Option Length := none) :
     (b.placeLine fs x size segs w hang ex ns c lf (stepLead := step)).boxDepth =
       (segsInk fs segs).2 := by
   simp only [Spacing.Page.placeLine]
   exact keepInk_boxDepth_exact ..
 
-private theorem finishPage_shift_uniform (b : B) (owed : Sp)
+private theorem finishPage_shift_uniform (b : B) (owed : Length)
     (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) :
@@ -9130,7 +9138,7 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y + d) := by
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
-    rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
+    rcases hsh with h | h <;> simp [Length.not_lt.mpr h]
   unfold Spacing.Page.finishPage Spacing.Page.noteLines
   simp only [hcond, hsf, hfil, hpn, Bool.false_and, Bool.false_eq_true, ite_false, ite_true,
     Array.append_empty, Nat.add_zero,
@@ -9141,9 +9149,9 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     else 0), fun i hi => ?_⟩
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
-      Nat.not_lt.mpr hi]
+      Nat.not_lt.mpr hi, units_eq_zero_iff]
 
-private theorem finishPage_center_exact (b : B) (owed : Sp)
+private theorem finishPage_center_exact (b : B) (owed : Length)
     (hv : b.vdist = .center) (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
@@ -9166,19 +9174,19 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
       ≤ VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
-        + 1 := by
+        + Length.quantum := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
-    rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
+    rcases hsh with h | h <;> simp [Length.not_lt.mpr h]
   unfold Spacing.Page.finishPage Spacing.Page.noteLines
   simp only [hcond, hsf, hfil, hpn, hv, Bool.false_and, Bool.false_eq_true, ite_false, ite_true,
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
-      Nat.not_lt.mpr hi]
+      Nat.not_lt.mpr hi, units_eq_zero_iff]
 
-private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
+private theorem finishPage_fill_centre_exact (b : B) (owed : Length)
     (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0) (hj : b.vdist.joins = false)
     (h2 : b.pageFils + (if b.skip.fil then 1 else 0) = 2)
     (h1 : ∀ i, b.pinnedLines ≤ i → b.filsAbove.getD i 0 = 1)
@@ -9201,10 +9209,10 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
         - filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2
       ≤ filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2 + 1 := by
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2 + Length.quantum := by
   refine ⟨fun i hi => ?_, by rw [filShare_half_exact]; exact VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
-    rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
+    rcases hsh with h | h <;> simp [Length.not_lt.mpr h]
   unfold Spacing.Page.finishPage Spacing.Page.noteLines
   simp only [hcond, hpn, h2, hj, VDist.filAbove, VDist.filTotal, Bool.false_eq_true, ite_false,
     ite_true, Array.append_empty, Array.back?_push, Option.bind_some]
@@ -9217,8 +9225,8 @@ def overfullSubject : Option Span → String
   | none => "overfull:unlocated"
 
 /-- How far an overfull line runs, after its frame's name on a stage. -/
-private def overfullDetail (lead : String) (excess : Sp) : String :=
-  lead ++ s!"{excess.toPtString}pt too wide"
+private def overfullDetail (lead : String) (excess : Length) : String :=
+  lead ++ s!"{excess.toBpString}pt too wide"
 
 /-- The stage a line stands on: its frame, else the section page, the one stage no frame labels. -/
 private def stageWho (label : Option String) : String :=
@@ -9230,7 +9238,7 @@ private def stagePast (label : Option String) (whatRuns : String) : String :=
 
 /-- W0005 for a line set `excess` past its measure: a stage sets that measure in both artifacts,
 in its own words and with its frame, while a flow page's lines are the PDF's. -/
-private def Spacing.Page.warnOverfull (b : B) (source : Option Span) (excess : Option Sp) : B :=
+private def Spacing.Page.warnOverfull (b : B) (source : Option Span) (excess : Option Length) : B :=
   let subject := overfullSubject source
   let lead := if b.curStage then s!"{stageWho b.curFrameLabel}: " else ""
   let most := match source, excess with
@@ -9266,7 +9274,7 @@ private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Opti
 /-- A heading's declared rule as the line builder reads
 it: weight, position against the baseline, and colour. -/
 public structure HeadingRule where
-  thickness : Sp
+  thickness : Length
   position : Ir.RulePosition
   color : Ir.Color
   deriving Repr, Inhabited
@@ -9274,35 +9282,35 @@ public structure HeadingRule where
 /-- A paragraph that opens a TeX box: its first line stands `inset` below
 the box's top, and TeX's interline rule places the box and its lines. -/
 public structure TexBox where
-  inset : Sp
+  inset : Length
   more : Bool
-  leading : Sp
+  leading : Length
   boxed : Bool := true
   /-- A rule beside the box reaching by its lines: how far past the
   box's lines it reaches above and below the box's baseline. -/
-  reach : Option (Sp × Sp) := none
+  reach : Option (Length × Length) := none
   /-- The box's last line's depth, its strut's or its ink's. -/
-  lastDepth : Sp := 0
+  lastDepth : Length := 0
   deriving Repr, Inhabited, DecidableEq
 
 /-- One paragraph, measured and ready to break: everything `kp` and line placement need. -/
 public structure Spacing.Paragraph where
   private mk ::
   private items : Array Item
-  private extras : Std.HashMap Nat Sp
-  private wordOffsets : Std.HashMap Nat Sp := {}
+  private extras : Std.HashMap Nat Length
+  private wordOffsets : Std.HashMap Nat Length := {}
   private anchors : Array (String × Nat) := #[]
   private itemSources : Array (Nat × Span) := #[]
   private diags : Array Diag
-  private target : Sp
-  private indent : Sp
+  private target : Length
+  private indent : Length
   private center : Bool
-  private size : Sp
+  private size : Length
   /-- The leading of the named size step the paragraph is set
   in (`Ir.paraStep?`), `size` then being that step's size. -/
-  private lead : Option Sp := none
+  private lead : Option Length := none
   /-- TeX's baseline skip for a title part that opens a new line. -/
-  private firstBaseline : Option Sp := none
+  private firstBaseline : Option Length := none
   /-- The line hangs from the right edge of the measure (`Geom.flushRight`). -/
   private flushRight : Bool := false
   /-- Justified or ragged, from the page. -/
@@ -9315,16 +9323,16 @@ public structure Spacing.Paragraph where
   /-- Whether font boxes may expand within ±`expandLimit`, from the page. -/
   private expand : Bool := true
   /-- Marker content set as its own items and placed before the first line. -/
-  private markerSegs : Option (Array Seg × Sp) := none
+  private markerSegs : Option (Array Seg × Length) := none
   /-- Where the marker's column stands, right-aligned against
   this offset from the margin; `none` hangs it off the indent. -/
-  private markerIndent : Option Sp := none
+  private markerIndent : Option Length := none
   /-- Where a flush-left marker starts, as an offset from the
   margin (`Ir.BibItem.labelFlush`); read before `markerIndent`. -/
-  private markerLeft : Option Sp := none
+  private markerLeft : Option Length := none
   /-- TeX's `\hangindent`, the list's `\itemindent` negated:
   every line but the first stands this far in from `indent`. -/
-  private hangIndent : Sp := 0
+  private hangIndent : Length := 0
   /-- Every forced break but the last restarts the hang past its kern, as verse's `\\` ends its
   paragraph. -/
   private hangLines : Bool := false
@@ -9343,21 +9351,21 @@ public structure Spacing.Paragraph where
   private leaf : Option Nat := none
   /-- The space the text after this paragraph needs on its page: nonzero
   for a heading, which TeX never lets end a page (`\@xsect`). -/
-  private keepNext : Sp := 0
+  private keepNext : Length := 0
   /-- The paragraph is display math, set as TeX sets a display. -/
   private display : Option DisplayJob := none
   /-- The paragraph opens a painted colour box with this inset (`Ir.titledPadding`). -/
-  private paintPadding : Option Sp := none
+  private paintPadding : Option Length := none
   /-- A table row's strut, height and depth (`tableStrut`); `none` off a table. -/
-  private rowStrut : Option (Sp × Sp) := none
+  private rowStrut : Option (Length × Length) := none
   /-- Every line carries a strut of this `\baselineskip`, as fancyvrb's code lines do. -/
-  private strut : Option Sp := none
+  private strut : Option Length := none
   /-- Whether the paragraph's forced line ends declare its lines,
   as a tex `\\` does and a markdown hard break does not. -/
   private declaresLines : Bool := true
   /-- The stretch every line carries besides its own glue (`KpSums.bg`): plain
   TeX's `\rightskip 0pt plus 2em` in a narrowed table cell, else zero. -/
-  private background : Sp := 0
+  private background : Length := 0
   /-- The paragraph opens a TeX box (`TexBox`). -/
   private texBox : Option TexBox := none
   /-- The paragraph follows a heading, which no page break may end (latex.ltx `\@afterheading`). -/
@@ -9416,11 +9424,11 @@ public theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Int
 /-- Where an empty box (`Op.boxAnchor`) stands below the band above. -/
 private inductive AnchorRule where
   /-- TeX's interline rule for a box `h` tall (`texBoxTop`). -/
-  | tex (h : Sp)
+  | tex (h : Length)
   /-- `\nointerlineskip`: on the band's bottom. -/
   | flush
   /-- tcolorbox's balanced skip `s` (tcolorbox.sty, `before skip balanced`). -/
-  | balanced (s : Sp)
+  | balanced (s : Length)
   deriving Inhabited
 
 /-- Block-walk output replayed in document order by
@@ -9432,7 +9440,7 @@ private inductive Op where
   | skipAlt (long short : Glue)
   /-- A titled frame's content opens here, below the title box, with the
   frame's own top skip pending; `box` is where a title template's box ends. -/
-  | bodyOpen (g : Glue) (box : Option Sp)
+  | bodyOpen (g : Glue) (box : Option Length)
   /-- A paragraph and the task computing its breaks (`Op.ofPara`). -/
   | para (job : ParaJob) (breaks : Task (Array Nat))
   /-- The placed extent of a block link or painted surface. -/
@@ -9454,30 +9462,30 @@ private inductive Op where
   | pageGround (bg : Option Ir.Color)
   /-- A colour bar behind the line just placed, the frame title;
   with a `strut`, moloch's frametitle box (`frameBar_exact`). -/
-  | titleBar (color : Ir.Color) (pad : Sp) (strut : Option Sp)
+  | titleBar (color : Ir.Color) (pad : Length) (strut : Option Length)
   /-- A frame opens, with whether its author declared `[allowframebreaks]`. -/
   | frameOpen (breakable : Bool) (source : Option Span) (opening : FrameOpening)
   /-- Close source ownership after the frame's final page boundary. -/
   | frameClose
   /-- beamer's `\vbox{}` opening a block's colour box, or a
   tcolorbox's edge: an empty box the next band is spaced below. -/
-  | boxAnchor (rule : AnchorRule) (shift : Sp) (paints : Bool)
+  | boxAnchor (rule : AnchorRule) (shift : Length) (paints : Bool)
   /-- A full-measure horizontal rule as its own line, placed through `placeLine`. -/
-  | hrule (color : Ir.Color) (thickness : Sp)
+  | hrule (color : Ir.Color) (thickness : Length)
   /-- A table rule row, already set: placed at the pending skip
   below the previous ink and committed with zero depth. -/
-  | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
+  | tableRule (thickness : Length) (x w : Length) (segs : Array Seg)
   /-- Content placed so far on the open page is chrome pinned
   to the page top, which the distribution never moves. -/
   | pin
   /-- A progress bar under the line just placed: `bg`
   across `w` from `x`, `fg` over `num/den` of it. -/
-  | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
+  | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Length)
   /-- The logo the pages from here carry; empty clears it. -/
   | setLogo (content : Array Ir.Inline)
   /-- An elaborated picture placed with its left edge at page x; `leaf` is its `.picture` leaf,
   `origin` its ordinal among the collected pictures. -/
-  | picture (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
+  | picture (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
   /-- A float's extent up to its `floatClose`: one
   unbreakable box, placed whole or moved to the next page. -/
   | floatOpen
@@ -9499,7 +9507,7 @@ private inductive Op where
   | clearDepth
   /-- A display a picture stands for opens here (`Ir.displayPicture?`),
   its skip above chosen as a display line's. -/
-  | displayOpen (dj : DisplayJob) (left size : Sp)
+  | displayOpen (dj : DisplayJob) (left size : Length)
 
 /-- A paragraph's op, its breaks computed in parallel from collection on. -/
 private def Op.ofPara (j : ParaJob) : Op := .para j (Task.spawn fun _ => j.breaks)
@@ -9509,7 +9517,7 @@ styles, and the class and deck settings in force. -/
 public structure Spacing.Context where
   private mk ::
   private geom : Geom
-  private xHeight : Sp
+  private xHeight : Length
   /-- The font the class's preamble set, in which a table's
   undeclared rule weights and seps resolve (`Ir.PreambleFace`). -/
   private preamble : Ir.PreambleFace
@@ -9540,7 +9548,7 @@ public structure Spacing.Context where
   (`Ir.TrivIn.within`); `none` outside every list, where the document's tokens stand. -/
   private trivIn : Option Ir.TrivIn := none
   /-- A quotation's `\listparindent`, from the class (`Ir.ClassRecord.quotationIndent`). -/
-  private quotationIndent : Dim.Length := {}
+  private quotationIndent : Dim.SymLength := {}
   /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`). -/
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
@@ -9570,7 +9578,7 @@ public structure Spacing.Context where
   private inLabel : Bool := false
   /-- The labels of the item whose block this walk opens on, outermost first, each with its item's
   indent, until that block's first paragraph line takes them (`\@donoparitem`). -/
-  private labels : Array (Array Ir.Inline × Sp) := #[]
+  private labels : Array (Array Ir.Inline × Length) := #[]
   /-- The page's TeX `\parskip`, which a minipage restores over the list it stands in. -/
   private pageParskip : SymGlue := Ir.texParskipDefault
   /-- The document's loaded images, which layout measures and places. -/
@@ -9590,12 +9598,12 @@ public structure Spacing.Context where
   private slotTitle : Bool := false
   /-- Exact title-part size and optional baseline skip, resolved at the
   slot boundary and scoped to that slot. -/
-  private roleMetrics : List (String × (Sp × Option Sp)) := []
+  private roleMetrics : List (String × (Length × Option Length)) := []
   /-- For each part that opens a later line, TeX's baseline skip in force on that line. -/
-  private roleBaselines : List (String × Sp) := []
+  private roleBaselines : List (String × Length) := []
   /-- The gap above the footline band: the document's
   furniture gap, else beamer's 4 pt (`Ir.footline.sep`). -/
-  private footGap : Sp := Ir.footline.sep
+  private footGap : Length := Ir.footline.sep
   /-- A centred scope sets this block as one box of its line (`collectCentered`),
   so a lone box row takes the centre's share of its slack. -/
   private centreBoxes : Bool := false
@@ -9616,7 +9624,7 @@ public structure Spacing.Pending where
   private mk ::
   /-- The right edge paragraphs break against, from the page's
   left margin: the text width unless a column narrows it. -/
-  private measure : Option Sp := none
+  private measure : Option Length := none
   /-- The document's palette, whose semantic keys drive the themed furniture. -/
   private pal : Ir.Palette := {}
   /-- What the dimming walk and a pending step's cover read of `pal`, once per palette epoch. -/
@@ -9659,7 +9667,7 @@ public structure Spacing.Pending where
   private itemMarker : Option (Array Ir.Inline) := none
   /-- The markers of the items a list opens in, each with its item's indent, until that list's first
   item's line takes them (`labelRow`). -/
-  private outerMarkers : Array (Array Ir.Inline × Sp) := #[]
+  private outerMarkers : Array (Array Ir.Inline × Length) := #[]
   /-- Quotations open around the walk, which LaTeX's `\@listdepth` counts beside the lists. -/
   private quoteDepth : Nat := 0
   /-- Diagnostics the block walk itself raises, joined into the placement diagnostics by `run`. -/
@@ -9719,7 +9727,7 @@ public structure Spacing.Pending where
 private abbrev Acc := Spacing.Pending
 
 /-- A walk nested in `a` against its own right edge, on ops and owed glue of its own. -/
-private def Spacing.Pending.nested (a : Acc) (edge : Sp) : Acc :=
+private def Spacing.Pending.nested (a : Acc) (edge : Length) : Acc :=
   { a with measure := some edge, ops := #[], wantDefault := false, owed := #[], anchorAt := none
            dispAlt := none }
 
@@ -9735,7 +9743,7 @@ private def Spacing.Pending.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
   ({ a with leafNext := a.leafNext + n }, if n == 0 then none else some a.leafNext)
 
 /-- The markers waiting for a list's first line (`labelRow`), taken out of the walk. -/
-private def Spacing.Pending.takeOuter (a : Acc) : Array (Array Ir.Inline × Sp) × Acc :=
+private def Spacing.Pending.takeOuter (a : Acc) : Array (Array Ir.Inline × Length) × Acc :=
   (a.outerMarkers, { a with outerMarkers := #[] })
 
 /-- LaTeX's `\@listdepth` around the walk: every list and quotation open. -/
@@ -9771,7 +9779,7 @@ private def Spacing.Pending.openHidden (a : Acc) : Acc := { a with ops := a.ops.
 private def Spacing.Pending.closeHidden (a : Acc) : Acc := { a with ops := a.ops.push .regionClose }
 
 /-- A list level's `\leftmargin` at `\@listdepth` `lv` (`Ir.leftMarginAt`). -/
-private def Spacing.Context.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) : Sp :=
+private def Spacing.Context.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) : Length :=
   Ir.leftMarginAt r.lists tokens r.preamble lv
 
 /-- The next line is a peer of the last: the default gap, unless something
@@ -9904,8 +9912,9 @@ private def Spacing.Pending.primitiveSkip (a : Acc) : Acc :=
 private theorem addvspace_after_vskip_exact (a : Acc) (v g : Glue) (hv : v.width ≠ 0)
     (hg : ¬ v.width < g.width) :
     (((a.vspace v).primitiveSkip).addvspace g).owed = a.owed.push v := by
+  have hv' : v.width.units ≠ 0 := fun e => hv ((Length.ext_iff' _ _).mpr e)
   simp [Spacing.Pending.primitiveSkip, Spacing.Pending.vspace, Spacing.Pending.addvspace,
-    hv, hg]
+    hv', hg]
 
 /-- The glue one boundary pays: the declared glue owed, with the page's
 parskip on top where a document skip stands at a peer boundary. -/
@@ -9956,34 +9965,34 @@ private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = f
   intro par
   exact ⟨by simp [Spacing.Pending.flushGap, Spacing.Pending.owedOp, ho, hs, hk, hd, par], by simp [Spacing.Pending.gapGlue, hs, par]⟩
 
-private theorem glue_width_le_add (x y : Glue) (hy : (0 : Int) ≤ y.width) :
+private theorem glue_width_le_add (x y : Glue) (hy : (0 : Length) ≤ y.width) :
     x.width ≤ (x.add y).width := by
-  simpa [Glue.add] using Int.add_le_add_left hy x.width
+  simpa [Glue.add] using Length.add_le_add_left hy x.width
 
-private theorem glue_width_le_add_left (x y : Glue) (hx : (0 : Int) ≤ x.width) :
+private theorem glue_width_le_add_left (x y : Glue) (hx : (0 : Length) ≤ x.width) :
     y.width ≤ (x.add y).width := by
-  simpa [Glue.add] using Int.add_le_add_right hx y.width
+  simpa [Glue.add] using Length.add_le_add_right hx y.width
 
 private theorem skip_monotone (a : Acc) (r : Rd) (g : Glue)
-    (hg : (0 : Int) ≤ g.width) (hp : (0 : Int) ≤ r.parskip.width)
-    (hq : (0 : Int) ≤ (r.resolve r.geom.texParskip).width) :
+    (hg : (0 : Length) ≤ g.width) (hp : (0 : Length) ≤ r.parskip.width)
+    (hq : (0 : Length) ≤ (r.resolve r.geom.texParskip).width) :
     (a.gapGlue r).width ≤ ((a.vspace g).gapGlue r).width := by
   have hf : ((a.vspace g).owed.foldl Glue.add {}) = (a.owed.foldl Glue.add {}).add g := by
     simp [Spacing.Pending.vspace, Glue.add]
   have hd : (a.vspace g).declaredSkip = true := rfl
   have hw : (a.vspace g).wantDefault = a.wantDefault := rfl
   have ht : (a.vspace g).trivOwed = a.trivOwed := rfl
-  have hpar : (0 : Int) ≤ (if a.trivOwed then r.resolve r.geom.texParskip else r.parskip).width := by
+  have hpar : (0 : Length) ≤ (if a.trivOwed then r.resolve r.geom.texParskip else r.parskip).width := by
     split <;> assumption
   simp only [Spacing.Pending.gapGlue, hf, hd, hw, ht, Bool.and_true]
   generalize (if a.trivOwed then r.resolve r.geom.texParskip else r.parskip) = par at hpar ⊢
   cases hwd : a.wantDefault
   · simpa [hwd] using glue_width_le_add (a.owed.foldl Glue.add {}) g hg
   · cases hds : a.declaredSkip
-    · simpa [hwd, hds] using Int.le_trans (glue_width_le_add (a.owed.foldl Glue.add {}) g hg)
+    · simpa [hwd, hds] using Length.le_trans (glue_width_le_add (a.owed.foldl Glue.add {}) g hg)
         (glue_width_le_add_left par ((a.owed.foldl Glue.add {}).add g) hpar)
     · simpa [hwd, hds, Glue.add] using
-        Int.add_le_add_left (glue_width_le_add (a.owed.foldl Glue.add {}) g hg) par.width
+        Length.add_le_add_left (glue_width_le_add (a.owed.foldl Glue.add {}) g hg) par.width
 
 private theorem flushGap_default_exact (a : Acc) (r : Rd)
     (howed : a.owed.isEmpty = true) (hw : a.wantDefault = true) (hk : a.anchorAt = none) :
@@ -9992,7 +10001,8 @@ private theorem flushGap_default_exact (a : Acc) (r : Rd)
 
 private theorem heading_default_before_exact (r : Rd) :
     ((r.parskip).add (r.parskip)).width = 2 * r.parskip.width := by
-  simp [Glue.add, Int.two_mul]
+  simp only [Glue.add]
+  length_omega
 
 /-- A page boundary: the gap owed stands before the break
 and is the old page's own, and the new page starts clean. -/
@@ -10058,7 +10068,7 @@ private def lineAnchors (anchors : Array (String × Nat)) (prev brk : Nat)
 
 /-- W0005 for a footnote line set `excess` past its measure, the PDF's, as the web page sets its notes
 apart from the page and the stage: on a stage in the stage's words. -/
-private def noteOverfull (r : Rd) (a : Acc) (source : Option Span) (excess : Sp) : Diag :=
+private def noteOverfull (r : Rd) (a : Acc) (source : Option Span) (excess : Length) : Diag :=
   let staged := r.slides && r.inFrame
   Diag.of .W0005
     (if staged then stagePast a.frameLabel "footnote runs" ++ "; no feasible break"
@@ -10072,7 +10082,7 @@ private def noteOverfull (r : Rd) (a : Acc) (source : Option Span) (excess : Sp)
 /-- W0005 for boxes set side by side `excess` wider than their measure, a row the web page's grid
 overruns as the PDF's does, its census key its own, apart from its lines'. -/
 private def columnsOverfull (r : Rd) (a : Acc) (cols : Array (BoxWidth × Array Block))
-    (excess : Sp) : Diag :=
+    (excess : Length) : Diag :=
   let source := cols.findSome? fun (_, body) => body.findSome? fun b => match b with
     | .para c => Ir.inlineSource c
     | _ => none
@@ -10100,12 +10110,12 @@ private def withKerns (items : Array Item) (first box : Item) (restart : Bool) :
   return (out, shift)
 
 /-- `\labelsep`: half an em (classes.dtx `\setlength\labelsep{.5em}`). -/
-private def labelSep (g : Geom) : Sp := g.fontSize / 2
+private def labelSep (g : Geom) : Length := g.fontSize / 2
 
 /-- The markers of the items a list opens in, then its first item's own, on one line as
 `\@donoparitem` sets them, each `\llap`ped to end a label separation short of its item's indent. -/
-private def labelRow (outer : List (Array Seg × Sp × Sp)) (inner : Array Seg × Sp)
-    (indent sep : Sp) : Array Seg × Sp :=
+private def labelRow (outer : List (Array Seg × Length × Length)) (inner : Array Seg × Length)
+    (indent sep : Length) : Array Seg × Length :=
   match outer with
   | [] => inner
   | (s0, w0, i0) :: rest =>
@@ -10114,21 +10124,21 @@ private def labelRow (outer : List (Array Seg × Sp × Sp)) (inner : Array Seg �
     (segs ++ #[Seg.gap (indent - sep - inner.2 - edge) false] ++ inner.1, indent - i0 + w0)
 
 private def collectPara (r : Rd) (a : Acc)
-    (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
+    (inlines : Array Inline) (indent : Length) (center : Bool) (size : Length)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
     (markerLeaf : Option Nat := none)
-    (markerIndent : Option Sp := none)
-    (markerLeft : Option Sp := none)
-    (outerMarkers : Array (Array Inline × Sp) := #[])
+    (markerIndent : Option Length := none)
+    (markerLeft : Option Length := none)
+    (outerMarkers : Array (Array Inline × Length) := #[])
     (rule : Option HeadingRule := none)
     (display : Bool := false)
-    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
-    (hangIndent : Sp := 0) (firstIndent : Sp := 0) (hangLines : Bool := false)
+    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Length := 0)
+    (hangIndent : Length := 0) (firstIndent : Length := 0) (hangLines : Bool := false)
     (hangFirst : Bool := true) (literalLines : Bool := false)
-    (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
-    (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
-    (inserted : Bool := false) (background : Sp := 0)
+    (dispJob : Option DisplayJob := none) (paintPadding : Option Length := none)
+    (rowStrut : Option (Length × Length) := none) (strut : Option Length := none)
+    (inserted : Bool := false) (background : Length := 0)
     (urlBreaks : Bool := r.surface != .tex)
     (texBox : Option TexBox := none) : Acc :=
   let texBox := texBox.orElse fun _ => a.boxOpener
@@ -10175,7 +10185,7 @@ private def collectPara (r : Rd) (a : Acc)
     let noteLead := Ir.stepLead r.geom.skips "footnotesize" r.geom.fontSize
     let sep := r.geom.fontSize * 665 / 1000
     let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
-    let scaleB (v : Int) : Sp := v * r.geom.fontSize / bodyFont.unitsPerEm
+    let scaleB (v : Int) : Length := v * r.geom.fontSize / bodyFont.unitsPerEm
     let target := r.geom.textWidth
     for (markIdx, num, body, noteLeaf) in rawNotes do
       let (nitems0, nds, cache2, _, _, _, nanchors, nsources) :=
@@ -10195,10 +10205,10 @@ private def collectPara (r : Rd) (a : Acc)
       let nitems := if r.geom.justify then nitems else raggedItems nitems
       let breaks := kpTwoPass nitems target
       let mut lines : Array LineOut := #[]
-      let mut yPrev : Sp := 0
-      let mut belowPrev : Sp := 0
-      let mut hgt : Sp := 0
-      let mut depth : Sp := 0
+      let mut yPrev : Length := 0
+      let mut belowPrev : Length := 0
+      let mut hgt : Length := 0
+      let mut depth : Length := 0
       let mut prev := 0
       let mut first := true
       for brk in breaks do
@@ -10239,7 +10249,7 @@ private def collectPara (r : Rd) (a : Acc)
         | some k => LeafCtr.of (some k) (Struct.leafCountInlines m) m
         | none => .fixed .label)
       let (outer, ds, cache) := Id.run do
-        let mut row : Array (Array Seg × Sp × Sp) := #[]
+        let mut row : Array (Array Seg × Length × Length) := #[]
         let mut ds := ds ++ mds
         let mut cache := cache
         for (m, i) in outerMarkers do
@@ -10262,7 +10272,7 @@ private def collectPara (r : Rd) (a : Acc)
   let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
     if kern == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
     else
-      let kernBox (w : Sp) : Item :=
+      let kernBox (w : Length) : Item :=
         Item.box w 0 a.fg none #[] strutSize {} {} 0 a.ground .unattributed
       let (items, shift) :=
         withKerns items (kernBox (if hangFirst then kern else 0)) (kernBox kern) restart
@@ -10308,31 +10318,23 @@ private def collectPara (r : Rd) (a : Acc)
 
 /-- The weight of a heading's declared rule: 0.06 em of the base,
 relating to the stroke weight of the text it cuts (Hochuli). -/
-private def headingRuleWeight (base : Sp) : Sp := base * 6 / 100
+private def headingRuleWeight (base : Length) : Length := base * 6 / 100
 
 /-- Heading display sizes at the page's body size, the steps of its ladder (`Ir.headingSize`). -/
-@[expose] public def sectionSize (geom : Geom) : Ir.HeadingLevel → Sp :=
+@[expose] public def sectionSize (geom : Geom) : Ir.HeadingLevel → Length :=
   Ir.headingSize geom.scale geom.fontSize
 
-public theorem scaleStep_monotone (base : Int)
+public theorem scaleStep_monotone (base : Length)
     (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division
     ∀ q ∈ Ir.sizeScale.zip Ir.sizeScale.tail,
       Ir.scaleStepIn Ir.sizeScale base q.1.1 < Ir.scaleStepIn Ir.sizeScale base q.2.1 := by
-  have hb' : (65536 : Int) ≤ base := hb
+  have hp : (65536 : Int) ≤ (pt 1).units := by decide -- the floor in base units
+  have hb' : (65536 : Int) ≤ base.units := Int.le_trans hp hb
   intro q hq
   simp only [Ir.sizeScale, List.tail_cons, List.zip_cons_cons, List.zip_nil_right,
     List.mem_cons, List.not_mem_nil, or_false] at hq
   rcases hq with h|h|h|h|h|h|h|h|h <;> subst h <;>
-    first
-    | (show base * 500 / 1000 < base * 700 / 1000; omega)
-    | (show base * 700 / 1000 < base * 800 / 1000; omega)
-    | (show base * 800 / 1000 < base * 900 / 1000; omega)
-    | (show base * 900 / 1000 < base * 1000 / 1000; omega)
-    | (show base * 1000 / 1000 < base * 1200 / 1000; omega)
-    | (show base * 1200 / 1000 < base * 1440 / 1000; omega)
-    | (show base * 1440 / 1000 < base * 1728 / 1000; omega)
-    | (show base * 1728 / 1000 < base * 2074 / 1000; omega)
-    | (show base * 2074 / 1000 < base * 2488 / 1000; omega)
+    simp [Ir.scaleStepIn, Ir.sizeScale, List.lookup] <;> length_omega
 
 public theorem heading_hierarchy (g : Geom) (hs : g.scale = Ir.sizeScale)
     (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
@@ -10342,22 +10344,22 @@ public theorem heading_hierarchy (g : Geom) (hs : g.scale = Ir.sizeScale)
   have h01 := scaleStep_monotone g.fontSize hfs
     (("normalsize", 1000), ("large", 1200)) (by decide)
   have e0 : Ir.scaleStepIn Ir.sizeScale g.fontSize "normalsize" = g.fontSize := by
-    show g.fontSize * 1000 / 1000 = g.fontSize
-    exact Int.mul_ediv_cancel _ (by decide)
+    simp [Ir.scaleStepIn, Ir.sizeScale, List.lookup]
+    length_omega
   rw [e0] at h01
   unfold sectionSize
   rw [hs]
-  exact ⟨h12, Int.le_of_lt h01⟩
+  exact ⟨h12, Length.le_of_lt h01⟩
 
 /-- Display type: headings, frame titles, section-page and standout
 text, walked with no hyphenation patterns and ragged setting. -/
 private def collectDisplay (r : Rd) (a : Acc)
-    (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
+    (inlines : Array Inline) (indent : Length) (center : Bool) (size : Length)
     (baseStyle : TextStyle := {})
     (rule : Option HeadingRule := none)
-    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
-    (paintPadding : Option Sp := none) (inserted : Bool := false)
-    (strut : Option Sp := none) (texBox : Option TexBox := none) : Acc :=
+    (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Length := 0)
+    (paintPadding : Option Length := none) (inserted : Bool := false)
+    (strut : Option Length := none) (texBox : Option TexBox := none) : Acc :=
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
     (display := true) (leaf := leaf) (span := span) (keepNext := keepNext)
@@ -10365,7 +10367,7 @@ private def collectDisplay (r : Rd) (a : Acc)
     (texBox := texBox)
 
 /-- The natural width of a set of items, penalties adding nothing. -/
-private def itemsNaturalWidth (items : Array Item) : Sp :=
+private def itemsNaturalWidth (items : Array Item) : Length :=
   items.foldl (fun w it => match it with
     | .box bw .. => w + bw
     | .glue g | .decoratedGlue g _ => w + g.width
@@ -10376,8 +10378,8 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
 
 /-- The natural width of `content` set at `size` on a line `avail` wide, measured and never
 shipped, with the hyphenation cache the measuring warmed. -/
-private def Spacing.Pending.naturalWidth (a : Acc) (r : Rd) (size : Sp) (content : Array Inline)
-    (avail : Sp) : Sp × Acc :=
+private def Spacing.Pending.naturalWidth (a : Acc) (r : Rd) (size : Length) (content : Array Inline)
+    (avail : Length) : Length × Acc :=
   let (items, _, cache, _) :=
     itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } content
       a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
@@ -10392,9 +10394,9 @@ private def itemsBreak (items : Array Item) : Bool :=
     | _ => false
 
 /-- A natural cell's width as lines: the widest run between forced breaks (CSS Sizing 3, §5.1). -/
-private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
-  let mut widest : Sp := 0
-  let mut run : Sp := 0
+private def itemsLinesWidth (items : Array Item) : Length := Id.run do
+  let mut widest : Length := 0
+  let mut run : Length := 0
   for it in items do
     match it with
     | .box bw .. | .img _ bw _ _ _ | .rule bw .. | .mark bw .. => run := run + bw
@@ -10409,7 +10411,7 @@ private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
 /-- The one door the document title renders through: a declared `titlepage`
 template wraps it, else it takes display type in bold at its page model's step. -/
 private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
-    (indent : Sp) (center : Bool) : Acc :=
+    (indent : Length) (center : Bool) : Acc :=
   let (a, leaf) := a.leafRange (Struct.leafCountInlines title)
   if r.slotTitle then
     collectDisplay r a title indent center r.geom.fontSize
@@ -10430,8 +10432,8 @@ public def inSpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
 
 /-- A column's width before spans: an `l`/`c`/`r` column's widest unspanned
 cell, a `p{f\linewidth}` its fraction of the measure, a `p{len}` its length. -/
-public def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array Sp))
-    (j : Nat) (spec : Ir.ColSpec) : Sp :=
+public def colBase (total : Length) (spans : Array Ir.ColSpan) (nats : Array (Array Length))
+    (j : Nat) (spec : Ir.ColSpec) : Length :=
   match spec.width with
   | .natural => nats.zipIdx.foldl (init := 0) fun m (r, i) =>
       if inSpan spans i j then m else max m ((r[j]?).getD 0)
@@ -10439,7 +10441,7 @@ public def colBase (total : Sp) (spans : Array Ir.ColSpan) (nats : Array (Array 
   | .flex _ => 0
 
 /-- What a span needs across its columns: its text's natural width, or its own `p{…}` width. -/
-public def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp :=
+public def spanNeed (total : Length) (nats : Array (Array Length)) (s : Ir.ColSpan) : Length :=
   match s.spec.width with
   | .natural => ((nats[s.row]?).bind (·[s.col]?)).getD 0
   | .sized e => e.resolveWidth (MeasureValues.horizontal total 0)
@@ -10447,17 +10449,21 @@ public def spanNeed (total : Sp) (nats : Array (Array Sp)) (s : Ir.ColSpan) : Sp
 
 /-- The box a span sets in: the columns it covers and the `2·colsep` gaps
 between them. -/
-public def spanBox (colsep : Sp) (widths : Array Sp) (s : Ir.ColSpan) : Sp :=
+public def spanBox (colsep : Length) (widths : Array Length) (s : Ir.ColSpan) : Length :=
   let last := min (s.col + s.n) widths.size
-  (widths.extract s.col last).foldl (· + ·) 0 + 2 * colsep * ((last : Int) - (s.col : Int) - 1)
+  let gaps : Int := (last : Int) - (s.col : Int) - 1
+  let gapW : Length := gaps * (2 * colsep)
+  (widths.extract s.col last).foldl (· + ·) 0 + gapW
 
 /-- Column `j` widened by every span ending at it,
 by TeX's rule for a spanned entry (tex.web §801). -/
-public def widenAt (colsep total : Sp) (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
-    (widths : Array Sp) (j : Nat) : Array Sp :=
+public def widenAt (colsep total : Length) (nats : Array (Array Length)) (spans : Array Ir.ColSpan)
+    (widths : Array Length) (j : Nat) : Array Length :=
   spans.foldl (init := widths) fun ws s =>
     if 0 < s.n && s.col + s.n == j + 1 && j < ws.size then
-      let before := (ws.extract s.col j).foldl (· + ·) 0 + 2 * colsep * ((s.n : Int) - 1)
+      let gaps : Int := (s.n : Int) - 1
+      let gapW : Length := gaps * (2 * colsep)
+      let before := (ws.extract s.col j).foldl (· + ·) 0 + gapW
       ws.set! j (max ws[j]! (spanNeed total nats s - before))
     else ws
 
@@ -10466,14 +10472,15 @@ public def tableFlexTarget (cols : Array Ir.ColSpec) : Option Ir.TableTarget :=
     | .flex target => some target
     | .natural | .sized _ => none
 
-public def tablePadding (colsep : Sp) (count : Nat) (padL padR : Bool) : Sp :=
-  (if padL then colsep else 0) + (if padR then colsep else 0) +
-    2 * colsep * ((count : Int) - 1)
+public def tablePadding (colsep : Length) (count : Nat) (padL padR : Bool) : Length :=
+  let gaps : Int := (count : Int) - 1
+  let gapW : Length := gaps * (2 * colsep)
+  (if padL then colsep else 0) + (if padR then colsep else 0) + gapW
 
 /-- Give every flexible column an equal share of what the
 target leaves, as tabularx's trial arithmetic (`TX@arith`). -/
-public def tableFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
-    (bases : Array Sp) (padL padR : Bool) : Array Sp :=
+public def tableFlexWidths (colsep total fontSize : Length) (cols : Array Ir.ColSpec)
+    (bases : Array Length) (padL padR : Bool) : Array Length :=
   let count := cols.foldl (fun n c => if c.width matches .flex _ then n + 1 else n) 0
   match tableFlexTarget cols with
   | none => bases
@@ -10488,8 +10495,8 @@ public def tableFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec
       | .flex _ => share
       | .natural | .sized _ => bases[j]?.getD 0
 
-public theorem tableFlexWidths_flex_contract (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
-    (bases : Array Sp) (padL padR : Bool) (i j : Nat) (ci cj : Ir.ColSpec)
+public theorem tableFlexWidths_flex_contract (colsep total fontSize : Length) (cols : Array Ir.ColSpec)
+    (bases : Array Length) (padL padR : Bool) (i j : Nat) (ci cj : Ir.ColSpec)
     (ti tj : Ir.TableTarget) (hi : cols[i]? = some ci) (hj : cols[j]? = some cj)
     (hwi : ci.width = .flex ti) (hwj : cj.width = .flex tj) :
     (tableFlexWidths colsep total fontSize cols bases padL padR)[i]? =
@@ -10526,29 +10533,29 @@ public theorem fitTableShare_contract (fits : Nat → Bool) (lo hi : Nat)
     exact h
 
 /-- One tabularx trial: equal X widths followed by TeX's span constraints. -/
-public def tableFlexTrial (colsep total : Sp) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (share : Nat) : Array Sp :=
+public def tableFlexTrial (colsep total : Length) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Length)) (spans : Array Ir.ColSpan) (share : Nat) : Array Length :=
   let bases := cols.mapIdx fun j c => match c.width with
-    | .flex _ => (share : Int)
+    | .flex _ => Length.ofUnits share
     | .natural | .sized _ => colBase total spans nats j c
   (List.range cols.size).foldl (widenAt colsep total nats spans) bases
 
 /-- Fit the final span-expanded widths, each X column keeping
 the one-em fallback when the span minimums exceed the target. -/
-public def tableSpanFlexWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (allocated : Array Sp)
-    (budget : Sp) : Array Sp :=
+public def tableSpanFlexWidths (colsep total fontSize : Length) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Length)) (spans : Array Ir.ColSpan) (allocated : Array Length)
+    (budget : Length) : Array Length :=
   let trial := tableFlexTrial colsep total cols nats spans
   let fits := fun share => decide ((trial share).foldl (· + ·) 0 ≤ budget)
   let upper := cols.zipIdx.foldl (fun m (c, j) =>
     if c.width matches .flex _ then max m (allocated[j]?.getD 0) else m) 0
-  trial (if fits 0 then fitTableShare fits 0 upper.toNat else fontSize.toNat)
+  trial (if fits 0 then fitTableShare fits 0 upper.units.toNat else fontSize.units.toNat)
 
 /-- A table's column widths: natural tables enforce the
 span minimums, flexible ones fit them inside the target. -/
-public def tableColWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan)
-    (padL : Bool := true) (padR : Bool := true) : Array Sp :=
+public def tableColWidths (colsep total fontSize : Length) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Length)) (spans : Array Ir.ColSpan)
+    (padL : Bool := true) (padR : Bool := true) : Array Length :=
   let bases := cols.mapIdx fun j spec => colBase total spans nats j spec
   let bases := tableFlexWidths colsep total fontSize cols bases padL padR
   if spans.isEmpty then bases
@@ -10559,8 +10566,8 @@ public def tableColWidths (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
 
 /-- Artifact geometry: nonempty spans stay inside the table's
 declared target whenever their minimum widths fit. -/
-public theorem table_flex_span_width_contract (colsep total fontSize : Int) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) (spans : Array Ir.ColSpan) (padL padR : Bool)
+public theorem table_flex_span_width_contract (colsep total fontSize : Length) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Length)) (spans : Array Ir.ColSpan) (padL padR : Bool)
     (target : Ir.TableTarget) (hs : spans.isEmpty = false)
     (ht : tableFlexTarget cols = some target)
     (hf : (tableFlexTrial colsep total cols nats spans 0).foldl (· + ·) 0 ≤
@@ -10575,10 +10582,11 @@ public theorem table_flex_span_width_contract (colsep total fontSize : Int) (col
   simp only [show decide ((tableFlexTrial colsep total cols nats spans 0).foldl
     (· + ·) 0 ≤ target.resolve total - tablePadding colsep cols.size padL padR) = true
       from by simpa using hf, ↓reduceIte]
-  exact Int.add_le_of_le_sub_right (of_decide_eq_true (fit _))
+  have key : ∀ {a b c : Length}, a ≤ c - b → a + b ≤ c := by intro a b c h; length_omega
+  exact key (of_decide_eq_true (fit _))
 
-public theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
-    (nats : Array (Array Sp)) (padL padR : Bool) :
+public theorem table_natural_width_exact (colsep total fontSize : Length) (cols : Array Ir.ColSpec)
+    (nats : Array (Array Length)) (padL padR : Bool) :
     tableColWidths colsep total fontSize cols nats #[] padL padR =
       tableFlexWidths colsep total fontSize cols
         (cols.mapIdx fun j spec => colBase total #[] nats j spec) padL padR := by
@@ -10602,24 +10610,24 @@ on one line, `(flushRight, center)`: ragged on the cell's side. -/
 
 /-- The stretch every line of a narrowed cell carries: plain TeX's
 `\raggedright` `\rightskip 0pt plus 2em` at the cell's size. -/
-@[expose] public def narrowedSkip (size : Sp) : Sp := 2 * size
+@[expose] public def narrowedSkip (size : Length) : Length := 2 * size
 
 /-- The strut every table row stands on: latex.ltx's `\@arstrutbox`,
 0.7 and 0.3 of the `\baselineskip` in force where the table opens. -/
-@[expose] public def tableStrut (size : Sp) (leading : Nat) : Sp × Sp :=
+@[expose] public def tableStrut (size : Length) (leading : Nat) : Length × Length :=
   let bs := Ir.leadingFor size leading
   (bs * 7 / 10, bs - bs * 7 / 10)
 
-public theorem tableStrut_exact (size : Int) (leading : Nat) :
+public theorem tableStrut_exact (size : Length) (leading : Nat) :
     (tableStrut size leading).1 + (tableStrut size leading).2 = Ir.leadingFor size leading := by
   simp only [tableStrut]
-  have h : ∀ a b : Int, a + (b - a) = b := by intro a b; omega
+  have h : ∀ a b : Length, a + (b - a) = b := by intro a b; length_omega
   exact h _ _
 
 /-- The strut a table cell stands on: `tableStrut` cut from the
 `\baselineskip` of the size step over the cell (`Ir.paraStep?`). -/
-private def cellStrut (skips ladder : List (String × Nat)) (size : Sp) (leading : Nat)
-    (cell : Array Inline) : Sp × Sp :=
+private def cellStrut (skips ladder : List (String × Nat)) (size : Length) (leading : Nat)
+    (cell : Array Inline) : Length × Length :=
   match Ir.paraStep? cell with
   | some n =>
     let bs := Ir.stepSkip (Ir.stepLead skips n size) (Ir.scaleStepIn ladder size n) leading
@@ -10628,15 +10636,15 @@ private def cellStrut (skips ladder : List (String × Nat)) (size : Sp) (leading
 
 /-- A table length as the page sets it: the declared token, else the name's
 default fixed in the preamble's font (`Ir.PreambleFace.resolve`). -/
-@[expose] public def tableLength (declared : Option Sp) (face : Ir.PreambleFace)
-    (name : String) : Sp :=
+@[expose] public def tableLength (declared : Option Length) (face : Ir.PreambleFace)
+    (name : String) : Length :=
   declared.getD (face.resolve (Ir.tableLengthDefault name))
 
 /-- A cell's min-content width: the widest run of its items between two
 legal breaks, a hyphenation point or a formula's break reading as none. -/
-private def itemsMinWidth (items : Array Item) : Sp := Id.run do
-  let mut widest : Sp := 0
-  let mut run : Sp := 0
+private def itemsMinWidth (items : Array Item) : Length := Id.run do
+  let mut widest : Length := 0
+  let mut run : Length := 0
   for it in items do
     match it with
     | .box w .. => run := run + w
@@ -10654,31 +10662,33 @@ private def itemsMinWidth (items : Array Item) : Sp := Id.run do
 
 /-- One narrowed column: its widest unbreakable run `mn` and its `k`-of-`d` share
 of the leftover room, in proportion to how much wider its widest line `w` is. -/
-public def fitWidth (mn w k d : Int) : Int :=
-  if d ≤ 0 then w else mn + (w - mn) * k / d
+public def fitWidth (mn w k d : Length) : Length :=
+  if d ≤ 0 then w else mn + (w - mn).mulDiv k d
 
-public theorem fitWidth_between (mn w k d : Int) (hmw : mn ≤ w) (hk : 0 ≤ k)
+public theorem fitWidth_between (mn w k d : Length) (hmw : mn ≤ w) (hk : 0 ≤ k)
     (hkd : k ≤ d) : mn ≤ fitWidth mn w k d ∧ fitWidth mn w k d ≤ w := by
   unfold fitWidth
   split
-  · exact ⟨hmw, Int.le_refl w⟩
+  · exact ⟨hmw, Length.le_refl w⟩
   · rename_i hd
-    have hd : 0 < d := by omega
-    have h0 : 0 ≤ (w - mn) * k / d := Int.ediv_nonneg (Int.mul_nonneg (by omega) hk) (by omega)
-    have h1 : (w - mn) * k / d ≤ w - mn := by
+    length_units
+    have hd : 0 < d.units := by omega
+    have h0 : 0 ≤ (w.units - mn.units) * k.units / d.units :=
+      Int.ediv_nonneg (Int.mul_nonneg (by omega) hk) (by omega)
+    have h1 : (w.units - mn.units) * k.units / d.units ≤ w.units - mn.units := by
       apply Int.ediv_le_of_le_mul hd
       exact Int.mul_le_mul_of_nonneg_left hkd (by omega)
     omega
 
 /-- Share a measure too narrow for a table's narrowing columns as
 a browser's automatic table layout does (HTML 4.01 §B.5.2). -/
-public def fitColumns (cols : Array Ir.ColSpec) (avail : Sp) (natural mins : Array Sp) :
-    Array Sp :=
+public def fitColumns (cols : Array Ir.ColSpec) (avail : Length) (natural mins : Array Length) :
+    Array Length :=
   let isNat (j : Nat) : Bool :=
     (cols[j]?.map fun c => c.narrows && (c.width matches .natural)).getD false
-  let lo (j : Nat) (w : Sp) : Sp := min ((mins[j]?).getD w) w
+  let lo (j : Nat) (w : Length) : Length := min ((mins[j]?).getD w) w
   let sums := natural.zipIdx.foldl (fun (fx, mx, mn) (w, j) =>
-    if isNat j then (fx, mx + w, mn + lo j w) else (fx + w, mx, mn)) ((0 : Sp), (0 : Sp), (0 : Sp))
+    if isNat j then (fx, mx + w, mn + lo j w) else (fx + w, mx, mn)) ((0 : Length), (0 : Length), (0 : Length))
   let (fixed, maxSum, minSum) := sums
   let room := avail - fixed
   if maxSum ≤ room then natural
@@ -10698,15 +10708,15 @@ public def tableLastStep : String := "tiny"
 (`none`: its body size) and how far it still passes the block there. -/
 public structure TableFit where
   step : Option String := none
-  overhang : Sp := 0
+  overhang : Length := 0
   deriving Repr, BEq, Inhabited
 
 /-- What a table's narrowing columns need at a size: each column's
 widest unbreakable run, unhyphenated, with the gaps and pads. -/
-private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.Store)
+private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Length) (imgs : Image.Store)
     (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
-    (spans : Array Ir.ColSpan) (colsep size : Sp) : Sp := Id.run do
-  let mut widths : Array Sp := cols.map fun _ => 0
+    (spans : Array Ir.ColSpan) (colsep size : Length) : Length := Id.run do
+  let mut widths : Array Length := cols.map fun _ => 0
   let mut cache : Std.HashMap String (Array Nat) := {}
   for (row, i) in rows.zipIdx do
     for (cell, j) in row.zipIdx do
@@ -10722,12 +10732,12 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.
 
 /-- The size a markdown table sets at: its body size when its narrowing columns fit
 `avail`, else the largest of `tableSteps` that fits, else the floor or `tableLastStep`. -/
-public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep avail : Sp)
+public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep avail : Length)
     (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
     (spans : Array Ir.ColSpan) : TableFit := Id.run do
   unless cols.any (·.narrows) do return {}
-  let xHeight := fs.xHeightAt geom.fontSize
-  let need (step : Option String) : Sp :=
+  let xHeight := xHeightOf fs geom.fontSize
+  let need (step : Option String) : Length :=
     tableNeed fs geom xHeight imgs cols padL padR rows spans colsep
       (match step with
         | some s => Ir.scaleStepIn geom.scale geom.fontSize s
@@ -10746,11 +10756,11 @@ or widest cell, `2·tabcolsep` apart, rules padded by their declared seps. -/
 private def collectTable (r : Rd) (a0 : Acc)
     (cols : Array Ir.ColSpec) (padL padR : Bool)
     (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
-    (spans : Array Ir.ColSpan) (indent : Sp) (center : Bool) : Acc := Id.run do
+    (spans : Array Ir.ColSpan) (indent : Length) (center : Bool) : Acc := Id.run do
   if cols.isEmpty then
     return a0
   let mut a := a0.flushGap r
-  let tok (name : String) : Sp :=
+  let tok (name : String) : Length :=
     tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
   let colsep := tok "tabcolsep"
   let total := (a.measure.getD r.geom.textWidth) - indent
@@ -10762,12 +10772,12 @@ private def collectTable (r : Rd) (a0 : Acc)
     | some s => Ir.scaleStepIn r.geom.scale r.geom.fontSize s
     | none => r.geom.fontSize
   -- The measuring pass drops its diagnostics; the setting pass emits them once.
-  let mut nats : Array (Array Sp) := #[]
+  let mut nats : Array (Array Length) := #[]
   let mut breaks : Array (Array Bool) := #[]
-  let mut mins : Array Sp := cols.map fun _ => 0
+  let mut mins : Array Length := cols.map fun _ => 0
   let mut cache := a.hyphCache
   for (row, i) in rows.zipIdx do
-    let mut rowNats : Array Sp := #[]
+    let mut rowNats : Array Length := #[]
     let mut rowBreaks : Array Bool := #[]
     for (cell, j) in row.zipIdx do
       let (items, _, c, _) :=
@@ -10787,10 +10797,10 @@ private def collectTable (r : Rd) (a0 : Acc)
   let widths := if web then
       fitColumns cols (total - tablePadding colsep cols.size padL padR) natural mins
     else natural
-  let lead : Sp := if padL then colsep else 0
-  let trail : Sp := if padR then colsep else 0
-  let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
-  let tableW : Sp := lead + widths.foldl (· + ·) 0 + innerGaps + trail
+  let lead : Length := if padL then colsep else 0
+  let trail : Length := if padR then colsep else 0
+  let innerGaps : Length := 2 * colsep * ((cols.size : Int) - 1)
+  let tableW : Length := lead + widths.foldl (· + ·) 0 + innerGaps + trail
   -- A tex table wider than the measure keeps its width and is named, as TeX sets it overfull.
   let offPaper := tableW > r.geom.pageW
   if tableW > total then
@@ -10799,21 +10809,21 @@ private def collectTable (r : Rd) (a0 : Acc)
           "the table's words alone are wider than the measure at its smallest size; it " ++
             (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
         else "the table is wider than the measure")
-      (detail := some s!"{(tableW - total).toPtString}pt wider")
+      (detail := some s!"{(tableW - total).toBpString}pt wider")
       (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
       (help := if web then
           "shorten the longest word in each column, or split the table into narrower ones"
         else "narrow the p{...} column widths, or widen the text block")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
-  let x0 : Sp := if web && tableW > total then
+  let x0 : Length := if web && tableW > total then
       if offPaper then (r.geom.pageW - tableW) / 2 - r.geom.hmargin
       else max (-r.geom.hmargin)
         (min (indent - (tableW - total) / 2) (r.geom.pageW - r.geom.hmargin - tableW))
-    else indent + side.boxOffset (max 0 (total - tableW))
+    else indent + slackShare side (max 0 (total - tableW))
   -- A cell sets by its own spec: `\@arrayparboxrestore` zeroes the scope's skips (latex.ltx).
   let rc := { r with centreBoxes := false, pats := cellPats
                      geom := { r.geom with flushRight := false, justify := true } }
-  let colX (j : Nat) : Sp := Id.run do
+  let colX (j : Nat) : Length := Id.run do
     let mut x := x0 + lead
     for i in [0:j] do
       x := x + widths[i]! + 2 * colsep
@@ -10829,7 +10839,7 @@ private def collectTable (r : Rd) (a0 : Acc)
   let kern := tok "cmidrulekern"
   let dbl := tok "doublerulesep"
   -- A `\cmidrule{a-b}` spans the cells' pads, as LaTeX's `\multispan` draws it.
-  let cmidSeg (ca cb : Nat) (tl tr : Bool) : Sp × Sp :=
+  let cmidSeg (ca cb : Nat) (tl tr : Bool) : Length × Length :=
     let ca := min (max ca 1) cols.size
     let cb := min (max cb ca) cols.size
     let left := colX (ca - 1) - (if ca == 1 then lead else colsep)
@@ -10838,7 +10848,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       + (if cb == cols.size then trail else colsep) - (if tr then kern else 0)
     (left, max 0 (right - left))
   -- booktabs' seps: `doublerulesep` between two rules; `\addlinespace` replaces the seps.
-  let mut pendBelow : Option Sp := none
+  let mut pendBelow : Option Length := none
   -- 0 = content (or table start), 1 = a drawn rule, 2 = an \addlinespace
   let mut prev : Nat := 0
   for i in [0:rows.size + 1] do
@@ -10857,8 +10867,8 @@ private def collectTable (r : Rd) (a0 : Acc)
         | .cmid _ _ _ _ =>
           -- a run of consecutive cmids is one rule row
           let mut segs : Array Seg := #[]
-          let mut x : Sp := 0
-          let mut lineX : Sp := 0
+          let mut x : Length := 0
+          let mut lineX : Length := 0
           let mut first := true
           for _ in [hi:here.size] do
             if h' : hi < here.size then
@@ -10984,7 +10994,7 @@ private def labelCollisions (pic : Ir.Pic.Picture) (boxes : Array Ir.Pic.Box) :
 
 /-- One run's contribution to a label line's vertical extent: the face's capitals-to-descent
 band, its middle half an x-height above the baseline (pgf's `mid` anchor). -/
-public def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
+public def labelVStep (fs : FontSet) (size : Length) (acc : Length × Length) (seg : Seg) : Length × Length :=
   match seg with
   | .run idx _ _ _ _ sz _ _ raise _ _ =>
     let font := fs.get idx
@@ -10997,11 +11007,11 @@ public def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : 
 
 /-- How far a label line's ink reaches above and below its
 baseline: the componentwise maximum of its runs' bands. -/
-public def labelVExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
+public def labelVExtent (fs : FontSet) (size : Length) (segs : Array Seg) : Length × Length :=
   segs.foldl (labelVStep fs size) (0, 0)
 
 /-- A glyph's vertical reach in the run that paints it, from its face, size and raise. -/
-public def glyphVExtent (font : Font) (size raise : Sp) (g : Nat) : Sp × Sp :=
+public def glyphVExtent (font : Font) (size raise : Length) (g : Nat) : Length × Length :=
   match font.yExtent g with
   | some (lo, hi) =>
     (hi * size / (font.unitsPerEm : Int) + raise,
@@ -11010,30 +11020,30 @@ public def glyphVExtent (font : Font) (size raise : Sp) (g : Nat) : Sp × Sp :=
     (scaledAt size font font.capHeight.toNat + raise,
      scaledAt size font (-font.descent).toNat - raise)
 
-private def growExtent (acc extent : Sp × Sp) : Sp × Sp :=
+private def growExtent (acc extent : Length × Length) : Length × Length :=
   (max acc.1 extent.1, max acc.2 extent.2)
 
-private def ExtentLe (a b : Sp × Sp) : Prop := a.1 ≤ b.1 ∧ a.2 ≤ b.2
+private def ExtentLe (a b : Length × Length) : Prop := a.1 ≤ b.1 ∧ a.2 ≤ b.2
 
-private theorem extentLe_trans {a b c : Sp × Sp} (hab : ExtentLe a b)
+private theorem extentLe_trans {a b c : Length × Length} (hab : ExtentLe a b)
     (hbc : ExtentLe b c) : ExtentLe a c :=
   ⟨Int.le_trans hab.1 hbc.1, Int.le_trans hab.2 hbc.2⟩
 
-private theorem growExtent_left (a b : Sp × Sp) : ExtentLe a (growExtent a b) :=
+private theorem growExtent_left (a b : Length × Length) : ExtentLe a (growExtent a b) :=
   ⟨Int.le_max_left _ _, Int.le_max_left _ _⟩
 
-private theorem growExtent_right (a b : Sp × Sp) : ExtentLe b (growExtent a b) :=
+private theorem growExtent_right (a b : Length × Length) : ExtentLe b (growExtent a b) :=
   ⟨Int.le_max_right _ _, Int.le_max_right _ _⟩
 
-private theorem foldExtent_preserves {α : Type} (f : (Sp × Sp) → α → Sp × Sp)
-    (hf : ∀ a x, ExtentLe a (f a x)) (xs : Array α) (a : Sp × Sp) :
+private theorem foldExtent_preserves {α : Type} (f : (Length × Length) → α → Length × Length)
+    (hf : ∀ a x, ExtentLe a (f a x)) (xs : Array α) (a : Length × Length) :
     ExtentLe a (xs.foldl f a) :=
   Array.foldl_induction (motive := fun _ b => ExtentLe a b)
     ⟨Int.le_refl _, Int.le_refl _⟩
     (fun i b h => extentLe_trans h (hf b xs[i]))
 
-private theorem foldExtent_covers {α : Type} (f : (Sp × Sp) → α → Sp × Sp)
-    (hf : ∀ a x, ExtentLe a (f a x)) (xs : Array α) (a e : Sp × Sp)
+private theorem foldExtent_covers {α : Type} (f : (Length × Length) → α → Length × Length)
+    (hf : ∀ a x, ExtentLe a (f a x)) (xs : Array α) (a e : Length × Length)
     (x : α) (hx : x ∈ xs) (he : ∀ b, ExtentLe e (f b x)) :
     ExtentLe e (xs.foldl f a) := by
   obtain ⟨j, hj, hget⟩ := Array.mem_iff_getElem.mp hx
@@ -11048,7 +11058,7 @@ private theorem foldExtent_covers {α : Type} (f : (Sp × Sp) → α → Sp × S
   exact h hj
 
 /-- One segment's measured contribution, which only grows the accumulator. -/
-public def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
+public def labelGlyphStep (fs : FontSet) (size : Length) (acc : Length × Length) (seg : Seg) : Length × Length :=
   match seg with
     | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
       let font := fs.get idx
@@ -11062,11 +11072,11 @@ public def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg
 
 /-- How far a label line's glyphs reach above and
 below its baseline, the box that reserves its ink. -/
-public def labelGlyphExtent (fs : FontSet) (size : Sp) (segs : Array Seg) : Sp × Sp :=
+public def labelGlyphExtent (fs : FontSet) (size : Length) (segs : Array Seg) : Length × Length :=
   segs.foldl (labelGlyphStep fs size) (0, 0)
 
-private theorem labelGlyphStep_grows (fs : FontSet) (size : Sp)
-    (a : Sp × Sp) (seg : Seg) : ExtentLe a (labelGlyphStep fs size a seg) := by
+private theorem labelGlyphStep_grows (fs : FontSet) (size : Length)
+    (a : Length × Length) (seg : Seg) : ExtentLe a (labelGlyphStep fs size a seg) := by
   cases seg with
   | run =>
     exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
@@ -11075,13 +11085,13 @@ private theorem labelGlyphStep_grows (fs : FontSet) (size : Sp)
   | poly => exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
   | gap | decoratedGap => exact ⟨Int.le_refl _, Int.le_refl _⟩
 
-public theorem labelGlyphExtent_covers (fs : FontSet) (size : Sp) (segs : Array Seg)
-    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+public theorem labelGlyphExtent_covers (fs : FontSet) (size : Length) (segs : Array Seg)
+    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
-    (g : Nat × Char × Sp) (hg : g ∈ glyphs) :
+    (g : Nat × Char × Length) (hg : g ∈ glyphs) :
     let e := glyphVExtent (fs.get idx) (if sz == 0 then size else sz) raise g.1
     e.1 ≤ (labelGlyphExtent fs size segs).1 ∧
       e.2 ≤ (labelGlyphExtent fs size segs).2 := by
@@ -11091,15 +11101,15 @@ public theorem labelGlyphExtent_covers (fs : FontSet) (size : Sp) (segs : Array 
   exact foldExtent_covers _ (fun _ _ => growExtent_left _ _) glyphs a _
     g hg (fun _ => growExtent_right _ _)
 
-public theorem labelVStep_glyph_id (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
+public theorem labelVStep_glyph_id (fs : FontSet) (size : Length) (acc : Length × Length) (seg : Seg) :
     labelVStep fs size acc (Seg.stripGlyphs seg) = labelVStep fs size acc seg := by
   cases seg <;> rfl
 
-public theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) :
+public theorem labelVStep_idem (fs : FontSet) (size : Length) (acc : Length × Length) (seg : Seg) :
     labelVStep fs size (labelVStep fs size acc seg) seg = labelVStep fs size acc seg := by
   cases seg with
   | run =>
-    have idem : ∀ a v : Int, max (max a v) v = max a v := by intro a v; omega
+    have idem : ∀ a v : Length, max (max a v) v = max a v := by intro a v; length_omega
     show (max (max acc.1 _) _, max (max acc.2 _) _) = (max acc.1 _, max acc.2 _)
     rw [idem, idem]
   | gap => rfl
@@ -11109,7 +11119,7 @@ public theorem labelVStep_idem (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg 
   | image => rfl
   | poly => rfl
 
-public theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array Seg) :
+public theorem label_centre_glyph_free (fs : FontSet) (size : Length) (segs : Array Seg) :
     labelVExtent fs size (segs.map Seg.stripGlyphs) = labelVExtent fs size segs := by
   unfold labelVExtent
   rw [Array.foldl_map]
@@ -11117,7 +11127,7 @@ public theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array 
   funext acc s
   exact labelVStep_glyph_id fs size acc s
 
-public theorem vphantom_absorbed (fs : FontSet) (size : Sp) (segs : Array Seg) (r : Seg) :
+public theorem vphantom_absorbed (fs : FontSet) (size : Length) (segs : Array Seg) (r : Seg) :
     labelVExtent fs size ((segs.push r).push (Seg.stripGlyphs r))
       = labelVExtent fs size (segs.push r) := by
   unfold labelVExtent
@@ -11125,28 +11135,28 @@ public theorem vphantom_absorbed (fs : FontSet) (size : Sp) (segs : Array Seg) (
 
 /-- Resolve a set label line once: the font band places its
 baseline and the measured glyph extent reserves its ink. -/
-public def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
+public def measureLabelLine (fs : FontSet) (size width ex : Length) (segs : Array Seg) :
     Ir.Pic.LabelInk :=
   let band := labelVExtent fs size segs
   let ink := labelGlyphExtent fs size segs
-  let (axis, rule, script) : Sp × Sp × Nat := match fs.mathFont? with
+  let (axis, rule, script) : Length × Length × Nat := match fs.mathFont? with
     | some (_, f, c) =>
-      let base : Int := (Math.mathSize size.toNat fs.body.xHeightOptical fs.body.unitsPerEm
-        f.xHeightOptical f.unitsPerEm : Nat)
+      let base : Length := mathLen (Math.mathSize size.units.toNat fs.body.xHeightOptical
+        fs.body.unitsPerEm f.xHeightOptical f.unitsPerEm : Nat)
       (c.axisHeight * base / (f.unitsPerEm : Int),
        c.fractionRuleThickness * base / (f.unitsPerEm : Int), c.scales.script * 10)
     | none => (0, 0, 0)
   { w := width, height := band.1, depth := band.2
     boxHeight := ink.1, boxDepth := ink.2, ex := ex, axis, rule, script }
 
-private theorem measureLabelLine_w (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
+private theorem measureLabelLine_w (fs : FontSet) (size width ex : Length) (segs : Array Seg) :
     (measureLabelLine fs size width ex segs).w = width := rfl
 
-private theorem measureLabelLine_ex (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
+private theorem measureLabelLine_ex (fs : FontSet) (size width ex : Length) (segs : Array Seg) :
     (measureLabelLine fs size width ex segs).ex = ex := rfl
 
 /-- The backend projection of the two extent fields of `Ir.Pic.LabelInk`. -/
-public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
+public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Length)
     (segs : Array Seg) :
     let m := measureLabelLine fs size width ex segs
     (m.height, m.depth) = labelVExtent fs size segs ∧
@@ -11155,13 +11165,13 @@ public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
 
 /-- The inline producer's and line breaker's result for one picture label. -/
 public structure LabelResult where
-  line? : Option (Array Seg × Sp × Ir.Pic.LabelInk)
+  line? : Option (Array Seg × Length × Ir.Pic.LabelInk)
   diags : Array Diag
   lineCount : Nat
   source : Option Span
 
 /-- Shape, break and measure a picture label once. -/
-public def labelResult (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
+public def labelResult (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Length)
     (leaf : Option Nat) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat) :
     LabelResult :=
   let size := geom.fontSize * (scale : Int) / 1000
@@ -11181,8 +11191,8 @@ public def labelResult (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeigh
   { line? := line, diags := produced.2.1, lineCount := breaks.size, source := source }
 
 public theorem labelResult_projects (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
-    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (xHeight : Length) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Length)
     (ink : Ir.Pic.LabelInk)
     (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink)) :
     ink = measureLabelLine fs size ink.w ink.ex segs := by
@@ -11192,29 +11202,29 @@ public theorem labelResult_projects (fs : FontSet) (imgs : Image.Store) (geom : 
   rw [measureLabelLine_w, measureLabelLine_ex]
 
 /-- Place a measured label by the IR's baseline and horizontal anchor. -/
-public def labelLine (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
-    (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Sp) (leaf : Option Nat) : LineOut :=
+public def labelLine (place : Ir.Pic.Place) (x y : Length) (align : Ir.Pic.LabelAlign)
+    (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Length) (leaf : Option Nat) : LineOut :=
   { x := (place.toPage (Ir.Pic.labelInkBox x y align ink).1).1
     y := (place.toPage (x, Ir.Pic.labelBaseline y align ink)).2
     size := size, segs := segs, setWidth := ink.w, leaf := leaf }
 
-public theorem labelLine_projects (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
-    (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Sp) (leaf : Option Nat) :
+public theorem labelLine_projects (place : Ir.Pic.Place) (x y : Length) (align : Ir.Pic.LabelAlign)
+    (ink : Ir.Pic.LabelInk) (segs : Array Seg) (size : Length) (leaf : Option Nat) :
     (labelLine place x y align ink segs size leaf).y =
       (place.toPage (x, Ir.Pic.labelBaseline y align ink)).2 := by rfl
 
 public theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
-    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (xHeight : Length) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Length)
     (ink : Ir.Pic.LabelInk)
     (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
-    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)
-    (g : Nat × Char × Sp) (hg : g ∈ glyphs)
-    (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign) :
+    (g : Nat × Char × Length) (hg : g ∈ glyphs)
+    (place : Ir.Pic.Place) (x y : Length) (align : Ir.Pic.LabelAlign) :
     let e := glyphVExtent (fs.get idx) (if sz == 0 then size else sz) raise g.1
     let line := labelLine place x y align ink segs size leaf
     let box := Ir.Pic.labelGlyphBox x y align ink
@@ -11236,17 +11246,17 @@ public theorem labelLine_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom
     rw [hdepth]
     exact he.2
   have hb := Ir.Pic.labelGlyphBox_covers_extent x y align ink _ _ hhi hlo
-  have reflect : ∀ t m baseline hi lo bottom top : Int,
+  have reflect : ∀ t m baseline hi lo bottom top : Length,
       bottom ≤ baseline - lo → baseline + hi ≤ top →
       t + (m - top) ≤ t + (m - baseline) - hi ∧
         t + (m - baseline) + lo ≤ t + (m - bottom) := by
     intro t m baseline hi lo bottom top hbottom htop
-    omega
+    length_omega
   exact reflect place.yTop place.ymax _ _ _ _ _ hb.1 hb.2
 
 /-- The measurement a picture's box is computed with: `labelResult`'s
 line as an `Ir.Pic.LabelMetric` over alphabet-resolved content. -/
-private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp) :
+private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Length) :
     Ir.Pic.LabelMetric := fun content scale =>
   match (labelResult fs imgs geom xHeight none
       (Ir.mapInlines (Ir.resolveMathAlphaInline fs.mathAlphabets) content) Ir.Color.black
@@ -11256,12 +11266,12 @@ private def picMetric (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight
 
 /-- The glyph reserve the picture layout uses. -/
 public def pictureLabelBox (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight x y : Sp) (content : Array Ir.Inline) (scale : Nat)
+    (xHeight x y : Length) (content : Array Ir.Inline) (scale : Nat)
     (align : Ir.Pic.LabelAlign) : Ir.Pic.Box :=
   Ir.Pic.labelGlyphBox x y align (picMetric fs imgs geom xHeight content scale)
 
 /-- Whether a painted run lacks outline evidence; only the font reader's `none` is unresolved. -/
-public def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Bool :=
+public def labelGlyphUnknown (fs : FontSet) (size : Length) (segs : Array Seg) : Bool :=
   segs.any fun seg => match seg with
   | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
     glyphs.any fun g =>
@@ -11330,7 +11340,7 @@ public instance (a r : Ir.Pic.Box) :
 
 /-- Check and place the producer's measured line against the picture's reserved glyph box. -/
 public def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (align : Ir.Pic.LabelAlign)
+    (x y : Length) (content : Array Ir.Inline) (align : Ir.Pic.LabelAlign)
     (result : LabelResult) (reserved : Ir.Pic.Box) : LabelEmission :=
   let key := Ir.plainText content
   let ds := result.diags.map (nameLabelDiag key)
@@ -11369,8 +11379,8 @@ public def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
 
 /-- Emit the line the producer selected, checked against the canonical reservation. -/
 public def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) : LabelEmission :=
   finishLabel fs leaf place x y content align
     (labelResult fs imgs geom xHeight leaf content color scale)
@@ -11380,11 +11390,11 @@ public def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 layout: the one function placement and elaboration both read. -/
 public def labelMetric (geom : Geom) (fs : FontSet) (imgs : Image.Store := {}) :
     Ir.Pic.LabelMetric :=
-  picMetric fs imgs geom (fs.xHeightAt geom.fontSize)
+  picMetric fs imgs geom (xHeightOf fs geom.fontSize)
 
 /-- The box a picture occupies on the page:
 `Ir.Pic.Picture.box` under layout's label measurement. -/
-public def pictureBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Sp)
+public def pictureBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (xHeight : Length)
     (pic : Ir.Pic.Picture) : Ir.Pic.Box :=
   pic.box (picMetric fs imgs geom xHeight)
 
@@ -11403,14 +11413,14 @@ public theorem resolveMathAlphaPicture_box_id (geom : Geom) (fs : FontSet)
 
 public theorem pictureBox_projects (geom : Geom) (fs : FontSet)
     (imgs : Image.Store) (pic : Ir.Pic.Picture) :
-    pictureBox geom fs imgs (fs.xHeightAt geom.fontSize) pic =
+    pictureBox geom fs imgs (xHeightOf fs geom.fontSize) pic =
       pic.box (labelMetric geom fs imgs) := by
   rfl
 
 /-- Stage one picture at its `pictureBox`, placed even
 when it cannot fit, with W0335 naming the overrun. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
-    (indent : Sp) (center : Bool) (display : Option DisplayJob := none) : Acc :=
+    (indent : Length) (center : Bool) (display : Option DisplayJob := none) : Acc :=
   -- A picture sets a paragraph of its own, which clears TeX's `\@nobreak`.
   let a := { a with noBreakNext := false }
   let metric := picMetric r.fs r.imgs r.geom r.xHeight
@@ -11425,8 +11435,8 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
       { a with diags := a.diags.push (Diag.of .W0335
         "the picture is larger than the text area; it may overrun the page"
         (span := source) (trigger := source.bind (·.pos.command))
-        (detail := some (s!"{w.toPtString}pt × {h.toPtString}pt against " ++
-          s!"{avail.toPtString}pt × {r.geom.textHeight.toPtString}pt"))
+        (detail := some (s!"{w.toBpString}pt × {h.toBpString}pt against " ++
+          s!"{avail.toBpString}pt × {r.geom.textHeight.toBpString}pt"))
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
@@ -11440,7 +11450,7 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
 separation ([node distance = ...])")
         (detail := some s!"{n} {if n == 1 then "pair" else "pairs"} of labels")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
-  let x := indent + side.boxOffset (max 0 (avail - w))
+  let x := indent + slackShare side (max 0 (avail - w))
   let a := a.flushGap r
   let a := match display with
     | some dj => { a with ops := a.ops.push (.displayOpen dj x r.geom.fontSize) }
@@ -11498,7 +11508,7 @@ private def Spacing.Pending.closeDisplay (a : Acc) (r : Rd) : Acc :=
 /-- The unnumbered display: the formula's paragraph
 centred on the measure, placed as TeX places a display. -/
 private def collectDisplayFormula (r : Rd) (a : Acc)
-    (content : Array Inline) (indent : Sp) : Acc :=
+    (content : Array Inline) (indent : Length) : Acc :=
   let dj := a.displayJob r
   let a := a.openDisplay r dj
   let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
@@ -11508,7 +11518,7 @@ private def collectDisplayFormula (r : Rd) (a : Acc)
 
 /-- A display a picture stands for (`Ir.displayPicture?`), placed as a display formula's line. -/
 private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
-    (pic : Ir.Pic.Picture) (indent : Sp) : Acc :=
+    (pic : Ir.Pic.Picture) (indent : Length) : Acc :=
   let dj := a.displayJob r
   let a := a.openDisplay r dj
   let a := { a with ops := a.ops ++ anchors.filterMap fun x => match x with
@@ -11516,7 +11526,7 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
     | _ => none }
   (collectPicture r a pic indent true (display := some dj)).closeDisplay r
 
-private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
+private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Length) : Acc :=
   -- A paragraph of label anchors alone ships no line and no gap.
   if Ir.anchorsOnly content then
     { a with ops := a.ops ++ (Ir.labelKeys content).map (Op.anchor ∘ Ir.labelAnchor) }
@@ -11532,7 +11542,7 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
       collectPara r a content indent false r.geom.fontSize
         (leaf := leaf) (span := Struct.leafCountInlines content)
 
-private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Sp) : Acc := Id.run do
+private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Length) : Acc := Id.run do
   -- A display sets its paragraph, which clears TeX's `\@nobreak`.
   let a := { a with noBreakNext := false }
   -- A numbered display sets [mirror box, fil, formula, fil, tag], amsmath's equation shape.
@@ -11597,7 +11607,7 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
 /-- A class's chapter head on the next page, as report.cls's `\@makechapterhead` and
 `\@makeschapterhead` set it, each part by TeX's interline glue at its size's `\baselineskip`. -/
 private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
-    (indent : Sp) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
+    (indent : Length) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
   let a := a.pageBreak
   -- A label in the title lands where the chapter opens, as hyperref's anchor at `\refstepcounter`.
   let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
@@ -11618,7 +11628,7 @@ private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Arr
     afterHeading := true, noBreakNext := true }
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
-    (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false)
+    (num : Option String) (title : Array Inline) (indent : Length) (top : Bool := false)
     (anchor : Option String := none) (page : Bool := false) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
@@ -11651,8 +11661,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
     let a := openFrameBody r a false .center area
-    let mp : Sp := Ir.sectionPageMeasure r.geom.textWidth
-    let indent : Sp := (r.geom.textWidth - mp) / 2
+    let mp : Length := Ir.sectionPageMeasure r.geom.textWidth
+    let indent : Length := (r.geom.textWidth - mp) / 2
     let st := r.style "sectionpage"
     let saved := (a.fg, a.ground)
     let a := { a with fg := design.sectionTitle, ground := ground }
@@ -11723,12 +11733,12 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
         (leaf := leaf) (span := span) (keepNext := keep)
   { a.vskip after with afterHeading := true, noBreakNext := true, fg := savedFg }
 
-private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
+private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Length) : Acc :=
   -- natbib's `thebibliography`: labels right-aligned in a column as wide as the widest.
   let size := r.geom.fontSize
   let numbered := items.any (·.marker.isSome)
-  let (labelW, a) : Sp × Acc := if !numbered then (0, a) else
-    items.foldl (init := ((0 : Sp), a)) fun (w, a) item =>
+  let (labelW, a) : Length × Acc := if !numbered then (0, a) else
+    items.foldl (init := ((0 : Length), a)) fun (w, a) item =>
       match item.marker with
       | none => (w, a)
       | some m =>
@@ -11751,8 +11761,8 @@ private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (i
 lines after the first `hang` further in; a shaded entry keeps its ink's share over the ground
 (`Ir.contentsShadeShare`). -/
 private def collectContentsEntry (r : Rd) (a : Acc) (e : Ir.ContentsEntry) (content : Array Inline)
-    (textIndent : Sp) (style : TextStyle) (marker : Option (Array Inline))
-    (markerLeft : Option Sp) (hang : Sp := 0) : Acc :=
+    (textIndent : Length) (style : TextStyle) (marker : Option (Array Inline))
+    (markerLeft : Option Length) (hang : Length := 0) : Acc :=
   let ground := a.ground.getD (Ir.Design.ofPalette a.pal).bg
   let style := if e.shaded then
       { style with color := r.shown (Oklab.cover Ir.contentsShadeShare ground a.fg) }
@@ -11771,7 +11781,7 @@ private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold : B
   let (w, a) := if folio.isEmpty then (0, a)
     else a.naturalWidth r r.geom.fontSize shown r.geom.textWidth
   let box := r.geom.fontSize * (Ir.contentsPageWidth : Int) / 1000
-  let kern (v : Sp) : Inline := .hspace (.lit { width := Dim.Length.ofSp v }) true
+  let kern (v : Length) : Inline := .hspace (.lit { width := Dim.SymLength.ofLength v }) true
   let reach : Inline := .hspace (.lit { fil := true }) true
   (markContent e.inline ++ #[reach, kern (box - w)] ++
     (if folio.isEmpty then #[] else #[.text folio]) ++
@@ -11781,9 +11791,9 @@ private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold : B
 leftover, a subsection's at `1.5em`; in a flow article's, a section's entry bold after `1em`, each
 with its page's folio. -/
 private def collectContents (r : Rd) (a : Acc) (spec : Ir.ContentsSpec)
-    (entries : Array Ir.ContentsEntry) (indent : Sp) : Acc := Id.run do
+    (entries : Array Ir.ContentsEntry) (indent : Length) : Acc := Id.run do
   let em := r.geom.fontSize
-  let milli (m : Nat) : Sp := em * (m : Int) / 1000
+  let milli (m : Nat) : Length := em * (m : Int) / 1000
   let mut a := a
   if r.slides then
     for step in Ir.deckContentsSteps spec entries do
@@ -12138,11 +12148,11 @@ private def codeChoose (rank : Nat → Nat) (n : Nat) : Option Nat × Option Nat
 
 /-- Where a segment from `s` ends: the whole rest where it fits, else its last first-rank
 wrap that fits, else its last wrap of any rank, else the first wrap past it. -/
-private def codeCut (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat) : Nat :=
+private def codeCut (rank : Nat → Nat) (width : Nat → Nat → Length) (limit : Length) (s n : Nat) : Nat :=
   if width s n ≤ limit then n
   else codeChoose rank n (codeScan rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none)
 
-private theorem codeCut_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
+private theorem codeCut_mem (rank : Nat → Nat) (width : Nat → Nat → Length) (limit : Length)
     (s n : Nat) (h : s < n) :
     (s < codeCut rank width limit s n ∧ codeCut rank width limit s n ≤ n) ∧
       (codeCut rank width limit s n = n ∨ rank (codeCut rank width limit s n) ≠ 0) := by
@@ -12178,7 +12188,7 @@ private theorem codeCut_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (l
         exact ⟨⟨by omega, this.1.2⟩, this.2⟩
 
 
-private theorem codeCut_space_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
+private theorem codeCut_space_mem (rank : Nat → Nat) (width : Nat → Nat → Length) (limit : Length)
     (s n c : Nat) (hc : s < c) (hcn : c < n) (hr : rank c = 2)
     (hfit : ∀ k, s < k → k ≤ c → width s k ≤ limit) (hwide : ¬ width s n ≤ limit) :
     rank (codeCut rank width limit s n) = 2 := by
@@ -12197,7 +12207,7 @@ private theorem codeCut_space_mem (rank : Nat → Nat) (width : Nat → Nat → 
   · simpa only [codeChoose] using h3
 
 
-private theorem codeCut_between (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
+private theorem codeCut_between (rank : Nat → Nat) (width : Nat → Nat → Length) (limit : Length)
     (s n c : Nat) (hc : s < c) (hcn : c < n) (hr : rank c ≠ 0)
     (hfit : ∀ k, s < k → k ≤ c → width s k ≤ limit) (hwide : ¬ width s n ≤ limit)
     (hrank : rank c = 2 ∨ rank (codeCut rank width limit s n) ≠ 2) :
@@ -12234,7 +12244,7 @@ private theorem codeCut_between (rank : Nat → Nat) (width : Nat → Nat → Sp
         exact absurd h3 hcut
 
 /-- The segment's cut with the bounds a recursion's measure reads. -/
-private def codeCutIn (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat)
+private def codeCutIn (rank : Nat → Nat) (width : Nat → Nat → Length) (limit : Length) (s n : Nat)
     (h : s < n) : {b : Nat // s < b ∧ b ≤ n} :=
   ⟨codeCut rank width limit s n, (codeCut_mem rank width limit s n h).1⟩
 
@@ -12268,8 +12278,8 @@ private theorem skipSpaces_between (us : Array CodeUnit) (n b : Nat) (h : b ≤ 
 
 /-- The segments a source line wraps into from `s`, each cut by
 `codeCut` against `first` or `cont`, the spaces at each wrap dropped. -/
-private def codeSegments (rank : Nat → Nat) (width : Nat → Nat → Sp) (us : Array CodeUnit)
-    (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) : Array (Nat × Nat) :=
+private def codeSegments (rank : Nat → Nat) (width : Nat → Nat → Length) (us : Array CodeUnit)
+    (first cont : Length) (n s : Nat) (out : Array (Nat × Nat)) : Array (Nat × Nat) :=
   if h : s < n then
     match codeCutIn rank width (if out.isEmpty then first else cont) s n h with
     | ⟨b, hb⟩ =>
@@ -12280,8 +12290,8 @@ private def codeSegments (rank : Nat → Nat) (width : Nat → Nat → Sp) (us :
   else out
 termination_by n - s
 
-private theorem codeSegments_breaks_mem (rank : Nat → Nat) (width : Nat → Nat → Sp)
-    (us : Array CodeUnit) (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) :
+private theorem codeSegments_breaks_mem (rank : Nat → Nat) (width : Nat → Nat → Length)
+    (us : Array CodeUnit) (first cont : Length) (n s : Nat) (out : Array (Nat × Nat)) :
     ∀ seg ∈ codeSegments rank width us first cont n s out,
       seg ∈ out ∨ seg.2 = n ∨ rank seg.2 ≠ 0 := by
   induction s, out using codeSegments.induct rank width us first cont n with
@@ -12306,10 +12316,10 @@ private theorem codeSegments_breaks_mem (rank : Nat → Nat) (width : Nat → Na
     exact Or.inl hseg
 
 /-- Which units stand in a run wider than a continuation line `cont` wide. -/
-private def codeWide (us : Array CodeUnit) (widths : Array Sp) (cont : Sp) : Array Bool := Id.run do
+private def codeWide (us : Array CodeUnit) (widths : Array Length) (cont : Length) : Array Bool := Id.run do
   let mut flags : Array Bool := Array.replicate us.size false
   let mut start := 0
-  let mut w : Sp := 0
+  let mut w : Length := 0
   for i in [0:us.size + 1] do
     let ends := i == us.size || (i > 0 && (us[i]?.map (·.lex)) != (us[i - 1]?.map (·.lex)))
     if ends && start < i then
@@ -12323,15 +12333,15 @@ private def codeWide (us : Array CodeUnit) (widths : Array Sp) (cont : Sp) : Arr
 
 /-- Where a source line wraps (`Ir.ListingWrap`): each segment filled to its last
 unit that fits under listings' rule, or to its last space under whitespace first. -/
-private def codeWraps (wrap : Ir.ListingWrap) (us : Array CodeUnit) (widths : Array Sp)
-    (first cont : Sp) : Array (Nat × Nat) :=
-  let pre : Array Sp := widths.foldl (fun acc w => acc.push ((acc.back?.getD 0) + w)) #[0]
+private def codeWraps (wrap : Ir.ListingWrap) (us : Array CodeUnit) (widths : Array Length)
+    (first cont : Length) : Array (Nat × Nat) :=
+  let pre : Array Length := widths.foldl (fun acc w => acc.push ((acc.back?.getD 0) + w)) #[0]
   let wide := codeWide us widths cont
   codeSegments (CodeUnit.rank wrap (fun i => wide.getD i false) us)
     (fun a b => (pre[b]?.getD 0) - (pre[a]?.getD 0)) us first cont us.size 0 #[]
 
 private theorem codeWraps_breaks_mem (wrap : Ir.ListingWrap) (us : Array CodeUnit)
-    (widths : Array Sp) (first cont : Sp) :
+    (widths : Array Length) (first cont : Length) :
     ∀ seg ∈ codeWraps wrap us widths first cont, seg.2 = us.size ∨
       ∃ p q, us[seg.2 - 1]? = some p ∧ us[seg.2]? = some q ∧ p.space = false ∧
         ((wrap = .units ∧ (q.space = true ∨ p.lex ≠ q.lex)) ∨
@@ -12346,8 +12356,8 @@ private theorem codeWraps_breaks_mem (wrap : Ir.ListingWrap) (us : Array CodeUni
 
 /-- A caption as classes.dtx's `\@makecaption` sets it: centred when it fits one
 line, else a paragraph, `cmargin` in from either side of the measure. -/
-private def collectCaption (r rf : Rd) (a : Acc) (caption : Array Inline) (cmargin : Sp)
-    (leaf : Option Nat) (span : Nat) (indent : Sp) : Acc :=
+private def collectCaption (r rf : Rd) (a : Acc) (caption : Array Inline) (cmargin : Length)
+    (leaf : Option Nat) (span : Nat) (indent : Length) : Acc :=
   let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
   let (w, a) := a.naturalWidth r r.geom.fontSize caption avail
   let saved := a.measure
@@ -12356,7 +12366,7 @@ private def collectCaption (r rf : Rd) (a : Acc) (caption : Array Inline) (cmarg
     (leaf := leaf) (span := span)
   { a with measure := saved }
 
-private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
+private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Length) : Acc :=
   let a0 := a
   -- Code never hyphenates; a declared caption sets above it (listings.sty `captionpos`).
   let a := match spec.caption with
@@ -12379,7 +12389,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- A `breakIndent` listing breaks here where its wrap allows (`codeWraps`), so none re-flows.
   let wrap := if spec.breakLines then spec.breakIndent else none
   let mono := r.fs.get (r.fs.lookup 2 400 false)
-  let advance (c : Char) : Sp :=
+  let advance (c : Char) : Length :=
     match glyphOf size mono c with
     | some g => g.2.2
     | none =>
@@ -12404,7 +12414,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
         i := i + 1
         unless out.isEmpty do
           let taken := if i == 2 then 2 * overlap else overlap
-          out := out.push (.linebreak { width := Dim.Length.ofSp (-taken) })
+          out := out.push (.linebreak { width := Dim.SymLength.ofLength (-taken) })
         let numbered := if spec.numbers then
             let numStr := toString i
             String.ofList (List.replicate (w - numStr.length) '\u00a0') ++ numStr ++ "\u00a0\u00a0"
@@ -12415,7 +12425,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
           out := out.push (.text "\u00a0")
         else
           -- Source columns count authored scalars; display columns expand tabs.
-          let (physical, hang) : Array (Array (ListingHighlight.Token × Nat)) × Sp :=
+          let (physical, hang) : Array (Array (ListingHighlight.Token × Nat)) × Length :=
             match wrap with
             | none => Id.run do
               let mut column := 0
@@ -12431,8 +12441,8 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               let us := codeUnits { spec with breakLines := false } line
               let ws := us.map (advance ·.c)
               let prefixW := (numbered.toList.map advance).sum
-              let lead : Sp := Id.run do
-                let mut w : Sp := 0
+              let lead : Length := Id.run do
+                let mut w : Length := 0
                 for u in us do
                   if u.space then w := w + advance u.c else break
                 return w
@@ -12462,7 +12472,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
           for pieces in physical do
             if j > 0 then
               out := out.push (.linebreak {})
-              out := out.push (.hspace (.lit { width := .ofSp hang }) true)
+              out := out.push (.hspace (.lit { width := .ofLength hang }) true)
             j := j + 1
             let mut k := 0
             for run in Listing.paintLine a.pal ground covered spec.style brushes
@@ -12493,7 +12503,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     a inner indent false size
     (marker := r.labels.back?.map (·.1)) (markerIndent := r.labels.back?.map (·.2))
     (outerMarkers := r.labels.pop)
-    (baseStyle := { leading := some (.lit { width := .ofSp leading }) })
+    (baseStyle := { leading := some (.lit { width := .ofLength leading }) })
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
   match own with
@@ -12503,7 +12513,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
 /-- A listing with the space its environment sets around it where
 the class frames it as TeX does (`Ir.ListingFrame.onPage`). -/
 private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String)
-    (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
+    (spec : Ir.ListingSpec) (indent : Length) : Acc :=
   match spec.frame with
   | .trivlist =>
     let (ri, a, g) := a.trivOpen r
@@ -12522,10 +12532,10 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
 sets it: the column as wide as the widest of `column`'s words with their colon, the word at its
 start, the colon at its end; with the width the content hangs at, past the tie. -/
 private def alignedKey (r : Rd) (a : Acc) (word : String) (site : Option Span)
-    (column : Array String) : Array Inline × Sp × Acc :=
+    (column : Array String) : Array Inline × Length × Acc :=
   let size := r.geom.fontSize
   let bold (t : String) : Inline := .styled .bold #[.text t]
-  let (colW, a) := (column.push word).foldl (init := ((0 : Sp), a)) fun (w, a) c =>
+  let (colW, a) := (column.push word).foldl (init := ((0 : Length), a)) fun (w, a) c =>
     let (cw, a) := a.naturalWidth r size #[bold (c ++ ":")] r.geom.textWidth
     (max w cw, a)
   let (ownW, a) := a.naturalWidth r size #[bold (word ++ ":")] r.geom.textWidth
@@ -12534,12 +12544,12 @@ private def alignedKey (r : Rd) (a : Acc) (word : String) (site : Option Span)
   let body := r.fs.get (r.fs.lookup 0 400 false)
   let tie := scaledAt size body body.spaceAdvance
   let key := if colW ≤ ownW then #[bold (word ++ ":")]
-    else #[bold word, .hspace (.lit { width := .ofSp (colW - wordW - colonW) }) true, bold ":"]
+    else #[bold word, .hspace (.lit { width := .ofLength (colW - wordW - colonW) }) true, bold ":"]
   (match site with
     | some s => #[Inline.located s key]
     | none => key, colW + tie, a)
 
-private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
+private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Length) : Acc :=
   -- Pseudocode: unhyphenated, unjustified display lines, one `algindent` per depth (algorithm2e).
   let words := Ir.algWords r.locale.tag
   let muted := Ir.mutedOf a.pal
@@ -12599,27 +12609,27 @@ private def collectRuleBlock (r : Rd) (a : Acc) (color : Ir.Color) (thickness : 
   { a with ops := a.ops.push (.hrule color (r.resolve thickness).width) }
 
 /-- Resolve the shared block inset in the body's measured font units. -/
-@[expose] public def titledPadding (fontSize xHeight : Sp) : Sp :=
+@[expose] public def titledPadding (fontSize xHeight : Length) : Length :=
   Ir.titledPadding.resolve fontSize xHeight
 
-public theorem titledPadding_projects (fontSize xHeight : Sp) :
+public theorem titledPadding_projects (fontSize xHeight : Length) :
     titledPadding fontSize xHeight = 3 * xHeight / 4 :=
   Ir.titledPadding_contract fontSize xHeight
 
 /-- The inset a font set's body face resolves at the page's body size. -/
-public def titledPaddingOf (fs : FontSet) (geom : Geom) : Sp :=
-  titledPadding geom.fontSize (fs.xHeightAt geom.fontSize)
+public def titledPaddingOf (fs : FontSet) (geom : Geom) : Length :=
+  titledPadding geom.fontSize (xHeightOf fs geom.fontSize)
 
 /-- A block title's `\baselineskip` under its font template
 (`Ir.blockTitleLeading`), resolved in the body's font. -/
-private def titleLeading (r : Rd) (font : Option (Array Inline)) : Sp :=
+private def titleLeading (r : Rd) (font : Option (Array Inline)) : Length :=
   (Ir.blockTitleLeading r.geom.scale r.geom.fontSize r.geom.leading
     (MeasureValues.horizontal r.geom.textWidth r.geom.textHeight) font).resolve
     r.geom.fontSize r.xHeight
 
 /-- The face and size a block title's template sets its content in. -/
-private def titleFaceIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
-    (font : Option (Array Inline)) : Font × Sp :=
+private def titleFaceIn (geom : Geom) (fs : FontSet) (xHeight : Length)
+    (font : Option (Array Inline)) : Font × Length :=
   let axes := (font.bind Ir.fontAxesOf).getD {}
   let sty := ([axes.size, axes.shape, axes.series, axes.family].filterMap id).foldl
     (applyStyle geom.scale) ({ weight := .b } : TextStyle)
@@ -12628,8 +12638,8 @@ private def titleFaceIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
 
 /-- A block title's `\baselineskip` and its cap height,
 which a rule reaching by the title's lines reads. -/
-private def titleMetricsIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
-    (font : Option (Array Inline)) : Sp × Sp :=
+private def titleMetricsIn (geom : Geom) (fs : FontSet) (xHeight : Length)
+    (font : Option (Array Inline)) : Length × Length :=
   let lead := (Ir.blockTitleLeading geom.scale geom.fontSize geom.leading
     (MeasureValues.horizontal geom.textWidth geom.textHeight) font).resolve geom.fontSize xHeight
   let (face, size) := titleFaceIn geom fs xHeight font
@@ -12643,18 +12653,18 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
   | .box => none
   | .lines height depth =>
     let font := Ir.blockTitleFont styles kind
-    let xHeight := fs.xHeightAt geom.fontSize
+    let xHeight := xHeightOf fs geom.fontSize
     let (lead, cap) := titleMetricsIn geom fs xHeight font
     let (face, size) := titleFaceIn geom fs xHeight font
-    let leaded (f : Font) (sz : Sp) : Sp × Sp :=
+    let leaded (f : Font) (sz : Length) : Length × Length :=
       leadedBox (scaledAt sz f f.ascent.toNat) (scaledAt sz f (-f.descent).toNat)
         (Ir.leadingFor sz geom.leading)
     let strut := leaded (fs.get (fs.lookup 0 700 false)) geom.fontSize
     let runs := leaded face size
     let b := max strut.1 runs.1
     let box := b + max strut.2 runs.2
-    let h := height.resolve lead cap
-    let d := depth.resolve lead cap
+    let h := metricAt height lead cap
+    let d := metricAt depth lead cap
     let body := fs.get (fs.lookup 0 400 false)
     let next := scaledAt geom.fontSize body
       ((['b', 'd', 'f', 'h', 'k', 'l', 'H'].map body.charHeight).foldl max 0).toNat
@@ -12668,15 +12678,16 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
     let rise := max 0 (h + dn - inset)
     let line := inset + lead * 7 / 10
     let room := texBaselineGap bs (max dn d) next - texBaselineGap bs dn next
-    some { top := b - lead - h, bottom := box - b - d
-           rise := texBaselineGap bs prev (line + rise) - texBaselineGap bs prev line
-           riseMany := texBaselineGap bs prev (line + lead + rise) - texBaselineGap bs prev (line + lead)
-           room := room, depth := d
-           bodyBelow := (leaded body geom.fontSize).2 }
+    some { top := (b - lead - h).units, bottom := (box - b - d).units
+           rise := (texBaselineGap bs prev (line + rise) - texBaselineGap bs prev line).units
+           riseMany := (texBaselineGap bs prev (line + lead + rise) -
+             texBaselineGap bs prev (line + lead)).units
+           room := room.units, depth := d.units
+           bodyBelow := (leaded body geom.fontSize).2.units }
 
 /-- The part below its baseline of a web block's last line box when
 that line is a listing's (CSS 2.1 §10.8.1); `none` otherwise. -/
-public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : Option Sp :=
+public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : Option Length :=
   match b with
   | some (.verbatim _ _ spec) =>
     match spec.fontSize with
@@ -12686,14 +12697,14 @@ public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : O
         geom.leading - spec.lineOverlap
       let mono := fs.get (fs.lookup 2 400 false)
       some (leadedBox (scaledAt size mono mono.ascent.toNat) (scaledAt size mono (-mono.descent).toNat)
-        (pitch * 1000 / max size 1 * size / 1000)).2
+        (let k : Int := pitch * 1000 / max size Length.quantum; k * size / 1000)).2
     | _ => none
   | _ => none
 
 /-- A titled block's title colour box (beamerinnerthemedefault.sty `block begin`) at
 the block's epoch: painted around its lines, or the box TeX's interline rule places. -/
 private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
-    (title : Array Inline) (indent pad x w : Sp) : Acc :=
+    (title : Array Inline) (indent pad x w : Length) : Acc :=
   let look := Ir.titledLook a.pal kind
   let a := a.flushGap r
   match look.bar, title.isEmpty with
@@ -12725,14 +12736,14 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
 
 /-- tcolorbox's box opening (`size=normal`): the box `\linewidth` wide, its top the
 balanced skip below the band above, its title segment and body inset by `Ir.tcbInset`. -/
-private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : Sp)
-    (bodyBg : Option Ir.Color) : Acc × Sp :=
+private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : Length)
+    (bodyBg : Option Ir.Color) : Acc × Length :=
   let look := Ir.titledLook a.pal .box
   let x := r.geom.hmargin + indent
   let measure := a.measure.getD r.geom.textWidth
   let w := measure - indent
   let s := Ir.leadingFor r.geom.fontSize r.geom.leading / 2
-  let bodyOpen (a : Acc) (rule : AnchorRule) (shift above : Sp) : Acc :=
+  let bodyOpen (a : Acc) (rule : AnchorRule) (shift above : Length) : Acc :=
     let a := match bodyBg with
       | some c => a.pushOp (.regionOpen (.surface (r.shown c)
           (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule) x w true))
@@ -12767,9 +12778,9 @@ private def shapedSetsTitle (shape : Ir.BlockShape) (titled : Bool) : Bool :=
 /-- A block in its kind's template (`Ir.BlockShape`), opened: the skips above,
 the rules beside the box, the title in its box, and the body's opening. -/
 private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir.BlockShape)
-    (title : Array Inline) (body : Array Block) (indent : Sp) : Acc × Sp × Sp :=
+    (title : Array Inline) (body : Array Block) (indent : Length) : Acc × Length × Length :=
   let measure := a.measure.getD r.geom.textWidth
-  let len (g : SymGlue) : Sp := (r.resolve g).width
+  let len (g : SymGlue) : Length := (r.resolve g).width
   let parskip := (r.resolve r.geom.texParskip).width
   let wholeL := len (shape.inset .whole .left)
   let wholeR := len (shape.inset .whole .right)
@@ -12782,10 +12793,10 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let titleCap := (titleMetricsIn r.geom r.fs r.xHeight font).2
   let reachOf (e : Ir.BlockEdge) : Option EdgeReach := match e.reach with
     | .lines height depth =>
-      some { height := height.resolve titleLeading titleCap
-             depth := depth.resolve titleLeading titleCap }
+      some { height := metricAt height titleLeading titleCap
+             depth := metricAt depth titleLeading titleCap }
     | .box => none
-  let titleReach : Option (Sp × Sp) :=
+  let titleReach : Option (Length × Length) :=
     (shape.edges.filter (·.besideTitle)).foldl (fun acc e =>
       match reachOf e, acc with
       | some q, some (u, d) => some (max u q.height, max d q.depth)
@@ -12799,9 +12810,9 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let wx1 := r.geom.hmargin + measure - wholeR
   let tx0 := wx0 + titleL
   let tx1 := wx1 - titleR
-  let ruleX (e : Ir.BlockEdge) (x0 x1 : Sp) : Sp :=
+  let ruleX (e : Ir.BlockEdge) (x0 x1 : Length) : Length :=
     if e.side == .left then x0 - len e.sep - len e.width else x1 + len e.sep
-  let opens (a : Acc) (beside : Ir.BlockEdge → Bool) (x0 x1 inset : Sp) : Acc :=
+  let opens (a : Acc) (beside : Ir.BlockEdge → Bool) (x0 x1 inset : Length) : Acc :=
     shape.edges.foldl (fun a e =>
       if beside e then
         a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e x0 x1) (len e.width) inset
@@ -12877,7 +12888,7 @@ private def collectBoxClose (r : Rd) (done : Acc) (bodyBg : Option Ir.Color) : A
 
 /-- The abstract's heading word, generated as the HTML's `<h2>` is, in
 the section heading's style centred (`Ir.abstractHeadingStyle`). -/
-private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
+private def collectAbstractHead (r : Rd) (a : Acc) (indent : Length) : Acc :=
   let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize "small"
   let hst := Ir.abstractHeadingStyle r.styles
   let hcenter := hst.align != some .left && hst.align != some .right
@@ -12894,7 +12905,7 @@ private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
 
 /-- A float's caption within its declared caption margin (`collectCaption`). -/
 private def collectFloatCaption (r rf : Rd) (a : Acc) (kind : Ir.FloatKind) (caption : Array Inline)
-    (capLeaf : Option Nat) (capSpan : Nat) (indent : Sp) : Acc :=
+    (capLeaf : Option Nat) (capSpan : Nat) (indent : Length) : Acc :=
   if caption.isEmpty then a else
   let cmargin := ((Ir.captionTokenOf a.tokens kind "captionmargin").map
     (fun g => (r.resolve g).width)).getD 0
@@ -12937,8 +12948,8 @@ private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
 
 /-- A frame title's lines on the measure its box gives them: the
 paper less the inset on either side, else the text block. -/
-private def frameTitleLine (r : Rd) (a : Acc) (inset : Option Sp)
-    (set : Acc → Sp → Acc) : Acc :=
+private def frameTitleLine (r : Rd) (a : Acc) (inset : Option Length)
+    (set : Acc → Length → Acc) : Acc :=
   match inset with
   | none => set a 0
   | some i =>
@@ -13006,13 +13017,13 @@ public def substPage (n total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
 /-- A chrome band slot set as one line at its natural width at the footline's
 step, the setting both the page's floor and the furniture pass read. -/
 private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (imgs : Image.Store) (geom : Geom) (xHeight : Sp) (style : TextStyle)
+    (imgs : Image.Store) (geom : Geom) (xHeight : Length) (style : TextStyle)
     (content : Array Inline) (cache : Std.HashMap String (Array Nat)) :
-    Option (Array Seg × Sp) × Bool × Array Diag × Std.HashMap String (Array Nat) :=
+    Option (Array Seg × Length) × Bool × Array Diag × Std.HashMap String (Array Nat) :=
   -- A named size inside a slot is the body's step, as TeX's size commands are absolute.
   let (items, ds, cache, _) :=
     itemsOfInlines pats geom.fontSize xHeight fs
-      { style with scale := (Ir.footlineSize geom.scale 1000).toNat }
+      { style with scale := (geom.scale.lookup Ir.footline.step).getD 1000 }
       content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
       (ladder := geom.scale)
   let breaks := kp items geom.textWidth
@@ -13024,9 +13035,9 @@ private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
 
 /-- The footline band's box on page `n`: the tallest and deepest
 ink of its slots, beamer's `\ht` and `\dp` of the footline. -/
-private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Sp)
-    (n : Nat) (band : Array Ir.BandSlot) : Sp × Sp :=
-  band.foldl (fun (acc : Sp × Sp) slot =>
+private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight : Length)
+    (n : Nat) (band : Array Ir.BandSlot) : Length × Length :=
+  band.foldl (fun (acc : Length × Length) slot =>
     match (setBandSlot none fs imgs geom xHeight {} (substPage n 0 slot.content) {}).1 with
     | some (segs, _) =>
       let (h, d) := segsInk fs segs
@@ -13036,8 +13047,8 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
 /-- `bandBox` at the document's resolved body x-height,
 for the web deck (`HtmlDoc.Config.footBox`). -/
 public def footBandBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (n : Nat)
-    (band : Array Ir.BandSlot) : Sp × Sp :=
-  bandBox fs imgs geom (fs.xHeightAt geom.fontSize) n band
+    (band : Array Ir.BandSlot) : Length × Length :=
+  bandBox fs imgs geom (xHeightOf fs geom.fontSize) n band
 
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the frame's
 footer; title and standout pages carry none (beamerinnerthememoloch.dtx). -/
@@ -13083,8 +13094,8 @@ private def labelOnly : Array Inline := #[.hspace (.lit {}) true]
 
 /-- An item's leading paragraph: a description's label runs in at the outer margin, as latex.ltx's
 `description` sets it, else the marker opens it. -/
-private def collectItemLead (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp)
-    (marker : Array Inline) (hang : Sp) (outer : Array (Array Inline × Sp)) : Acc :=
+private def collectItemLead (r : Rd) (a : Acc) (content : Array Inline) (indent : Length)
+    (marker : Array Inline) (hang : Length) (outer : Array (Array Inline × Length)) : Acc :=
   let (a', leaf) := a.leafRange (Struct.leafCountInlines content)
   -- An `\item[label]`'s label sets in the marker's place, its leaves first.
   if let some (label, rest) := Ir.itemLabel? content then
@@ -13119,7 +13130,7 @@ private def labelMeet : Block → LabelMeet
   | _ => .settles
 
 /-- The line an item's waiting labels set alone, before a block that sets none of its own. -/
-private def Spacing.Context.settleLabels (r : Rd) (a : Acc) (indent : Sp) : Acc :=
+private def Spacing.Context.settleLabels (r : Rd) (a : Acc) (indent : Length) : Acc :=
   match r.labels.back? with
   | some (m, i) =>
     (collectPara { r with labels := #[] } a labelOnly indent false r.geom.fontSize (marker := some m)
@@ -13128,7 +13139,7 @@ private def Spacing.Context.settleLabels (r : Rd) (a : Acc) (indent : Sp) : Acc 
 
 /-- The reader and walk where `blk` meets an item's waiting labels: a list takes them as the markers
 of the items it opens in. -/
-private def Spacing.Context.meetLabels (r : Rd) (a : Acc) (blk : Block) (indent : Sp) : Rd × Acc :=
+private def Spacing.Context.meetLabels (r : Rd) (a : Acc) (blk : Block) (indent : Length) : Rd × Acc :=
   if r.labels.isEmpty then (r, a) else
   match blk, labelMeet blk with
   | .list .., _ => ({ r with labels := #[] }, { a with outerMarkers := r.labels })
@@ -13158,11 +13169,11 @@ private def ruleBlock : Block → Bool
 
 /-- Walk a block sequence, spacing peers by `parskip`. -/
 private def collectBlocks (r : Rd) (a : Acc)
-    (blocks : Array Block) (indent : Sp) : Acc :=
+    (blocks : Array Block) (indent : Length) : Acc :=
   collectBlockList r a blocks.toList indent true false
 
 private def collectBlockList (r : Rd) (a : Acc)
-    (blocks : List Block) (indent : Sp) (first prevRule : Bool) : Acc :=
+    (blocks : List Block) (indent : Length) (first prevRule : Bool) : Acc :=
   match blocks with
   -- Labels still waiting where their block ends set a line of their own.
   | [] => r.settleLabels a indent
@@ -13183,7 +13194,7 @@ private def collectBlockList (r : Rd) (a : Acc)
 
 /-- An inset abstract's body as `collectBlockList` walks it: its paragraphs `inset` from both
 sides through `ri`, and every other block at its own margins, as `\@trivlist` resets `\leftskip`. -/
-private def collectInsetList (r ri : Rd) (a : Acc) (blocks : List Block) (indent inset : Sp)
+private def collectInsetList (r ri : Rd) (a : Acc) (blocks : List Block) (indent inset : Length)
     (first prevRule : Bool) : Acc :=
   match blocks with
   | [] => a
@@ -13212,7 +13223,7 @@ private def walkTransparent : Block → Bool
 quotation's first lines take the class's `\listparindent`, verse's lines hang (`Ir.verseHang`), and
 an overlay carrier's blocks set as the quotation's own. -/
 private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : List Block)
-    (indent : Sp) (first prevRule cont brk : Bool) : Acc :=
+    (indent : Length) (first prevRule cont brk : Bool) : Acc :=
   match blocks with
   | [] => r.settleLabels a indent
   | .onSteps spec inner :: rest =>
@@ -13272,19 +13283,19 @@ private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : 
 /-- The title frame's body when the title page declares slots: each
 slot set as one box from the shared start and pinned where declared. -/
 private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
-    (blocks : List Block) (indent : Sp) : Acc :=
+    (blocks : List Block) (indent : Length) : Acc :=
   match blocks with
   | [] => a
   | blk :: rest =>
     let a := match slotOfBlock slots blk with
       | some (sl, i) =>
-        let partSize (p : Ir.TitlePart) : Sp :=
+        let partSize (p : Ir.TitlePart) : Length :=
           let explicit := p.size.map fun g => (r.resolve g).width
           let templated := p.font.map fun tpl => Ir.templateSize r.geom.scale r.geom.fontSize tpl
-          max 1 ((explicit <|> templated).getD r.geom.fontSize)
+          max Length.quantum ((explicit <|> templated).getD r.geom.fontSize)
         let roleMetrics := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
           p.size.map fun g =>
-            let size := max 1 (r.resolve g).width
+            let size := max Length.quantum (r.resolve g).width
             let leading := p.leading.map fun l => (r.resolve l).width
             (Ir.titlePartRole i k, (size, leading))
         let roleBaselines := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
@@ -13308,12 +13319,12 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
           let a := collectBlock rs a blk indent
           let spec : SlotSpec :=
             { anchor := pl.anchor, pagePoint := pl.pagePoint
-              dx := (pl.xshift.map fun g => (r.resolve g).width).getD 0
-              dy := -((pl.yshift.map fun g => (r.resolve g).width).getD 0)
-              sep := (pl.innerSep.map fun g => (r.resolve g).width).getD
-                (Ir.pgfInnerSep r.geom.fontSize)
-              outerSep := Ir.pgfOuterSep
-              box := w.map fun w => (r.geom.hmargin + indent, w) }
+              dx := ((pl.xshift.map fun g => (r.resolve g).width).getD 0).units
+              dy := (-((pl.yshift.map fun g => (r.resolve g).width).getD 0)).units
+              sep := ((pl.innerSep.map fun g => (r.resolve g).width).getD
+                (Ir.pgfInnerSep r.geom.fontSize)).units
+              outerSep := Ir.pgfOuterSep.units
+              box := w.map fun w => ((r.geom.hmargin + indent).units, w.units) }
           { a.pushOp (.slotClose spec) with measure := saved }
         | none => collectBlock rs a blk indent
       | none => collectBlock r a blk indent
@@ -13322,8 +13333,8 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
 /-- One list item: its leading paragraph carries the marker, or a
 description list's label runs in; `hang` is the list's indent step. -/
 private def collectItem (r : Rd) (a : Acc)
-    (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline)
-    (hang : Sp) (labelled : Bool := false) : Acc :=
+    (item : List Block) (indent : Length) (first : Bool) (marker : Array Inline)
+    (hang : Length) (labelled : Bool := false) : Acc :=
   match item with
   -- An empty item sets its label on a line of its own, as `\item\item` does.
   | [] => if first then collectItemLead r a.takeOuter.2 labelOnly indent marker hang a.takeOuter.1 else a
@@ -13375,7 +13386,7 @@ private def collectItem (r : Rd) (a : Acc)
 /-- A step opening its item: its paragraph carries the marker into the step, as beamer's `\item<n>`
 covers or hides its label with it. -/
 private def collectItemStep (r : Rd) (a : Acc) (spec : Ir.OverlaySpec) (body : Array Block)
-    (indent : Sp) (marker : Array Inline) (hang : Sp) (outer : Array (Array Inline × Sp)) : Acc :=
+    (indent : Length) (marker : Array Inline) (hang : Length) (outer : Array (Array Inline × Length)) : Acc :=
   let hides := r.hides spec
   let r' := if hides then r else r.pendingStep spec a.dimHere.cover
   let a' := if hides then a.openHidden else a
@@ -13387,8 +13398,8 @@ private def collectItemStep (r : Rd) (a : Acc) (spec : Ir.OverlaySpec) (body : A
   if hides then done.closeHidden else done
 
 private def collectItems (r : Rd) (a : Acc)
-    (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
-    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) (hang : Sp)
+    (items : List (Array Block)) (indent : Length) (st : Ir.ElementStyle)
+    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) (hang : Length)
     (num : Nat := idx) : Acc :=
   match items with
   | [] => a
@@ -13414,7 +13425,7 @@ private def collectItems (r : Rd) (a : Acc)
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (r : Rd) (a : Acc)
-    (body : List Block) (indent : Sp) (prevRule : Bool) : Acc :=
+    (body : List Block) (indent : Length) (prevRule : Bool) : Acc :=
   match body with
   | [] => r.settleLabels a indent
   -- An overlay carrier is grouping, as `collectBlock` reads it: what it
@@ -13457,7 +13468,7 @@ private def collectCentered (r : Rd) (a : Acc)
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
 private def collectColumns (r : Rd) (a : Acc)
-    (cols : List (BoxWidth × Array Block)) (x0 shareW gutter total : Sp) : Acc :=
+    (cols : List (BoxWidth × Array Block)) (x0 shareW gutter total : Length) : Acc :=
   match cols with
   | [] => a
   | (w, body) :: rest =>
@@ -13470,7 +13481,7 @@ private def collectColumns (r : Rd) (a : Acc)
 /-- A standout frame's content: paragraphs centre and
 set Large bold in the page's inverted text colour. -/
 private def collectStandout (r : Rd) (a : Acc)
-    (body : List Block) (indent : Sp) : Acc :=
+    (body : List Block) (indent : Length) : Acc :=
   match body with
   | [] => a
   | blk :: rest =>
@@ -13490,7 +13501,7 @@ private def collectStandout (r : Rd) (a : Acc)
 
 /-- A laid-out paragraph's lines: each under the last at the leading, no peer gap between them,
 each `Ir.linesStep` further in for each scope holding it. -/
-private def collectLaid (r : Rd) (a : Acc) (lines : List LaidLine) (indent : Sp) : Acc :=
+private def collectLaid (r : Rd) (a : Acc) (lines : List LaidLine) (indent : Length) : Acc :=
   match lines with
   | [] => a
   | l :: rest =>
@@ -13498,7 +13509,7 @@ private def collectLaid (r : Rd) (a : Acc) (lines : List LaidLine) (indent : Sp)
     collectLaid r (collectParaBlock r a l.content (indent + (l.depth : Int) * step)) rest indent
 
 private def collectBlock (r : Rd) (a : Acc)
-    (blk : Block) (indent : Sp) : Acc :=
+    (blk : Block) (indent : Length) : Acc :=
   match blk with
   | .para content => collectParaBlock r a content indent
   | .lines ls => collectLaid r a ls.toList indent
@@ -13756,7 +13767,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A lone declared box leaves its slack to its scope's side; several spend it on gutters.
     let side : Ir.HAlign := if r.centreBoxes then .center
       else if r.geom.flushRight then .right else .left
-    let off := if cols.size == 1 && unspecified == 0 then side.boxOffset rem else 0
+    let off := if cols.size == 1 && unspecified == 0 then slackShare side rem else 0
     let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
     -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage, and the page's own
     -- `\parskip` stands there over a list's `\parsep`.
@@ -13892,7 +13903,7 @@ private def collectBlock (r : Rd) (a : Acc)
       let box := if (Ir.Design.ofPalette a.pal).frametitle.isSome then none
         else
           let size := Ir.scaleStepIn r.geom.scale r.geom.fontSize Ir.plainFrameTitleStep
-          some (Ir.defaultFrameTitleBelow size r.geom.leading (r.xHeight * size / r.geom.fontSize))
+          some (Ir.defaultFrameTitleBelow size r.geom.leading (r.xHeight.mulDiv size r.geom.fontSize))
       { a with ops := (a.ops.push .pin).push (.bodyOpen g box), wantDefault := false,
                frameTop := true }
     -- A golden frame is the title page, all display furniture: never hyphenated or justified.
@@ -13907,7 +13918,7 @@ private def collectBlock (r : Rd) (a : Acc)
 end
 
 private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
-    (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
+    (body : Array Block) (indent : Length) (hst : r.styles.find? n = none)
     (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
     (hth : Ir.thmSpaceOf? n = none) (hpm : Ir.pageMarkerRole n = false)
     (hdc : Ir.DisplayCtx.ofRole? n = none) (hdp : n ≠ Ir.displayPictureRole) :
@@ -13923,25 +13934,25 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     hdc, hop, hpic, Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
-    (opening : Ir.PageOpening) (indent : Sp)
+    (opening : Ir.PageOpening) (indent : Length)
     (h : Ir.pageOpeningOfRole? n = some opening) :
     collectBlock r a (.role n #[]) indent =
       { a with ops := a.ops.push (.pageOpening opening) } := by
   simp only [collectBlock, h]
 
 /-- Sorted, pairwise disjoint, nonempty half-open intervals. -/
-public def Chained : List (Int × Int) → Prop
+public def Chained : List (Length × Length) → Prop
   | [] => True
   | (lo, hi) :: rest => lo ≤ hi ∧ (∀ o ∈ rest, hi ≤ o.1) ∧ Chained rest
 
 /-- The sub-intervals of `[cur, hi)` not covered by a chained obstruction list. -/
-public def subtract (cur hi : Int) : List (Int × Int) → List (Int × Int)
+public def subtract (cur hi : Length) : List (Length × Length) → List (Length × Length)
   | [] => if cur < hi then [(cur, hi)] else []
   | (olo, ohi) :: rest =>
     if cur < min olo hi then (cur, min olo hi) :: subtract (max cur ohi) hi rest
     else subtract (max cur ohi) hi rest
 
-public theorem subtract_bounds (obs : List (Int × Int)) (cur hi : Int) :
+public theorem subtract_bounds (obs : List (Length × Length)) (cur hi : Length) :
     ∀ s ∈ subtract cur hi obs, cur ≤ s.1 ∧ s.1 < s.2 ∧ s.2 ≤ hi := by
   induction obs generalizing cur with
   | nil =>
@@ -13954,13 +13965,13 @@ public theorem subtract_bounds (obs : List (Int × Int)) (cur hi : Int) :
     split at hs
     · rcases List.mem_cons.mp hs with rfl | hs'
       · dsimp only
-        omega
+        length_omega
       · have := ih (max cur o.2) s hs'
-        omega
+        length_omega
     · have := ih (max cur o.2) s hs
-      omega
+      length_omega
 
-public theorem underline_skips_ink (obs : List (Int × Int)) (cur hi : Int)
+public theorem underline_skips_ink (obs : List (Length × Length)) (cur hi : Length)
     (hch : Chained obs) :
     ∀ s ∈ subtract cur hi obs, ∀ o ∈ obs, s.2 ≤ o.1 ∨ o.2 ≤ s.1 := by
   induction obs generalizing cur with
@@ -13974,43 +13985,43 @@ public theorem underline_skips_ink (obs : List (Int × Int)) (cur hi : Int)
       · rcases List.mem_cons.mp ho with rfl | ho'
         · left
           dsimp only
-          omega
+          length_omega
         · have := hsep o ho'
           left
           dsimp only
-          omega
+          length_omega
       · have hb := subtract_bounds rest (max cur a.2) hi s hs'
         rcases List.mem_cons.mp ho with rfl | ho'
         · right
-          omega
+          length_omega
         · exact ih (max cur a.2) hrest s hs' o ho'
     · have hb := subtract_bounds rest (max cur a.2) hi s hs
       rcases List.mem_cons.mp ho with rfl | ho'
       · right
-        omega
+        length_omega
       · exact ih (max cur a.2) hrest s hs o ho'
 
-public theorem underline_covers_gaps (obs : List (Int × Int)) (cur hi x : Int)
+public theorem underline_covers_gaps (obs : List (Length × Length)) (cur hi x : Length)
     (hch : Chained obs) (hx : cur ≤ x ∧ x < hi)
     (hout : ∀ o ∈ obs, x < o.1 ∨ o.2 ≤ x) :
     ∃ s ∈ subtract cur hi obs, s.1 ≤ x ∧ x < s.2 := by
   induction obs generalizing cur with
   | nil =>
-    refine ⟨(cur, hi), ?_, by omega⟩
+    refine ⟨(cur, hi), ?_, by length_omega⟩
     simp only [subtract]
     split
     · simp
     · exfalso
-      omega
+      length_omega
   | cons a rest ih =>
     obtain ⟨_, _, hrest⟩ := hch
     rcases hout a (List.mem_cons_self ..) with hlt | hge
-    · refine ⟨(cur, min a.1 hi), ?_, by dsimp only; omega⟩
+    · refine ⟨(cur, min a.1 hi), ?_, by dsimp only; length_omega⟩
       simp only [subtract]
       split
       · exact List.mem_cons_self ..
-      · exact absurd (by omega : cur < min a.1 hi) ‹¬_›
-    · obtain ⟨s, hs, hcov⟩ := ih (max cur a.2) hrest ⟨by omega, hx.2⟩
+      · exact absurd (by length_omega : cur < min a.1 hi) ‹¬_›
+    · obtain ⟨s, hs, hcov⟩ := ih (max cur a.2) hrest ⟨by length_omega, hx.2⟩
         (fun o ho => hout o (List.mem_cons_of_mem _ ho))
       refine ⟨s, ?_, hcov⟩
       simp only [subtract]
@@ -14020,13 +14031,13 @@ public theorem underline_covers_gaps (obs : List (Int × Int)) (cur hi x : Int)
 
 /-- Merge a sorted run of intervals into a chained list, fusing
 an input that reaches back into the growing interval `cur`. -/
-public def mergeChained (cur : Int × Int) : List (Int × Int) → List (Int × Int)
+public def mergeChained (cur : Length × Length) : List (Length × Length) → List (Length × Length)
   | [] => [cur]
   | (lo, hi) :: rest =>
     if lo ≤ cur.2 then mergeChained (cur.1, max cur.2 hi) rest
     else cur :: mergeChained (lo, hi) rest
 
-public theorem mergeChained_lb (cur : Int × Int) (l : List (Int × Int))
+public theorem mergeChained_lb (cur : Length × Length) (l : List (Length × Length))
     (hs : l.Pairwise (fun a b => a.1 ≤ b.1)) (hcl : ∀ o ∈ l, cur.1 ≤ o.1) :
     ∀ s ∈ mergeChained cur l, cur.1 ≤ s.1 := by
   induction l generalizing cur with
@@ -14034,7 +14045,7 @@ public theorem mergeChained_lb (cur : Int × Int) (l : List (Int × Int))
     intro s hs'
     simp only [mergeChained, List.mem_singleton] at hs'
     subst hs'
-    omega
+    length_omega
   | cons a rest ih =>
     obtain ⟨hhd, hrest⟩ := List.pairwise_cons.mp hs
     intro s hmem
@@ -14043,12 +14054,12 @@ public theorem mergeChained_lb (cur : Int × Int) (l : List (Int × Int))
     · exact ih (cur.1, max cur.2 a.2) hrest
         (fun o ho => by have := hcl o (List.mem_cons_of_mem _ ho); exact this) s hmem
     · rcases List.mem_cons.mp hmem with rfl | hmem'
-      · omega
+      · length_omega
       · have ha := hcl a (List.mem_cons_self ..)
         have := ih a hrest (fun o ho => hhd o ho) s hmem'
-        omega
+        length_omega
 
-public theorem mergeChained_chained (cur : Int × Int) (l : List (Int × Int))
+public theorem mergeChained_chained (cur : Length × Length) (l : List (Length × Length))
     (hc : cur.1 ≤ cur.2) (hne : ∀ o ∈ l, o.1 ≤ o.2)
     (hs : l.Pairwise (fun a b => a.1 ≤ b.1)) (hcl : ∀ o ∈ l, cur.1 ≤ o.1) :
     Chained (mergeChained cur l) := by
@@ -14059,24 +14070,24 @@ public theorem mergeChained_chained (cur : Int × Int) (l : List (Int × Int))
     obtain ⟨hhd, hrest⟩ := List.pairwise_cons.mp hs
     simp only [mergeChained]
     split
-    · exact ih (cur.1, max cur.2 a.2) (by dsimp only; omega)
+    · exact ih (cur.1, max cur.2 a.2) (by dsimp only; length_omega)
         (fun o ho => hne o (List.mem_cons_of_mem _ ho)) hrest
         (fun o ho => hcl o (List.mem_cons_of_mem _ ho))
     · refine ⟨hc, fun o ho => ?_, ?_⟩
       · have := mergeChained_lb a rest hrest (fun o ho => hhd o ho) o ho
-        omega
+        length_omega
       · exact ih a (hne a (List.mem_cons_self ..))
           (fun o ho => hne o (List.mem_cons_of_mem _ ho)) hrest
           (fun o ho => hhd o ho)
 
 /-- Sort obstructions by their low bound and fuse
 overlapping and touching intervals into a chained list. -/
-public def mergeIntervals (obs : Array (Int × Int)) : List (Int × Int) :=
+public def mergeIntervals (obs : Array (Length × Length)) : List (Length × Length) :=
   match (obs.mergeSort fun a b => decide (a.1 ≤ b.1)).toList with
   | [] => []
   | x :: rest => mergeChained x rest
 
-public theorem mergeIntervals_chained (obs : Array (Int × Int))
+public theorem mergeIntervals_chained (obs : Array (Length × Length))
     (hne : ∀ o ∈ obs, o.1 ≤ o.2) : Chained (mergeIntervals obs) := by
   unfold mergeIntervals
   split
@@ -14086,8 +14097,8 @@ public theorem mergeIntervals_chained (obs : Array (Int × Int))
         (fun a b => a.1 ≤ b.1) := by
       have := Array.pairwise_mergeSort (le := fun a b => decide (a.1 ≤ b.1))
         (xs := obs) (fun a b c hab hbc => by
-          simp only [decide_eq_true_eq] at *; omega)
-        (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega)
+          simp only [decide_eq_true_eq] at *; length_omega)
+        (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; length_omega)
       exact this.imp (by simp)
     have hmem : ∀ o ∈ (obs.mergeSort fun a b => decide (a.1 ≤ b.1)).toList,
         o.1 ≤ o.2 := by
@@ -14101,70 +14112,75 @@ public theorem mergeIntervals_chained (obs : Array (Int × Int))
 
 /-- Horizontal placement and resolved bands of a line's
 decoration segments, the pen advancing by the set widths. -/
-public def decorationSpans (x : Int) : List Seg → List (Int × Int × Ir.Decoration × DecorationRule)
+public def decorationSpans (x : Length) : List Seg → List (Length × Length × Ir.Decoration × DecorationRule)
   | [] => []
   | .decoration k w t r c :: rest =>
     (x, x + w, k, { color := c, thickness := t, raise := r }) :: decorationSpans (x + w) rest
   | s :: rest => decorationSpans (x + s.advance) rest
 
-private theorem decorationSpans_append (a b : List Seg) (x : Int) :
+private theorem decorationSpans_append (a b : List Seg) (x : Length) :
     decorationSpans x (a ++ b) = decorationSpans x a ++
       decorationSpans (x + (a.map Seg.advance).sum) b := by
   induction a generalizing x with
   | nil => simp [decorationSpans]
   | cons s rest ih =>
-    cases s <;> simp [decorationSpans, Seg.advance, ih, Int.add_assoc]
+    cases s <;> simp [decorationSpans, Seg.advance, ih, Length.add_assoc]
 
-private def underlinePieces (paint : DecorationRule) (hi : Int) :
-    List (Int × Int) → Int → Array Seg → Array Seg
+private theorem lsum_append (a b : List Length) : (a ++ b).sum = a.sum + b.sum := by
+  induction a with
+  | nil => simp
+  | cons x rest ih => simp only [List.cons_append, List.sum_cons, ih]; length_omega
+
+private def underlinePieces (paint : DecorationRule) (hi : Length) :
+    List (Length × Length) → Length → Array Seg → Array Seg
   | [], cur, out => out.push (.gap (hi - cur) false)
   | (lo, stop) :: rest, cur, out =>
     underlinePieces paint hi rest stop
       ((out.push (.gap (lo - cur) false)).push
         (.decoration .underline (stop - lo) paint.thickness paint.raise paint.color))
 
-private theorem underlinePieces_placement (paint : DecorationRule) (hi x cur : Int)
-    (spans : List (Int × Int)) (out : Array Seg)
+private theorem underlinePieces_placement (paint : DecorationRule) (hi x cur : Length)
+    (spans : List (Length × Length)) (out : Array Seg)
     (hx : x + (out.toList.map Seg.advance).sum = cur) :
     x + ((underlinePieces paint hi spans cur out).toList.map Seg.advance).sum = hi ∧
     decorationSpans x (underlinePieces paint hi spans cur out).toList =
       decorationSpans x out.toList ++ spans.map (fun (lo, stop) => (lo, stop, Ir.Decoration.underline, paint)) := by
   induction spans generalizing cur out with
   | nil =>
-    simp [underlinePieces, decorationSpans_append, decorationSpans, Seg.advance]
-    omega
+    simp [underlinePieces, decorationSpans_append, decorationSpans, Seg.advance, lsum_append]
+    length_omega
   | cons span rest ih =>
     let next := (out.push (.gap (span.1 - cur) false)).push
       (.decoration .underline (span.2 - span.1) paint.thickness paint.raise paint.color)
     have hn : x + (next.toList.map Seg.advance).sum = span.2 := by
-      simp [next, Seg.advance]
-      omega
+      simp [next, Seg.advance, lsum_append]
+      length_omega
     have hit := ih span.2 next hn
     constructor
     · exact hit.1
     · simp only [underlinePieces]
       rw [hit.2]
       simp [next, decorationSpans_append, decorationSpans, Seg.advance]
-      constructor <;> omega
+      constructor <;> length_omega
 
 /-- A segment's underline band: a run resolves its face here, an authored space carries its band. -/
-public def Seg.underlineRule (fs : FontSet) (lineSize : Sp) : Seg → Option DecorationRule
+public def Seg.underlineRule (fs : FontSet) (lineSize : Length) : Seg → Option DecorationRule
   | .run fontIdx color _ _ _ size _ decorations _ _ _ =>
     (decorations.resolve (fs.get fontIdx) (if size == 0 then lineSize else size) color).underline
   | .decoratedGap _ _ decorations => decorations.underline
   | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ _ _ | .poly _ _ => none
 
 /-- Append a segment's skip-ink paint, its full advance kept as gaps between the surviving spans. -/
-public def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
-    (x : Sp) (seg : Seg) (out : Array Seg) : Array Seg :=
+public def appendUnderline (fs : FontSet) (size : Length) (obs : List (Length × Length))
+    (x : Length) (seg : Seg) (out : Array Seg) : Array Seg :=
   match seg.underlineRule fs size with
   | none => out.push (.gap seg.advance false)
   | some paint => underlinePieces paint (x + seg.advance)
       (subtract x (x + seg.advance) obs) x out
 
 /-- Native artifact geometry of the run and space painter, not a second reading of IR decoration. -/
-public theorem appendUnderline_exact (fs : FontSet) (size : Sp) (obs : List (Int × Int))
-    (origin x : Int) (seg : Seg) (out : Array Seg)
+public theorem appendUnderline_exact (fs : FontSet) (size : Length) (obs : List (Length × Length))
+    (origin x : Length) (seg : Seg) (out : Array Seg)
     (hx : origin + (out.toList.map Seg.advance).sum = x) :
     origin + ((appendUnderline fs size obs x seg out).toList.map Seg.advance).sum =
         x + seg.advance ∧
@@ -14175,14 +14191,14 @@ public theorem appendUnderline_exact (fs : FontSet) (size : Sp) (obs : List (Int
             (lo, hi, Ir.Decoration.underline, paint)) := by
   cases hp : seg.underlineRule fs size with
   | none =>
-    simp [appendUnderline, hp, decorationSpans_append, decorationSpans, Seg.advance]
-    omega
+    simp [appendUnderline, hp, decorationSpans_append, decorationSpans, Seg.advance, lsum_append]
+    length_omega
   | some paint =>
     simpa [appendUnderline, hp] using underlinePieces_placement paint
       (x + seg.advance) origin x (subtract x (x + seg.advance) obs) out hx
 
-public theorem appendUnderline_covers (fs : FontSet) (size : Sp) (obs : List (Int × Int))
-    (origin x point : Int) (seg : Seg) (out : Array Seg) (paint : DecorationRule)
+public theorem appendUnderline_covers (fs : FontSet) (size : Length) (obs : List (Length × Length))
+    (origin x point : Length) (seg : Seg) (out : Array Seg) (paint : DecorationRule)
     (hpen : origin + (out.toList.map Seg.advance).sum = x)
     (hpaint : seg.underlineRule fs size = some paint) (hch : Chained obs)
     (hx : x ≤ point ∧ point < x + seg.advance)
@@ -14200,7 +14216,7 @@ public theorem appendUnderline_covers (fs : FontSet) (size : Sp) (obs : List (In
 
 /-- Underline rules for one set line, interrupted where glyph ink crosses the band
 with a gap of twice the run's rule thickness (CSS Text Decoration 4 §2.10.5). -/
-private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
+private def underlineSegs (fs : FontSet) (lineSize : Length) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
       | .run _ _ _ _ _ _ _ decorations _ _ _ => decorations.underline
@@ -14208,8 +14224,8 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       | _ => false) do
     return #[]
   -- Pass 1: obstruction intervals in line coordinates, each glyph's in-band ink plus clearance.
-  let mut obs : Array (Sp × Sp) := #[]
-  let mut x : Sp := 0
+  let mut obs : Array (Length × Length) := #[]
+  let mut x : Length := 0
   for seg in segs do
     match seg with
     | .gap w _ | .decoratedGap w _ _ => x := x + w
@@ -14221,7 +14237,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       let sz := if size == 0 then lineSize else size
       let upem : Int := font.unitsPerEm
       let thick := (font.band).2 * sz / upem
-      let mut gx : Sp := x
+      let mut gx : Length := x
       for (g, _, adv) in glyphs do
         for (ilo, ihi) in font.inkAt g do
           obs := obs.push (gx + ilo * sz / upem - 2 * thick,
@@ -14264,7 +14280,7 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
 
 /-- A mark pushed onto a line's marks, joined to the one before it where one paint sets both, so a
 stretch of a mark is one rectangle and no seam shows between its runs. -/
-private def pushMark (out : Array Seg) (c : Color) (w t r : Sp) : Array Seg :=
+private def pushMark (out : Array Seg) (c : Color) (w t r : Length) : Array Seg :=
   match out.back? with
   | some (.decoration (.highlight c' none) w' t' r' p') =>
     if c' == c && t' == t && r' == r && p' == c then
@@ -14299,9 +14315,9 @@ private def markSegs (segs : Array Seg) : Array Seg := Id.run do
 /-- Where a placed line's leader dots stand from its origin, each with its polygon and paint: in
 each leader gap a dot in every box the gap holds whole, the boxes counted from the line box's left
 edge (`LeaderPaint`). -/
-private def leaderDots (segs : Array Seg) : Array (Sp × Array (Sp × Sp) × Ir.Color) := Id.run do
-  let mut out : Array (Sp × Array (Sp × Sp) × Ir.Color) := #[]
-  let mut x : Sp := 0
+private def leaderDots (segs : Array Seg) : Array (Length × Array (Length × Length) × Ir.Color) := Id.run do
+  let mut out : Array (Length × Array (Length × Length) × Ir.Color) := #[]
+  let mut x : Length := 0
   for seg in segs do
     if let .decoratedGap w _ d := seg then
       if let some lp := d.leaders then
@@ -14311,12 +14327,12 @@ private def leaderDots (segs : Array Seg) : Array (Sp × Array (Sp × Sp) × Ir.
           let last := lp.reach / lp.box
           let edge := x + w - lp.reach
           for j in [0:(last - first).toNat] do
-            out := out.push (edge + (first + j) * lp.box, lp.dot, lp.color)
+            out := out.push (edge + (first + (j : Int)) * lp.box, lp.dot, lp.color)
     x := x + seg.advance
   return out
 
 /-- Dots as a rider's segments: a gap to each dot's box, then its polygon. -/
-private def dotSegs (pen : Sp) (out : Array Seg) : List (Sp × Array (Sp × Sp) × Ir.Color) → Array Seg
+private def dotSegs (pen : Length) (out : Array Seg) : List (Length × Array (Length × Length) × Ir.Color) → Array Seg
   | [] => out
   | (x, pts, c) :: rest => dotSegs x ((out.push (.gap (x - pen) false)).push (.poly pts c)) rest
 
@@ -14536,8 +14552,8 @@ public theorem paintLines_counted_projects (fs : FontSet) (lines : Array LineOut
   · exact fun l r hr => markRiders_uncounted l r hr
   · exact fun l r hr => leaderRiders_uncounted l r hr
 
-private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Int)
-    (spans : List (Int × Int)) (out : Array Seg)
+private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Length)
+    (spans : List (Length × Length)) (out : Array Seg)
     (h : ∀ s ∈ out, s.NoGlyph) :
     ∀ s ∈ underlinePieces paint hi spans cur out, s.NoGlyph := by
   induction spans generalizing cur out with
@@ -14555,8 +14571,8 @@ private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Int)
       · trivial
     · trivial
 
-private theorem appendUnderline_noGlyph (fs : FontSet) (size : Sp)
-    (obs : List (Int × Int)) (x : Sp) (seg : Seg) (out : Array Seg)
+private theorem appendUnderline_noGlyph (fs : FontSet) (size : Length)
+    (obs : List (Length × Length)) (x : Length) (seg : Seg) (out : Array Seg)
     (h : ∀ s ∈ out, s.NoGlyph) :
     ∀ s ∈ appendUnderline fs size obs x seg out, s.NoGlyph := by
   unfold appendUnderline
@@ -14567,12 +14583,12 @@ private theorem appendUnderline_noGlyph (fs : FontSet) (size : Sp)
     · trivial
   · exact underlinePieces_noGlyph _ _ _ _ _ h
 
-private theorem underlineSegs_noGlyph (fs : FontSet) (size : Sp) (segs : Array Seg) :
+private theorem underlineSegs_noGlyph (fs : FontSet) (size : Length) (segs : Array Seg) :
     ∀ s ∈ underlineSegs fs size segs, s.NoGlyph := by
   unfold underlineSegs
   dsimp only [Id.run, bind, pure, Id]
   split
-  · apply Loop.forIn_array_inv (fun st : Sp × Array Seg => ∀ s ∈ st.2, s.NoGlyph)
+  · apply Loop.forIn_array_inv (fun st : Length × Array Seg => ∀ s ∈ st.2, s.NoGlyph)
     · simp
     · intro seg _ st hst
       exact appendUnderline_noGlyph _ _ _ _ _ _ hst
@@ -14603,8 +14619,8 @@ private theorem lineThroughSegs_noGlyph (segs : Array Seg) :
       | poly pts color => exact hout
   · simp
 
-private theorem dotSegs_noGlyph (pen : Sp) (out : Array Seg) (h : ∀ s ∈ out, s.NoGlyph) :
-    ∀ (dots : List (Sp × Array (Sp × Sp) × Ir.Color)), ∀ s ∈ dotSegs pen out dots, s.NoGlyph := by
+private theorem dotSegs_noGlyph (pen : Length) (out : Array Seg) (h : ∀ s ∈ out, s.NoGlyph) :
+    ∀ (dots : List (Length × Array (Length × Length) × Ir.Color)), ∀ s ∈ dotSegs pen out dots, s.NoGlyph := by
   intro dots
   induction dots generalizing pen out with
   | nil => exact h
@@ -14645,7 +14661,7 @@ private theorem decorationRiders_noGlyph (fs : FontSet) (l : LineOut) :
   · cases Option.some.inj hr
     exact hg
 
-private theorem pushMark_noGlyph (out : Array Seg) (c : Color) (w t r : Sp)
+private theorem pushMark_noGlyph (out : Array Seg) (c : Color) (w t r : Length)
     (hout : ∀ s ∈ out, s.NoGlyph) : ∀ s ∈ pushMark out c w t r, s.NoGlyph := by
   have push (t : Seg) (ht : t.NoGlyph) (xs : Array Seg) (hxs : ∀ s ∈ xs, s.NoGlyph) :
       ∀ s ∈ xs.push t, s.NoGlyph := by
@@ -14775,7 +14791,7 @@ private def Spacing.Paragraph.lineStart (j : ParaJob) (first : Bool) (prev : Nat
 /-- The geometry of one paragraph line: its segs, x, set
 width, overfull flag, protrusion hang and expansion factor. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
-    (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp × Int :=
+    (prev brk : Nat) : Array Seg × Length × Length × Bool × Length × Int :=
   -- A hanging first line starts past its kern, as the breaker priced it.
   let lead := if j.restarts first prev then j.hangIndent else 0
   let width := j.target + lead
@@ -14831,7 +14847,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
 
 /-- A display's first line takes TeX's skip above
 (`Spacing.Page.displaySkip`), measured to the formula's box. -/
-private def Spacing.Page.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x : Sp) (segs : Array Seg) :
+private def Spacing.Page.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x : Length) (segs : Array Seg) :
     B :=
   match j.display, first with
   | some dj, true =>
@@ -14840,16 +14856,16 @@ private def Spacing.Page.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x :
       j.size
   | _, _ => b
 
-@[simp] private theorem openDisplayAt_pages (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+@[simp] private theorem openDisplayAt_pages (b : B) (j : ParaJob) (f : Bool) (x : Length)
     (segs : Array Seg) : (b.openDisplayAt j f x segs).pages = b.pages := by
   unfold Spacing.Page.openDisplayAt; split <;> rfl
-@[simp] private theorem openDisplayAt_noBreak (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+@[simp] private theorem openDisplayAt_noBreak (b : B) (j : ParaJob) (f : Bool) (x : Length)
     (segs : Array Seg) : (b.openDisplayAt j f x segs).noBreak = b.noBreak := by
   unfold Spacing.Page.openDisplayAt; split <;> rfl
-@[simp] private theorem openDisplayAt_geom (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+@[simp] private theorem openDisplayAt_geom (b : B) (j : ParaJob) (f : Bool) (x : Length)
     (segs : Array Seg) : (b.openDisplayAt j f x segs).geom = b.geom := by
   unfold Spacing.Page.openDisplayAt; split <;> rfl
-@[simp] private theorem openDisplayAt_docBg (b : B) (j : ParaJob) (f : Bool) (x : Sp)
+@[simp] private theorem openDisplayAt_docBg (b : B) (j : ParaJob) (f : Bool) (x : Length)
     (segs : Array Seg) : (b.openDisplayAt j f x segs).docBg = b.docBg := by
   unfold Spacing.Page.openDisplayAt; split <;> rfl
 
@@ -14895,7 +14911,7 @@ private def Spacing.Page.withPendingSource (b : B) (source : Option Span) : B :=
 /-- Where a box-opening paragraph's first baseline stands below the band above:
 TeX's interline rule for the box, then its inset and first line's height. -/
 private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (segs : Array Seg)
-    (last : Bool) : Sp :=
+    (last : Bool) : Length :=
   let h1 := (lineStrutInk j.strut (segsInk fs segs)).1
   let bsIn := tb.leading
   let bsOut := Ir.leadingFor b.geom.fontSize b.geom.leading
@@ -14909,7 +14925,7 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
 
 /-- How far a paragraph's line sets past its measure, where its overrun flag is set: past the
 target its protrusion widens, as TeX measures its margin kerns inside the box. -/
-private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Sp :=
+private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Length :=
   let lead := if j.restarts first prev then j.hangIndent else 0
   let width := j.target + lead
   let a := j.lineStart first prev
@@ -15005,7 +15021,7 @@ private def reflowRecord (subject : String) (frame : Option String) (inFrame : B
   let places := placesSaid (site.map (·.file)) (over.filterMap (·.site))
   let past := if over.isEmpty then "" else
     s!"; {over.size} {if over.size == 1 then "line runs" else "lines run"} past the measure, \
-by up to {widest.toPtString}pt" ++ (if places.isEmpty then "" else s!", at {places}")
+by up to {widest.toBpString}pt" ++ (if places.isEmpty then "" else s!", at {places}")
   Diag.of .W0386 (subject := some subject)
     (if over.isEmpty then "a declared line did not fit the measure and re-flowed"
       else "a declared line did not fit the measure and re-flowed, and a line of it \
@@ -15056,7 +15072,7 @@ private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bo
 private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) :
     (paraLineGeom fs j b first prev brk).2.2.2.1 = (lineOverrunBy j first prev brk).isSome := by
-  have someIf : ∀ (c : Bool) (v : Sp), (if c = true then some v else (none : Option Sp)).isSome = c := by
+  have someIf : ∀ (c : Bool) (v : Length), (if c = true then some v else (none : Option Length)).isSome = c := by
     intro c v
     cases c <;> rfl
   unfold paraLineGeom lineOverrunBy setLine
@@ -15159,9 +15175,9 @@ private def placeParaWith (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : A
 /-- What TeX's page builder reads where a page could end before a paragraph's line: the room below
 the line above, the glue's stretch, shrink and fills above it, and the pages already shipped. -/
 private structure TurnRoom where
-  room : Sp
-  stretch : Sp
-  shrink : Sp
+  room : Length
+  stretch : Length
+  shrink : Length
   fils : Nat
   shipped : Nat
 
@@ -15280,7 +15296,7 @@ private theorem sourceBound_paraLineGeom {n : Nat} (fs : FontSet) (j : ParaJob)
           _ j.wordOffsets h
 
 private theorem sourceBound_openDisplayAt {n : Nat} (b : B) (j : ParaJob)
-    (first : Bool) (x : Sp) (segs : Array Seg) (hb : b.SourceBound n) :
+    (first : Bool) (x : Length) (segs : Array Seg) (hb : b.SourceBound n) :
     (b.openDisplayAt j first x segs).SourceBound n := by
   unfold Spacing.Page.openDisplayAt
   split <;> exact hb.of_eq rfl rfl rfl rfl rfl
@@ -15362,10 +15378,10 @@ private def ItemsProse (items : Array Item) : Prop :=
   simp [ItemsProse, or_imp, forall_and]
 
 private theorem flushWord_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
-    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Sp)
-    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Sp))
-    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Sp)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
+    (ground : Option Ir.Color) (attr : Attribution) (items : Array Item) (offsets : Std.HashMap Nat Length)
+    (sources : Array (Nat × Nat)) (box : Array (Nat × Char × Length))
+    (boxOwners : Array Attribution) (boxSources : Array Nat) (w : Length)
     (hi : ItemsProse items) :
     ItemsProse (flushWord fontIdx color link size leading decorations ground attr items offsets
       sources box boxOwners boxSources w).1 := by
@@ -15376,13 +15392,13 @@ private theorem flushWord_prose (fontIdx : Nat) (color : Ir.Color) (link : Optio
   · split
     · exact (itemsProse_push _ _).mpr ⟨hi, trivial⟩
     · apply Loop.bind_of_inv
-        (P := fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
-          Sp × Array (Nat × Char × Sp) × Sp × Attribution => ItemsProse st.1)
-        (Q := fun out : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) =>
+        (P := fun st : Array Item × Std.HashMap Nat Length × Array (Nat × Nat) ×
+          Length × Array (Nat × Char × Length) × Length × Attribution => ItemsProse st.1)
+        (Q := fun out : Array Item × Std.HashMap Nat Length × Array (Nat × Nat) =>
           ItemsProse out.1)
       · apply Loop.forIn_array_inv
-          (P := fun st : Array Item × Std.HashMap Nat Sp × Array (Nat × Nat) ×
-            Sp × Array (Nat × Char × Sp) × Sp × Attribution => ItemsProse st.1)
+          (P := fun st : Array Item × Std.HashMap Nat Length × Array (Nat × Nat) ×
+            Length × Array (Nat × Char × Length) × Length × Attribution => ItemsProse st.1)
         · exact hi
         · rintro x _ ⟨is, os, ss, off, run, rw, owner⟩ hs
           dsimp only
@@ -15393,14 +15409,14 @@ private theorem flushWord_prose (fontIdx : Nat) (color : Ir.Color) (link : Optio
         split <;> exact (itemsProse_push _ _).mpr ⟨hs, trivial⟩
 
 private theorem WordAcc.flush_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (st : WordAcc)
     (hs : ItemsProse (WordAcc.items st)) :
     ItemsProse (WordAcc.items (st.flush fontIdx color link size leading decorations ground attr)) :=
   flushWord_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hs
 
 private theorem WordAcc.glyph_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (c : Char) (sourceId : Nat)
     (owner : Attribution) (origin : Option Span) (st : WordAcc)
@@ -15417,10 +15433,10 @@ private theorem WordAcc.glyph_prose (fontIdx : Nat) (color : Ir.Color) (link : O
     · split <;> exact hs
 
 private theorem WordAcc.letters_prose (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-    (size : Sp) (leading : Option Sp) (decorations : Decorations)
+    (size : Length) (leading : Option Length) (decorations : Decorations)
     (ground : Option Ir.Color) (attr : Attribution) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (run : Array Char) (start : Nat)
-    (owners : Array Attribution) (origins : Array (Option Span)) (hyphW : Sp) (st : WordAcc)
+    (owners : Array Attribution) (origins : Array (Option Span)) (hyphW : Length) (st : WordAcc)
     (hs : ItemsProse (WordAcc.items st)) :
     ItemsProse (WordAcc.items (st.letters fontIdx color link size leading decorations ground attr smallcaps
       fs font run start owners origins #[] hyphW)) := by
@@ -15433,7 +15449,7 @@ private theorem WordAcc.letters_prose (fontIdx : Nat) (color : Ir.Color) (link :
 
 private theorem wordItems_none_prose (langKey : String)
     (explicitBreak : Option Char → Char → Option Char → Option Nat)
-    (size : Sp) (leading : Option Sp) (fontIdx : Nat)
+    (size : Length) (leading : Option Length) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
@@ -15446,7 +15462,7 @@ private theorem wordItems_none_prose (langKey : String)
   apply Loop.bind_of_inv
     (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat => ItemsProse (WordAcc.items st.1))
     (Q := fun out : Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-      Std.HashMap String (Array Nat) × Std.HashMap Nat Sp × Array (Nat × Nat) × GlyphOrigins =>
+      Std.HashMap String (Array Nat) × Std.HashMap Nat Length × Array (Nat × Nat) × GlyphOrigins =>
       ItemsProse out.1)
   · apply Loop.forIn_range_inv
       (P := fun st : WordAcc × Std.HashMap String (Array Nat) × Nat =>
@@ -15473,7 +15489,7 @@ private theorem wordItems_none_prose (langKey : String)
   · intro st hs
     exact WordAcc.flush_prose _ _ _ _ _ _ _ _ st.1 hs
 
-private theorem widenLast_prose (items : Array Item) (w : Sp)
+private theorem widenLast_prose (items : Array Item) (w : Length)
     (hi : ItemsProse items) : ItemsProse (widenLast items w) := by
   unfold widenLast
   split
@@ -15488,13 +15504,13 @@ private theorem widenLast_prose (items : Array Item) (w : Sp)
     next => exact hi
 
 private theorem decoratedGlue_prose (g : Glue) (d : Decorations)
-    (font : Font) (size : Sp) (color : Ir.Color) :
+    (font : Font) (size : Length) (color : Ir.Color) :
     (Item.ofDecoratedGlue g d font size color).Prose := by
   unfold Item.ofDecoratedGlue
   split <;> trivial
 
-private theorem itemsOfTok_none_prose (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfTok_none_prose (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
     (anchors : Array (String × Nat)) (origins : Array (Option Span))
     (source : Option Span) (ht : Tk.TextSource tk)
@@ -15517,8 +15533,8 @@ private theorem itemsOfTok_none_prose (size xHeight : Sp)
     · simp only [hb, Bool.false_eq_true, ↓reduceIte]
       exact hi
 
-private theorem itemsOfToks_none_prose (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+private theorem itemsOfToks_none_prose (size xHeight : Length)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Length)
     (acc : ItemsAcc) (toks : Array Tk) (ht : ∀ tk ∈ toks, Tk.TextSource tk)
     (hi : ItemsProse (ItemsAcc.items acc)) :
     ItemsProse (ItemsAcc.items
@@ -15571,11 +15587,11 @@ private def paraItems (items : Array Item) : Array Item :=
   items.push (.glue { fil := true, parfill := true }) |>.push
     (.pen 0 forcedCost false 0 Ir.Color.black #[])
 
-private theorem itemsOfInlines_none_prose (size xHeight : Sp)
+private theorem itemsOfInlines_none_prose (size xHeight : Length)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
-    (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat)
+    (textW textH : Length) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat)
     (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false) :
     ∃ items, ItemsProse items ∧
       (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs textW textH
@@ -15664,8 +15680,8 @@ private theorem raggedItems_paraItems (items : Array Item) :
     raggedItems (paraItems items) = paraItems (raggedItems items) := by
   simp [raggedItems, paraItems]
 
-private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand : Bool)
-    (bg : Sp) (fil : Bool) {runt : Bool} (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
+private theorem kpTwoPass_unflagged (items : Array Item) (target : Length) (protrude expand : Bool)
+    (bg : Length) (fil : Bool) {runt : Bool} (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
     kpTwoPass items target protrude expand bg fil runt =
       kp items target protrude expand bg fil runt := by
   unfold kpTwoPass
@@ -15680,8 +15696,8 @@ private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude
     have hh := hp it hi
     cases it <;> simp_all [Item.UnflaggedEmpty]
 
-private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Sp)
-    (protrude expand : Bool) (bg : Sp) (fil : Bool) {runt : Bool} (hp : ItemsProse items) :
+private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Length)
+    (protrude expand : Bool) (bg : Length) (fil : Bool) {runt : Bool} (hp : ItemsProse items) :
     (breakSpans (paraItems items)
         (kpTwoPass (paraItems items) target protrude expand bg fil runt).toList).1 =
       (paraItems items).toList.flatMap Item.boxChars := by
@@ -15689,8 +15705,8 @@ private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Sp)
   exact kp_boxChars _ _ _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
     (paraItems_noEarlierForced items hp)
 
-private theorem setLine_unflagged_chars (items : Array Item) (a j : Nat) (target : Sp)
-    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Sp)
+private theorem setLine_unflagged_chars (items : Array Item) (a j : Nat) (target : Length)
+    (justify protrude expand : Bool) (wordOffsets : Std.HashMap Nat Length)
     (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
     (setLine items a j target justify protrude expand wordOffsets).1.toList.flatMap Seg.glyphChars =
       itemSpan items a j := by
@@ -15732,8 +15748,8 @@ private theorem map_lineCensus_mapIdx (pick : Option Nat → Bool → Bool)
     simp [hf]
 
 private theorem map_lineCensus_zip (pick : Option Nat → Bool → Bool)
-    (xs : Array LineOut) (sh : Array Sp) (hsz : sh.size = xs.size)
-    (f : LineOut × Sp → LineOut)
+    (xs : Array LineOut) (sh : Array Length) (hsz : sh.size = xs.size)
+    (f : LineOut × Length → LineOut)
     (hf : ∀ p, lineCensus pick (f p) = lineCensus pick p.1) :
     ((xs.zip sh).map f).map (lineCensus pick) = xs.map (lineCensus pick) := by
   apply Array.ext
@@ -15742,7 +15758,7 @@ private theorem map_lineCensus_zip (pick : Option Nat → Bool → Bool)
     simp [hf]
 
 private theorem finishPage_lineCensus (pick : Option Nat → Bool → Bool)
-    (b : B) (owed : Sp) (flush : Bool)
+    (b : B) (owed : Length) (flush : Bool)
     (hs : (Spacing.Page.shrinkAbove b).size = (Spacing.Page.cur b).lines.size) :
     ((Spacing.Page.pages (Spacing.Page.finishPage b owed flush)).back?.map
       fun p => p.lines.map (lineCensus pick)) =
@@ -15765,7 +15781,7 @@ private theorem finishPage_lineCensus (pick : Option Nat → Bool → Bool)
        split <;> rfl)
 
 private theorem census_finishPage {n : Nat} (pick : Option Nat → Bool → Bool)
-    (b : B) (owed : Sp) (flush : Bool) (hb : Spacing.Page.SourceBound n b) :
+    (b : B) (owed : Length) (flush : Bool) (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.finishPage b owed flush) = Spacing.Page.census pick b := by
   have he := finishPage_lineCensus pick b owed flush (Spacing.Page.SourceBound.ledger hb)
   change ((Spacing.Page.pages b).push _).back?.map _ = _ at he
@@ -15783,14 +15799,14 @@ private theorem census_finishPage {n : Nat} (pick : Option Nat → Bool → Bool
     List.flatMap_append, List.flatMap_nil, List.append_nil] using
     congrArg ((Spacing.Page.pages b).toList.flatMap (pageCensus pick) ++ ·) ht
 
-private theorem census_warnSpill (pick : Option Nat → Bool → Bool) (b : B) (over : Sp) :
+private theorem census_warnSpill (pick : Option Nat → Bool → Bool) (b : B) (over : Length) :
     Spacing.Page.census pick (Spacing.Page.warnSpill b over) = Spacing.Page.census pick b := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals exact census_of_eq pick b _ rfl rfl
 
 private theorem census_spillPage {n : Nat} (pick : Option Nat → Bool → Bool)
-    (b : B) (over : Sp) (hb : Spacing.Page.SourceBound n b) :
+    (b : B) (over : Length) (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.spillPage b over) = Spacing.Page.census pick b := by
   have hc : Spacing.Page.chrome (Spacing.Page.finishPage b 0 (Spacing.Page.flushes b)) = none := by
     simpa only [Spacing.Page.finishPage] using Spacing.Page.SourceBound.chrome hb
@@ -15799,23 +15815,23 @@ private theorem census_spillPage {n : Nat} (pick : Option Nat → Bool → Bool)
   simpa only [Spacing.Page.reopenChrome, hc] using census_finishPage pick b 0 (Spacing.Page.flushes b) hb
 
 private theorem census_commit (pick : Option Nat → Bool → Bool) (b : B) (l : LineOut)
-    (depth below : Sp) (rl consume : Bool) (over : Sp) :
+    (depth below : Length) (rl consume : Bool) (over : Length) :
     Spacing.Page.census pick (Spacing.Page.commit b l depth below rl consume over) =
       Spacing.Page.census pick b ++ lineCensus pick l := by
   simp [Spacing.Page.census, pageCensus, Spacing.Page.commit, lineCensus, List.append_assoc]
 
 private theorem census_warnOverrun (pick : Option Nat → Bool → Bool)
-    (b : B) (y d : Sp) :
+    (b : B) (y d : Length) :
     Spacing.Page.census pick (Spacing.Page.warnOverrun b y d) = Spacing.Page.census pick b :=
   census_of_eq pick b _ rfl rfl
 
-private theorem census_noteOverrun (pick : Option Nat → Bool → Bool) (b : B) (o : Sp) :
+private theorem census_noteOverrun (pick : Option Nat → Bool → Bool) (b : B) (o : Length) :
     Spacing.Page.census pick (Spacing.Page.noteOverrun b o) = Spacing.Page.census pick b :=
   census_of_eq pick b _ rfl rfl
 
 private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
-    (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
-    (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
+    (b : B) (mk : Length → LineOut) (firstY stepY retryY : B → Length)
+    (depth below : Length) (rl : Bool) (inkBelow bottom : Length)
     (cs : List Char) (hb : Spacing.Page.SourceBound n b) (hm : ∀ y, lineCensus pick (mk y) = cs) :
     Spacing.Page.census pick (Spacing.Page.fitCommit b mk firstY stepY retryY depth below rl inkBelow bottom #[]) =
       Spacing.Page.census pick b ++ cs := by
@@ -15842,18 +15858,18 @@ private theorem filter_zeroRule_chars (segs : Array Seg) :
     cases s <;> simp_all [List.filter_cons, Seg.glyphChars]
     split <;> simp_all [Seg.glyphChars]
 
-private theorem census_keepInk (pick : Option Nat → Bool → Bool) (b : B) (ink : Sp) :
+private theorem census_keepInk (pick : Option Nat → Bool → Bool) (b : B) (ink : Length) :
     Spacing.Page.census pick (Spacing.Page.keepInk b ink) = Spacing.Page.census pick b := rfl
 
 private theorem census_displayState (pick : Option Nat → Bool → Bool)
-    (b : B) (tex : Bool) (e : Option Sp) :
+    (b : B) (tex : Bool) (e : Option Length) :
     Spacing.Page.census pick (Spacing.Page.displayState b tex e) = Spacing.Page.census pick b := rfl
 
 private theorem census_placeLine {n : Nat} (pick : Option Nat → Bool → Bool)
-    (fs : FontSet) (b : B) (x size : Sp) (segs : Array Seg) (w hang : Sp) (ex : Int)
-    (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Sp)
+    (fs : FontSet) (b : B) (x size : Length) (segs : Array Seg) (w hang : Length) (ex : Int)
+    (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Length)
     (display : Option DisplayJob) (opens : Bool) (anchors : Array String)
-    (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
+    (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length)
     (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.placeLine fs b x size segs w hang ex #[] counted leaf
       firstBaseline display opens anchors paintPadding step rs strut) =
@@ -15879,11 +15895,11 @@ private theorem KpChain.members_lt {items : Array Item} {last : Nat} {breaks : L
     · rcases List.mem_singleton.mp hk with rfl
       exact hj
 
-private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand : Bool)
-    (bg : Sp) (fil : Bool) {runt : Bool} (hn : 0 < items.size) :
+private theorem kp_members_lt (items : Array Item) (target : Length) (protrude expand : Bool)
+    (bg : Length) (fil : Bool) {runt : Bool} (hn : 0 < items.size) :
     ∀ k ∈ kp items target protrude expand bg fil runt, k < items.size := by
   let sums := { kpSums items with bg := bg }
-  let slack : Sp := if protrude then maxProtrudeRight items else 0
+  let slack : Length := if protrude then maxProtrudeRight items else 0
   let st := kpForward items sums target slack protrude expand fil runt items.size
   have ht := (kpForward_valid items sums target slack protrude expand fil (runt := runt) items.size
     (Nat.le_refl _)).1
@@ -15908,12 +15924,12 @@ private theorem paraLineGeom_chars {n : Nat} (fs : FontSet) (j : ParaJob)
         (Spacing.Paragraph.wordOffsets j) hp
 
 private theorem census_warnOverfull (pick : Option Nat → Bool → Bool) (b : B)
-    (source : Option Span) (excess : Option Sp) :
+    (source : Option Span) (excess : Option Length) :
     Spacing.Page.census pick (Spacing.Page.warnOverfull b source excess) =
       Spacing.Page.census pick b := rfl
 
 private theorem census_openDisplayAt (pick : Option Nat → Bool → Bool) (b : B) (j : ParaJob)
-    (first : Bool) (x : Sp) (segs : Array Seg) :
+    (first : Bool) (x : Length) (segs : Array Seg) :
     Spacing.Page.census pick (Spacing.Page.openDisplayAt b j first x segs) = Spacing.Page.census pick b := by
   unfold Spacing.Page.openDisplayAt
   split <;> rfl
@@ -16095,11 +16111,11 @@ private structure ColMark where
   inks : Nat
   /-- Whether the column produced a box or moved the cursor. -/
   contributes : Bool := false
-  first : Option Sp := none
-  y : Sp := 0
-  depth : Sp := 0
-  below : Sp := 0
-  boxDepth : Sp := 0
+  first : Option Length := none
+  y : Length := 0
+  depth : Length := 0
+  below : Length := 0
+  boxDepth : Length := 0
   band : Spacing.Band := .text
   source : Option Span := none
 
@@ -16130,10 +16146,10 @@ private def Spacing.Page.colEnd (b : B) : ColEnd :=
 /-- Placement state saved at a `colOpen`: where the columns
 start, the lowest bottom so far, and the row's alignment. -/
 private structure ColSave where
-  y : Sp
-  prevDepth : Sp
-  prevBelow : Sp
-  boxDepth : Sp
+  y : Length
+  prevDepth : Length
+  prevBelow : Length
+  boxDepth : Length
   prevBand : Spacing.Band
   skip : Glue
   fresh : Bool
@@ -16179,7 +16195,7 @@ public structure PictureEmission where
 /-- One shape step: a label sets its line through `emitLabel`;
 every other shape is ink in the picture's one `InkOut`. -/
 public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape)
     (origin : Option (Nat × Nat) := none) : PictureEmission :=
   match shape with
@@ -16210,7 +16226,7 @@ public def pictureInk (box : Gfx.Box) (pic : Ir.Pic.Picture) (place : Ir.Pic.Pla
 
 /-- The picture emitter in source-shape order. -/
 public def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
     (pic : Ir.Pic.Picture) (origin : Option Nat := none) : PictureEmission :=
   match origin with
   | none => pic.shapes.foldl (fun out shape =>
@@ -16223,7 +16239,7 @@ public def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 /-- Fit and place one picture as a box of its height,
 then every shape through one affine transform. -/
 private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
-    (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) : B :=
+    (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) : B :=
   -- The picture's bottom is a baseline (TikZ's default): the next line stands a leading below.
   let strut := b0.strutBelow fs
   let source := leaf.bind fun id => (b0.pictureSpans.find? (·.1 == id)).map (·.2)
@@ -16233,7 +16249,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- A declared baseline (`Ir.Pic.Picture.rise`) makes the part below it the line's depth.
   let rise := pic.rise (picMetric fs imgs b0.geom b0.xHeight)
   let lead := Ir.leadingFor b0.geom.fontSize b0.geom.leading
-  let set (b : B) (yTop : Sp) (consume : Bool) (overflow : Sp) : B :=
+  let set (b : B) (yTop : Length) (consume : Bool) (overflow : Length) : B :=
     let above := if consume then b.pageShrink + b.skip.shrink else 0
     let stretch := if consume then b.pageStretch + b.skip.stretch else 0
     -- The consumed skip's fil counts as for a line, so the distribution moves the picture by it.
@@ -16296,8 +16312,11 @@ private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat
       (first.y + (extent first).2)
     let lo := group.foldl (fun m l => min m l.x) first.x
     let hi := group.foldl (fun m l => max m (l.x + l.setWidth)) (first.x + first.setWidth)
-    let (left, w) := spec.box.getD (lo, hi - lo)
-    let (dx, dy) := slotShift spec b.geom.pageW b.geom.pageH left w top (bot - top)
+    let (left, w) := spec.box.getD (lo.units, (hi - lo).units)
+    let (dx, dy) := slotShift spec b.geom.pageW.units b.geom.pageH.units left w top.units
+      (bot - top).units
+    let dx := mathLen dx
+    let dy := mathLen dy
     let lines := b.cur.lines.mapIdx fun i l =>
       if i < l0 then l else { l with x := l.x + dx, y := l.y + dy }
     let fills := b.cur.fills.mapIdx fun i f =>
@@ -16340,7 +16359,7 @@ private def ColSave.finish (save : ColSave) (b : B) : ColSave :=
 /-- A row stands its boxes on one baseline, each by the
 reference point its `[pos]` names (latex.ltx `\@iiiparbox`). -/
 private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
-  let refOf (k : Nat) (m : ColMark) : Sp :=
+  let refOf (k : Nat) (m : ColMark) : Length :=
     if !m.contributes then save.y else
     let lineEnd := (save.marks[k + 1]?.map (·.lines)).getD b.cur.lines.size
     let firstLine := if m.lines < lineEnd then (b.cur.lines[m.lines]?.map (·.y)).getD m.y
@@ -16352,8 +16371,8 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
     | .center => (save.y + m.y + m.depth) / 2
   let refs := save.marks.mapIdx refOf
   let target := refs.foldl max save.y
-  let dyAt (start : ColMark → Nat) (i : Nat) : Sp := Id.run do
-    let mut d : Sp := 0
+  let dyAt (start : ColMark → Nat) (i : Nat) : Length := Id.run do
+    let mut d : Length := 0
     for k in [0:save.marks.size] do
       if let some m := save.marks[k]? then
         if m.contributes && start m ≤ i then d := target - refs[k]!
@@ -16387,13 +16406,13 @@ private theorem alignRow_shipped_id (b : B) (save : ColSave) :
 
 /-- Place `Op.boxAnchor` where its rule puts it below the band above, then the shift. -/
 private def Spacing.Page.placeAnchor (fs : FontSet) (b : B) (rule : AnchorRule)
-    (shift : Sp) (paints : Bool) : B :=
-  let bs (b : B) : Sp := Ir.leadingFor b.geom.fontSize b.geom.leading
-  let rise (b : B) : Sp := match rule with
+    (shift : Length) (paints : Bool) : B :=
+  let bs (b : B) : Length := Ir.leadingFor b.geom.fontSize b.geom.leading
+  let rise (b : B) : Length := match rule with
     | .tex h => texBoxTop (bs b) b.boxDepth h
     | .flush => b.boxDepth
     | .balanced s => max b.boxDepth (bs b * 3 / 10) + max 0 (s - b.skip.width)
-  let mk (y : Sp) : LineOut :=
+  let mk (y : Length) : LineOut :=
     { x := b.geom.hmargin, y := y, size := 0, segs := #[], setWidth := 0
       regionExtent := some (0, 0) }
   if paints then
@@ -16592,7 +16611,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b.geom.textWidth
   | .tableRule th x w segs =>
     -- Exactly the pending sep below the previous ink, with zero depth, as after TeX's `\hrule`.
-    let mk (y : Sp) : LineOut :=
+    let mk (y : Length) : LineOut :=
       { x := x, y := y, size := 0, segs := segs, setWidth := w, regionExtent := some (th, 0) }
     b := b.fitCommit mk
       (fun b => b.geom.vmargin + th)
@@ -16642,7 +16661,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
            prose := prose }
 
 private theorem stepStaged_hrule_b (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (color : Ir.Color) (th : Sp) :
+    (st : StepSt) (color : Ir.Color) (th : Length) :
     (stepStaged fs imgs st (.hrule color th)).b =
       st.b.placeLine fs st.b.geom.hmargin 0
         #[.rule st.b.geom.textWidth th 0 color] st.b.geom.textWidth := rfl
@@ -16651,7 +16670,7 @@ private theorem stepStaged_regionClose_b (fs : FontSet) (imgs : Image.Store) (st
     (stepStaged fs imgs st .regionClose).b = st.b.closeRegion fs := rfl
 
 private theorem stepStaged_boxAnchor_b (fs : FontSet) (imgs : Image.Store) (st : StepSt)
-    (h : AnchorRule) (shift : Sp) (paints : Bool) :
+    (h : AnchorRule) (shift : Length) (paints : Bool) :
     (stepStaged fs imgs st (.boxAnchor h shift paints)).b = st.b.placeAnchor fs h shift paints :=
   rfl
 
@@ -16666,7 +16685,7 @@ private theorem closeRegion_shipped_id (fs : FontSet) (b : B) :
   split <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 private theorem stepStaged_tableRule_b (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (th x w : Sp) (segs : Array Seg) :
+    (st : StepSt) (th x w : Length) (segs : Array Seg) :
     (stepStaged fs imgs st (.tableRule th x w segs)).b =
       st.b.fitCommit
         (fun y =>
@@ -16684,7 +16703,7 @@ private theorem stepStaged_para_b (fs : FontSet) (imgs : Image.Store)
   split <;> rfl
 
 private theorem stepStaged_picture_b (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    (st : StepSt) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     (stepStaged fs imgs st (.picture x pic leaf origin)).b =
       placePicture fs imgs st.b x pic leaf origin := by
   simp only [stepStaged, Id.run, Id, pure]
@@ -16773,7 +16792,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       if 0 < own then some (Diag.of .W0358
         "a figure or table is taller than the text block; it overruns its page"
         (help := "shrink the float's content, or raise the text height (\\page{ vmargin = ... })")
-        (detail := some s!"{own.toPtString}pt taller"))
+        (detail := some s!"{own.toBpString}pt taller"))
       else if 0 < b2.notesH && 0 < over then some (noteOverrunDiag over)
       else none
     { st2 with b := { b2 with diags := (named.map b2.diags.push).getD b2.diags, noBreak := false } }
@@ -16795,18 +16814,18 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
     (he : PagesExtend b b') : PagesExtend b c :=
   he.imp fun _ hs => h ▸ hs
 
-@[simp] private theorem finishPage_geom (b : B) (o : Sp) (f : Bool) :
+@[simp] private theorem finishPage_geom (b : B) (o : Length) (f : Bool) :
     (b.finishPage o f).geom = b.geom := rfl
-@[simp] private theorem finishPage_docBg (b : B) (o : Sp) (f : Bool) :
+@[simp] private theorem finishPage_docBg (b : B) (o : Length) (f : Bool) :
     (b.finishPage o f).docBg = b.docBg := rfl
 @[simp] private theorem reopenChrome_geom (b : B) : b.reopenChrome.geom = b.geom := by
   unfold Spacing.Page.reopenChrome; split <;> rfl
 @[simp] private theorem reopenChrome_docBg (b : B) :
     b.reopenChrome.docBg = b.docBg := by
   unfold Spacing.Page.reopenChrome; split <;> rfl
-@[simp] private theorem spillPage_geom (b : B) (o : Sp) : (b.spillPage o).geom = b.geom := by
+@[simp] private theorem spillPage_geom (b : B) (o : Length) : (b.spillPage o).geom = b.geom := by
   simp [Spacing.Page.spillPage]
-@[simp] private theorem spillPage_docBg (b : B) (o : Sp) :
+@[simp] private theorem spillPage_docBg (b : B) (o : Length) :
     (b.spillPage o).docBg = b.docBg := by
   simp [Spacing.Page.spillPage]
 @[simp] private theorem placeParaTrailer_geom (j : ParaJob) (brk : Nat) (b : B) :
@@ -16820,17 +16839,17 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
   repeat' split
   all_goals rfl
 
-private theorem finishPage_extends (b : B) {o : Sp} {f : Bool} :
+private theorem finishPage_extends (b : B) {o : Length} {f : Bool} :
     PagesExtend b (b.finishPage o f) :=
   ⟨#[_], rfl⟩
 
-private theorem landTrailing_finishPage_extends (b : B) {o : Sp} {f : Bool} :
+private theorem landTrailing_finishPage_extends (b : B) {o : Length} {f : Bool} :
     PagesExtend b (landTrailing (b.finishPage o f)) := by
   obtain ⟨P, -, h⟩ := landTrailing_finishPage_pages b o f
   exact ⟨#[P.landAnchors b.pendingAnchors], by rw [h]; rfl⟩
 
-private theorem fitWith_extends (b : B) (place : B → Sp → Bool → Sp → B)
-    (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
+private theorem fitWith_extends (b : B) (place : B → Length → Bool → Length → B)
+    (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
     (holdsBlank : Bool) (hp : ∀ b y c o, (place b y c o).pages = b.pages)
     (hs : ∀ b y d, (settle b y d).pages = b.pages) :
     PagesExtend b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
@@ -16841,15 +16860,15 @@ private theorem fitWith_extends (b : B) (place : B → Sp → Bool → Sp → B)
     | (refine pagesExtend_trans (finishPage_extends b (o := 0) (f := b.flushes)) (pagesExtend_of_eq ?_);
        simp [hp, hs, Spacing.Page.noteOverrun]; done)
 
-private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+private theorem fitCommit_extends (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (ns : Array NoteBlock) :
     PagesExtend b
       (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
   fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => rfl)
     fun _ _ _ => rfl
 
-private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
+private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
     (paints : Bool) : PagesExtend b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -16857,8 +16876,8 @@ private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shi
     exact fitCommit_extends ..
   · exact pagesExtend_of_eq rfl
 
-private theorem fitWith_noBreak (b : B) (place : B → Sp → Bool → Sp → B)
-    (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
+private theorem fitWith_noBreak (b : B) (place : B → Length → Bool → Length → B)
+    (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
     (holdsBlank : Bool)
     (hp : ∀ b y c o, (place b y c o).pages = b.pages ∧ (place b y c o).noBreak = b.noBreak)
     (hs : ∀ b y d, (settle b y d).pages = b.pages ∧ (settle b y d).noBreak = b.noBreak)
@@ -16871,17 +16890,17 @@ private theorem fitWith_noBreak (b : B) (place : B → Sp → Bool → Sp → B)
     | (simp [hp, hs, h, Spacing.Page.noteOverrun]; done)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
 
-private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (ns : Array NoteBlock) (h : b.noBreak = true) :
+private theorem fitCommit_noBreak (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (ns : Array NoteBlock) (h : b.noBreak = true) :
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).pages = b.pages ∧
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).noBreak = true :=
   fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => ⟨rfl, rfl⟩)
     (fun _ _ _ => ⟨rfl, rfl⟩) h
 
-private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (ns : Array NoteBlock)
+private theorem fitCommit_note_with_mark (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (ns : Array NoteBlock)
     (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
     ∃ l' ∈ (b.fitCommit mk firstY stepY retryY depth below rl inkBelow
         bottom ns).pendingNotes,
@@ -16891,14 +16910,14 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
   all_goals exact attachNotes_mem _ ns nb hnb l hl
 
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     PagesExtend b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
   exact fitWith_extends b _ _ _ _ _ _ _ _
     (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling]) fun _ _ _ => rfl
 
 private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
+    (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
     (h : b.noBreak = true) :
     (placePicture fs imgs b x pic leaf origin).pages = b.pages ∧
       (placePicture fs imgs b x pic leaf origin).noBreak = true := by
@@ -16907,41 +16926,41 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
     (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling])
     (fun _ _ _ => ⟨rfl, rfl⟩) h
 
-private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
+private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length) :
     PagesExtend b
       (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
         step rs strut) := by
   simp only [Spacing.Page.placeLine, PagesExtend, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact fitCommit_extends ..
 
-private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
+private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
       step rs strut).pages = b.pages := by
   simp only [Spacing.Page.placeLine, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact (fitCommit_noBreak (h := h) ..).1
 
-private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
+private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
       step rs strut).noBreak = true := by
   simp only [Spacing.Page.placeLine, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact (fitCommit_noBreak (h := h) ..).2
 
-private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
+private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
     (nb : NoteBlock) (hnb : nb ∈ ns)
-    (l : LineOut) (hl : l ∈ nb.lines) (step : Option Sp := none) :
+    (l : LineOut) (hl : l ∈ nb.lines) (step : Option Length := none) :
     ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op
         (stepLead := step)).pendingNotes,
       l'.segs = l.segs := by
@@ -16949,10 +16968,10 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
 
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
-    (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
+    (hp : b1.pages = b0.pages) (x size : Length) (segs : Array Seg) (w hang : Length)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
-    (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String)
-    (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
+    (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool) (anchors : Array String)
+    (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length) :
     PagesExtend b0
       (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
         step rs strut) :=
@@ -17068,7 +17087,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed) (f := false)); simp; done)
     | exact pagesExtend_congr rfl (landTrailing_finishPage_extends _ (o := st.b.closingOwed) (f := false))
 
-private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (shift : Sp)
+private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (shift : Length)
     (paints : Bool) (h : b.noBreak = true) :
     (b.placeAnchor fs h' shift paints).pages = b.pages ∧
       (b.placeAnchor fs h' shift paints).noBreak = true := by
@@ -17078,10 +17097,10 @@ private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (sh
     exact fitCommit_noBreak (h := h) ..
   · exact ⟨rfl, h⟩
 
-private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp)
+private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
       step rs strut).pages = b.pages ∧
@@ -17189,15 +17208,15 @@ private theorem BgStep.trans {a b c : B} (h1 : BgStep a b) (h2 : BgStep b c) :
   · exact hp1 hs p h
   · exact Or.inr (hg1 ▸ h)
 
-private theorem BgStep.keepInk {a b : B} (h : BgStep a b) (d : Sp) :
+private theorem BgStep.keepInk {a b : B} (h : BgStep a b) (d : Length) :
     BgStep a (b.keepInk d) :=
   h.trans (BgStep.of_eq rfl rfl rfl)
 
 private theorem BgStep.displayState {a b : B} (h : BgStep a b)
-    (tex : Bool) (e : Option Sp) : BgStep a (b.displayState tex e) :=
+    (tex : Bool) (e : Option Length) : BgStep a (b.displayState tex e) :=
   h.trans (BgStep.of_eq rfl rfl rfl)
 
-private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
+private theorem finishPage_bg (b : B) {o : Length} {f : Bool} :
     b.docBg.isSome = true → ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilled b.geom p := by
   intro hd p hp
@@ -17215,11 +17234,11 @@ private theorem finishPage_bg (b : B) {o : Sp} {f : Bool} :
     · refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl⟩
       simp [effectivePageGround]
 
-private theorem bgStep_finishPage (b : B) {o : Sp} {f : Bool} :
+private theorem bgStep_finishPage (b : B) {o : Length} {f : Bool} :
     BgStep b (b.finishPage o f) :=
   ⟨rfl, id, finishPage_bg b⟩
 
-private theorem bgStep_landTrailing_finishPage (b : B) {o : Sp} {f : Bool} :
+private theorem bgStep_landTrailing_finishPage (b : B) {o : Length} {f : Bool} :
     BgStep b (landTrailing (b.finishPage o f)) := by
   refine ⟨rfl, id, fun hd p hp => ?_⟩
   simp only [landTrailing, Spacing.Page.finishPage, Array.size_push, Nat.add_sub_cancel,
@@ -17243,7 +17262,7 @@ private def bgFilledWith (g : Geom) (c : Ir.Color) (p : PageOut) : Prop :=
     f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed ∧
     f.color = c
 
-private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp} {f : Bool}
+private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Length} {f : Bool}
     (h : b.pageBg = some c) : ∀ p ∈ (b.finishPage o f).pages,
       p ∈ b.pages ∨ bgFilledWith b.geom c p := by
   intro p hp
@@ -17257,12 +17276,12 @@ private theorem finishPage_pageBg_exact (b : B) (c : Ir.Color) {o : Sp} {f : Boo
     rw [h]
     simp [effectivePageGround]
 
-private theorem bgStep_spillPage (b : B) (o : Sp) : BgStep b (b.spillPage o) :=
+private theorem bgStep_spillPage (b : B) (o : Length) : BgStep b (b.spillPage o) :=
   (bgStep_finishPage b (o := 0) (f := b.flushes)).trans
     (BgStep.of_eq (by simp [Spacing.Page.spillPage]) (by simp [Spacing.Page.spillPage]) (by simp [Spacing.Page.spillPage]))
 
-private theorem bgStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
-    (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
+private theorem bgStep_fitWith (b : B) (place : B → Length → Bool → Length → B)
+    (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
     (holdsBlank : Bool)
     (hp : ∀ b y c o, (place b y c o).geom = b.geom ∧ (place b y c o).docBg = b.docBg ∧
       (place b y c o).pages = b.pages)
@@ -17278,14 +17297,14 @@ private theorem bgStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
          simp [hp, hs, Spacing.Page.noteOverrun]
        done)
 
-private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+private theorem bgStep_fitCommit (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (ns : Array NoteBlock) :
     BgStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
   bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => ⟨rfl, rfl, rfl⟩)
     fun _ _ _ => ⟨rfl, rfl, rfl⟩
 
-private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
+private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
     (paints : Bool) : BgStep b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -17293,10 +17312,10 @@ private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shif
     exact bgStep_fitCommit ..
   · exact BgStep.of_eq rfl rfl rfl
 
-private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
+private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length) :
     BgStep b
       (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
         step rs strut) := by
@@ -17306,7 +17325,7 @@ private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
   exact bgStep_fitCommit ..
 
 private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     BgStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
   exact bgStep_fitWith b _ _ _ _ _ _ _ _
@@ -17443,7 +17462,7 @@ private theorem matchingClose_ge (staged : Array Op) (j depth : Nat) :
 
 /-- What a heading keeps of the paragraph after it: its first two
 lines as placement sets them (latex.ltx `\@afterheading`). -/
-private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Sp :=
+private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Length :=
   let box (first : Bool) (prev brk : Nat) : LineBox :=
     lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent b.geom.leading j.size
       (paraLineGeom fs j b first prev brk).1 j.lead
@@ -17460,7 +17479,7 @@ private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) :
 /-- A heading's reserve: the next block's first box and the glue before
 it, a run of headings keeping as one chain (latex.ltx `\@xsect`). -/
 private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
-    (staged : Array Op) (k : Nat) (glue : Sp) : Sp :=
+    (staged : Array Op) (k : Nat) (glue : Length) : Length :=
   if h : k < staged.size then
     match staged[k] with
     | .skip g => keepExt b fs imgs staged (k + 1) (glue + g.width)
@@ -17591,7 +17610,7 @@ private def joinColumnCurrent (a b : B) : B :=
                first := false }) }
 
 /-- Two columns' furthest runs per overfull line, the further of each kept. -/
-private def mergeMost (x y : Std.HashMap String (String × Sp)) : Std.HashMap String (String × Sp) :=
+private def mergeMost (x y : Std.HashMap String (String × Length)) : Std.HashMap String (String × Length) :=
   y.fold (fun acc k v => match acc.get? k with
     | some w => if w.2 < v.2 then acc.insert k v else acc
     | none => acc.insert k v) x
@@ -17880,12 +17899,12 @@ private theorem FrameStep.trans {a b c : B}
   · exact hab.2 p old
   · exact Or.inr (new.trans hab.1)
 
-private theorem FrameStep.keepInk {a b : B} (h : FrameStep a b) (d : Sp) :
+private theorem FrameStep.keepInk {a b : B} (h : FrameStep a b) (d : Length) :
     FrameStep a (b.keepInk d) :=
   h.trans (FrameStep.of_eq rfl rfl)
 
 private theorem FrameStep.displayState {a b : B} (h : FrameStep a b)
-    (tex : Bool) (e : Option Sp) : FrameStep a (b.displayState tex e) :=
+    (tex : Bool) (e : Option Length) : FrameStep a (b.displayState tex e) :=
   h.trans (FrameStep.of_eq rfl rfl)
 
 private def FramesFooted (openings : Array FrameOpening) (b : B) : Prop :=
@@ -17900,7 +17919,7 @@ private theorem FramesFooted.step {openings : Array FrameOpening} {a b : B}
   · exact ha.2 p old
   · exact new ▸ ha.1
 
-private theorem frameStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
+private theorem frameStep_finishPage (b : B) (owed : Length) (flush : Bool) :
     FrameStep b (b.finishPage owed flush) := by
   refine ⟨rfl, fun p hp => ?_⟩
   simp only [Spacing.Page.finishPage, Array.mem_push] at hp
@@ -17908,7 +17927,7 @@ private theorem frameStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
   · exact Or.inl hp
   · exact Or.inr rfl
 
-private theorem frameStep_landTrailing_finishPage (b : B) (owed : Sp) (flush : Bool) :
+private theorem frameStep_landTrailing_finishPage (b : B) (owed : Length) (flush : Bool) :
     FrameStep b (landTrailing (b.finishPage owed flush)) := by
   refine ⟨rfl, fun p hp => ?_⟩
   simp only [landTrailing, Spacing.Page.finishPage, Array.size_push, Nat.add_sub_cancel,
@@ -17922,13 +17941,13 @@ private theorem frameStep_landTrailing_finishPage (b : B) (owed : Sp) (flush : B
   unfold Spacing.Page.reopenChrome
   split <;> rfl
 
-@[simp] private theorem warnSpill_frameStamp (b : B) (over : Sp) :
+@[simp] private theorem warnSpill_frameStamp (b : B) (over : Length) :
     (b.warnSpill over).frameStamp = b.frameStamp := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals rfl
 
-private theorem frameStep_spillPage (b : B) (over : Sp) :
+private theorem frameStep_spillPage (b : B) (over : Length) :
     FrameStep b (b.spillPage over) :=
   (frameStep_finishPage b 0 b.flushes).trans
     ((FrameStep.of_eq (reopenChrome_frameStamp ..) (reopenChrome_pages ..)).trans
@@ -17939,20 +17958,20 @@ private theorem frameStep_attachNotes (b : B) (ns : Array NoteBlock) :
     FrameStep b (b.attachNotes ns) :=
   FrameStep.of_eq rfl rfl
 
-private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Sp)
-    (ruleLine consume : Bool) (overflow : Sp) :
+private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Length)
+    (ruleLine consume : Bool) (overflow : Length) :
     FrameStep b (b.commit l depth below ruleLine consume overflow) :=
   FrameStep.of_eq rfl rfl
 
-private theorem frameStep_noteOverrun (b : B) (o : Sp) : FrameStep b (b.noteOverrun o) :=
+private theorem frameStep_noteOverrun (b : B) (o : Length) : FrameStep b (b.noteOverrun o) :=
   FrameStep.of_eq rfl rfl
 
-private theorem frameStep_warnOverrun (b : B) (y depth : Sp) :
+private theorem frameStep_warnOverrun (b : B) (y depth : Length) :
     FrameStep b (b.warnOverrun y depth) :=
   FrameStep.of_eq rfl rfl
 
-private theorem frameStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
-    (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
+private theorem frameStep_fitWith (b : B) (place : B → Length → Bool → Length → B)
+    (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
     (holdsBlank : Bool) (hp : ∀ b y c o, FrameStep b (place b y c o))
     (hs : ∀ b y d, FrameStep b (settle b y d)) :
     FrameStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
@@ -17968,15 +17987,15 @@ private theorem frameStep_fitWith (b : B) (place : B → Sp → Bool → Sp → 
         · refine FrameStep.trans ?_ (frameStep_noteOverrun ..)
           split <;> exact (frameStep_spillPage b _).trans ((hp ..).trans (hs ..))
 
-private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+private theorem frameStep_fitCommit (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (ns : Array NoteBlock) :
     FrameStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
   frameStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true
     (fun _ _ _ _ => (frameStep_commit ..).trans (frameStep_attachNotes ..))
     fun _ _ _ => frameStep_warnOverrun ..
 
-private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
+private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
     (paints : Bool) : FrameStep b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -17984,10 +18003,10 @@ private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (s
     exact frameStep_fitCommit ..
   · exact FrameStep.of_eq rfl rfl
 
-private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
+private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length) :
     FrameStep b
       (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
         step rs strut) := by
@@ -17997,7 +18016,7 @@ private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
   exact frameStep_fitCommit ..
 
 private theorem frameStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
-    (x : Sp) (segs : Array Seg) :
+    (x : Length) (segs : Array Seg) :
     FrameStep b (b.openDisplayAt j first x segs) := by
   unfold Spacing.Page.openDisplayAt
   split <;> exact FrameStep.of_eq rfl rfl
@@ -18039,7 +18058,7 @@ private theorem frameStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
   split <;> exact FrameStep.of_eq rfl rfl
 
 private theorem frameStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     FrameStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
   exact frameStep_fitWith b _ _ _ _ _ _ _ _
@@ -18321,12 +18340,12 @@ private theorem ReflowStep.trans {a b c : B}
     (hab : ReflowStep a b) (hbc : ReflowStep b c) : ReflowStep a c :=
   ⟨hbc.1.trans hab.1, fun d hd => hbc.2 d (hab.2 d hd)⟩
 
-private theorem ReflowStep.keepInk {a b : B} (h : ReflowStep a b) (d : Sp) :
+private theorem ReflowStep.keepInk {a b : B} (h : ReflowStep a b) (d : Length) :
     ReflowStep a (b.keepInk d) :=
   h.trans (ReflowStep.of_eq rfl rfl)
 
 private theorem ReflowStep.displayState {a b : B} (h : ReflowStep a b)
-    (tex : Bool) (e : Option Sp) : ReflowStep a (b.displayState tex e) :=
+    (tex : Bool) (e : Option Length) : ReflowStep a (b.displayState tex e) :=
   h.trans (ReflowStep.of_eq rfl rfl)
 
 private def Spacing.Page.ReflowsNamed (b : B) : Prop :=
@@ -18343,7 +18362,7 @@ private theorem reflowStep_attachNotes (b : B) (ns : Array NoteBlock) :
     ReflowStep b (b.attachNotes ns) :=
   ReflowStep.of_eq rfl rfl
 
-private theorem reflowStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
+private theorem reflowStep_finishPage (b : B) (owed : Length) (flush : Bool) :
     ReflowStep b (b.finishPage owed flush) := by
   refine ⟨rfl, ?_⟩
   intro d hd
@@ -18362,7 +18381,7 @@ private theorem reflowStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
   unfold Spacing.Page.reopenChrome
   split <;> rfl
 
-private theorem reflowStep_warnSpill (b : B) (over : Sp) :
+private theorem reflowStep_warnSpill (b : B) (over : Length) :
     ReflowStep b (b.warnSpill over) := by
   unfold Spacing.Page.warnSpill
   repeat' split
@@ -18370,18 +18389,18 @@ private theorem reflowStep_warnSpill (b : B) (over : Sp) :
     | exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
     | exact ⟨rfl, fun _ h => h⟩
 
-private theorem reflowStep_spillPage (b : B) (over : Sp) :
+private theorem reflowStep_spillPage (b : B) (over : Length) :
     ReflowStep b (b.spillPage over) :=
   (reflowStep_finishPage b 0 b.flushes).trans
     ((ReflowStep.of_eq (reopenChrome_paragraphBreaks ..) (reopenChrome_diags ..)).trans
       ((reflowStep_warnSpill ..).trans (ReflowStep.of_eq rfl rfl)))
 
-private theorem reflowStep_commit (b : B) (l : LineOut) (depth below : Sp)
-    (ruleLine consume : Bool) (overflow : Sp) :
+private theorem reflowStep_commit (b : B) (l : LineOut) (depth below : Length)
+    (ruleLine consume : Bool) (overflow : Length) :
     ReflowStep b (b.commit l depth below ruleLine consume overflow) :=
   ReflowStep.of_eq rfl rfl
 
-private theorem reflowStep_noteOverrun (b : B) (o : Sp) : ReflowStep b (b.noteOverrun o) :=
+private theorem reflowStep_noteOverrun (b : B) (o : Length) : ReflowStep b (b.noteOverrun o) :=
   ReflowStep.of_eq rfl rfl
 
 private theorem mem_pushed {α : Type} (xs : Array α) (o : Option α) (x : α) (h : x ∈ xs) :
@@ -18390,12 +18409,12 @@ private theorem mem_pushed {α : Type} (xs : Array α) (o : Option α) (x : α) 
   | none => exact h
   | some _ => exact Array.mem_push.mpr (Or.inl h)
 
-private theorem reflowStep_warnOverrun (b : B) (y depth : Sp) :
+private theorem reflowStep_warnOverrun (b : B) (y depth : Length) :
     ReflowStep b (b.warnOverrun y depth) :=
   ⟨rfl, fun d h => mem_pushed b.diags _ d h⟩
 
-private theorem reflowStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
-    (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
+private theorem reflowStep_fitWith (b : B) (place : B → Length → Bool → Length → B)
+    (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
     (holdsBlank : Bool) (hp : ∀ b y c o, ReflowStep b (place b y c o))
     (hs : ∀ b y d, ReflowStep b (settle b y d)) :
     ReflowStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
@@ -18411,15 +18430,15 @@ private theorem reflowStep_fitWith (b : B) (place : B → Sp → Bool → Sp →
         · refine ReflowStep.trans ?_ (reflowStep_noteOverrun ..)
           split <;> exact (reflowStep_spillPage b _).trans ((hp ..).trans (hs ..))
 
-private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
-    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
-    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+private theorem reflowStep_fitCommit (b : B) (mk : Length → LineOut)
+    (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
+    (inkBelow bottom : Length) (ns : Array NoteBlock) :
     ReflowStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
   reflowStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true
     (fun _ _ _ _ => (reflowStep_commit ..).trans (reflowStep_attachNotes ..))
     fun _ _ _ => reflowStep_warnOverrun ..
 
-private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
+private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
     (paints : Bool) : ReflowStep b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
@@ -18427,10 +18446,10 @@ private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (
     exact reflowStep_fitCommit ..
   · exact ReflowStep.of_eq rfl rfl
 
-private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) (step : Option Sp) (rs : Option (Sp × Sp)) (strut : Option Sp) :
+private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
+    (anchors : Array String) (paintPadding : Option Length) (step : Option Length) (rs : Option (Length × Length)) (strut : Option Length) :
     ReflowStep b
       (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
         step rs strut) := by
@@ -18439,12 +18458,12 @@ private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
   apply ReflowStep.keepInk
   exact reflowStep_fitCommit ..
 
-private theorem reflowStep_warnOverfull (b : B) (source : Option Span) (excess : Option Sp) :
+private theorem reflowStep_warnOverfull (b : B) (source : Option Span) (excess : Option Length) :
     ReflowStep b (b.warnOverfull source excess) :=
   ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
 
 private theorem reflowStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
-    (x : Sp) (segs : Array Seg) :
+    (x : Length) (segs : Array Seg) :
     ReflowStep b (b.openDisplayAt j first x segs) := by
   unfold Spacing.Page.openDisplayAt
   split <;> exact ReflowStep.of_eq rfl rfl
@@ -18532,7 +18551,7 @@ private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
   exact named.step (reflowStep_paraLines fs (placedJob fs b j breaks) breaks turns (_, 0, true))
 
 private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
+    (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     ReflowStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
   exact reflowStep_fitWith b _ _ _ _ _ _ _ _
@@ -18735,21 +18754,21 @@ private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
 /-- The placement result before the furniture pass, with the context that pass reads. -/
 public structure Shipped where
   pages : Array PageOut
-  footGap : Sp
+  footGap : Length
   /-- The overflow ladder's records (`Out.overruns`, `Out.needs`,
   `Out.spilled`). -/
-  overruns : Array (FrameOrigin × Sp × Sp) := #[]
-  needs : Array (FrameOrigin × Sp) := #[]
+  overruns : Array (FrameOrigin × Length × Length) := #[]
+  needs : Array (FrameOrigin × Length) := #[]
   spilled : Array FrameOrigin := #[]
   /-- The diagnostics as of shipping, the builder's own and the measure band's. -/
   diags : Array Diag
   paragraphBreaks : Array ParagraphBreaks := #[]
   /-- The builder's furthest run per located overfull line (`Spacing.Page.overfullMost`). -/
-  overfullMost : Std.HashMap String (String × Sp) := {}
+  overfullMost : Std.HashMap String (String × Length) := {}
   labelRequests : Array LabelAudit.Request := #[]
   doc : Doc
   geom : Geom
-  xHeight : Sp
+  xHeight : Length
   pats : Option Hyphen.Patterns
   fs : FontSet
   imgs : Image.Store
@@ -18757,9 +18776,9 @@ public structure Shipped where
   navEntries : Array (String × String)
   logoSpans : Array (Nat × Array Ir.Inline)
   plainFoot : Bool
-  footSize : Sp
-  headY : Sp
-  footY : Sp
+  footSize : Length
+  headY : Length
+  footY : Length
   muted : Ir.Color
 
 /-- The furniture pass's spine: page `i` gains the
@@ -19081,14 +19100,14 @@ private theorem mergeReflow_names (merged : Std.HashMap String Diag) (d : Diag) 
   · exact ⟨rfl, rfl⟩
 
 /-- A located overfull line's record states the furthest any setting of its line ran. -/
-private def mergeOverfull (most : Std.HashMap String (String × Sp)) (d : Diag) : Diag :=
+private def mergeOverfull (most : Std.HashMap String (String × Length)) (d : Diag) : Diag :=
   if d.kind == .W0005 && d.span.isSome then
     match d.subject.bind most.get? with
     | some (lead, e) => { d with detail := some (overfullDetail lead e) }
     | none => d
   else d
 
-private theorem mergeOverfull_names (most : Std.HashMap String (String × Sp)) (d : Diag) :
+private theorem mergeOverfull_names (most : Std.HashMap String (String × Length)) (d : Diag) :
     (mergeOverfull most d).code = d.code ∧ (mergeOverfull most d).subject = d.subject := by
   unfold mergeOverfull
   split
@@ -19097,12 +19116,12 @@ private theorem mergeOverfull_names (most : Std.HashMap String (String × Sp)) (
 
 /-- One report per problem: re-flows merged (`mergeReflow`), overfull lines stated at their
 furthest (`mergeOverfull`), then repeats dropped (`uniqueDiags`). -/
-private def reportOnce (ps : Array ParagraphBreaks) (most : Std.HashMap String (String × Sp))
+private def reportOnce (ps : Array ParagraphBreaks) (most : Std.HashMap String (String × Length))
     (diags : Array Diag) : Array Diag :=
   uniqueDiags (diags.map fun d => mergeOverfull most (mergeReflow (reflowsMerged ps) d))
 
 private theorem reportOnce_covers (ps : Array ParagraphBreaks)
-    (most : Std.HashMap String (String × Sp)) (diags : Array Diag) :
+    (most : Std.HashMap String (String × Length)) (diags : Array Diag) :
     ∀ d ∈ diags, diagReported (reportOnce ps most diags) d.code d.subject := by
   intro d hd
   obtain ⟨e, he, hc, hs⟩ := uniqueDiags_covers _ _
@@ -19172,7 +19191,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
   let numRight := match doc.page.furnitureGap with
     | some g => geom.hmargin - g
     | none => geom.hmargin / 2
-  let runLine (content : Array Inline) (n : Nat) (y size : Sp) (baseStyle : TextStyle)
+  let runLine (content : Array Inline) (n : Nat) (y size : Length) (baseStyle : TextStyle)
       (cache : _) :
       Option LineOut × Array Diag × _ :=
     let sub := substPage n total content
@@ -19202,7 +19221,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
               setWidth := w }, ds, cache)
   -- A band slot is its own line, placed by its side and the paper's edge alone (`bandSlotX`).
   let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
-      (y : Sp) (baseStyle : TextStyle) (cache : _) :
+      (y : Length) (baseStyle : TextStyle) (cache : _) :
       Option LineOut × Array Diag × _ :=
     let (set?, wraps, ds, cache) := setBandSlot pats fs imgs geom xHeight
       { baseStyle with ground := baseStyle.ground.or furnGround } (substPage n total content) cache
@@ -19216,7 +19235,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
       (some { x := bandSlotX geom side w, y := y, size := footSize, segs := segs,
               setWidth := w }, ds, cache)
   -- The logo: the preamble `\logo` is the initial state; a body `\logo` changes it onward.
-  let mkLogoLine (content : Array Inline) (textH : Sp) (cache0 : Std.HashMap String (Array Nat)) :
+  let mkLogoLine (content : Array Inline) (textH : Length) (cache0 : Std.HashMap String (Array Nat)) :
       Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
       itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround } content cache0
@@ -19296,7 +19315,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
           if let some brk := breaks[0]? then
             let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
             -- A glyph run's size stands in for its ascent, the band centring's only estimate.
-            let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
+            let inkH := segs.foldl (init := (0 : Length)) fun m sg => match sg with
               | .image _ _ h _ r => max m (h + r)
               | .run _ _ _ _ _ size _ _ raise _ _ => max m (size + raise)
               | _ => m
@@ -19323,7 +19342,7 @@ shown, whatever reads the file"
               (help := "a band holds one line at a fixed position: shorten \
 the content, or widen the page (\\page{ width = ... })")
               (detail := some s!"on page {i + 1}, \
-{(geom.offMedium l.x l.setWidth).toPtString}pt past its edge"))
+{(geom.offMedium l.x l.setWidth).toBpString}pt past its edge"))
           placed := placed.push (slot, { l with furniture := true })
       let slots := placed
       for hj : j in [0:slots.size] do
@@ -19683,11 +19702,11 @@ private theorem flushGap_leafNext (a : Acc) (r : Rd) :
   repeat' split
   all_goals rfl
 
-private theorem itemsOfInlines_empty (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+private theorem itemsOfInlines_empty (pats : Option Hyphen.Patterns) (size xHeight : Length)
     (fs : FontSet) (baseStyle : TextStyle) (cache : Std.HashMap String (Array Nat))
-    (ctr : LeafCtr) (imgs : Image.Store) (textW textH : Sp) (noteOk : Bool)
+    (ctr : LeafCtr) (imgs : Image.Store) (textW textH : Length) (noteOk : Bool)
     (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) :
+    (roleMetrics : List (String × (Length × Option Length))) (steps : Nat) :
     (itemsOfInlines pats size xHeight fs baseStyle #[] cache ctr imgs textW textH
       noteOk ladder step roleMetrics steps).1 =
       #[.glue { fil := true, parfill := true },
@@ -19703,14 +19722,14 @@ private theorem raggedItems_noGlyph (items : Array Item)
   all_goals first | exact hg | split <;> trivial
 
 private theorem collectPara_leafNext (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat) :
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat) :
     (collectPara r a xs indent false r.geom.fontSize
       (leaf := leaf) (span := span)).leafNext = a.leafNext := by
   simp only [collectPara]
   exact flushGap_leafNext a r
 
 private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat)
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat)
     (ha : a.SourceBound n) (hp : PlainInlines xs)
     (hs : (∃ k, leaf = some k ∧ k < n) ∨ xs = #[]) :
     (collectPara r a xs indent false r.geom.fontSize
@@ -19808,7 +19827,7 @@ private theorem sourceLeafSum_ofDoc (doc : Doc) :
     blocksRaw_leafCount doc.body.toList #[]
 
 private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
-    (indent : Sp) (hp : PlainInlines xs) (hl : r.labels = #[]) :
+    (indent : Length) (hp : PlainInlines xs) (hl : r.labels = #[]) :
     collectParaBlock r a xs indent =
       collectPara r (a.leafRange (Struct.leafCountInlines xs)).1 xs indent false r.geom.fontSize
         (leaf := (a.leafRange (Struct.leafCountInlines xs)).2) (span := Struct.leafCountInlines xs) := by
@@ -19825,7 +19844,7 @@ private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
   · simp [hl]
 
 private theorem collectParaBlock_leafNext (r : Rd) (a : Acc) (xs : Array Inline)
-    (indent : Sp) (hp : PlainInlines xs) (hl : r.labels = #[]) :
+    (indent : Length) (hp : PlainInlines xs) (hl : r.labels = #[]) :
     (collectParaBlock r a xs indent).leafNext = a.leafNext + xs.size := by
   rw [collectParaBlock_plain r a xs indent hp hl]
   simp only [Spacing.Pending.leafRange]
@@ -19833,7 +19852,7 @@ private theorem collectParaBlock_leafNext (r : Rd) (a : Acc) (xs : Array Inline)
   rw [plainInlines_leafCount xs hp]
 
 private theorem sourceBound_collectParaBlock {n : Nat} (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Sp) (ha : a.SourceBound n) (hp : PlainInlines xs)
+    (xs : Array Inline) (indent : Length) (ha : a.SourceBound n) (hp : PlainInlines xs)
     (hn : a.leafNext + xs.size ≤ n) (hl : r.labels = #[]) :
     (collectParaBlock r a xs indent).SourceBound n := by
   rw [collectParaBlock_plain r a xs indent hp hl]
@@ -19970,7 +19989,7 @@ private theorem raggedItems_chars (items : Array Item) :
   all_goals first | rfl | (split <;> rfl)
 
 private theorem collectPara_prose (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat)
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat)
     (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) :
     ∃ j : ParaJob, Spacing.Pending.ops (collectPara r a xs indent false (Spacing.Context.geom r).fontSize
         (leaf := leaf) (span := span)) = (Spacing.Pending.ops (a.flushGap r)).push (Op.ofPara j) ∧
@@ -20104,7 +20123,7 @@ private theorem Spacing.Pending.GapAppend.census {a b : Acc} (h : a.GapAppend b)
 
 
 private theorem collectPara_census (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Sp) (leaf : Option Nat) (span : Nat)
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat)
     (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) (ha : a.Prose)
     (pick : Option Nat → Bool → Bool) :
     let out := collectPara r a xs indent false (Spacing.Context.geom r).fontSize
@@ -20137,7 +20156,7 @@ private theorem collectPara_census (r : Rd) (a : Acc)
     · rfl
 
 private theorem collectParaBlock_census (r : Rd) (a : Acc) (xs : Array Inline)
-    (indent : Sp) (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) (ha : a.Prose)
+    (indent : Length) (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) (ha : a.Prose)
     (pick : Option Nat → Bool → Bool) (hl : r.labels = #[]) :
     let out := collectParaBlock r a xs indent
     out.Prose ∧ (out.Clean → a.Clean ∧
@@ -20313,7 +20332,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   -- The geometry decides whether patterns apply: a card never hyphenates.
   let pats := if geom.hyphenate then pats else none
   let font := fs.body
-  let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
+  let scale (u : Int) : Length := u * geom.fontSize / font.unitsPerEm
   -- The chrome footer draws only on slides that declare it and no `\runningfoot` overrides.
   let footAllowed := doc.chromeAllowed
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
@@ -20322,8 +20341,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   -- One `furnitureBand` per side from its own margin, one ink and gap (`furniture_sides`).
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)
-  let xHeight := fs.xHeightAt geom.fontSize
-  let tokenLen (n : String) : Option Sp :=
+  let xHeight := xHeightOf fs geom.fontSize
+  let tokenLen (n : String) : Option Length :=
     (doc.tokens.find? n).map fun g => (g.resolve geom.fontSize xHeight).width
   let headsep := doc.page.headsep <|> tokenLen "headsep"
   let footskip := doc.page.footskip <|> tokenLen "footskip"
@@ -20397,7 +20416,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       if gt != gb then
         acc.diags.push (Diag.of .N0021
           (s!"header and footer gaps differ by " ++
-            s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
+            s!"{(if gt > gb then gt - gb else gb - gt).toBpString}pt as declared; " ++
             "equal gaps are the default"))
       else acc.diags
     else acc.diags
@@ -20414,7 +20433,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
             s!"'{element}' sets more space below the heading than above it"
             (help := s!"a heading binds to the text it introduces: in " ++
               s!"\\style\{{element}}\{...} keep 'after' at most 'before'")
-            (detail := some s!"{down.toPtString}pt below, {up.toPtString}pt above"))
+            (detail := some s!"{down.toBpString}pt below, {up.toBpString}pt above"))
         else ds
       | _, _ => ds
     | none => ds) preDiags
@@ -20447,9 +20466,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
         let alphabet := (List.range 26).foldl (fun acc k =>
           acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
         if alphabet > 0 then
-          let l45 := 1415 * alphabet / 1000 + 2303 * spPerPt / 100
-          let l65 := 2042 * alphabet / 1000 + 3341 * spPerPt / 100
-          let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
+          let l45 := 1415 * alphabet / 1000 + pt 2303 / 100 -- memoir's 45-character line
+          let l65 := 2042 * alphabet / 1000 + pt 3341 / 100 -- memoir's 65-character line
+          let over : Length := 200 * (geom.textWidth - l45)
+          let cpl10 : Int := 450 + over / (l65 - l45)
           if cpl10 < 450 || cpl10 > 900 then
             let dir := if cpl10 > 900 then "narrow" else "widen"
             b.diags.push (Diag.of .W0201
@@ -20754,7 +20774,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   extract_lets d ps _ _ _ _ _ _ _ _
     _ _ _ _ _ _ _ _ _ _ _
     _ _ _ rd acc0 acc accF _ _ _ b0
-    alphabet _ _ cpl10 dir post
+    alphabet _ _ _ dir post
   have hacc := collectDocBody_census rd d frameSpans acc0 hp
     (by rcases hh with hh | hh <;>
       simp only [rd, ps, hh, Bool.false_eq_true, ↓reduceIte, ite_self])
@@ -20901,7 +20921,7 @@ public def fittedDoc (doc : Doc) (decisions : Array (FrameOrigin × Ir.FrameFit)
 /-- What the ladder names of the setting `final`: each marked
 step that reached past its text area, continued or overfull. -/
 public def fitAccount (first final : Out) : Array (FrameOrigin × Ir.FrameFit) :=
-  let measured (o : FrameOrigin) (x : Sp) : Sp :=
+  let measured (o : FrameOrigin) (x : Length) : Length :=
     ((first.overruns.find? (·.1 == o)).map (·.2.1)).getD x
   let steps := final.overruns.map fun (o, x, _) =>
     if final.spilled.contains o then (o, Ir.FrameFit.continued (measured o x))
@@ -20910,13 +20930,13 @@ public def fitAccount (first final : Out) : Array (FrameOrigin × Ir.FrameFit) :
     (o, Ir.FrameFit.continued (measured o 0))
 
 /-- The overruns the continuing steps of frame `k` measured. -/
-private def continuedBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : List Sp :=
+private def continuedBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : List Length :=
   steps.filterMap fun p => match p.2 with
     | .continued c => if p.1.source == k then some c else none
     | .natural | .shrunk | .overfull _ => none
 
 /-- The overhangs the overfull steps of frame `k` stood. -/
-private def overfullBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : List Sp :=
+private def overfullBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : List Length :=
   steps.filterMap fun p => match p.2 with
     | .overfull v => if p.1.source == k then some v else none
     | .natural | .shrunk | .continued _ => none
@@ -20924,7 +20944,7 @@ private def overfullBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : L
 /-- Frame `k`'s one account from its steps: continued with
 the largest overrun where any continued, else overfull. -/
 private def frameEntry (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) :
-    Option (Nat × Ir.FrameFit × Option Sp) :=
+    Option (Nat × Ir.FrameFit × Option Length) :=
   match (continuedBy steps k).max?, (overfullBy steps k).max? with
   | some c, v => some (k, .continued c, v)
   | none, some v => some (k, .overfull v, none)
@@ -20932,18 +20952,18 @@ private def frameEntry (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) :
 
 /-- One account per frame each step of `steps` moved, by its index in the PDF's view. -/
 public def frameAccount (steps : List (FrameOrigin × Ir.FrameFit)) :
-    List (Nat × Ir.FrameFit × Option Sp) :=
+    List (Nat × Ir.FrameFit × Option Length) :=
   (steps.map (·.1.source)).eraseDups.filterMap (frameEntry steps)
 
 private theorem frameEntry_moved (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat)
-    (e : Nat × Ir.FrameFit × Option Sp) (h : frameEntry steps k = some e) :
+    (e : Nat × Ir.FrameFit × Option Length) (h : frameEntry steps k = some e) :
     e.1 = k ∧ e.2.1.moved := by
   unfold frameEntry at h
   split at h <;> simp only [Option.some.injEq, reduceCtorEq] at h <;> subst h <;>
     exact ⟨rfl, rfl⟩
 
 public theorem frameAccount_moved (steps : List (FrameOrigin × Ir.FrameFit))
-    (e : Nat × Ir.FrameFit × Option Sp) (he : e ∈ frameAccount steps) : e.2.1.moved := by
+    (e : Nat × Ir.FrameFit × Option Length) (he : e ∈ frameAccount steps) : e.2.1.moved := by
   obtain ⟨k, -, hk⟩ := List.mem_filterMap.mp he
   exact (frameEntry_moved steps k e hk).2
 
@@ -20998,7 +21018,7 @@ it moved. -/
 public def ladderDiags (labels : Array (Option String)) (frameSpans : Array (Nat × Span))
     (first final : Out) : Array Diag :=
   let entries := (frameAccount (fitAccount first final).toList).toArray
-  let overhang (d : Diag) : Option Sp := entries.findSome? fun (k, fit, _) =>
+  let overhang (d : Diag) : Option Length := entries.findSome? fun (k, fit, _) =>
     match fit with
     | .overfull o => if boxPastAt labels frameSpans k d then some o else none
     | .natural | .shrunk | .continued _ => none
@@ -21007,7 +21027,7 @@ public def ladderDiags (labels : Array (Option String)) (frameSpans : Array (Nat
       if (fit matches .overfull _) && final.diags.any (boxPastAt labels frameSpans k) then none
       else fitDiag fit (labels[k]?.getD none) (frameSite frameSpans k) also
 
-private theorem joined_keeps (x : Option Sp) (d : Diag) :
+private theorem joined_keeps (x : Option Length) (d : Diag) :
     (x.elim d (boxPastJoined d)).kind = d.kind ∧ (x.elim d (boxPastJoined d)).span = d.span ∧
       (x.elim d (boxPastJoined d)).subject = d.subject := by
   cases x <;> exact ⟨rfl, rfl, rfl⟩
@@ -21709,8 +21729,10 @@ public theorem add_pending_exact (a : Pending) (g : Glue) :
   | none => simp [h]
   | some last =>
     by_cases h0 : last.width == 0
-    · simp [h, h0]
-    · by_cases hlt : last.width < g.width <;> simp [h, h0, hlt]
+    · have h0' : last.width.units = 0 := by simpa using h0
+      simp [h, h0, h0']
+    · have h0' : last.width.units ≠ 0 := by simpa using h0
+      by_cases hlt : last.width < g.width <;> simp [h, h0, h0', hlt]
 
 public theorem add_ordinary (a : Pending) (g : Glue) (h : Ordinary a) :
     Ordinary (add a g) := by
@@ -21755,13 +21777,13 @@ public theorem flush_emits_exact (a : Pending) (r : Context) (h : Ordinary a) :
 
 /-- The measurements `placeLine` reads for one ordinary text line. -/
 public structure LineInput where
-  origin : Sp
-  inkBelow : Sp
-  floor : Sp
+  origin : Length
+  inkBelow : Length
+  floor : Length
   skip : Glue
-  shrink : Sp
+  shrink : Length
 
-public def input (r : Context) (b : Page) (size : Sp) (segs : Array Seg) : LineInput :=
+public def input (r : Context) (b : Page) (size : Length) (segs : Array Seg) : LineInput :=
   let box := lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   ⟨b.y + b.textGap box (segs.any Seg.isMath) (segsInk r.fs segs).1 + b.surfaceTop, box.inkBelow,
@@ -21774,13 +21796,13 @@ public def Ready (b : Page) (segs : Array Seg) : Prop :=
   b.prevBand = .text ∧ ruleOnly segs = false ∧ b.notesH = 0 ∧
   b.ignoreDepth = false ∧ b.texAfter = false ∧ b.opening = false
 
-public def baselines (b : Page) : Array Sp := b.cur.lines.map (·.y)
+public def baselines (b : Page) : Array Length := b.cur.lines.map (·.y)
 public def shipped (b : Page) : Array PageOut := b.pages
 public def queuedGlue (b : Page) : Glue := b.skip
 
 /-- The placement steps for the skips `flushGap` emitted, then `placeLine`. -/
-public def place (a : Pending) (r : Context) (b : Page) (x size : Sp)
-    (segs : Array Seg) (width : Sp) : Page :=
+public def place (a : Pending) (r : Context) (b : Page) (x size : Length)
+    (segs : Array Seg) (width : Length) : Page :=
   let st : StepSt := { b }
   let st := (flushed a r).foldl (fun st g => stepStaged r.fs r.imgs st (.skip g)) st
   st.b.placeLine r.fs x size segs width
@@ -21804,8 +21826,8 @@ private theorem skip_steps (r : Context) (b : B) (gs : Array Glue)
       simpa [Spacing.Page.fresh] using h)
   simpa using hh
 
-private theorem line_placement (r : Context) (b : Page) (x size : Sp)
-    (segs : Array Seg) (width : Sp) (h : Ready b segs)
+private theorem line_placement (r : Context) (b : Page) (x size : Length)
+    (segs : Array Seg) (width : Length) (h : Ready b segs)
     (hfit : b.y + b.skip.width +
       (b.textGap (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
         b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop +
@@ -21828,13 +21850,13 @@ private theorem line_placement (r : Context) (b : Page) (x size : Sp)
   simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
   simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn,
     noteFloor, htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
-    Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true,
+    Bool.false_eq_true, ite_false, ite_true, Length.add_zero, beq_self_eq_true,
     Option.getD_none]
   simp only [hfit, true_or, ite_true, Spacing.Page.commit, attachNotes_empty_id]
   simp
 
-public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
-    (segs : Array Seg) (width : Sp) (h : Ready b segs)
+public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Length)
+    (segs : Array Seg) (width : Length) (h : Ready b segs)
     (hfit : let i := input r b size segs
       let g := (flushed a r).foldl Glue.add i.skip
       i.origin + g.width + i.inkBelow - i.floor ≤ i.shrink + g.shrink) :
@@ -21855,8 +21877,8 @@ public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
       Spacing.Page.bottom b ≤ b.pageShrink + g.shrink
     unfold input at hfit
     dsimp only at hfit
-    simpa only [g, Int.sub_eq_add_neg, Int.neg_add, Int.neg_neg,
-      Int.add_assoc, Int.add_comm, Int.add_left_comm] using hfit)
+    simpa only [g, Length.sub_eq_add_neg, Length.neg_add, Length.neg_neg,
+      Length.add_assoc, Length.add_comm, Length.add_left_comm] using hfit)
   dsimp only [place]
   rw [skip_steps r b _ hf]
   constructor
@@ -21864,7 +21886,7 @@ public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
   · rw [hp.2]
     simp only [baselines, input, g, Spacing.Page.surfaceTop,
       Spacing.Page.textGap, Spacing.Page.previousMath, Spacing.Page.boxDepth,
-      Int.add_assoc, Int.add_comm, Int.add_left_comm]
+      Length.add_assoc, Length.add_comm, Length.add_left_comm]
 
 end LeanTex.Core.Layout.Spacing
 
@@ -21911,8 +21933,8 @@ private theorem close_natural (b : B)
   rw [hl]
   have hm := congrArg (Array.map (fun p => p.lines)) hP
   rw [← hm]
-  simp [Spacing.Page.finishPage, Int.not_lt.mpr hn, hf, hs,
-    hv, VDist.aboveShare, VDist.top, filShare, Spacing.Page.noteLines, hp]
+  simp [Spacing.Page.finishPage, Length.not_lt.mpr hn, hf, hs,
+    hv, VDist.aboveShare, VDist.top, filShare, Spacing.Page.noteLines, hp, mul_zero_div]
 
 private theorem closeLast_ships_exact (b : B) (hb : b.cur.blank = false) :
     (closeLast b).pages.size = b.pages.size + 1 ∧
@@ -21945,7 +21967,7 @@ private inductive LinesRise : List LineOut → List LineOut → Prop
 private theorem LinesRise.refl (ls : List LineOut) : LinesRise ls ls := by
   induction ls with
   | nil => exact .nil
-  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, rfl, Int.le_refl _⟩ ih
+  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih
 
 private theorem LinesRise.append {as bs cs ds : List LineOut}
     (h : LinesRise as bs) (h' : LinesRise cs ds) :
@@ -21969,24 +21991,24 @@ private structure PageRise (a b : B) : Prop where
   pages : a.pages = b.pages
   regions : a.openRegions = b.openRegions
 
-private def nextBaseline (fs : FontSet) (b : B) (size : Sp)
-    (segs : Array Seg) (first : Option Sp) (step : Option Sp := none) : Sp :=
+private def nextBaseline (fs : FontSet) (b : B) (size : Length)
+    (segs : Array Seg) (first : Option Length) (step : Option Length := none) : Length :=
   b.y + b.skip.width + first.getD
     (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
       b.geom.leading size segs step) (segs.any Seg.isMath) (segsInk fs segs).1) + b.surfaceTop
 
 /-- Numeric fit at the next call to the placer. -/
-private def LineFits (fs : FontSet) (b : B) (size : Sp)
-    (segs : Array Seg) (first : Option Sp) (step : Option Sp := none) : Prop :=
+private def LineFits (fs : FontSet) (b : B) (size : Length)
+    (segs : Array Seg) (first : Option Length) (step : Option Length := none) : Prop :=
   nextBaseline fs b size segs first step +
     (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
       b.geom.leading size segs step).inkBelow + b.surfaceBottom -
     b.bottom ≤ b.pageShrink + b.skip.shrink
 
-private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
-    (leaf : Option Nat) (first : Option Sp) (opens : Bool) (anchors : Array String)
-    (step : Option Sp) (strut : Option Sp)
+private theorem ordinary_line (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (expand : Int) (counted : Bool)
+    (leaf : Option Nat) (first : Option Length) (opens : Bool) (anchors : Array String)
+    (step : Option Length) (strut : Option Length)
     (h : Ready b segs) (hf : LineFits fs b size segs first step) :
     b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors none
         step none strut =
@@ -22012,15 +22034,15 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
   dsimp only
   simp only [Spacing.Page.fresh, PageOut.blank, hc, hs, Bool.false_and, hp, hr, hi, Spacing.Page.peerGap, hn,
     noteFloor, ht, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
-    Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true]
+    Bool.false_eq_true, ite_false, ite_true, Length.add_zero, beq_self_eq_true]
   simp only [LineFits, nextBaseline] at hf
   simp only [hf, true_or, ite_true, attachNotes_empty_id]
   rfl
 
-private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
-    (leaf : Option Nat) (first : Option Sp) (opens : Bool)
-    (aa ab : Array String) (step : Option Sp) (strut : Option Sp) (h : PageRise a b)
+private theorem line_rise (fs : FontSet) (a b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (expand : Int) (counted : Bool)
+    (leaf : Option Nat) (first : Option Length) (opens : Bool)
+    (aa ab : Array String) (step : Option Length) (strut : Option Length) (h : PageRise a b)
     (ha : Ready a segs) (hb : Ready b segs)
     (hfa : LineFits fs a size segs first step) (hfb : LineFits fs b size segs first step) :
     PageRise (a.placeLine fs x size segs w hang expand #[] counted leaf first none opens aa none
@@ -22030,7 +22052,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
   have hy : nextBaseline fs a size segs first step ≤ nextBaseline fs b size segs first step := by
     simp only [nextBaseline, Spacing.Page.surfaceTop, h.regions, h.geom, h.ascent,
       h.capHeight, h.descent, Spacing.Page.textGap, h.below, h.depth, h.math]
-    exact Int.add_le_add_right (Int.add_le_add_right h.cursor _) _
+    exact Length.add_le_add_right (Length.add_le_add_right h.cursor _) _
   rw [ordinary_line fs a x size segs w hang expand counted leaf first opens aa step strut ha hfa,
       ordinary_line fs b x size segs w hang expand counted leaf first opens ab step strut hb hfb]
   constructor
@@ -22043,7 +22065,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
   · simp [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.boxDepth]
   · simp only [Spacing.Page.previousMath, Spacing.Page.displayState, Spacing.Page.keepInk,
       Spacing.Page.commit, Array.back?_push, Option.any_some]
-  · simpa only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Int.add_zero] using hy
+  · simpa only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Length.add_zero] using hy
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Array.toList_push]
     exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, rfl, hy⟩ .nil)
   · exact h.pages
@@ -22073,7 +22095,7 @@ private theorem trailer_rise (j : ParaJob) (brk : Nat) (a b : B) (h : PageRise a
   split
   · refine { h' with cursor := ?_ }
     dsimp only
-    simpa only [Int.add_assoc] using Int.add_le_add_right h'.cursor _
+    simpa only [Length.add_assoc] using Length.add_le_add_right h'.cursor _
   · exact { h' with }
 
 private theorem paragraph_step (fs : FontSet) (j : ParaJob)
@@ -22102,10 +22124,10 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
 
-private theorem placeLine_fits_pages (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
-    (leaf : Option Nat) (first : Option Sp) (opens : Bool) (anchors : Array String)
-    (step : Option Sp) (strut : Option Sp)
+private theorem placeLine_fits_pages (fs : FontSet) (b : B) (x size : Length)
+    (segs : Array Seg) (w hang : Length) (expand : Int) (counted : Bool)
+    (leaf : Option Nat) (first : Option Length) (opens : Bool) (anchors : Array String)
+    (step : Option Length) (strut : Option Length)
     (h : Ready b segs) (hf : LineFits fs b size segs first step) :
     (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors none
         step none strut).pages = b.pages := by
@@ -22312,7 +22334,7 @@ public def textInk : Seg → List Char
 public def inkLine (l : LineOut) : Bool :=
   !l.furniture && !l.note && l.segs.toList.flatMap textInk != []
 
-public def inkBaselines (o : Out) : List Sp :=
+public def inkBaselines (o : Out) : List Length :=
   (o.pages.toList.flatMap fun p => p.lines.toList.filter inkLine).map (·.y)
 
 private theorem inkLine_rise {a b : LineOut} (h : LineRise a b) :
@@ -22330,9 +22352,9 @@ private theorem LinesRise.filter {as bs : List LineOut} (h : LinesRise as bs) :
     · exact ih
 
 private theorem LinesRise.last {as bs : List LineOut} (h : LinesRise as bs) :
-    ((as.map (·.y)).getLast?.getD 0 : Int) ≤ (bs.map (·.y)).getLast?.getD 0 := by
+    ((as.map (·.y)).getLast?.getD 0 : Length) ≤ (bs.map (·.y)).getLast?.getD 0 := by
   induction h with
-  | nil => exact Int.le_refl _
+  | nil => exact Length.le_refl _
   | @cons a b as bs hl ht ih =>
     cases ht with
     | nil => simpa using hl.baseline
@@ -22475,7 +22497,7 @@ private theorem para_step_b (fs : FontSet) (st : FlowSt) (j : ParaJob)
     (t : Task (Array Nat)) (hk : j.keepNext ≤ 0) :
     (stepFlow fs {} st (.para j t)).placed.b = placePara fs st.placed.b j t.get := by
   simp only [stepFlow, stepStaged]
-  have hn : ¬ (0 : Int) < j.keepNext := Int.not_lt.mpr hk
+  have hn : ¬ (0 : Length) < j.keepNext := Length.not_lt.mpr hk
   simp only [Spacing.Page.keepHeading, hn, decide_false, Bool.false_and, Bool.false_eq_true, ite_false]
   split <;> rfl
 
@@ -22488,7 +22510,7 @@ private theorem paragraph_tail_place (fs : FontSet) (ops : Array Op)
   induction h generalizing st with
   | @last i hi hop hend =>
     rw [placeFlowFrom]
-    simp only [hi, reduceDIte, hop, keepAt, Int.not_lt.mpr hk, ite_false]
+    simp only [hi, reduceDIte, hop, keepAt, Length.not_lt.mpr hk, ite_false]
     rw [placeFlowFrom]
     simp only [hend, Nat.lt_irrefl, reduceDIte]
     simpa using para_step_b fs st j t hk
@@ -22590,10 +22612,10 @@ public theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir
     (hs' : ParagraphSafe fs b j breaks gs')
     (hw : (gs.foldl Glue.add (queuedGlue b)).width ≤
       (gs'.foldl Glue.add (queuedGlue b)).width) :
-    ((inkBaselines (run geom fs none before)).getLast?.getD 0 : Int) ≤
+    ((inkBaselines (run geom fs none before)).getLast?.getD 0 : Length) ≤
       (inkBaselines (run geom fs none after)).getLast?.getD 0 := by
   have hb : PageRise (boundaryStart b gs) (boundaryStart b gs') :=
-    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, Int.add_le_add_left hw _,
+    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, Length.add_le_add_left hw _,
       LinesRise.refl _, rfl, rfl⟩
   have hp := paragraph_rise fs j breaks _ _ hs.2.2.1 hs.2.2.2.1 hb
     hs.2.2.2.2.1 hs'.2.2.2.2.1
@@ -22621,7 +22643,7 @@ deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
 deriving instance DecidableEq for NoteBlock, DisplayJob
 
 private def bucketEq :
-    DecidableEq (Std.DHashMap.Internal.AssocList Nat (fun _ => Sp))
+    DecidableEq (Std.DHashMap.Internal.AssocList Nat (fun _ => Length))
   | .nil, .nil => isTrue rfl
   | .nil, .cons _ _ _ => isFalse (by intro h; cases h)
   | .cons _ _ _, .nil => isFalse (by intro h; cases h)
@@ -22630,7 +22652,7 @@ private def bucketEq :
     decidable_of_iff (a = a' ∧ b = b' ∧ t = t') (by simp)
 
 -- Representation equality, stronger than map equivalence, so certificates substitute exactly.
-private instance : DecidableEq (Std.HashMap Nat Sp) := fun a b =>
+private instance : DecidableEq (Std.HashMap Nat Length) := fun a b =>
   letI := bucketEq
   decidable_of_iff
     (a.inner.inner.size = b.inner.inner.size ∧
@@ -22649,14 +22671,14 @@ deriving instance DecidableEq for Paragraph
 starts at its default (`program_initial_exact`). -/
 private structure InitialInput where
   geom : Geom
-  ascent : Sp
-  descent : Sp
-  capHeight : Sp
-  xHeight : Sp
+  ascent : Length
+  descent : Length
+  capHeight : Length
+  xHeight : Length
   docBg : Option Ir.Color
-  footins : Sp
+  footins : Length
   noteInk : Ir.Color
-  footGap : Sp
+  footGap : Length
   diags : Array Diag
   deriving DecidableEq
 
@@ -22703,7 +22725,7 @@ private def preparedTail? (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
       have hn : p.ops[0] ≠ .floatOpen := by simp [heq]
       have hkeep : keepAt p.initial fs {} p.ops 0 p.ops[0] =
           .para first firstTask := by
-        simp [heq, keepAt, Int.not_lt.mpr hk]
+        simp [heq, keepAt, Length.not_lt.mpr hk]
       let st := stepFlow fs {} { placed := { b := p.initial } }
         (keepAt p.initial fs {} p.ops 0 p.ops[0])
       let input : TailInput :=

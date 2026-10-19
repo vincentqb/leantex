@@ -6,6 +6,9 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-- A `gridEnvs` row's probe: the cells `a`–`d` in the shape its column
 model takes — one column for `gather` and a one-column spec, two otherwise. -/
 def gridProbeBody (kind : Math.GridKind) : String :=
@@ -88,17 +91,17 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
 (got '{text}')" (text == expected)
   -- `aligned` stands its pairs `\minalignsep` (10 pt) apart; boundary cells take half each.
   let pairDoc := dvDoc "" "\\[ \\begin{aligned} a &= b & c &= d \\end{aligned} \\]"
-  let runsOf (src : String) : Array (String × Dim.Sp × Dim.Sp) :=
+  let runsOf (src : String) : Array (String × Dim.Length × Dim.Length) :=
     (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l =>
       (lineRuns l).map fun (_, text, x, w) => (text, x, w)
   let letter (c : Char) : String := String.singleton (mathLetter c)
   match (runsOf pairDoc).find? (·.1 == letter 'b'), (runsOf pairDoc).find? (·.1 == letter 'c') with
   | some (_, xb, wb), some (_, xc, _) =>
     t s!"amsmath aligned: its column pairs stand \\minalignsep apart, got {spMilli (xc - (xb + wb))}"
-      (xc - (xb + wb) == Math.minAlignSep)
+      (xc - (xb + wb) == (Dim.Length.ofUnits Math.minAlignSep))
   | _, _ => t "amsmath aligned: the two-pair probe ships its cells" false
   let pairHtml := (HtmlDoc.emit {} (elabStr pairDoc).1).1
-  let sep := HtmlDoc.classLengthCss (Dim.pt 10) (Dim.Length.ofSp Math.minAlignSep)
+  let sep := HtmlDoc.classLengthCss (Dim.pt 10) (Dim.SymLength.ofLength (Dim.Length.ofUnits Math.minAlignSep))
   t s!"amsmath aligned: the browser's pair boundary carries the separation, half a side, \
 as a print length ({sep})"
     (hasStr pairHtml s!"padding-left: 0; padding-right: calc({sep} / 2)" &&
@@ -111,7 +114,7 @@ as a print length ({sep})"
      ("c &= b & e &= b \\\\ c &= d & e &= b \\\\", false)]
   let trailDoc (rows : String) : String :=
     dvDoc "" s!"$x \\begin\{aligned} {rows} \\end\{aligned}$ Zeta"
-  let gapToWord (src : String) : Option Dim.Sp := do
+  let gapToWord (src : String) : Option Dim.Length := do
     let runs := runsOf src
     let (_, xz, _) ← runs.find? (·.1 == "Zeta")
     let ends := (runs.filter fun (text, x, _) => text != "Zeta" && !text.isEmpty && x < xz).map
@@ -124,7 +127,7 @@ as a print length ({sep})"
       | some g =>
         t s!"amsmath aligned: '{rows}' stands {if trails then "\\minalignsep" else "nothing"} \
 after its last pair, got {spMilli (g - base)}"
-          (g - base == if trails then Math.minAlignSep else 0)
+          (g - base == if trails then (Dim.Length.ofUnits Math.minAlignSep) else 0)
       | none => t s!"amsmath aligned: the '{rows}' probe ships its marks" false
     let trailHtml (rows : String) : String := (HtmlDoc.emit {} (elabStr (trailDoc rows)).1).1
     t "amsmath aligned: the browser stands a trailing pair's \\minalignsep after its last cells"
@@ -141,13 +144,13 @@ after its last pair, got {spMilli (g - base)}"
     t s!"amsmath aligned: '{redef.trimAscii}' ships the page without it"
       (runsOf (dvDoc redef pairs) == runsOf (dvDoc "" pairs))
   -- An alignment sets its cells in display style wherever it stands.
-  let glyphSizes (src : String) : Array Dim.Sp :=
+  let glyphSizes (src : String) : Array Dim.Length :=
     let (d, _) := elabStr src
     (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap fun s =>
       match s with
       | .run _ _ _ _ glyphs sz _ _ _ _ _ => if glyphs.isEmpty then none else some sz
       | _ => none
-  let oneSize (xs : Array Dim.Sp) : Bool :=
+  let oneSize (xs : Array Dim.Length) : Bool :=
     !xs.isEmpty && xs.all (· == xs[0]!)
   let inlineFrac := dvDoc "" "$x\\frac{a}{b}$"
   let alignedFrac := dvDoc "" "$x\\begin{aligned}\\frac{a}{b}\\end{aligned}$"
@@ -166,7 +169,7 @@ after its last pair, got {spMilli (g - base)}"
     (hasStr fx "<mo stretchy=\"false\">(</mo>" &&
       hasStr fx "<mo stretchy=\"true\" symmetric=\"true\">{</mo>")
   -- `cases` sets `\arraystretch` 1.2, so its rows stand 1.2 times an array's pitch apart.
-  let pitchOf (src : String) : Option Dim.Sp := do
+  let pitchOf (src : String) : Option Dim.Length := do
     let (d, _) := elabStr src
     let raises := (bodyLines (layoutOf fs d)).flatMap fun l => l.segs.filterMap
       fun s => match s with
@@ -194,7 +197,7 @@ after its last pair, got {spMilli (g - base)}"
   let small (cells : String) : String :=
     dvDoc "" s!"$\\begin\{smallmatrix}{cells}\\end\{smallmatrix}$"
   let near (a b : Int) : Bool := (a - b).natAbs ≤ 1
-  let runsOf (src : String) : Array (Dim.Sp × Bool × Dim.Sp) :=
+  let runsOf (src : String) : Array (Dim.Length × Bool × Dim.Length) :=
     (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => l.segs.filterMap fun s =>
       match s with
       | .run _ _ _ w glyphs sz _ _ _ _ _ => some (w, !glyphs.isEmpty, sz)
@@ -202,7 +205,7 @@ after its last pair, got {spMilli (g - base)}"
   match (glyphSizes (dvDoc "" "$x$"))[0]? with
   | none => t "amsmath smallmatrix: the formula size was read" false
   | some size =>
-    let permille (x : Dim.Sp) : Int := x * 1000 / size
+    let permille (x : Dim.Length) : Int := x * 1000 / size
     let width (src : String) : Int := permille ((runsOf src).foldl (· + ·.1) 0)
     t "amsmath smallmatrix: its cells set at the script size"
       ((elabStr (small "a&b\\\\c&d")).2.isEmpty &&
@@ -298,7 +301,7 @@ def amsTagTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (roman, bold, math) := (0, 1, 4)
   let v (c : Char) : Char := MathParse.italicVar c
   let ast := ((MathParse.ctrlAtom.lookup "ast").map (·.2)).getD '?'
-  let glyphs (src : String) : Array (Nat × Char × Dim.Sp) :=
+  let glyphs (src : String) : Array (Nat × Char × Dim.Length) :=
     (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => l.segs.flatMap fun s =>
       match s with
       | .run idx _ _ _ gs _ _ _ raise _ _ => gs.map fun g => (idx, g.2.1, raise)
@@ -377,7 +380,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     (expansions.map (·.1) == MathParse.fracCmds.map (·.1))
   let laid (src : String) : Array Layout.LineOut :=
     bodyLines (layoutOf fs (elabStr (dvDoc "" src)).1)
-  let lineWidth (src : String) : Dim.Sp := (((laid src)[0]?).map (·.setWidth)).getD 0
+  let lineWidth (src : String) : Dim.Length := (((laid src)[0]?).map (·.setWidth)).getD 0
   for (cmd, gen) in expansions do
     let (d, ds) := elabStr (dvDoc "" s!"$\\{cmd}\{a}\{b}$")
     t s!"amsmath fraction \\{cmd}: no diagnostic" ds.isEmpty
@@ -387,7 +390,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     let (w, wb) := (lineWidth s!"$x\\{cmd}\{a}\{b}y$", lineWidth s!"$x\{\\{cmd}\{a}\{b}}y$")
     t s!"amsmath fraction \\{cmd}: spaces as the Ord its braces make ({w} vs {wb})"
       (w > 0 && w == wb)
-  let sizeOf (src : String) (c : Char) : Option Dim.Sp :=
+  let sizeOf (src : String) (c : Char) : Option Dim.Length :=
     ((laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
       | .run _ _ _ _ gs sz _ _ _ _ _ => if gs.any (·.2.1 == c) then some sz else none
       | _ => none).head?
@@ -399,7 +402,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     ((sizeOf "$x\\frac{a}{b}$" a).isSome &&
       sizeOf "\\[ x\\tfrac{a}{b} \\]" a == sizeOf "$x\\frac{a}{b}$" a &&
       sizeOf "\\[ x\\tfrac{a}{b} \\]" a != sizeOf "\\[ x\\tfrac{a}{b} \\]" x)
-  let rules (src : String) : List Dim.Sp :=
+  let rules (src : String) : List Dim.Length :=
     (laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
       | .rule _ th _ _ => some th
       | _ => none
@@ -445,7 +448,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
 own kerns. -/
 def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
-  let widthOf (body : String) : Dim.Sp :=
+  let widthOf (body : String) : Dim.Length :=
     (((bodyLines (layoutOf fs (elabStr (dvDoc "" body)).1))[0]?).map (·.setWidth)).getD 0
   let pairs : List (String × String) := [
     ("$a \\bmod b$", "$a \\;\\text{mod}\\; b$"),
@@ -459,7 +462,7 @@ def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
     -- 12 mu as `\:\:\:` may differ from one 12 mu kern by its extra roundings' 2 sp.
     let (w, d) := (widthOf cmd, widthOf defn)
     t s!"amsmath mod: {cmd} is as wide as its definition ({w} vs {d})"
-      (w > 0 && w - d ≤ 2 && d - w ≤ 2)
+      (w > 0 && w - d ≤ 2 * Dim.Length.quantum && d - w ≤ 2 * Dim.Length.quantum)
   t "amsmath mod: the HTML sets the upright word and fixed parentheses"
     (let h := (HtmlDoc.emit {} (elabStr (dvDoc "" "$a \\pmod{b}$")).1).1
      hasStr h "<mi style=\"white-space: pre\">mod</mi>" &&

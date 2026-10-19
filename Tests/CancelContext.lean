@@ -102,7 +102,7 @@ private def mixedContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
         let m ← mathEm
         let node ← leaf
         let css ← (attrValuesOf (· == "mi") "style" node)[0]?
-        return hasStr css s!"font-size: calc({MathMl.measuredEm t m})").getD false)
+        return hasStr css s!"font-size: calc({MathMl.measuredEm t.units m.units})").getD false)
 
 end CancelContext
 

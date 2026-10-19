@@ -269,7 +269,7 @@ def report (only : Option String := none) : IO UInt32 := do
           if o > 0 && shown < 5 then
             shown := shown + 1
             let text := String.ofList (Layout.LineOut.glyphChars l)
-            IO.println s!"  p{i + 1} +{(o + 65535) / 65536} pt: {text.take 72}"
+            IO.println s!"  p{i + 1} +{(o + Dim.pt 1 - Dim.Length.quantum) / Dim.pt 1} pt: {text.take 72}"
   return 0
 
 /-- A segment, spelled for a reader. -/
@@ -282,12 +282,12 @@ def segText : Layout.Seg → String
       | .label => "label"
       | .noteMark n => s!"note {n}"
       | .unattributed => "unattributed"
-    s!"run(face {idx}, {w.toPtString} pt, {gs.size} glyphs{if m.math.isSome then ", math" else ""}, {kind})"
-  | .gap w word => s!"gap({w.toPtString}{if word then ", word" else ""})"
-  | .decoratedGap w word _ => s!"gap({w.toPtString}{if word then ", word" else ""}, decorated)"
-  | .decoration _ w _ _ _ => s!"decoration({w.toPtString})"
-  | .rule w t _ _ => s!"rule({w.toPtString} × {t.toPtString})"
-  | .image _ w h _ _ => s!"image({w.toPtString} × {h.toPtString})"
+    s!"run(face {idx}, {w.toBpString} pt, {gs.size} glyphs{if m.math.isSome then ", math" else ""}, {kind})"
+  | .gap w word => s!"gap({w.toBpString}{if word then ", word" else ""})"
+  | .decoratedGap w word _ => s!"gap({w.toBpString}{if word then ", word" else ""}, decorated)"
+  | .decoration _ w _ _ _ => s!"decoration({w.toBpString})"
+  | .rule w t _ _ => s!"rule({w.toBpString} × {t.toBpString})"
+  | .image _ w h _ _ => s!"image({w.toBpString} × {h.toBpString})"
   | .poly pts _ => s!"poly({pts.size} points)"
 
 /-- Build one fixture by its item name. -/
@@ -309,15 +309,15 @@ def lines (name : String) : IO UInt32 := do
     let stepped (l : Layout.LineOut) : Bool :=
       steps.any fun m => m.y == l.y && m.x == l.x && m.leaf == l.leaf
     IO.println s!"faces: {b.fs.fonts.toList.map (·.psName)}; text slots {b.fs.index.toList.map (·.2) |>.eraseDups}; \
-math {b.fs.math}; text area {b.geom.hmargin.toPtString}–{(b.geom.pageW - b.geom.hmargin).toPtString} pt"
+math {b.fs.math}; text area {b.geom.hmargin.toBpString}–{(b.geom.pageW - b.geom.hmargin).toBpString} pt"
     for h : i in [0:b.out.pages.size] do
       for l in b.out.pages[i].lines do
         let role := (l.leaf.bind (roles[·]?)).map (fun r => s!"{repr r.kind}") |>.getD "-"
         let marks := (if l.furniture then " furniture" else "") ++ (if l.note then " note" else "") ++
           (if l.counted then " counted" else "") ++ (if endsHyphenated l then " hyphen" else "")
         let o := overflow b.geom l
-        IO.println s!"p{i + 1} y {l.y.toPtString} x {l.x.toPtString} advance {(advance l).toPtString} \
-hang {l.hang.toPtString}{if o > 0 then s!" OVER {o.toPtString}" else ""}\
+        IO.println s!"p{i + 1} y {l.y.toBpString} x {l.x.toBpString} advance {(advance l).toBpString} \
+hang {l.hang.toBpString}{if o > 0 then s!" OVER {o.toBpString}" else ""}\
 {if offMedium b.geom b.fs l then " OFF-MEDIUM" else ""}{if stepped l then " EDGE-STEP" else ""} \
 [{role}{marks}] \
 {String.ofList (Layout.LineOut.glyphChars l) |>.take 60}"
@@ -336,8 +336,8 @@ def pagesOf (name : String) : IO UInt32 := do
   | .ok b =>
     let f := b.fixture
     let pitch := linePitch f.roles f.pages
-    IO.println s!"floor {b.geom.bodyBottom.toPtString} pt; prose pitch \
-{(pitch.map (·.toPtString)).getD "none"} pt; declared openings at leaves {f.opens}"
+    IO.println s!"floor {b.geom.bodyBottom.toBpString} pt; prose pitch \
+{(pitch.map (·.toBpString)).getD "none"} pt; declared openings at leaves {f.opens}"
     for h : i in [0:f.pages.size] do
       let p := f.pages[i]
       let body := p.lines.filter fun (l : Layout.LineOut) => !l.furniture && !l.note
@@ -346,7 +346,7 @@ def pagesOf (name : String) : IO UInt32 := do
       let first := leaves.foldl min (leaves[0]?.getD 0)
       let last := leaves.foldl max 0
       let room := match pitch with
-        | some pt => ((roomAt f.geom pt p).map fun (r : Dim.Sp) => s!"{r.toPtString} pt").getD "-"
+        | some pt => ((roomAt f.geom pt p).map fun (r : Dim.Length) => s!"{r.toBpString} pt").getD "-"
         | none => "-"
       let next := match f.pages[i + 1]? with
         | some q =>
@@ -437,7 +437,8 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
   no "overfull: furniture in the margin is not a line of the text"
     (overflow geom { stLine 20 790 #[stRun 30 "foot"] with furniture := true } == 0)
   no "overfull: a decoration's rider past the edge stands with its line"
-    (overflow geom (stLine 100 100 #[.decoration .underline (Dim.pt 410) 1 0 Ir.Color.black]) == 0)
+    (overflow geom (stLine 100 100 #[.decoration .underline (Dim.pt 410) Dim.Length.quantum 0
+      Ir.Color.black]) == 0)
   no "overfull: a fill after the text is not ink"
     (overflow geom (stLine 100 100 #[stRun 300 "text", .gap (Dim.pt 150) false]) == 0)
   -- overflow-pt: the largest overflow, rounded up to a whole point.
@@ -446,7 +447,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     (maxOverflowPt geom #[stPage #[overBy 5, overBy 12, overBy 7]] == 12)
   no "overflow-pt: a hair past the edge is a whole point"
     (maxOverflowPt geom #[stPage #[stLine 100 100 #[.gap (Dim.pt 400) false,
-      .rule (Dim.pt 1 / 10) 1 0 Ir.Color.black]]] == 1)
+      .rule (Dim.pt 1 / 10) Dim.Length.quantum 0 Ir.Color.black]]] == 1)
   no "overflow-pt: no overfull line is zero" (maxOverflowPt geom #[stPage #[inside]] == 0)
   -- off-medium: the page and its bleed hold the ink.
   let fs : Font.FontSet ← do

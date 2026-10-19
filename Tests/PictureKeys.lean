@@ -13,7 +13,7 @@ def picDoc (pre opts body : String) : String :=
   "\\begin{tikzpicture}" ++ opts ++ "\n" ++ body ++ "\n\\end{tikzpicture}\n\\end{document}"
 
 /-- The stroke widths the first page ships, in paint order. -/
-def shippedWidths (oneFace : Font.FontSet) (src : String) : Array Dim.Sp :=
+def shippedWidths (oneFace : Font.FontSet) (src : String) : Array Dim.Length :=
   ((layoutOf oneFace (elabStr src).1).pages[0]?.map fun p =>
     (pageDraws p).filterMap fun (_, _, st) => st.map (·.width)).getD #[]
 
@@ -28,7 +28,7 @@ def bodyAttrValues (doc : Ir.Doc) (key : String) : Array String :=
 /-- A declared line width is the width pgf strokes, at every level a picture reads a key. -/
 def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let named : List (String × Dim.Sp) :=
+  let named : List (String × Dim.Length) :=
     [("ultra thin", Dim.pt 1 / 10), ("very thin", Dim.pt 1 / 5), ("thin", Dim.pt 2 / 5),
      ("semithick", Dim.pt 3 / 5), ("thick", Dim.pt 4 / 5), ("very thick", Dim.pt 6 / 5),
      ("ultra thick", Dim.pt 8 / 5)]
@@ -59,7 +59,7 @@ def pictureWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (shippedWidths oneFace edge == #[Dim.pt 1 / 5] && !picLoss edge)
   let (doc, _) := elabStr (path "semithick")
   t "the SVG strokes the declared width"
-    ((bodyAttrValues doc "stroke-width").contains (Dim.pt 3 / 5).toPtString)
+    ((bodyAttrValues doc "stroke-width").contains (Dim.pt 3 / 5).toBpString)
 
 /-- A node's `font=` sets its label in the fonts it names, at the size the document's own ladder
 gives each switch. -/
@@ -69,7 +69,7 @@ def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let doc (pre body : String) : String :=
     picDoc pre "" body |>.replace "\\begin{document}\n"
       "\\begin{document}\n{\\small Smallword}\n\n"
-  let sizes (src : String) (words : List String) : List (Option Dim.Sp) :=
+  let sizes (src : String) (words : List String) : List (Option Dim.Length) :=
     let c := censusOfSrc oneFace src
     words.map (lineSizeOf c 0)
   let node := doc venue "\\node[font=\\small] at (0,0) {Nodeword};"
@@ -99,21 +99,21 @@ def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
 
 
 /-- The depth of the TeX box a word set in `font` at `size` makes. -/
-def wordDepth (font : Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
+def wordDepth (font : Font) (size : Dim.Length) (word : String) : Dim.Length :=
   word.toList.foldl (fun d c =>
     match (font.gid c).bind font.yExtent with
     | some (lo, _) => max d (-lo * size / (font.unitsPerEm : Int))
     | none => d) 0
 
 /-- The height of the TeX box a word set in `font` at `size` makes. -/
-def wordHeight (font : Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
+def wordHeight (font : Font) (size : Dim.Length) (word : String) : Dim.Length :=
   word.toList.foldl (fun d c =>
     match (font.gid c).bind font.yExtent with
     | some (_, hi) => max d (hi * size / (font.unitsPerEm : Int))
     | none => d) 0
 
 /-- The height of an SVG's viewBox in the emitted page, in sp. -/
-def viewBoxHeight (page : String) : Option Dim.Sp := do
+def viewBoxHeight (page : String) : Option Dim.Length := do
   let rest ← (page.splitOn "viewBox=\"0 0 ")[1]?
   let v ← (rest.splitOn "\"")[0]?
   let h ← (v.splitOn " ")[1]?
@@ -125,11 +125,12 @@ undeclared one the glyphs' own. -/
 def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let font := oneFace.body
-  let near (p q : Int) : Bool := decide (p - q ≤ 3 ∧ q - p ≤ 3)
+  let near (p q : Dim.Length) : Bool :=
+    decide (p - q ≤ 3 * Dim.Length.quantum ∧ q - p ≤ 3 * Dim.Length.quantum)
   let size := (Layout.Geom.ofPage (elabStr (picDoc "" "" "")).1.page).fontSize
   let ex := font.xHeight * size / (font.unitsPerEm : Int)
   let sep := Picture.innerSep size
-  let anchors (src : String) : Option (Dim.Sp × Dim.Sp × Dim.Sp) := do
+  let anchors (src : String) : Option (Dim.Length × Dim.Length × Dim.Length) := do
     let (doc, _) := elabMeasured oneFace src
     let page ← (layoutOf oneFace doc).pages[0]?
     let label ← page.lines.find? fun l => hasStr (lineText l) "Label"
@@ -151,7 +152,7 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\documentclass{article}\\pictures{ tool = none }\\begin{document}\n" ++
     "\\begin{tikzpicture}\\node at (0,0) {" ++ word ++ "};\\end{tikzpicture}\n\n" ++
     "Below.\n\\end{document}"
-  let room (word : String) : Option Dim.Sp := do
+  let room (word : String) : Option Dim.Length := do
     let (doc, _) := elabMeasured oneFace (below word)
     let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
     let a ← lineYOf c 0 word
@@ -162,20 +163,21 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (match room "vowel", room "vowelp" with
      | some a, some b => decide (0 < deeper) && near (b - a) deeper
      | _, _ => false)
-  let svgHeight (word : String) : Option Dim.Sp := do
+  let svgHeight (word : String) : Option Dim.Length := do
     let (doc, _) := elabMeasured oneFace (below word)
     viewBoxHeight (HtmlDoc.emit
       { labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) oneFace } doc).1
   t "the SVG's box grows by the same depth"
     (match svgHeight "vowel", svgHeight "vowelp" with
-     | some a, some b => decide (b - a - deeper ≤ 70 ∧ deeper - (b - a) ≤ 70)
+     | some a, some b => decide (b - a - deeper ≤ 70 * Dim.Length.quantum ∧ deeper - (b - a) ≤ 70 * Dim.Length.quantum)
      | _, _ => false)
 
 
 /-- A node's `align=` sets its lines as the key says, and `every text node part` is read. -/
 def pictureAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let near (p q : Dim.Length) : Bool :=
+    decide (p - q ≤ 2 * Dim.Length.quantum ∧ q - p ≤ 2 * Dim.Length.quantum)
   let node (pre opts : String) : String :=
     picDoc pre "" ("\\node" ++ opts ++ " at (0,0) {Longer first line\\\\ short};")
   let lines (src : String) : Option (Layout.LineOut × Layout.LineOut) := do
@@ -208,7 +210,7 @@ def pictureAlignChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
 
 /-- Consecutive segments meet end to start and the last ends where the first began. -/
 def closedChain (ss : Array Ir.Pic.PathSeg) : Bool :=
-  let ends : Ir.Pic.PathSeg → (Dim.Sp × Dim.Sp) × (Dim.Sp × Dim.Sp)
+  let ends : Ir.Pic.PathSeg → (Dim.Length × Dim.Length) × (Dim.Length × Dim.Length)
     | .line x1 y1 x2 y2 => ((x1, y1), (x2, y2))
     | .cubic x1 y1 _ _ _ _ x2 y2 => ((x1, y1), (x2, y2))
   let es := ss.map ends
@@ -232,7 +234,7 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   t "the SVG strokes the rectangle as one closed outline"
     ((bodyAttrValues rd "stroke-width").size == 1 &&
       (rd.body.foldl (fun acc b => acc ++ attrValuesOf (fun _ => true) "height" (HtmlDoc.blockNode {} b)) #[]).contains
-        (Dim.mm 10).toPtString)
+        (Dim.mm 10).toBpString)
   let tri := picDoc "" "" "\\draw (0,0) -- (2,0) -- (1,1) -- cycle;"
   let triSegs : Array Ir.Pic.PathSeg := ((pageOf tri).map edgeSegs).getD #[]
   t "-- cycle closes the path back to its start, and names nothing"
@@ -250,7 +252,7 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
 meets it. -/
 def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let paths (src : String) : Array (Dim.Sp × Dim.Sp) × Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let paths (src : String) : Array (Dim.Length × Dim.Length) × Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     let (doc, _) := elabMeasured oneFace src
     let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
     ((c[0]?.map (·.pathSpans)).getD #[], (c[0]?.map (·.pathBoxes)).getD #[])
@@ -266,7 +268,8 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- One declared minimum governs its own axis; the text governs the other.
   let wide := (paths (node ", inner sep=0pt, minimum width=40mm")).1[0]?
   let tall := (paths (node ", inner sep=0pt, minimum height=20mm")).1[0]?
-  let near (p q : Int) : Bool := decide (p - q ≤ 1 ∧ q - p ≤ 1)
+  let near (p q : Dim.Length) : Bool :=
+    decide (p - q ≤ 1 * Dim.Length.quantum ∧ q - p ≤ 1 * Dim.Length.quantum)
   t "a declared minimum governs its axis and the text the other"
     (match bare, wide, tall with
      | some (w0, h0), some (ww, wh), some (tw, th) =>
@@ -278,8 +281,11 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (match bare, circ with
      | some (w0, h0), some (d, _) =>
        let r := d / 2
-       decide (r * r ≤ (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) + 2 * r + 2 ∧
-         (w0 / 2) * (w0 / 2) + (h0 / 2) * (h0 / 2) ≤ (r + 1) * (r + 1) + 2 * r + 2)
+       let q := Dim.Length.quantum
+       let hw : Dim.Length := w0 / 2
+       let hh : Dim.Length := h0 / 2
+       decide (r * r ≤ hw * hw + hh * hh + 2 * (r * q) + 2 * (q * q) ∧
+         hw * hw + hh * hh ≤ (r + q) * (r + q) + 2 * (r * q) + 2 * (q * q))
      | _, _ => false)
   -- An edge between two drawn nodes starts and ends one outer sep (half the line width) past their outlines.
   let (_, boxes) := paths (picDoc "" ""
@@ -289,8 +295,9 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "an edge meets the outlines it joins"
     (match boxes[0]?, boxes[1]?, boxes[2]? with
      | some (ax, _, aw, _), some (bx, _, _, _), some (ex, _, ew, _) =>
-       decide (ex - (ax + aw + o) ≤ 2 ∧ (ax + aw + o) - ex ≤ 2 ∧
-         (ex + ew) - (bx - o) ≤ 2 ∧ (bx - o) - (ex + ew) ≤ 2)
+       let q := 2 * Dim.Length.quantum
+       decide (ex - (ax + aw + o) ≤ q ∧ (ax + aw + o) - ex ≤ q ∧
+         (ex + ew) - (bx - o) ≤ q ∧ (bx - o) - (ex + ew) ≤ q)
      | _, _, _ => false)
 
 
@@ -298,15 +305,16 @@ def pictureOutlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
 def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let near (p q : Dim.Length) : Bool :=
+    decide (p - q ≤ 2 * Dim.Length.quantum ∧ q - p ≤ 2 * Dim.Length.quantum)
   let pageOf (body : String) : Option Layout.PageOut :=
     (layoutOf oneFace (elabMeasured oneFace (picDoc "" "" body)).1).pages[0]?
-  let frames (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let frames (p : Layout.PageOut) : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     (pageDraws p).filterMap fun (g, _, _) => match g with
       | .rect x y w h => some (x, y, w, h)
       | _ => none
-  let mid (b : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) : Dim.Sp := b.2.1 + b.2.2.2 / 2
-  let level (bs : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp)) : Bool :=
+  let mid (b : Dim.Length × Dim.Length × Dim.Length × Dim.Length) : Dim.Length := b.2.1 + b.2.2.2 / 2
+  let level (bs : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length)) : Bool :=
     match bs[0]? with
     | some b0 => bs.size ≥ 2 && bs.all fun b => near (mid b) (mid b0)
     | none => false
@@ -344,14 +352,15 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
 def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let near (p q : Dim.Length) : Bool :=
+    decide (p - q ≤ 2 * Dim.Length.quantum ∧ q - p ≤ 2 * Dim.Length.quantum)
   let pageOf (body : String) : Option Layout.PageOut :=
     (layoutOf oneFace (elabMeasured oneFace (picDoc "" "" body)).1).pages[0]?
-  let frames (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+  let frames (p : Layout.PageOut) : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     (pageDraws p).filterMap fun (g, _, _) => match g with
       | .rect x y w h => some (x, y, w, h)
       | _ => none
-  let edgeXs (p : Layout.PageOut) : Option (Dim.Sp × Dim.Sp) :=
+  let edgeXs (p : Layout.PageOut) : Option (Dim.Length × Dim.Length) :=
     (pageDraws p).findSome? fun (g, _, st) => match g, st with
       | .path subs, some _ =>
         let ss := subpathSegs subs
@@ -360,7 +369,7 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
           some (min x1 x2, max x1 x2)
         | _, _ => none
       | _, _ => none
-  let gaps (opts : String) : Option (Dim.Sp × Dim.Sp) := do
+  let gaps (opts : String) : Option (Dim.Length × Dim.Length) := do
     let p ← pageOf ("\\node[draw" ++ opts ++ "] (a) at (0,0) {A};\\node[draw" ++ opts ++
       "] (b) at (3,0) {B};\n\\draw (a) -- (b);")
     let (ax, _, aw, _) ← (frames p)[0]?

@@ -11,7 +11,7 @@ namespace Tests
 /-- The image boxes a reader receives, with the store entry the writer embeds, so a placeholder
 cannot pass as a lowered animation. -/
 private def animatedImageSegs (out : Layout.Out) :
-    Array (Option Nat × Dim.Sp × Dim.Sp) :=
+    Array (Option Nat × Dim.Length × Dim.Length) :=
   (allLines out).foldl (fun acc line =>
     line.segs.foldl (fun acc seg => match seg with
       | .image idx w h _ _ => acc.push (idx, w, h)
@@ -21,7 +21,7 @@ private def graphicsInk (out : Layout.Out) : String :=
   (bodyLines out).foldl (fun s l => s ++ lineInk l) ""
 
 private structure GraphicsPage where
-  images : Array (Option Nat × Dim.Sp × Dim.Sp)
+  images : Array (Option Nat × Dim.Length × Dim.Length)
   ink : String
   tree : Array Html.Node
   diags : Array Diag
@@ -135,7 +135,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let page := graphicsPage fonts imgs
   let imageSrcs (p : GraphicsPage) := HtmlDoc.imgSrcsList #[] p.tree.toList
   let text (p : GraphicsPage) := shownTextList "" p.tree.toList
-  let selected (p : GraphicsPage) (idx : Nat) (w h : Dim.Sp) : Bool :=
+  let selected (p : GraphicsPage) (idx : Nat) (w h : Dim.Length) : Bool :=
     p.images == #[(some idx, w, h)] &&
       imageSrcs p == #[hrefs[idx]!]
 

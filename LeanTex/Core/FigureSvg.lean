@@ -27,7 +27,7 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
 /-- Each glyph's pen x, in points: the `x` list that places the glyph of the
 same position. -/
 @[expose] public def penList (s : Shaped) : String :=
-  " ".intercalate (s.glyphs.toList.map (·.2.2.2.toPtString))
+  " ".intercalate (s.glyphs.toList.map (·.2.2.2.toBpString))
 
 /-- The run's font as CSS: its role's family and the resolved face's weight and style. -/
 @[expose] public def fontCss (s : Shaped) : String :=
@@ -56,11 +56,11 @@ public def textNode (fr : GfxSvg.SFrame) (s : Shaped) : Html.Node :=
   if (paintAttrs s).contains ("fill", "none") then Html.elem "g" else
   let xf := GfxSvg.transformAttr (fr.lift (s.xf.compose textFlip))
   let rest : Array (String × String) :=
-    #[("y", "0"), ("font-size", s.size.toPtString), ("style", fontCss s), ("xml:space", "preserve")] ++
+    #[("y", "0"), ("font-size", s.size.toBpString), ("style", fontCss s), ("xml:space", "preserve")] ++
       paintAttrs s ++ lang
   if astral s then
     Html.elem "text" (s.glyphs.map fun g =>
-      Html.elem "tspan" #[Html.text (String.singleton g.2.2.1)] #[("x", g.2.2.2.toPtString)])
+      Html.elem "tspan" #[Html.text (String.singleton g.2.2.1)] #[("x", g.2.2.2.toBpString)])
       (#[xf] ++ rest)
   else Html.elem "text" #[Html.text (runText s)] (#[xf, ("x", penList s)] ++ rest)
 
@@ -106,8 +106,8 @@ public def inlineFigure? (imgs : Image.Store) (k : Nat) : Option (Figure Shaped)
 
 /-- A drawn figure as inline SVG: its box as the viewBox in points, under `attrs`, clipping where it clips. -/
 public def inlineSvg (fig : Figure Shaped) (attrs : Array (String × String)) : Html.Node :=
-  let w := (fig.box.2.1 - fig.box.1.1).toPtString
-  let h := (fig.box.2.2 - fig.box.1.2).toPtString
+  let w := (fig.box.2.1 - fig.box.1.1).toBpString
+  let h := (fig.box.2.2 - fig.box.1.2).toBpString
   Html.elem "svg" (GfxSvg.spell 0 (GfxSvg.tree textNode #[] (GfxSvg.documentIso fig.box) fig))
     (#[("viewBox", s!"0 0 {w} {h}")] ++ attrs ++
       #[("overflow", if fig.clipToBox then "hidden" else "visible")])

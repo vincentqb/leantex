@@ -164,7 +164,7 @@ def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"markdown input {label}/{deck}: HTML preserves literal code"
           (hasStr htmlText literal)
         -- Verbatim spaces are glyphless runs, so every run's text, offset and width is compared.
-        let codeRuns (o : Layout.Out) : Option (Array (Nat × String × Dim.Sp × Dim.Sp)) :=
+        let codeRuns (o : Layout.Out) : Option (Array (Nat × String × Dim.Length × Dim.Length)) :=
           ((bodyLines o).find? fun l => hasStr (lineText l) "\\input{never}").map fun l =>
             (lineRuns l).map fun (f, text, x, w) => (f, text, x - l.x, w)
         let native := layoutOf fonts (elabStr
@@ -217,7 +217,7 @@ def pdfLineTexts (pdf : ByteArray) : Array String :=
   match readArtifact pdf with
   | .error _ => #[]
   | .ok pages => pages.flatMap fun page => Id.run do
-    let mut lines : Array (Dim.Sp × String) := #[]
+    let mut lines : Array (Dim.Length × String) := #[]
     for run in page.runs do
       match lines.findIdx? (·.1 == run.y) with
       | some k => lines := lines.modify k fun (y, s) => (y, s ++ run.text)

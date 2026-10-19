@@ -11,7 +11,7 @@ open Dim Font
 /-- Pairing an extent with its outline status preserves the actual
 producer's placement arithmetic, including the nominal fallback. This
 equation does not turn that fallback into containment evidence. -/
-public theorem glyphBounds_agree (font : Font) (size raise : Sp) (gid : Nat) :
+public theorem glyphBounds_agree (font : Font) (size raise : Length) (gid : Nat) :
     (GlyphBounds.glyph font size raise gid).extent = glyphVExtent font size raise gid := by
   unfold GlyphBounds.glyph glyphVExtent
   cases font.yExtent gid <;> rfl
@@ -22,18 +22,18 @@ to those produced segments; the formula reads the painted run's own face,
 size and raise. Missing outlines are deliberately outside this conditional
 geometry lemma and require a diagnostic from the producer. -/
 public theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
-    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (xHeight : Length) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Length)
     (ink : Ir.Pic.LabelInk)
     (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
-    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)
-    (g : Nat × Char × Sp) (hg : g ∈ glyphs) (lo hi : Int)
+    (g : Nat × Char × Length) (hg : g ∈ glyphs) (lo hi : Int)
     (houtline : (fs.get idx).yExtent g.1 = some (lo, hi))
-    (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign) :
+    (place : Ir.Pic.Place) (x y : Length) (align : Ir.Pic.LabelAlign) :
     let runSize := if sz == 0 then size else sz
     let top := hi * runSize / ((fs.get idx).unitsPerEm : Int) + raise
     let below := (-lo) * runSize / ((fs.get idx).unitsPerEm : Int) - raise
@@ -48,13 +48,13 @@ public theorem labelLine_outline_covers (fs : FontSet) (imgs : Image.Store) (geo
 
 /-- The missing-evidence check sees every glyph of every actual run. A
 larger known outline in another run cannot hide an unresolved glyph. -/
-public theorem labelGlyphUnknown_missing (fs : FontSet) (size : Sp) (segs : Array Seg)
-    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+public theorem labelGlyphUnknown_missing (fs : FontSet) (size : Length) (segs : Array Seg)
+    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
-    (g : Nat × Char × Sp) (hg : g ∈ glyphs)
+    (g : Nat × Char × Length) (hg : g ∈ glyphs)
     (hmissing : (fs.get idx).yExtent g.1 = none) :
     labelGlyphUnknown fs size segs = true := by
   apply Array.any_eq_true'.mpr
@@ -64,14 +64,14 @@ public theorem labelGlyphUnknown_missing (fs : FontSet) (size : Sp) (segs : Arra
 
 /-- Passing the producer's check supplies real outline evidence for each
 painted glyph. This is derived from the check, never assumed of the font. -/
-public theorem labelGlyphUnknown_complete (fs : FontSet) (size : Sp) (segs : Array Seg)
+public theorem labelGlyphUnknown_complete (fs : FontSet) (size : Length) (segs : Array Seg)
     (h : labelGlyphUnknown fs size segs = false)
-    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ segs)
-    (g : Nat × Char × Sp) (hg : g ∈ glyphs) :
+    (g : Nat × Char × Length) (hg : g ∈ glyphs) :
     ∃ lo hi, (fs.get idx).yExtent g.1 = some (lo, hi) := by
   cases he : (fs.get idx).yExtent g.1 with
   | none =>
@@ -83,10 +83,10 @@ public theorem labelGlyphUnknown_complete (fs : FontSet) (size : Sp) (segs : Arr
 /-- Vertical outline containment over the runs a line actually paints.
 Each glyph is read in its own face, size and raise. Non-glyph segments do
 not assert a font-outline fact. -/
-public def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Sp) : Prop :=
-  ∀ (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+public def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Length) : Prop :=
+  ∀ (idx : Nat) (color : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution),
     Seg.run idx color link width glyphs sz leading decorations raise ground attr ∈ line.segs →
     ∀ g ∈ glyphs, ∃ lo hi,
@@ -98,7 +98,7 @@ public def LineOut.OutlinesIn (line : LineOut) (fs : FontSet) (top bottom : Sp) 
 
 /-- Containment survives enlarging the reserved interval. -/
 public theorem LineOut.OutlinesIn.mono (line : LineOut) (fs : FontSet)
-    (top bottom top' bottom' : Sp) (h : line.OutlinesIn fs top bottom)
+    (top bottom top' bottom' : Length) (h : line.OutlinesIn fs top bottom)
     (htop : top' ≤ top) (hbottom : bottom ≤ bottom') :
     line.OutlinesIn fs top' bottom' := by
   intro idx color link width glyphs sz leading decorations raise ground attr hrun g hg
@@ -109,12 +109,12 @@ public theorem LineOut.OutlinesIn.mono (line : LineOut) (fs : FontSet)
 /-- With complete outline evidence, the actual placed producer result
 satisfies containment for every run, including mixed faces and raises. -/
 public theorem labelLine_outlines_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
-    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (xHeight : Length) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Length)
     (ink : Ir.Pic.LabelInk)
     (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hk : labelGlyphUnknown fs size segs = false)
-    (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign) :
+    (place : Ir.Pic.Place) (x y : Length) (align : Ir.Pic.LabelAlign) :
     let box := Ir.Pic.labelGlyphBox x y align ink
     (labelLine place x y align ink segs size leaf).OutlinesIn fs
       (place.toPage box.2).2 (place.toPage box.1).2 := by
@@ -151,12 +151,12 @@ public theorem LabelLossNamed.mono (content : Array Ir.Inline) (before after : A
 that picture layout actually reserves. The premise is the decidable
 comparison that `emitLabel` executes on the two actual measurements. -/
 public theorem labelLine_reserved_covers (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (content : Array Ir.Inline)
-    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Sp)
+    (xHeight : Length) (leaf : Option Nat) (content : Array Ir.Inline)
+    (color : Ir.Color) (scale : Nat) (segs : Array Seg) (size : Length)
     (ink : Ir.Pic.LabelInk)
     (h : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hk : labelGlyphUnknown fs size segs = false)
-    (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
+    (place : Ir.Pic.Place) (x y : Length) (align : Ir.Pic.LabelAlign)
     (hr : labelReserveCovers (Ir.Pic.labelGlyphBox x y align ink)
       (pictureLabelBox fs imgs geom xHeight x y content scale align)) :
     let box := pictureLabelBox fs imgs geom xHeight x y content scale align
@@ -175,8 +175,8 @@ public theorem labelLine_reserved_covers (fs : FontSet) (imgs : Image.Store) (ge
 producer, contains every chosen line, and bounds every painted glyph
 inside its canonical reserve. Textually blank content may produce no line. -/
 public def LabelCovered (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (lines : Array LineOut) : Prop :=
   (labelTextBlank content = true ∧
     (labelResult fs imgs geom xHeight leaf content color scale).line? = none) ∨
@@ -189,8 +189,8 @@ public def LabelCovered (fs : FontSet) (imgs : Image.Store) (geom : Geom)
         (place.toPage box.2).2 (place.toPage box.1).2
 
 public theorem LabelCovered.mono (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (before after : Array LineOut)
     (h : LabelCovered fs imgs geom xHeight leaf place x y content color scale align before)
     (keep : ∀ line ∈ before, line ∈ after) :
@@ -204,8 +204,8 @@ complete, measured line within the canonical reserve, or names the precise
 loss in a diagnostic keyed by the label. No premise asserts correctness of
 shaping, font outlines, or the metric consumer. -/
 public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) :
     let emitted := emitLabel fs imgs geom xHeight leaf place x y content color scale align
     LabelCovered fs imgs geom xHeight leaf place x y content color scale align
@@ -276,8 +276,8 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
 /-- The label boundary preserves every producer diagnostic, supplying the
 label key only when the producer supplied none. -/
 public theorem emitLabel_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (d : Diag)
     (hd : d ∈ (labelResult fs imgs geom xHeight leaf content color scale).diags) :
     nameLabelDiag (Ir.plainText content) d ∈
@@ -293,9 +293,9 @@ public theorem emitLabel_producer_diags_accounts (fs : FontSet) (imgs : Image.St
 when the same label also wraps or exceeds its reserve. The nominal extent
 used for placement is never substituted for this evidence. -/
 public theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
-    (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Length) (ink : Ir.Pic.LabelInk)
     (hl : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hu : labelGlyphUnknown fs size segs = true) :
     ∃ d ∈ (emitLabel fs imgs geom xHeight leaf place x y content color scale align).diags,
@@ -314,9 +314,9 @@ public theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
 /-- The missing-outline account uses the source of the line actually
 selected by the producer, including after a later line is truncated. -/
 public theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
-    (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (align : Ir.Pic.LabelAlign) (segs : Array Seg) (size : Length) (ink : Ir.Pic.LabelInk)
     (hl : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
     (hu : labelGlyphUnknown fs size segs = true) :
     ∃ d ∈ (emitLabel fs imgs geom xHeight leaf place x y content color scale align).diags,
@@ -335,7 +335,7 @@ public theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.St
 
 /-- A shape step preserves every line emitted by an earlier shape. -/
 public theorem emitPictureShape_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape) (line : LineOut)
     (h : line ∈ out.lines) :
     line ∈ (emitPictureShape fs imgs geom xHeight leaf place out shape).lines := by
@@ -346,7 +346,7 @@ public theorem emitPictureShape_lines (fs : FontSet) (imgs : Image.Store) (geom 
 
 /-- A shape step preserves every diagnostic emitted by an earlier shape. -/
 public theorem emitPictureShape_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape) (d : Diag)
     (h : d ∈ out.diags) :
     d ∈ (emitPictureShape fs imgs geom xHeight leaf place out shape).diags := by
@@ -358,8 +358,8 @@ public theorem emitPictureShape_diags (fs : FontSet) (imgs : Image.Store) (geom 
 /-- The actual shape emitter appends the selected line; a label cannot be
 certified by a line present only in an unused producer result. -/
 public theorem emitPictureShape_label_lines (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place) (out : PictureEmission)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place) (out : PictureEmission)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (line : LineOut)
     (h : line ∈
       (emitLabel fs imgs geom xHeight leaf place x y content color scale align).line?.toArray) :
@@ -373,8 +373,8 @@ public theorem emitPictureShape_label_lines (fs : FontSet) (imgs : Image.Store) 
 
 /-- The actual shape emitter appends the label's entire diagnostic account. -/
 public theorem emitPictureShape_label_diags (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place) (out : PictureEmission)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place) (out : PictureEmission)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign) (d : Diag)
     (h : d ∈ (emitLabel fs imgs geom xHeight leaf place x y content color scale align).diags) :
     d ∈ (emitPictureShape fs imgs geom xHeight leaf place out
@@ -385,8 +385,8 @@ public theorem emitPictureShape_label_diags (fs : FontSet) (imgs : Image.Store) 
 covered line or a keyed loss. This includes failed production, unknown
 outlines, extra chosen lines, and differences from the reserved metric. -/
 public theorem emitPictureShape_label_ink_covered_or_named (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (out : PictureEmission) (x y : Sp) (content : Array Ir.Inline)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (out : PictureEmission) (x y : Length) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign) :
     let emitted := emitPictureShape fs imgs geom xHeight leaf place out
       (.label x y content color scale align)
@@ -411,8 +411,8 @@ alignment band with actual shaped runs and their reserved glyph box. It is
 the producer contract consumed by picture placement, not a claim that an
 author's explicit bounding box encloses all of a picture's ink. -/
 public theorem ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : Geom)
-    (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place) (pic : Ir.Pic.Picture)
-    (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place) (pic : Ir.Pic.Picture)
+    (x y : Length) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
     (align : Ir.Pic.LabelAlign)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ pic.shapes) :
     let emitted := emitPicture fs imgs geom xHeight leaf place pic
@@ -448,8 +448,8 @@ public theorem ink_covered_or_named (fs : FontSet) (imgs : Image.Store) (geom : 
 /-- Every label diagnostic survives the actual picture fold. The index
 tracks the source label's visit; later shapes can only append diagnostics. -/
 public theorem emitPicture_label_diags_accounts (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (pic : Ir.Pic.Picture) (x y : Sp) (content : Array Ir.Inline)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (pic : Ir.Pic.Picture) (x y : Length) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ pic.shapes)
     (d : Diag)
@@ -478,8 +478,8 @@ public theorem emitPicture_label_diags_accounts (fs : FontSet) (imgs : Image.Sto
 including failures that prevented a glyph or an entire line from being
 produced. Existing subjects are preserved. -/
 public theorem emitPicture_producer_diags_accounts (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (pic : Ir.Pic.Picture) (x y : Sp) (content : Array Ir.Inline)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (pic : Ir.Pic.Picture) (x y : Length) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ pic.shapes)
     (d : Diag)
@@ -494,18 +494,18 @@ public theorem emitPicture_producer_diags_accounts (fs : FontSet) (imgs : Image.
 named by the picture that emits it. This conclusion holds independently
 of line wrapping, the other glyphs' extents, or subsequent shapes. -/
 public theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.Store)
-    (geom : Geom) (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
-    (pic : Ir.Pic.Picture) (x y : Sp) (content : Array Ir.Inline)
+    (geom : Geom) (xHeight : Length) (leaf : Option Nat) (place : Ir.Pic.Place)
+    (pic : Ir.Pic.Picture) (x y : Length) (content : Array Ir.Inline)
     (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ pic.shapes)
-    (segs : Array Seg) (size : Sp) (ink : Ir.Pic.LabelInk)
+    (segs : Array Seg) (size : Length) (ink : Ir.Pic.LabelInk)
     (hl : (labelResult fs imgs geom xHeight leaf content color scale).line? = some (segs, size, ink))
-    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (leading : RunMetrics)
-    (decorations : Decorations) (raise : Sp) (ground : Option Ir.Color)
+    (idx : Nat) (runColor : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (leading : RunMetrics)
+    (decorations : Decorations) (raise : Length) (ground : Option Ir.Color)
     (attr : Attribution)
     (hrun : Seg.run idx runColor link width glyphs sz leading decorations raise ground attr ∈ segs)
-    (g : Nat × Char × Sp) (hg : g ∈ glyphs)
+    (g : Nat × Char × Length) (hg : g ∈ glyphs)
     (hmissing : (fs.get idx).yExtent g.1 = none) :
     ∃ d ∈ (emitPicture fs imgs geom xHeight leaf place pic).diags,
       d.kind = .W0394 ∧ d.subject = some (Ir.plainText content) := by
@@ -519,8 +519,8 @@ public theorem emitPicture_missing_outline_named (fs : FontSet) (imgs : Image.St
 /-- The former alignment-band bound is precisely a cap-height bound,
 regardless of alignment or position. Actual outlines above that height
 falsify it while remaining inside the separately reserved glyph box. -/
-public theorem label_alignment_covers_exact (x y : Sp) (align : Ir.Pic.LabelAlign)
-    (ink : Ir.Pic.LabelInk) (reach : Sp) :
+public theorem label_alignment_covers_exact (x y : Length) (align : Ir.Pic.LabelAlign)
+    (ink : Ir.Pic.LabelInk) (reach : Length) :
     Ir.Pic.labelBaseline y align ink + reach ≤ (Ir.Pic.labelInkBox x y align ink).2.2 ↔
       reach ≤ ink.height := by
   rw [Ir.Pic.labelBaseline_box_exact x y align ink]
@@ -544,7 +544,7 @@ lines and fills and left a picture's strokes in flow position once split
 the picture from its own labels. -/
 private theorem placeSlot_shift_exact (fs : FontSet) (b : Spacing.Page)
     (save : ColSave × Nat × Nat × Nat) (spec : SlotSpec) :
-    ∃ dx dy : Sp,
+    ∃ dx dy : Length,
       (b.placeSlot fs save spec).cur.lines = b.cur.lines.mapIdx (fun i l =>
         if i < save.2.1 then l else { l with x := l.x + dx, y := l.y + dy }) ∧
       (b.placeSlot fs save spec).cur.fills = b.cur.fills.mapIdx (fun i f =>

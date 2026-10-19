@@ -299,8 +299,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     { src := "rects.jpg", source := some jpgData, info := jpgInfo.toOption },
     { src := "rects-alpha.png", source := some alphaData, info := alphaInfo.toOption }] }
   let geom : Layout.Geom := {}
-  let imageSegs (out : Layout.Out) : Array (Option Nat × Dim.Sp × Dim.Sp) := Id.run do
-    let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
+  let imageSegs (out : Layout.Out) : Array (Option Nat × Dim.Length × Dim.Length) := Id.run do
+    let mut acc : Array (Option Nat × Dim.Length × Dim.Length) := #[]
     for p in out.pages do
       for l in p.lines do
         for s in l.segs do
@@ -316,12 +316,12 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let outTw := layoutSrc "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let expectW := geom.textWidth * 800 / 1000
   t "layout width fraction of the measure"
-    (imageSegs outTw == #[(some 0, expectW, expectW * Dim.pt 40 / Dim.pt 64)])
+    (imageSegs outTw == #[(some 0, expectW, expectW.mulDiv (Dim.pt 40) (Dim.pt 64))])
   let affineSrc := "\\includegraphics[width=0.315\\dimexpr \\textwidth +36mm\\relax]{rects.png}"
   let outAffine := layoutSrc affineSrc
   let affineW := ((geom.textWidth + Dim.mm 36) * 315).tdiv 1000
   t "layout resolves an affine image width against the local measure"
-    (imageSegs outAffine == #[(some 0, affineW, affineW * Dim.pt 40 / Dim.pt 64)])
+    (imageSegs outAffine == #[(some 0, affineW, affineW.mulDiv (Dim.pt 40) (Dim.pt 64))])
   t "an affine image width emits no length error"
     (!(errCodes affineSrc).contains "E0331")
   let localSrc := "\\begin{minipage}{0.5\\textwidth}" ++
@@ -330,7 +330,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let localW := ((geom.textWidth / 2 + Dim.pt 10) * 1).tdiv 2
   t "linewidth resolves inside its minipage rather than against the page"
     (imageSegs (layoutSrc localSrc) ==
-      #[(some 0, localW, localW * Dim.pt 40 / Dim.pt 64)])
+      #[(some 0, localW, localW.mulDiv (Dim.pt 40) (Dim.pt 64))])
   let outBoth := layoutSrc "\\includegraphics[width=32pt, height=40pt]{rects.png}"
   t "layout declared size wins"
     (imageSegs outBoth == #[(some 0, Dim.pt 32, Dim.pt 40)])
@@ -379,7 +379,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "logo declaration elaborates clean" (logoDiags.isEmpty)
   let logoGeom := Layout.Geom.ofPage logoDoc.page
   let logoOut := layoutOf oneFace logoDoc logoGeom none store
-  let logoW := Dim.pt 8 * Dim.pt 64 / Dim.pt 40
+  let logoW := (Dim.pt 8).mulDiv (Dim.pt 64) (Dim.pt 40)
   t "logo placed on every page at the right margin"
     (logoOut.pages.size == 2 && logoOut.pages.all fun p =>
       p.lines.any fun l =>
@@ -950,8 +950,8 @@ def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let t := check ref
   let pngInfo := Image.decode (← IO.FS.readBinFile "testdata/corpus/rects.png")
   let store : Image.Store := { entries := #[{ src := "rects.png", info := pngInfo.toOption }] }
-  let boxes (out : Layout.Out) : Array (Nat × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
-    let mut acc : Array (Nat × Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+  let boxes (out : Layout.Out) : Array (Nat × Dim.Length × Dim.Length × Dim.Length × Dim.Length) := Id.run do
+    let mut acc : Array (Nat × Dim.Length × Dim.Length × Dim.Length × Dim.Length) := #[]
     for h : i in [0:out.pages.size] do
       for l in out.pages[i].lines do
         let mut x := l.x
@@ -979,7 +979,7 @@ width=.4\\textwidth]{rects.png}%\n"
   -- `\hfill` is an order above `\centering`'s fil glue, so it takes all of the row's slack.
   t s!"image rows: one page, four images: {bs.size} on {out.pages.size}"
     (out.pages.size == 1 && bs.size == 4)
-  t s!"image rows: each row spans the measure, the fill taking the slack: {bs}"
+  t s!"image rows: each row spans the measure, the fill taking the slack: {reprStr bs}"
     (bs.size == 4 && [0, 2].all fun k =>
       match bs[k]?, bs[k + 1]? with
       | some (_, x0, y0, _, _), some (_, x1, y1, w1, _) =>
@@ -991,7 +991,7 @@ width=.4\\textwidth]{rects.png}%\n"
     match p.footBox with
     | some (bh, bd) =>
       let th := Layout.footFloor geom.pageH Ir.footline.sep bh bd
-      t s!"image rows: .28\\textheight is .28 of the frame's text area, {th}: {bs}"
+      t s!"image rows: .28\\textheight is .28 of the frame's text area, {reprStr th}: {reprStr bs}"
         (bs.size == 4 && bs.all fun (_, _, _, _, hh) => hh == 280 * th / 1000)
     | none => t "image rows: the frame page carries the footline" false
   | none => t "image rows: the frame lays out" false
@@ -1006,8 +1006,8 @@ width=.4\\textwidth]{rects.png}%\n"
     match p.footBox with
     | some (bh, bd) =>
       let th := Layout.footFloor logoGeom.pageH Ir.footline.sep bh bd
-      t s!"image rows: a logo's .2\\textheight is .2 of the frame's text area, {th}: \
-{boxes logoOut}"
+      t s!"image rows: a logo's .2\\textheight is .2 of the frame's text area, {reprStr th}: \
+{reprStr (boxes logoOut)}"
         ((boxes logoOut).map (·.2.2.2.2) == #[200 * th / 1000])
     | none => t "image rows: the logo's page carries the footline" false
   | none => t "image rows: the logo's frame lays out" false

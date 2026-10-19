@@ -453,8 +453,8 @@ def selftest : IO UInt32 := do
   unless accountingOf (mk 2 (some (.census, "")) []) == .clean do
     bad := bad.push "a fixture declaring nothing was called unexplained"
   -- The line reading, the whole content of the line level.
-  let line (y : Dim.Sp) (t : String) : ArtRun :=
-    { marks := #[], x := 0, y := y, w := 0, size := Dim.pt 10, ascent := 0
+  let line (y : Int) (t : String) : ArtRun :=
+    { marks := #[], x := 0, y := y * Dim.Length.quantum, w := 0, size := Dim.pt 10, ascent := 0
       inkAscent := 0, descent := 0, widest := 0, text := t }
   let page (rs : Array ArtRun) : ArtPage :=
     { media := (0, 0, 0, 0), runs := rs, boxes := #[], content := .empty }
@@ -469,7 +469,7 @@ def selftest : IO UInt32 := do
   unless lineKey pd == lineKey du && orderKey pd == orderKey du do
     bad := bad.push "two paintings of one page read differently"
   let wide : ArtRun :=
-    { marks := #[], x := Dim.pt 100, y := 100, w := 0, size := Dim.pt 10, ascent := 0
+    { marks := #[], x := Dim.pt 100, y := 100 * Dim.Length.quantum, w := 0, size := Dim.pt 10, ascent := 0
       inkAscent := 0, descent := 0, widest := 0, text := "z" }
   unless linesOf (page #[wide, line 100 "ab"]) == #["abz"] do
     bad := bad.push s!"a line is not read left to right: {repr (linesOf (page #[wide, line 100 "ab"]))}"

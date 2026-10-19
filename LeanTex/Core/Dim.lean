@@ -5,43 +5,296 @@ import all Init.Data.Repr
 
 namespace LeanTex.Core.Dim
 
-/-- Scaled points, TeX's exact fixed point: 1 pt = 2^16 sp. -/
-public abbrev Sp := Int
+/-- Base units per inch: the one place the engine's base unit is defined. -/
+@[expose] public def unitsPerInch : Int := 4718592
 
-@[expose] public def spPerPt : Int := 65536
+/-- The engine's one length: an exact count of base units, `unitsPerInch` to the inch. -/
+public structure Length where
+  ofUnits ::
+  units : Int
 
-@[expose] public def pt (n : Int) : Sp := n * spPerPt
+namespace Length
 
-@[expose] public def inch (n : Int) : Sp := n * 72 * spPerPt
+public instance : DecidableEq Length := fun a b =>
+  if h : a.units = b.units then isTrue (by cases a; cases b; simp_all)
+  else isFalse (by intro e; cases e; exact h rfl)
+public instance : BEq Length := ⟨fun a b => a.units == b.units⟩
+public instance : LawfulBEq Length where
+  eq_of_beq {a b} h := by
+    cases a; cases b
+    simp only [BEq.beq] at h
+    simpa using h
+  rfl {a} := by cases a; simp [BEq.beq]
+public instance : Inhabited Length := ⟨⟨0⟩⟩
+public instance : OfNat Length 0 := ⟨⟨0⟩⟩
+public instance : Repr Length := ⟨fun l p => reprPrec l.units p⟩
+public instance : Hashable Length := ⟨fun l => hash l.units⟩
+public instance : Ord Length := ⟨fun a b => compare a.units b.units⟩
+public instance : Add Length := ⟨fun a b => ⟨a.units + b.units⟩⟩
+public instance : Sub Length := ⟨fun a b => ⟨a.units - b.units⟩⟩
+public instance : Neg Length := ⟨fun a => ⟨-a.units⟩⟩
+public instance : HMul Int Length Length := ⟨fun k a => ⟨k * a.units⟩⟩
+public instance : HMul Nat Length Length := ⟨fun k a => ⟨(k : Int) * a.units⟩⟩
+public instance : HMul Length Int Length := ⟨fun a k => ⟨a.units * k⟩⟩
+public instance : HMul Length Nat Length := ⟨fun a k => ⟨a.units * (k : Int)⟩⟩
+/-- Division by a count rounds as `Int` division does. -/
+public instance : HDiv Length Int Length := ⟨fun a k => ⟨a.units / k⟩⟩
+public instance : HDiv Length Nat Length := ⟨fun a k => ⟨a.units / (k : Int)⟩⟩
+/-- How many whole `b` fit in `a`, as `Int` division rounds. -/
+public instance : HDiv Length Length Int := ⟨fun a b => a.units / b.units⟩
+/-- The product of two lengths in squared base units, for comparing ratios by cross-multiplying. -/
+public instance : HMul Length Length Int := ⟨fun a b => a.units * b.units⟩
+public instance : HMod Length Length Length := ⟨fun a b => ⟨a.units % b.units⟩⟩
+public instance : LE Length := ⟨fun a b => a.units ≤ b.units⟩
+public instance : LT Length := ⟨fun a b => a.units < b.units⟩
+public instance (a b : Length) : Decidable (a ≤ b) := inferInstanceAs (Decidable (a.units ≤ b.units))
+public instance (a b : Length) : Decidable (a < b) := inferInstanceAs (Decidable (a.units < b.units))
+public instance : Max Length := ⟨fun a b => ⟨max a.units b.units⟩⟩
+public instance : Min Length := ⟨fun a b => ⟨min a.units b.units⟩⟩
 
-/-- Millimetres, 1 mm = 7200⁄2540 pt rounded to sp; this engine's `pt` is the big point, 1⁄72 in. -/
-@[expose] public def mm (n : Int) : Sp := n * 7200 * spPerPt / 2540
+@[simp] public theorem units_zero : (0 : Length).units = 0 := rfl
+@[simp] public theorem units_add (a b : Length) : (a + b).units = a.units + b.units := rfl
+@[simp] public theorem units_sub (a b : Length) : (a - b).units = a.units - b.units := rfl
+@[simp] public theorem units_neg (a : Length) : (-a).units = -a.units := rfl
+@[simp] public theorem units_imul (k : Int) (a : Length) : (k * a).units = k * a.units := rfl
+@[simp] public theorem units_nmul (k : Nat) (a : Length) : (k * a).units = (k : Int) * a.units := rfl
+@[simp] public theorem units_muli (a : Length) (k : Int) : (a * k).units = a.units * k := rfl
+@[simp] public theorem units_muln (a : Length) (k : Nat) : (a * k).units = a.units * (k : Int) := rfl
+@[simp] public theorem units_divi (a : Length) (k : Int) : (a / k).units = a.units / k := rfl
+@[simp] public theorem units_divn (a : Length) (k : Nat) : (a / k).units = a.units / (k : Int) := rfl
+@[simp] public theorem div_length (a b : Length) : a / b = a.units / b.units := rfl
+@[simp] public theorem mul_length (a b : Length) : a * b = a.units * b.units := rfl
+@[simp] public theorem units_mod (a b : Length) : (a % b).units = a.units % b.units := rfl
+@[simp] public theorem units_max (a b : Length) : (max a b).units = max a.units b.units := rfl
+@[simp] public theorem units_min (a b : Length) : (min a b).units = min a.units b.units := rfl
+public theorem le_refl (a : Length) : a ≤ a := Int.le_refl _
+@[simp] public theorem le_def (a b : Length) : a ≤ b ↔ a.units ≤ b.units := Iff.rfl
+@[simp] public theorem lt_def (a b : Length) : a < b ↔ a.units < b.units := Iff.rfl
+public theorem ext_iff' (a b : Length) : a = b ↔ a.units = b.units :=
+  ⟨fun h => h ▸ rfl, fun h => by cases a; cases b; simp_all⟩
+@[simp] public theorem beq_def (a b : Length) : (a == b) = (a.units == b.units) := by
+  cases a; cases b; rfl
+
+/-- Truncate toward zero after dividing by `k`, as TeX's `\divide` does (TeX §107). -/
+@[expose] public def tdiv (a : Length) (k : Int) : Length := ⟨a.units.tdiv k⟩
+
+@[simp] public theorem units_tdiv (a : Length) (k : Int) : (a.tdiv k).units = a.units.tdiv k := rfl
+
+/-- `a · num / den`, rounded down: scaling by a ratio of lengths. -/
+@[expose] public def mulDiv (a num den : Length) : Length := ⟨a.units * num.units / den.units⟩
+
+@[simp] public theorem units_mulDiv (a num den : Length) :
+    (a.mulDiv num den).units = a.units * num.units / den.units := rfl
+
+/-- `a · num / den` rounded half away from zero. -/
+@[expose] public def scaleRound (a : Length) (num den : Int) : Length :=
+  let n := a.units * num
+  if n < 0 then ⟨-((-n + den / 2) / den)⟩ else ⟨(n + den / 2) / den⟩
+
+@[expose] public def abs (a : Length) : Length := ⟨(a.units.natAbs : Int)⟩
+
+@[expose] public def sign (a : Length) : Int := a.units.sign
+
+/-- The base unit itself: the rounding quantum, for a bound that must clear rounding. -/
+@[expose] public def quantum : Length := ⟨1⟩
+
+@[simp] public theorem units_quantum : quantum.units = 1 := rfl
+
+/-- The exact rational count of base units, for exact affine arithmetic. -/
+@[expose] public def toRat (a : Length) : Rat := a.units
+
+/-- A rational count of base units, rounded down. -/
+@[expose] public def ofRatFloor (r : Rat) : Length := ⟨r.floor⟩
+
+/-- A rational count of base units, rounded up. -/
+@[expose] public def ofRatCeil (r : Rat) : Length := ⟨r.ceil⟩
+
+/-- A rational count of base units, rounded half away from zero. -/
+@[expose] public def ofRatRound (r : Rat) : Length :=
+  let n := r.num
+  let d := (r.den : Int)
+  if n < 0 then ⟨-((-n * 2 + d) / (2 * d))⟩ else ⟨(n * 2 + d) / (2 * d)⟩
+
+end Length
+
+/-- Restate every length fact in base units. -/
+macro "length_units" : tactic =>
+  `(tactic| (try simp only [Length.ext_iff', Length.le_def, Length.lt_def, Length.units_zero,
+    Length.units_add, Length.units_sub, Length.units_neg, Length.units_imul, Length.units_nmul,
+    Length.units_muli, Length.units_muln, Length.units_divi, Length.units_divn, Length.div_length,
+    Length.units_mod, Length.mul_length, Length.units_max, Length.units_min, Length.beq_def,
+    Length.units_tdiv, Length.units_quantum, Length.units_mulDiv] at *))
+
+/-- Restate every length fact in base units, then decide it by `omega`. -/
+macro "length_omega" : tactic => `(tactic| (length_units; omega))
+
+namespace Length
+
+public theorem add_comm (a b : Length) : a + b = b + a := by length_omega
+public theorem add_assoc (a b c : Length) : a + b + c = a + (b + c) := by length_omega
+public theorem add_left_comm (a b c : Length) : a + (b + c) = b + (a + c) := by length_omega
+public theorem add_right_comm (a b c : Length) : a + b + c = a + c + b := by length_omega
+@[simp] public theorem add_zero (a : Length) : a + 0 = a := by length_omega
+@[simp] public theorem zero_add (a : Length) : 0 + a = a := by length_omega
+@[simp] public theorem sub_zero (a : Length) : a - 0 = a := by length_omega
+@[simp] public theorem sub_self (a : Length) : a - a = 0 := by length_omega
+@[simp] public theorem neg_neg (a : Length) : - -a = a := by length_omega
+@[simp] public theorem neg_zero : -(0 : Length) = 0 := by length_omega
+public theorem add_neg_cancel_right (a b : Length) : a + b + -b = a := by length_omega
+public theorem add_sub_cancel (a b : Length) : a + b - b = a := by length_omega
+public theorem sub_add_cancel (a b : Length) : a - b + b = a := by length_omega
+public theorem le_trans {a b c : Length} (h1 : a ≤ b) (h2 : b ≤ c) : a ≤ c := Int.le_trans h1 h2
+public theorem lt_of_lt_of_le {a b c : Length} (h1 : a < b) (h2 : b ≤ c) : a < c :=
+  Int.lt_of_lt_of_le h1 h2
+public theorem lt_of_le_of_lt {a b c : Length} (h1 : a ≤ b) (h2 : b < c) : a < c :=
+  Int.lt_of_le_of_lt h1 h2
+public theorem le_of_lt {a b : Length} (h : a < b) : a ≤ b := Int.le_of_lt h
+public theorem lt_irrefl (a : Length) : ¬a < a := Int.lt_irrefl _
+public theorem le_antisymm {a b : Length} (h1 : a ≤ b) (h2 : b ≤ a) : a = b := by length_omega
+public theorem not_le {a b : Length} : ¬a ≤ b ↔ b < a := Int.not_le
+public theorem not_lt {a b : Length} : ¬a < b ↔ b ≤ a := Int.not_lt
+public theorem le_total (a b : Length) : a ≤ b ∨ b ≤ a := Int.le_total _ _
+public theorem le_max_left (a b : Length) : a ≤ max a b := by length_omega
+public theorem le_max_right (a b : Length) : b ≤ max a b := by length_omega
+public theorem min_le_left (a b : Length) : min a b ≤ a := by length_omega
+public theorem min_le_right (a b : Length) : min a b ≤ b := by length_omega
+public theorem max_comm (a b : Length) : max a b = max b a := by length_omega
+public theorem min_comm (a b : Length) : min a b = min b a := by length_omega
+public theorem max_le {a b c : Length} (h1 : a ≤ c) (h2 : b ≤ c) : max a b ≤ c := by length_omega
+public theorem le_min {a b c : Length} (h1 : c ≤ a) (h2 : c ≤ b) : c ≤ min a b := by length_omega
+public theorem add_le_add {a b c d : Length} (h1 : a ≤ b) (h2 : c ≤ d) : a + c ≤ b + d := by
+  length_omega
+public theorem add_le_add_left {a b : Length} (h : a ≤ b) (c : Length) : c + a ≤ c + b := by
+  length_omega
+public theorem add_le_add_right {a b : Length} (h : a ≤ b) (c : Length) : a + c ≤ b + c := by
+  length_omega
+public theorem add_lt_add_left {a b : Length} (h : a < b) (c : Length) : c + a < c + b := by
+  length_omega
+public theorem add_lt_add_right {a b : Length} (h : a < b) (c : Length) : a + c < b + c := by
+  length_omega
+public theorem sub_le_sub_left {a b : Length} (h : a ≤ b) (c : Length) : c - b ≤ c - a := by
+  length_omega
+public theorem sub_le_sub_right {a b : Length} (h : a ≤ b) (c : Length) : a - c ≤ b - c := by
+  length_omega
+public theorem sub_le_sub {a b c d : Length} (h1 : a ≤ b) (h2 : c ≤ d) : a - d ≤ b - c := by
+  length_omega
+public theorem le_add_of_nonneg_right {a b : Length} (h : 0 ≤ b) : a ≤ a + b := by length_omega
+public theorem le_add_of_nonneg_left {a b : Length} (h : 0 ≤ b) : a ≤ b + a := by length_omega
+public theorem sub_le_self (a : Length) {b : Length} (h : 0 ≤ b) : a - b ≤ a := by length_omega
+public theorem neg_le_neg {a b : Length} (h : a ≤ b) : -b ≤ -a := by length_omega
+public theorem le_of_eq {a b : Length} (h : a = b) : a ≤ b := h ▸ le_refl a
+public theorem ne_of_lt {a b : Length} (h : a < b) : a ≠ b := by intro e; subst e; exact lt_irrefl _ h
+public theorem ne_of_gt {a b : Length} (h : b < a) : a ≠ b := by intro e; subst e; exact lt_irrefl _ h
+public theorem lt_of_le_of_ne {a b : Length} (h1 : a ≤ b) (h2 : a ≠ b) : a < b := by
+  have : a.units ≠ b.units := fun e => h2 ((ext_iff' a b).mpr e)
+  length_omega
+public theorem le_of_not_lt {a b : Length} (h : ¬a < b) : b ≤ a := not_lt.mp h
+public theorem lt_of_not_le {a b : Length} (h : ¬a ≤ b) : b < a := not_le.mp h
+public theorem max_le_max {a b c d : Length} (h1 : a ≤ c) (h2 : b ≤ d) : max a b ≤ max c d := by
+  length_omega
+public theorem min_le_min {a b c d : Length} (h1 : a ≤ c) (h2 : b ≤ d) : min a b ≤ min c d := by
+  length_omega
+public theorem max_eq_left {a b : Length} (h : b ≤ a) : max a b = a := by length_omega
+public theorem max_eq_right {a b : Length} (h : a ≤ b) : max a b = b := by length_omega
+public theorem min_eq_left {a b : Length} (h : a ≤ b) : min a b = a := by length_omega
+public theorem min_eq_right {a b : Length} (h : b ≤ a) : min a b = b := by length_omega
+public theorem le_max_of_le_left {a b c : Length} (h : a ≤ b) : a ≤ max b c := by length_omega
+public theorem le_max_of_le_right {a b c : Length} (h : a ≤ c) : a ≤ max b c := by length_omega
+public theorem min_le_of_left_le {a b c : Length} (h : a ≤ c) : min a b ≤ c := by length_omega
+public theorem min_le_of_right_le {a b c : Length} (h : b ≤ c) : min a b ≤ c := by length_omega
+public theorem sub_eq_add_neg (a b : Length) : a - b = a + -b := by length_omega
+public theorem sub_add_cancel' (a b : Length) : a + (b - a) = b := by length_omega
+public theorem add_sub_assoc (a b c : Length) : a + b - c = a + (b - c) := by length_omega
+public theorem neg_add (a b : Length) : -(a + b) = -a + -b := by length_omega
+public theorem lt_asymm {a b : Length} (h : a < b) : ¬b < a := by length_omega
+public theorem le_of_lt_add_quantum {a b : Length} (h : a < b + quantum) : a ≤ b := by length_omega
+
+end Length
+
+@[expose] public def inch (n : Int) : Length := ⟨n * unitsPerInch⟩
+
+/-- The big point and the CSS pixel are whole counts of the base unit. -/
+public theorem unitsPerInch_exact : unitsPerInch % 72 = 0 ∧ unitsPerInch % 96 = 0 := by decide
+
+/-- The big point, 1⁄72 in: PDF's and CSS's point. -/
+@[expose] public def bp (n : Int) : Length := ⟨n * unitsPerInch / 72⟩
+
+/-- The engine's point, which reads as a big point. -/
+@[expose] public def pt (n : Int) : Length := bp n
+
+/-- Millimetres, 1 mm = 10⁄254 in rounded to the base unit. -/
+@[expose] public def mm (n : Int) : Length := ⟨n * unitsPerInch * 10 / 254⟩
 
 /-- Hundredths of a millimetre, for standards that specify to 0.01 mm (ISO/IEC 7810's ID-1). -/
-@[expose] public def mm100 (n : Int) : Sp := n * 7200 * spPerPt / 254000
+@[expose] public def mm100 (n : Int) : Length := ⟨n * unitsPerInch / 2540⟩
 
-public theorem pt_exact (n : Int) : pt n / spPerPt = n := by
-  simp [pt, spPerPt]
+/-- The CSS pixel, 1⁄96 in (CSS Values and Units 4 §6.2). -/
+@[expose] public def px (n : Int) : Length := ⟨n * unitsPerInch / 96⟩
+
+/-- Thousandths of a big point, rounded half away from zero: the grid PDF and SVG print to. -/
+@[expose] public def Length.ofBpMilli (m : Int) : Length :=
+  if m < 0 then ⟨-(((-m) * unitsPerInch + 36000) / 72000)⟩ else ⟨(m * unitsPerInch + 36000) / 72000⟩
+
+/-- `num / den` big points, rounded down. -/
+@[expose] public def Length.bpFloor (num den : Int) : Length :=
+  ⟨Int.fdiv (num * unitsPerInch) (72 * den)⟩
+
+/-- `num / den` big points, rounded up. -/
+@[expose] public def Length.bpCeil (num den : Int) : Length :=
+  ⟨-Int.fdiv (-(num * unitsPerInch)) (72 * den)⟩
+
+/-- `num / den` of a big point, rounded half up. -/
+@[expose] public def Length.bpRound (num den : Nat) : Length :=
+  ⟨((num * (unitsPerInch / 72).toNat + den / 2) / den : Nat)⟩
+
+/-- A length `num / den` units of `unit`, rounded down. -/
+@[expose] public def Length.ofRatio (unit : Length) (num : Int) (den : Nat) : Length :=
+  ⟨unit.units * num / (den : Int)⟩
+
+public theorem pt_exact (n : Int) : pt n / pt 1 = n := by
+  simp only [pt, bp, unitsPerInch, Length.div_length]
+  omega
+
+public theorem bp_units (n : Int) : (bp n).units = n * (bp 1).units := by
+  simp only [bp, unitsPerInch]
+  omega
+
+public theorem bp_one_pos : 0 < (bp 1).units := by decide
+
+/-- TeX's scaled points in a length, 65536 to the point, rounded to the nearest. -/
+@[expose] public def Length.toSp (x : Length) : Int :=
+  (x.units * 65536 + (pt 1).units / 2) / (pt 1).units
+
+/-- A count of TeX's scaled points as a length, rounded to the nearest. -/
+@[expose] public def Length.ofSp (n : Int) : Length := ⟨((pt 1).units * n + 32768) / 65536⟩
+
+public theorem Length.toSp_ofSp (n : Int) : (Length.ofSp n).toSp = n := by
+  simp only [Length.ofSp, Length.toSp, pt, bp, unitsPerInch]
+  omega
+
+/-- The length in inches, exactly. -/
+@[expose] public def Length.inInches (x : Length) : Rat := (x.units : Rat) / (unitsPerInch : Rat)
+
+/-- A rational count of base units in big points, exactly. -/
+@[expose] public def unitsInBp (r : Rat) : Rat := r * 72 / (unitsPerInch : Rat)
 
 public theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
-  have h : 254 * n * 7200 * spPerPt = 2540 * (10 * n * 72 * spPerPt) := by
-    simp only [spPerPt]
-    omega
-  simp only [mm, inch, h]
-  exact Int.mul_ediv_cancel_left _ (by decide)
+  simp only [mm, inch, Length.ofUnits.injEq, unitsPerInch]
+  omega
 
 public theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
-  have h : 100 * n * 7200 * spPerPt = 100 * (n * 7200 * spPerPt) := by
-    simp only [spPerPt]
-    omega
-  have h2 : (254000 : Int) = 100 * 2540 := by decide
-  simp only [mm100, mm, h, h2]
-  exact Int.mul_ediv_mul_of_pos _ _ (by decide)
+  simp only [mm100, mm, Length.ofUnits.injEq, unitsPerInch]
+  omega
 
-/-- The value `toPtString` spells, in thousandths of a point, rounded half away from zero. -/
-@[expose] public def Sp.toPtMilli (x : Sp) : Int :=
-  let milli : Int := ((x.natAbs * 1000 + 32768) / 65536 : Nat)
-  if x < 0 then -milli else milli
+/-- The value `toBpString` spells, in thousandths of a big point, rounded half away from zero. -/
+@[expose] public def Length.toBpMilli (x : Length) : Int :=
+  if x.units < 0 then -((-x.units * 72000 + unitsPerInch / 2) / unitsPerInch)
+  else (x.units * 72000 + unitsPerInch / 2) / unitsPerInch
+
+public theorem Length.toBpMilli_ofBpMilli (m : Int) : (Length.ofBpMilli m).toBpMilli = m := by
+  unfold Length.ofBpMilli Length.toBpMilli
+  simp only [unitsPerInch]
+  split <;> (dsimp only; split <;> omega)
 
 /-- The last `k` decimal digits of `n`, most significant first, zeros kept. -/
 @[expose] public def kDigits : Nat → Nat → List Char
@@ -52,10 +305,10 @@ public theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
 @[expose] public def fracDigits (k fr : Nat) : List Char :=
   ((kDigits k fr).reverse.dropWhile (· == '0')).reverse
 
-/-- Render as decimal points with up to three fractional digits (exact sp
-value rounded to the nearest thousandth, `toPtMilli`). -/
-@[expose] public def Sp.toPtString (x : Sp) : String :=
-  let m := x.toPtMilli
+/-- Render as decimal big points, PDF's user unit, with up to three fractional digits (the exact
+value rounded to the nearest thousandth, `toBpMilli`). -/
+@[expose] public def Length.toBpString (x : Length) : String :=
+  let m := x.toBpMilli
   let milli := m.natAbs
   let ip := milli / 1000
   let fr := milli % 1000
@@ -66,7 +319,7 @@ value rounded to the nearest thousandth, `toPtMilli`). -/
     s!"{sign}{ip}." ++ String.ofList (fracDigits 3 fr)
 
 example : mm 254 = inch 10 := by decide
-example : (pt 10).toPtString = "10" := by rfl
+example : (pt 10).toBpString = "10" := by rfl
 
 /-- A rational `p / q` (`q > 0`) as a decimal rounded once at the ninth digit, half away from
 zero: the one matrix-entry printer. -/
@@ -84,10 +337,14 @@ zero: the one matrix-entry printer. -/
 /-- An exact rational at nine decimals (`ratString`). -/
 public def ratDecimal (r : Rat) : String := ratString r.num r.den
 
+/-- A rational count of base units spelled in big points, PDF's user unit, at nine decimals. -/
+public def unitsRatBpString (r : Rat) : String := ratString (r.num * 72) ((r.den : Int) * unitsPerInch)
+
+
 public structure Glue where
-  width : Sp := 0
-  stretch : Sp := 0
-  shrink : Sp := 0
+  width : Length := 0
+  stretch : Length := 0
+  shrink : Length := 0
   fil : Bool := false
   /-- Fill that only runs out the rest of a line, yielding to an author's `\hfill`. -/
   parfill : Bool := false
@@ -102,67 +359,74 @@ public structure Glue where
     fil := a.fil || b.fil }
 
 public theorem Glue.add_comm (a b : Glue) : a.add b = b.add a := by
-  simp [add, Int.add_comm, Bool.or_comm]
+  simp only [add, Glue.mk.injEq, Bool.or_comm, and_true]
+  refine ⟨?_, ?_, ?_⟩ <;> length_omega
 
 public theorem Glue.add_assoc (a b c : Glue) : (a.add b).add c = a.add (b.add c) := by
-  simp [add, Int.add_assoc, Bool.or_assoc]
+  simp only [add, Glue.mk.injEq, Bool.or_assoc, and_true]
+  refine ⟨?_, ?_, ?_⟩ <;> length_omega
 
 /-- TeX-style badness: 100·r³ capped at 10000, where r = |delta|/total. -/
-@[expose] public def badness (delta total : Int) : Nat :=
-  if total ≤ 0 then
+@[expose] public def badness (delta total : Length) : Nat :=
+  if total.units ≤ 0 then
     10000
   else
-    min ((100 * delta.natAbs ^ 3) / total.natAbs ^ 3) 10000
+    min ((100 * delta.units.natAbs ^ 3) / total.units.natAbs ^ 3) 10000
 
-public theorem badness_le (d t : Int) : badness d t ≤ 10000 := by
+public theorem badness_le (d t : Length) : badness d t ≤ 10000 := by
   unfold badness
   split
   · exact Nat.le_refl _
   · exact Nat.min_le_right _ _
 
 /-- A length that may depend on the font: an absolute part plus em and ex parts in thousandths. -/
-public structure Length where
-  sp : Sp := 0
+public structure SymLength where
+  sp : Length := 0
   em : Int := 0
   ex : Int := 0
   deriving Repr, BEq, DecidableEq, Inhabited, Hashable
 
-namespace Length
+namespace SymLength
 
-@[expose] public def ofSp (v : Sp) : Length := { sp := v }
+@[expose] public def ofLength (v : Length) : SymLength := { sp := v }
 
-@[expose] public def add (a b : Length) : Length :=
+@[expose] public def add (a b : SymLength) : SymLength :=
   { sp := a.sp + b.sp, em := a.em + b.em, ex := a.ex + b.ex }
 
 /-- Componentwise difference, exact. -/
-@[expose] public def sub (a b : Length) : Length :=
+@[expose] public def sub (a b : SymLength) : SymLength :=
   { sp := a.sp - b.sp, em := a.em - b.em, ex := a.ex - b.ex }
 
 /-- Scale by a rational `num/den`, truncating toward zero as TeX's `\divide` and coefficient
 scaling do (TeX §107). -/
-@[expose] public def scale (l : Length) (num : Int) (den : Nat) : Length :=
+@[expose] public def scale (l : SymLength) (num : Int) (den : Nat) : SymLength :=
   { sp := (l.sp * num).tdiv den
     em := (l.em * num).tdiv den
     ex := (l.ex * num).tdiv den }
 
-/-- Resolve against a font size and x-height, both in sp. -/
-@[expose] public def resolve (l : Length) (fontSize xHeight : Sp) : Sp :=
+/-- Scale by the ratio of two lengths, as `scale` truncates. -/
+@[expose] public def scaleRatio (l : SymLength) (num den : Length) : SymLength :=
+  l.scale num.units den.units.toNat
+
+/-- Resolve against a font size and x-height. -/
+@[expose] public def resolve (l : SymLength) (fontSize xHeight : Length) : Length :=
   l.sp + l.em * fontSize / 1000 + l.ex * xHeight / 1000
 
-public theorem resolve_ofSp (v fontSize xHeight : Sp) :
-    (ofSp v).resolve fontSize xHeight = v := by
-  simp [resolve, ofSp]
+public theorem resolve_ofLength (v fontSize xHeight : Length) :
+    (ofLength v).resolve fontSize xHeight = v := by
+  simp [resolve, ofLength, Length.ext_iff']
 
-public theorem add_comm (a b : Length) : a.add b = b.add a := by
-  simp [add, Int.add_comm]
+public theorem add_comm (a b : SymLength) : a.add b = b.add a := by
+  simp only [add, SymLength.mk.injEq]
+  refine ⟨?_, ?_, ?_⟩ <;> length_omega
 
-end Length
+end SymLength
 
 /-- Glue whose components may be font-relative. -/
 public structure SymGlue where
-  width : Length := {}
-  stretch : Length := {}
-  shrink : Length := {}
+  width : SymLength := {}
+  stretch : SymLength := {}
+  shrink : SymLength := {}
   /-- First-order infinite stretch, TeX's `fil`; finite components ride beside it. -/
   fil : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited, Hashable
@@ -188,7 +452,11 @@ namespace SymGlue
     shrink := g.shrink.scale num den
     fil := g.fil }
 
-@[expose] public def resolve (g : SymGlue) (fontSize xHeight : Sp) : Glue :=
+/-- Scale by the ratio of two lengths, as `scale` truncates. -/
+@[expose] public def scaleRatio (g : SymGlue) (num den : Length) : SymGlue :=
+  g.scale num.units den.units.toNat
+
+@[expose] public def resolve (g : SymGlue) (fontSize xHeight : Length) : Glue :=
   { width := g.width.resolve fontSize xHeight
     stretch := g.stretch.resolve fontSize xHeight
     shrink := g.shrink.resolve fontSize xHeight
@@ -359,39 +627,39 @@ end Affine
 
 /-- A fully resolved local-measure context. -/
 public structure MeasureValues where
-  textWidth : Sp
-  lineWidth : Sp
-  columnWidth : Sp
-  textHeight : Sp
+  textWidth : Length
+  lineWidth : Length
+  columnWidth : Length
+  textHeight : Length
   deriving Repr, BEq
 
 /-- Look up one measure as rigid glue. -/
 @[expose] public def MeasureValues.find (env : MeasureValues) : Measure → SymGlue
-  | .textWidth => { width := .ofSp env.textWidth }
-  | .lineWidth => { width := .ofSp env.lineWidth }
-  | .columnWidth => { width := .ofSp env.columnWidth }
-  | .textHeight => { width := .ofSp env.textHeight }
+  | .textWidth => { width := .ofLength env.textWidth }
+  | .lineWidth => { width := .ofLength env.lineWidth }
+  | .columnWidth => { width := .ofLength env.columnWidth }
+  | .textHeight => { width := .ofLength env.textHeight }
 
 /-- One value for every horizontal measure, with a separate text height. -/
-@[expose] public def MeasureValues.horizontal (measure textHeight : Sp) : MeasureValues :=
+@[expose] public def MeasureValues.horizontal (measure textHeight : Length) : MeasureValues :=
   { textWidth := measure, lineWidth := measure,
     columnWidth := measure, textHeight := textHeight }
 
 /-- Resolve a typed affine length against the geometry and font metrics at its consuming site:
 the only door from `Affine Measure` to sp. -/
 @[expose] public def Affine.resolveWidth (e : Affine Measure) (env : MeasureValues)
-    (fontSize xHeight : Sp := 0) : Sp :=
+    (fontSize xHeight : Length := 0) : Length :=
   (e.eval env.find).width.resolve fontSize xHeight
 
 public theorem Affine.resolveWidth_ref_exact (env : MeasureValues) (m : Measure)
-    (fontSize xHeight : Sp) :
+    (fontSize xHeight : Length) :
     (Affine.ref m).resolveWidth env fontSize xHeight = (env.find m).width.sp := by
   cases m <;> simp [Affine.resolveWidth, Affine.eval, MeasureValues.find,
-    Length.resolve, Length.ofSp]
+    SymLength.resolve, SymLength.ofLength, Length.ext_iff']
 
-public theorem Affine.resolveWidth_lit_exact (env : MeasureValues) (v : Sp)
-    (fontSize xHeight : Sp) :
-    (Affine.lit { width := .ofSp v }).resolveWidth env fontSize xHeight = v := by
-  simpa [Affine.resolveWidth, Affine.eval] using Length.resolve_ofSp v fontSize xHeight
+public theorem Affine.resolveWidth_lit_exact (env : MeasureValues) (v : Length)
+    (fontSize xHeight : Length) :
+    (Affine.lit { width := .ofLength v }).resolveWidth env fontSize xHeight = v := by
+  simpa [Affine.resolveWidth, Affine.eval] using SymLength.resolve_ofLength v fontSize xHeight
 
 end LeanTex.Core.Dim

@@ -392,8 +392,8 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         (elemNodesOne (· == "svg") #[] node).isEmpty &&
         MathMl.nodeChars #[] node == #['x', '7'])
 
-  let size : Dim.SymGlue := { width := { sp := 24 * 65536 } }
-  let leading : Dim.SymGlue := { width := { sp := 28 * 65536 } }
+  let size : Dim.SymGlue := { width := { sp := Dim.pt 24 } }
+  let leading : Dim.SymGlue := { width := { sp := Dim.pt 28 } }
   let sized := Ir.Style.fontSize (.lit size) (.lit leading)
   let role := Ir.titlePartRole 0 0
   let part : Ir.TitlePart := {

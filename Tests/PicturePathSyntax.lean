@@ -20,7 +20,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     "\\begin{tikzpicture}" ++ opts ++ "\n" ++ nodes ++ body ++
     "\n\\useasboundingbox (-4,-3) rectangle (7,5);\n\\end{tikzpicture}\n\\end{document}"
   let page (body : String) (opts : String := "") := layoutOf oneFace (elabStr (src body opts)).1
-  let points (out : Layout.Out) : Array (Nat × Array Int) :=
+  let points (out : Layout.Out) : Array (Nat × Array Dim.Length) :=
     out.pages.flatMap fun p => (pageDraws p).filterMap fun (g, fl, st) =>
       match g, isTipDraw fl st with
       | .path #[sp], true => some (1, #[sp.start.1, sp.start.2] ++
@@ -36,11 +36,11 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       | .path _, true, _ => (acc.1, acc.2 + 1)
       | .path subs, false, some _ => (acc.1 + (subpathSegs subs).size, acc.2)
       | _, _, _ => acc) acc) (0, 0)
-  let close (a b : Array (Nat × Array Int)) : Bool :=
+  let close (a b : Array (Nat × Array Dim.Length)) : Bool :=
     a.size == b.size && (a.zip b).all fun ((ka, xs), (kb, ys)) =>
       ka == kb && xs.size == ys.size && (xs.zip ys).all fun (x, y) =>
         -- Two rounded offsets differ from one rounded sum by at most two sp.
-        decide (x - y ≤ 2 ∧ y - x ≤ 2)
+        decide (x - y ≤ 2 * Dim.Length.quantum ∧ y - x ≤ 2 * Dim.Length.quantum)
   let svg (body : String) (opts : String := "") : Array String :=
     (elabStr (src body opts)).1.body.foldl (fun acc b =>
       acc ++ attrValuesOf (· == "path") "d" (HtmlDoc.blockNode {} b)) #[]
@@ -127,7 +127,8 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       let labels (out : Layout.Out) := (bodyLines out).filter (lineText · == "Tag")
       t s!"path syntax: {name} ships its text at the segment"
         (match (labels got).toList, (labels want).toList with
-         | [a], [b] => decide (a.x - b.x ≤ 2 ∧ b.x - a.x ≤ 2 ∧ a.y - b.y ≤ 2 ∧ b.y - a.y ≤ 2)
+         | [a], [b] => let q := 2 * Dim.Length.quantum
+           decide (a.x - b.x ≤ q ∧ b.x - a.x ≤ q ∧ a.y - b.y ≤ q ∧ b.y - a.y ≤ q)
          | _, _ => false)
   let labelPoints (body : String) :=
     ((bodyLines (page body)).filter (lineText · == "Tag")).map fun line => (line.x, line.y)

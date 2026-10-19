@@ -22,7 +22,7 @@ open LeanTex.Core LeanTex.Core.Dim
 font-relative ones and glue keep their symbolic components. -/
 public inductive Value where
   | str (s : String)
-  | dim (sp : Sp)
+  | dim (sp : Length)
   | int (n : Int)
   | ident (s : String)
   | block (src : String)
@@ -495,24 +495,24 @@ public def parseColorSpec (model : Option String) (raw : String) :
       | none => parsePlainColor source
     else parsePlainColor value
 
-/-- Scaled points per unit, as an exact fraction. -/
-private def unitScaleBase : String → Option (Int × Nat)
-  | "sp" => some (1, 1)
-  | "pt" => some (spPerPt, 1)
-  | "bp" => some (spPerPt, 1)
-  | "in" => some (72 * spPerPt, 1)
-  | "cm" => some (7200 * spPerPt, 254)
-  | "mm" => some (7200 * spPerPt, 2540)
-  | "pc" => some (12 * spPerPt, 1)
+/-- A unit as an exact fraction: `den` of the unit make the length. -/
+private def unitScaleBase : String → Option (Length × Nat)
+  | "sp" => some (pt 1, 65536)
+  | "pt" => some (pt 1, 1)
+  | "bp" => some (bp 1, 1)
+  | "in" => some (inch 1, 1)
+  | "cm" => some (inch 100, 254)
+  | "mm" => some (inch 10, 254)
+  | "pc" => some (pt 12, 1)
   -- The CSS pixel: 1px = 1/96 in (CSS Values and Units 4 §6.2).
-  | "px" => some (72 * spPerPt, 96)
+  | "px" => some (inch 1, 96)
   -- The didot point: 1157 dd = 1238 TeX pt (TeXbook ch. 10).
-  | "dd" => some (8913600 * spPerPt, 8361639)
-  | "cc" => some (12 * 8913600 * spPerPt, 8361639)
+  | "dd" => some (inch 123800, 8361639)
+  | "cc" => some (inch (12 * 123800), 8361639)
   | _ => none
 
-/-- Scaled points per unit, a `true` unit its plain counterpart exactly. -/
-private def unitScale : String → Option (Int × Nat)
+/-- A unit as an exact fraction, a `true` unit its plain counterpart exactly. -/
+private def unitScale : String → Option (Length × Nat)
   | "truesp" => unitScaleBase "sp"
   | "truept" => unitScaleBase "pt"
   | "truebp" => unitScaleBase "bp"
@@ -525,17 +525,17 @@ private def unitScale : String → Option (Int × Nat)
   | "truecc" => unitScaleBase "cc"
   | u => unitScaleBase u
 
+/-- Whether `num` of unit `u` make `den` of unit `v`, cross-multiplied. -/
+private def unitsAgree (u v : String) (num den : Int) : Bool :=
+  match unitScale u, unitScale v with
+  | some (lu, du), some (lv, dv) => lu.units * dv * num == lv.units * du * den
+  | _, _ => false
+
 private theorem unitScale_consistent :
-    unitScale "bp" = unitScale "pt" ∧
-    unitScale "pt" = (unitScale "sp").map (fun u => (spPerPt * u.1, u.2)) ∧
-    unitScale "in" = (unitScale "pt").map (fun u => (72 * u.1, u.2)) ∧
-    unitScale "pc" = (unitScale "pt").map (fun u => (12 * u.1, u.2)) ∧
-    unitScale "cm" = (unitScale "in").map (fun u => (100 * u.1, 254 * u.2)) ∧
-    unitScale "mm" = (unitScale "cm").map (fun u => (u.1, 10 * u.2)) ∧
-    unitScale "px" = (unitScale "in").map (fun u => (u.1, 96 * u.2)) ∧
-    unitScale "dd" = (unitScale "in").map (fun u => (123800 * u.1, 8361639 * u.2)) ∧
-    unitScale "cc" = (unitScale "dd").map (fun u => (12 * u.1, u.2)) := by
-  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, unitScaleBase, spPerPt]
+    unitsAgree "bp" "pt" 1 1 ∧ unitsAgree "pt" "sp" 1 65536 ∧ unitsAgree "in" "pt" 1 72 ∧
+    unitsAgree "pc" "pt" 1 12 ∧ unitsAgree "cm" "in" 254 100 ∧ unitsAgree "mm" "cm" 10 1 ∧
+    unitsAgree "px" "in" 96 1 ∧ unitsAgree "dd" "in" 8361639 123800 ∧ unitsAgree "cc" "dd" 1 12 := by
+  decide
 
 private theorem unitScale_true :
     unitScale "truesp" = unitScale "sp" ∧ unitScale "truept" = unitScale "pt" ∧
@@ -547,17 +547,17 @@ private theorem unitScale_true :
 
 /-- One term's length from its mantissa, scale and unit name. -/
 private def lengthOfUnit (mantissa : Int) (scale : Nat) (unit : String) :
-    Option Length :=
+    Option SymLength :=
   if unit == "em" then
     some { em := mantissa * 1000 / scale }
   else if unit == "ex" then
     some { ex := mantissa * 1000 / scale }
   else
-    (unitScale unit).map fun (num, den) =>
-      Length.ofSp (mantissa * num / (scale * den : Nat))
+    (unitScale unit).map fun (len, den) =>
+      SymLength.ofLength (len.ofRatio mantissa (scale * den))
 
 /-- A single length term: a number with an absolute or font-relative unit. -/
-public def parseLength (s : String) : Option Length :=
+public def parseLength (s : String) : Option SymLength :=
   let s := s.trimAscii.toString
   let digits := s.toList.takeWhile fun c => c.isDigit || c == '.' || c == '-' || c == '+'
   let unit := (String.ofList (s.toList.drop digits.length)).trimAscii.toString
@@ -651,7 +651,7 @@ public theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : Len
   | sub a b iha ihb => simp only [eval, iha, ihb]
 
 /-- The expression evaluated in ℤ over one fixed-point component. -/
-public def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
+public def evalInt (look : String → Option Int) : LenExpr → (SymLength → Int) → Except String Int
   | .lit g, part => .ok (part g.width)
   | .ref n, _ =>
     match look n with
@@ -673,8 +673,8 @@ public def evalInt (look : String → Option Int) : LenExpr → (Length → Int)
     | _, .error m => .error m
 
 public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
-    (eval look e).map (fun g => g.width.sp)
-      = evalInt (fun n => (look n).map (fun g => g.width.sp)) e (fun l => l.sp) := by
+    (eval look e).map (fun g => g.width.sp.units)
+      = evalInt (fun n => (look n).map (fun g => g.width.sp.units)) e (fun l => l.sp.units) := by
   induction e with
   | lit l => rfl
   | ref n => simp only [eval, evalInt]; cases look n <;> rfl
@@ -682,7 +682,7 @@ public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
     simp only [eval, evalInt]
     cases h : eval look e with
     | error m => rw [h] at ih; simp [← ih, Except.map]
-    | ok g => rw [h] at ih; simp [← ih, Except.map, SymGlue.scale, Length.scale]
+    | ok g => rw [h] at ih; simp [← ih, Except.map, SymGlue.scale, SymLength.scale, Length.units_tdiv]
   | add a b iha ihb =>
     simp only [eval, evalInt]
     cases ha : eval look a with
@@ -693,7 +693,7 @@ public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
       | error m => rw [hb] at ihb; simp [← iha, ← ihb, Except.map]
       | ok gb =>
         rw [hb] at ihb
-        simp [← iha, ← ihb, Except.map, SymGlue.add, Length.add]
+        simp [← iha, ← ihb, Except.map, SymGlue.add, SymLength.add]
   | sub a b iha ihb =>
     simp only [eval, evalInt]
     cases ha : eval look a with
@@ -704,7 +704,7 @@ public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
       | error m => rw [hb] at ihb; simp [← iha, ← ihb, Except.map]
       | ok gb =>
         rw [hb] at ihb
-        simp [← iha, ← ihb, Except.map, SymGlue.sub, Length.sub]
+        simp [← iha, ← ihb, Except.map, SymGlue.sub, SymLength.sub]
 
 public theorem eval_absent_named (look : String → Option SymGlue) (n : String)
     (h : look n = none) : eval look (.ref n) = .error n := by
@@ -934,7 +934,7 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
 /-- Inches per unit, exactly as the engine reads the unit everywhere (`unitScale`), so a point is a
 big point; `none` for a font-relative or unknown unit. -/
 public def unitInches (u : String) : Option Rat :=
-  (unitScale u).map fun (n, d) => (n : Rat) / ((d : Rat) * 72 * (spPerPt : Rat))
+  (unitScale u).map fun (l, d) => l.inInches / (d : Rat)
 
 /-- An operand of an exact evaluation: a bare number, or a length in inches. -/
 private inductive XVal where
@@ -1189,8 +1189,8 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
     let digits := s.toList.takeWhile fun c => c.isDigit || c == '.' || c == '-' || c == '+'
     let unit := String.ofList (s.toList.drop digits.length) |>.trimAscii.toString
     match parseDecimal (String.ofList digits), unitScale unit with
-    | some (mantissa, scale), some (num, den) =>
-      some (.dim (mantissa * num / (scale * den : Nat)))
+    | some (mantissa, scale), some (len, den) =>
+      some (.dim (len.ofRatio mantissa (scale * den)))
     | some (mantissa, 1), none =>
       if unit.isEmpty then some (.int mantissa)
       else if isRatioName s then some (.ident s)

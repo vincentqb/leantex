@@ -8,7 +8,7 @@ open LeanTex.Core
 open LeanTex.Core.PdfRead (Obj)
 
 /-- The positive interior spacing of a shipped text line, authored horizontal spacing included. -/
-private def spacingGaps (line : Layout.LineOut) : Array (Dim.Sp × Dim.Sp) := Id.run do
+private def spacingGaps (line : Layout.LineOut) : Array (Dim.Length × Dim.Length) := Id.run do
   let mut x := line.x
   let mut seen := false
   let mut gaps := #[]

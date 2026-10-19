@@ -608,7 +608,7 @@ def warnsOf (src key : String) : Bool :=
   (elabStr src).2.any fun d => (d.code.startsWith "W" || d.code.startsWith "E") && names key d
 
 /-- The paragraph gap a page sets between its first two lines, baseline to baseline. -/
-def firstGap (fonts : Font.FontSet) (src : String) : Option Dim.Sp :=
+def firstGap (fonts : Font.FontSet) (src : String) : Option Dim.Length :=
   match (pageLines fonts src)[0]? with
   | some ls => match ls[0]?, ls[1]? with
     | some (a, _), some (b, _) => some (b - a)
@@ -641,7 +641,7 @@ def paramTruthChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let foot (o : String) : String :=
     s!"\\documentclass\{article}\n\\usepackage{o}\{geometry}\n\\begin\{document}\nAlpha words.\n" ++
       "\\end{document}\n"
-  let folioY (src : String) : Option Dim.Sp :=
+  let folioY (src : String) : Option Dim.Length :=
     ((pageLines fonts src)[0]?.bind fun ls => ls.find? (·.2.trimAscii.toString == "1")).map (·.1)
   t "geometry: nofoot and noheadfoot set the foot at no skip, nohead leaves it"
     (folioY (foot "[nofoot]") != folioY (foot "") && folioY (foot "[noheadfoot]") == folioY (foot "[nofoot]") &&
@@ -683,7 +683,7 @@ def paramTruthChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
 def namingOf (src key : String) : Array Diag := (elabStr src).2.filter (names key)
 
 /-- The first baseline on a source's first page. -/
-def firstY (fonts : Font.FontSet) (src : String) : Option Dim.Sp :=
+def firstY (fonts : Font.FontSet) (src : String) : Option Dim.Length :=
   ((pageLines fonts src)[0]?.bind (·[0]?)).map (·.1)
 
 /-- Standard settings are silent where LuaLaTeX ships the same page with and without them or the
@@ -791,10 +791,10 @@ def textHeightChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let doc (pre : String) : String :=
     s!"\\documentclass\{article}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
   -- The first page's body lines, its folio aside.
-  let firstPage (src : String) : Array (Dim.Sp × String) :=
+  let firstPage (src : String) : Array (Dim.Length × String) :=
     (((pageLines fonts src)[0]?).getD #[]).filter fun (_, l) => l.trimAscii.toString.toNat?.isNone
-  let top (src : String) : Dim.Sp := ((firstPage src)[0]?.map (·.1)).getD 0
-  let last (src : String) : Dim.Sp := ((firstPage src).back?.map (·.1)).getD 0
+  let top (src : String) : Dim.Length := ((firstPage src)[0]?.map (·.1)).getD 0
+  let last (src : String) : Dim.Length := ((firstPage src).back?.map (·.1)).getD 0
   let lead := Dim.pt 12
   let geo (o : String) : String := doc s!"\\usepackage[{o}]\{geometry}"
   let margin := geo "margin=1in"
@@ -802,7 +802,7 @@ def textHeightChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "text height: the kernel's \\textheight keeps the top margin and ends the block 500pt below it"
     (top kernel == top margin && last kernel ≤ Dim.inch 1 + Dim.pt 500 &&
       last kernel + 2 * lead > Dim.inch 1 + Dim.pt 500 && last kernel < last margin)
-  let ofTop (src : String) : Dim.Sp := top src - top margin + Dim.inch 1
+  let ofTop (src : String) : Dim.Length := top src - top margin + Dim.inch 1
   t "text height: geometry's text height alone splits the leftover 2:3"
     (ofTop (geo "textheight=500pt") == (Dim.pt 792 - Dim.pt 500) * 2 / 5)
   t "text height: geometry's text height beside a bottom margin stands on it"
@@ -828,9 +828,9 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\nx\n\\end\{document}\n"
   let art (pre : String) : String := doc "{article}" pre
   let page (src : String) : Ir.PageSpec := (elabStr src).1.page
-  let held (src : String) (top bottom : Dim.Sp) : Bool :=
+  let held (src : String) (top bottom : Dim.Length) : Bool :=
     (page src).vmargin == top && (page src).bottomMargin == bottom
-  let tall (src : String) : Dim.Sp := let p := page src; p.height - p.vmargin - p.bottomMargin
+  let tall (src : String) : Dim.Length := let p := page src; p.height - p.vmargin - p.bottomMargin
   let named (src key : String) : Bool :=
     (elabStr src).2.any fun d => d.code == "W0104" && d.subject.any (·.endsWith s!":{key}")
   let quiet (src : String) : Bool := (elabStr src).2.all (·.severity == .note)

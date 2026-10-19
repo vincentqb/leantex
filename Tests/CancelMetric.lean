@@ -24,20 +24,21 @@ def agrees (fonts : Font.FontSet) (out : Layout.Out) (em : Int)
     let geom := Math.cancelGeom .to spec.room input
     let some actual := (shipped[0]?).bind (·[0]?) | throw "missing shipped mark"
     let some expected := (geom.polys[0]?).bind (·[0]?) | throw "missing measured mark"
-    let dx := actual.1 - expected.1
-    let dy := actual.2 - expected.2
+    let u := Dim.Length.ofUnits
+    let dx := actual.1 - u expected.1
+    let dy := actual.2 - u expected.2
     let all := shippedBodyGlyphs out
     let #[anchor] := all.filter (·.scalar == '𝑢') | throw "missing style witness"
     let glyphs := all.filter fun g => target.toList.contains g.scalar
     unless String.ofList (glyphs.toList.map (·.scalar)) == target do
       throw "target census differs"
     let ink ← ShippedInk.targetInk fonts glyphs
-    return em > 0 && anchor.size == em &&
-      shipped == geom.polys.map (fun ps => ps.map fun (x, y) => (x + dx, y + dy)) &&
-      ink.left == dx + geom.valueX + input.vleft &&
-      ink.right == dx + geom.valueX + input.vright &&
-      ink.bottom == dy + geom.valueY + input.vbot &&
-      ink.top == dy + geom.valueY + input.vtop : Except String Bool).toOption.getD false
+    return em > 0 && anchor.size == u em &&
+      shipped == geom.polys.map (fun ps => ps.map fun (x, y) => (u x + dx, u y + dy)) &&
+      ink.left == dx + u (geom.valueX + input.vleft) &&
+      ink.right == dx + u (geom.valueX + input.vright) &&
+      ink.bottom == dy + u (geom.valueY + input.vbot) &&
+      ink.top == dy + u (geom.valueY + input.vtop) : Except String Bool).toOption.getD false
 
 /-- Source neighbours witness the reserved interval: operand ink stays in the measured envelope and
 clear of the following source glyph. -/
@@ -49,19 +50,19 @@ def bodyRoomAgrees (fonts : Font.FontSet) (out : Layout.Out)
     let geom := Math.cancelGeom .to spec.room metric.input
     let some actual := (polys[0]?).bind (·[0]?) | throw "missing shipped mark"
     let some expected := (geom.polys[0]?).bind (·[0]?) | throw "missing measured mark"
-    let dx := actual.1 - expected.1
+    let dx := actual.1 - Dim.Length.ofUnits expected.1
     let all := shippedBodyGlyphs out
     let body ← ShippedInk.targetInk fonts (all.filter (·.scalar == '𝑥'))
     let (left, right) ← CancelAlignment.constructEndpoints out
-    return body.left == dx + geom.shift + metric.bodyLeft &&
-      body.right == dx + geom.shift + metric.bodyRight &&
+    return body.left == dx + Dim.Length.ofUnits (geom.shift + metric.bodyLeft) &&
+      body.right == dx + Dim.Length.ofUnits (geom.shift + metric.bodyRight) &&
       (!spec.room || body.inRoom left right) : Except String Bool).toOption.getD false
 
 /-- Ambient declarations reach the native resolver, and a stale callback is rejected when the active
 size changes. -/
 def contextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let fixed (n : Int) : Dim.Affine Dim.Measure :=
-    .lit { width := .ofSp (Dim.pt n) }
+    .lit { width := .ofLength (Dim.pt n) }
   let contexts : Array (String × String × Array Ir.Style × Bool) := #[
     ("large", "\\Large ", #[.size "Large"], true),
     ("absolute", "\\fontsize{24pt}{29pt}\\selectfont ",

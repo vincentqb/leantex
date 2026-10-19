@@ -424,13 +424,13 @@ def svgFuzz : IO (Nat × Nat) := do
   let mut figures : Array ByteArray := #[]
   for n in names do figures := figures.push (← IO.FS.readBinFile n)
   -- Anchors: the pristine figures' verdicts and boxes, and canonical spellings reading back.
-  let boxes : Array Nat := #[18874368, 9830400, 9830400, 3932160, 5898240, 4718592]
+  let boxes : Array Dim.Length := #[Dim.pt 288, Dim.pt 150, Dim.pt 150, Dim.pt 60, Dim.pt 90, Dim.pt 72]
   for h : k in [0:figures.size] do
     let b := figures[k]
     match Svg.importBytes b with
     | .exact i =>
       if names[k]! == "testdata/svg/filtered.svg" then die s!"{names[k]!} imported exactly"
-      unless i.fig.box.2.1 == (boxes[k]! : Int) do die s!"{names[k]!} imported to width {i.fig.box.2.1}"
+      unless i.fig.box.2.1 == boxes[k]! do die s!"{names[k]!} imported to width {reprStr i.fig.box.2.1}"
     | .lossy i =>
       unless names[k]! == "testdata/svg/filtered.svg" && i.fig.losses == #[.property "filter"] do
         die s!"{names[k]!} imported with losses {repr i.fig.losses}"

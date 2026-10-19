@@ -17,7 +17,7 @@ def prose : String :=
 leaves, and the morning light settles slowly on the stones along the bank.")
 
 /-- The characters, spaces included, of every shipped body line set to the full measure. -/
-def fullLineChars (out : Layout.Out) (measure : Dim.Sp) : Array Nat :=
+def fullLineChars (out : Layout.Out) (measure : Dim.Length) : Array Nat :=
   (bodyLines out).filterMap fun l =>
     if l.setWidth + Dim.pt 1 ≥ measure then some (lineText l).length else none
 
@@ -29,7 +29,7 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mdDoc := (elabMd (prose ++ "\n")).1
   let texDoc := (elabStr (dvDoc "" prose)).1
-  let width (d : Ir.Doc) : Dim.Sp := d.page.width - 2 * d.page.hmargin
+  let width (d : Ir.Doc) : Dim.Length := d.page.width - 2 * d.page.hmargin
   t "markdown takes the markdown text block, an article its own"
     (width mdDoc == Ir.markdownTextBlock && width texDoc == Ir.articleTextBlock)
   t "a declared page geometry still keeps every value it names"

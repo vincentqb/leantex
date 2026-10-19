@@ -188,7 +188,7 @@ public theorem shippedGrounds_projects (geom : Geom) (out : Out) {p : Nat} {page
 /-- A run's actual point size and OpenType weight, with the PDF writer's body-face fallback;
 `none` when the font is absent. -/
 public def runMetrics? (fs : Font.FontSet) (out : Out) (paint : RunPaint) :
-    Option (Dim.Sp × Nat) := do
+    Option (Dim.Length × Nat) := do
   let page ← out.pages[paint.page]?
   let line ← page.lines[paint.line]?
   let .run idx _ _ _ _ size _ _ _ _ _ ← line.segs[paint.segment]? | none
@@ -203,7 +203,7 @@ public inductive ContrastUnknown where
 
 /-- A contrast verdict, or the evidence the judge lacks. -/
 public inductive TextVerdict where
-  | measured (ground : Color) (size : Dim.Sp) (weight : Nat) (pair : PairAssessment)
+  | measured (ground : Color) (size : Dim.Length) (weight : Nat) (pair : PairAssessment)
   | unverified (reason : ContrastUnknown)
   deriving Repr, BEq
 
@@ -246,12 +246,13 @@ public theorem judgePaint_exact (grounds : Array (Option Color)) (fs : Font.Font
   | some metrics =>
     rcases metrics with ⟨size, weight⟩
     by_cases hs : size ≤ 0
-    · simp [judgePaint, hm, hs, TextVerdict.passes, TextVerified, Int.not_lt.mpr hs]
+    · have hs' : ¬ 0 < size.units := by length_omega
+      simp [judgePaint, hm, hs, hs', TextVerdict.passes, TextVerified]
     · cases hg : grounds[paint.page]?.join with
       | none => simp [judgePaint, hm, hs, hg, TextVerdict.passes, TextVerified]
       | some ground =>
         simp [judgePaint, hm, hs, hg, TextVerdict.passes, TextVerified,
-          and_assoc, Int.lt_of_not_ge hs,
+          and_assoc, (by length_omega : 0 < size.units),
           (assessPair_contract (textRequired size (weight ≥ 700)) paint.ink ground).2]
 
 /-- One verdict for every nonempty placed run, background scans shared. -/

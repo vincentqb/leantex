@@ -100,7 +100,7 @@ def counterexamples (fs : FontSet) : Array (String × Bool) := Id.run do
   let plain : Doc := { body := #[.para a, .para b] }
   let ordinary := run geom fs none plain
   let spaced := run geom fs none { plain with body := #[.para a,
-    .spaced (Sourced.bare { width := Length.ofSp (pt 80) }) #[.para b]] }
+    .spaced (Sourced.bare { width := SymLength.ofLength (pt 80) }) #[.para b]] }
   let ordinaryLines := (bodyLines ordinary).filter fun l => !l.note && hasGlyphRun l
   let spacedLines := (bodyLines spaced).filter fun l => !l.note && hasGlyphRun l
   let chrome : Chrome := { footerRight := some .frameNumber }

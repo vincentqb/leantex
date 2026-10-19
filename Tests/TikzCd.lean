@@ -118,7 +118,7 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((firstPass (dvDoc pre (display cdLossy))).1.pictureSrcs.map (·.1)))
   t "a body size the class holds no option for is set by its own switch"
     (Ir.pictureSwitch { fontSize := Dim.pt 9 } none ==
-      some s!"\\fontsize\{{(Dim.pt 9).toPtString}pt}\{{(Ir.leadingFor (Dim.pt 9)).toPtString}pt}\\selectfont")
+      some s!"\\fontsize\{{(Dim.pt 9).toBpString}pt}\{{(Ir.leadingFor (Dim.pt 9)).toBpString}pt}\\selectfont")
   let ops := reqOf (dvDoc (pre ++ "\\DeclareMathOperator{\\gradient}{grad}\n" ++
       "\\newlength{\\thumbside}\\setlength{\\thumbside}{.5in}\n")
     (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\", hook] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))

@@ -76,7 +76,8 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     match doc.body with
     | #[.frame #[] false .center false #[.columns #[(w1, #[.para #[.text "left"]]),
                                                      (w2, #[.para #[.text "right"]])]]] =>
-      w1.resolve 1000 == some 600 && w2.resolve 1000 == some 400
+      w1.resolve (1000 * Dim.Length.quantum) == some (600 * Dim.Length.quantum) &&
+        w2.resolve (1000 * Dim.Length.quantum) == some (400 * Dim.Length.quantum)
     | _ => false)
   let out := layoutOf oneFace doc
   t "pdf columns share a baseline side by side"
@@ -165,7 +166,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       .step 2 none #[.para #[.text "two"], .step 3 none #[.para #[.text "three"]]]]])
   let out := layoutOf oneFace pDoc
   t "pdf emits one page per step" (out.pages.size == 3)
-  let coords (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp) :=
+  let coords (p : Layout.PageOut) : Array (Dim.Length × Dim.Length) :=
     p.lines.map fun l => (l.x, l.y)
   t "pdf steps do not reflow"
     (match out.pages[0]?, out.pages[2]? with
@@ -591,7 +592,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let pOut := layoutOf oneFace pDoc
   t "step pages plus divider plus frame" (pOut.pages.size == 5)
   let alert : Ir.Color := { r := 0xA5, g := 0x5A, b := 0x13 }
-  let mp : Dim.Sp := (Layout.Geom.ofPage pDoc.page).textWidth * 7875 / 10000
+  let mp : Dim.Length := (Layout.Geom.ofPage pDoc.page).textWidth * 7875 / 10000
   t "the progress position belongs to the frame, not the step"
     (match pOut.pages[3]? with
      | some p => p.fills.any fun f => f.w == mp / 2 && f.color == alert
@@ -763,12 +764,12 @@ def footerBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let geom0 := Layout.Geom.ofPage doc.page
   let out := layoutOf oneFace doc geom0
   let font := oneFace.body
-  let ascent : Dim.Sp := font.ascent * geom0.fontSize / (font.unitsPerEm : Int)
-  let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
+  let ascent : Dim.Length := font.ascent * geom0.fontSize / (font.unitsPerEm : Int)
+  let descent : Dim.Length := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
   let band := Layout.furnitureBand geom0.vmargin (ascent + descent) none
   let geom := { geom0 with footBand := band.band }
   t "a 6pt margin cannot hold the foot line, so the band bites"
-    (geom.footBand > (0 : Dim.Sp))
+    (geom.footBand > (0 : Dim.Length))
   let footY := Layout.furnFootY band geom.pageH descent
   t "the foot line is laid on every page"
     (!out.pages.isEmpty && out.pages.all fun p => p.lines.any (·.y == footY))
@@ -807,7 +808,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (out.pages[2]?.bind (·.foot) == out.pages[3]?.bind (·.foot))
   let font := oneFace.body
   let footSize := Ir.footlineSize Ir.sizeScale geom0.fontSize
-  let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
+  let descent : Dim.Length := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
   -- A flat digit's band has no depth: its baseline stands moloch's closing `\vskip4pt` above the paper's edge.
   let footY := Layout.footBaseline geom0.pageH 0
   t "the foot line stands 4 pt above the paper's edge, at its step, muted"
@@ -941,7 +942,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ("\\begin{frame}{One}\na\n\\end{frame}\n\\section{End}"))
   let fGeom := Layout.Geom.ofPage fDoc.page
   let fOut := layoutOf oneFace fDoc fGeom
-  let mp : Dim.Sp := fGeom.textWidth * 7875 / 10000
+  let mp : Dim.Length := fGeom.textWidth * 7875 / 10000
   t "a section after every frame fills the bar exactly"
     (fOut.pages.any fun p => p.fills.any fun f =>
       f.w == mp && f.color == (molochProgress ()).1)
@@ -1091,7 +1092,7 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         | .run _ c _ _ _ _ _ _ _ _ _ => c == fg
         | _ => false
      | none => false)
-  let mp : Dim.Sp := geom.textWidth * 7875 / 10000
+  let mp : Dim.Length := geom.textWidth * 7875 / 10000
   let alert : Ir.Color := { r := 0xEB, g := 0x81, b := 0x1B }
   t "section page draws the progress track in the mixed colour"
     (match out.pages[1]? with
@@ -1823,7 +1824,7 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}x\\end{document}")
   t "palette redeclare overrides" (oDoc.palette.find? "a" == some { r := 0x22, g := 0x22, b := 0x22 })
   t "tokens redeclare overrides"
-    ((oDoc.tokens.find? "s").map (·.width) == some (Dim.Length.ofSp (Dim.pt 8)))
+    ((oDoc.tokens.find? "s").map (·.width) == some (Dim.SymLength.ofLength (Dim.pt 8)))
   t "palette redeclare keeps one entry"
     ((oDoc.palette.entries.filter (·.1 == (.color "a"))).size == 1)
 
@@ -1844,7 +1845,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
        some ((Ir.Color.ofHtml 0xEB 0x81 0x1B |>.mix 50 .black).mix 30 .white))
   t "theme moloch declares the progress token"
     (((mDoc.tokens.find? "progressheight").map (·.width)) ==
-      some (Dim.Length.ofSp (Dim.pt 1)))
+      some (Dim.SymLength.ofLength (Dim.pt 1)))
   t "theme moloch styles the frame title"
     ((mDoc.styles.find? "frametitle").bind (·.font) |>.isSome)
   let (oDoc, _) := elabStr (deck169 "\\theme{moloch}\\palette{ alert = #C2185B }"
@@ -1913,7 +1914,7 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "bare design mutes to the ink" (bare.muted == bare.fg)
   t "bare design separator defaults to the ink" (bare.separator == bare.fg)
   t "bare design progress bar is 1pt thick"
-    (bare.progressheight == { width := Dim.Length.ofSp (Dim.pt 1) })
+    (bare.progressheight == { width := Dim.SymLength.ofLength (Dim.pt 1) })
   let themed := designOf "\\theme{moloch}"
   t "themed design carries the bundle's bar pair"
     (themed.frametitle == some { fg := { r := 0xFA, g := 0xFA, b := 0xFA }, bg := { r := 0x23, g := 0x37, b := 0x3B } })
@@ -2099,7 +2100,7 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
-  let gDescent : Dim.Sp := (-gFont.descent) * gGeom.fontSize / (gFont.unitsPerEm : Int)
+  let gDescent : Dim.Length := (-gFont.descent) * gGeom.fontSize / (gFont.unitsPerEm : Int)
   let footY := Layout.furnFootY
     (Layout.furnitureBand gGeom.vmargin
       (gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int) + gDescent) none)

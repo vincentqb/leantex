@@ -103,7 +103,7 @@ private def texts (oneFace : Font.FontSet) (src : String) : Array String :=
     " ".intercalate ((lineText l).splitOn " " |>.filter (· != ""))
 
 /-- The baseline of the first body line holding `w`. -/
-private def yOf (oneFace : Font.FontSet) (src w : String) : Option Dim.Sp :=
+private def yOf (oneFace : Font.FontSet) (src w : String) : Option Dim.Length :=
   ((bodyLines (layoutOf oneFace (elabStr src).1)).find? fun l => hasStr (lineText l) w).map (·.y)
 
 /-- An item's label sets on the first line its item sets, as latex.ltx's `\@item` sets its labels,
@@ -186,7 +186,7 @@ def openerChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
       (tl.map (·.x)).all (· == (tl[0]?.map (·.x)).getD 0) &&
       (tl.any fun l => hasStr (lineText l) "Tag" && hasStr (lineText l) "Mike" && hung l))
   -- A minipage sets `\@listdepth` back to zero, so its list spaces as the outermost does.
-  let pitch (src : String) : Option Dim.Sp :=
+  let pitch (src : String) : Option Dim.Length :=
     match yOf oneFace src "Kilo", yOf oneFace src "Lima" with
     | some a, some b => some (b - a)
     | _, _ => none
@@ -197,7 +197,7 @@ def openerChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
      pitch (article ("\\begin{itemize}\n\\item Mike.\n" ++ inner ++ "\n\\end{itemize}")) !=
        pitch (article inner))
   -- A center in a float closes as a trivlist before the caption below it, as `\endtrivlist` does.
-  let capGap (opener closer : String) : Option Dim.Sp :=
+  let capGap (opener closer : String) : Option Dim.Length :=
     let src := article ("Lima words.\n\\begin{table}[h]\n" ++ opener ++
       "\\begin{tabular}{l}\nKilo\\\\\n\\end{tabular}\n" ++ closer ++
       "\\caption{Mike.}\n\\end{table}\nOscar words.")

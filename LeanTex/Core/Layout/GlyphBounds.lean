@@ -11,7 +11,7 @@ open Dim
 font metrics remain useful for best-effort placement, but do not certify
 containment of an outline the font reader could not measure. -/
 public structure Measurement where
-  extent : Sp × Sp := (0, 0)
+  extent : Length × Length := (0, 0)
   unresolved : Bool := false
   deriving Repr, BEq, Inhabited
 
@@ -19,21 +19,21 @@ public structure Measurement where
 placement value and carries its missing evidence in the same result.
 The equation is exposed for layout's agreement proof, including its
 nominal branch; the fallback scaler stays local to that branch. -/
-@[expose] public def glyph (font : Font) (size raise : Sp) (gid : Nat) : Measurement :=
+@[expose] public def glyph (font : Font) (size raise : Length) (gid : Nat) : Measurement :=
   match font.yExtent gid with
   | some (lo, hi) =>
     { extent := (hi * size / (font.unitsPerEm : Int) + raise,
         (-lo) * size / (font.unitsPerEm : Int) - raise) }
   | none =>
     -- Preserve the layout scaler's treatment of a nonpositive size.
-    let nominal (units : Nat) : Sp := (units * size.toNat) / font.unitsPerEm
+    let nominal (units : Nat) : Length := units * max 0 size / font.unitsPerEm
     { extent := (nominal font.capHeight.toNat + raise,
         nominal (-font.descent).toNat - raise)
       unresolved := true }
 
 /-- Known outline coordinates are scaled in their own run's face, size and
 raise, with no substitution of the paragraph face or a nominal height. -/
-public theorem glyph_known_exact (font : Font) (size raise : Sp)
+public theorem glyph_known_exact (font : Font) (size raise : Length)
     (gid : Nat) (lo hi : Int) (h : font.yExtent gid = some (lo, hi)) :
     glyph font size raise gid =
       { extent := (hi * size / (font.unitsPerEm : Int) + raise,
@@ -42,7 +42,7 @@ public theorem glyph_known_exact (font : Font) (size raise : Sp)
 
 /-- The unresolved flag records exactly the font reader's failure to
 provide an outline extent, even when the nominal fallback is nonzero. -/
-public theorem glyph_unresolved_exact (font : Font) (size raise : Sp)
+public theorem glyph_unresolved_exact (font : Font) (size raise : Length)
     (gid : Nat) :
     (glyph font size raise gid).unresolved = true ↔ font.yExtent gid = none := by
   cases h : font.yExtent gid <;> simp [glyph, h]
@@ -57,7 +57,7 @@ private def Dominates (a b : Measurement) : Prop :=
 
 private theorem dominates_trans {a b c : Measurement} (hab : Dominates a b)
     (hbc : Dominates b c) : Dominates a c :=
-  ⟨Int.le_trans hab.1 hbc.1, Int.le_trans hab.2 hbc.2⟩
+  ⟨by have := hab.1; have := hbc.1; length_omega, by have := hab.2; have := hbc.2; length_omega⟩
 
 private theorem join_left (a b : Measurement) : Dominates a (a.join b) :=
   ⟨Int.le_max_left _ _, Int.le_max_left _ _⟩

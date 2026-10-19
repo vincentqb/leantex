@@ -233,9 +233,55 @@ public def readMatch : Nat → String → Nat
 "
   (_, failures) ← (expect "read-parameter fixture did not compile"
     (threading.exitCode == 0)).run failures
+  let named ← probe "BaseNamed" "module
+public import LeanTex.Core.Dim
+open LeanTex.Core.Dim
+public def gap (x : Length) : Length := pt 1 + 2 * Length.quantum + x / 2
+public def lines (x : Length) : Int := x / pt 12
+public def half (x : Length) : Rat := x.toRat / 2
+public def slack (x : Length) : Length := x + 2 * Length.quantum
+public def share (x y : Length) : Int := x * (1000 : Int) / y
+"
+  (_, failures) ← (expect "named-length fixture did not compile" (named.exitCode == 0)).run failures
+  let built ← probe "BaseBuilt" "module
+public import LeanTex.Core.Dim
+open LeanTex.Core.Dim
+public def onePoint : Length := Length.ofUnits 65536
+"
+  (_, failures) ← (expect "built-length fixture did not compile" (built.exitCode == 0)).run failures
+  let counted ← probe "BaseCounted" "module
+public import LeanTex.Core.Dim
+open LeanTex.Core.Dim
+public def inPoints (x : Length) : Int := x.units / 65536
+"
+  (_, failures) ← (expect "counted-length fixture did not compile" (counted.exitCode == 0)).run failures
+  let shifted ← probe "BaseShifted" "module
+public import LeanTex.Core.Dim
+open LeanTex.Core.Dim
+public def shifted (x : Length) : Rat := x.toRat + 65536
+"
+  (_, failures) ← (expect "shifted-length fixture did not compile" (shifted.exitCode == 0)).run failures
+  let shapes := #[
+    ("BaseProduct", "public def onePoint : Length := Length.ofUnits (2 * 32768)"),
+    ("BaseAbove", "public def wide (x : Length) : Bool := x.units > 65536"),
+    ("BaseFloor", "public def onePoint : Length := Length.ofRatFloor 65536"),
+    ("BaseQuanta", "public def onePoint : Length := 65536 * Length.quantum"),
+    ("BaseScaled", "public def inPoints (x : Length) : Rat := x.toRat / 65536"),
+    ("BaseNatural", "public def inPoints (x : Length) : Nat := x.units.toNat / 65536"),
+    ("BaseNamedEq", "public def eq_sneaky : Length := Length.ofUnits 65536")]
+  for (name, body) in shapes do
+    let out ← probe name s!"module\npublic import LeanTex.Core.Dim\nopen LeanTex.Core.Dim\n{body}\n"
+    (_, failures) ← (expect s!"{name} fixture did not compile" (out.exitCode == 0)).run failures
+  let based ← probe "BaseRead" "module
+public import LeanTex.Core.Dim
+open LeanTex.Core.Dim
+public def perPoint : Int := unitsPerInch / 72
+"
+  (_, failures) ← (expect "base-read fixture did not compile" (based.exitCode == 0)).run failures
   let allFixtures := #["Valid", "Hyphenated-Module", "Visible", "Hidden", "Foreign", "Foundation",
     "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Hoisted", "Structured", "Threaded",
-    "Threading", "Unimported"]
+    "Threading", "Unimported", "BaseNamed", "BaseBuilt", "BaseCounted", "BaseShifted", "BaseRead", "BaseProduct", "BaseAbove",
+    "BaseFloor", "BaseQuanta", "BaseScaled", "BaseNatural", "BaseNamedEq"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
       ("hyphenated compiled module", #["Valid", "Hyphenated-Module"],
@@ -248,6 +294,18 @@ public def readMatch : Nat → String → Nat
       ("bindings returned as a structure", #["Structured"], #["Structured"], true),
       ("parameter only its recursive calls read", #["Threaded"], #["Threaded"], false),
       ("recursive parameters read, a termination fact", #["Threading"], #["Threading"], true),
+      ("lengths through Dim's constructors", #["BaseNamed"], #["BaseNamed"], true),
+      ("a length built from a base-unit numeral", #["BaseBuilt"], #["BaseBuilt"], false),
+      ("a base-unit count against a numeral", #["BaseCounted"], #["BaseCounted"], false),
+      ("a rational base-unit count shifted by a numeral", #["BaseShifted"], #["BaseShifted"], false),
+      ("the base unit read outside Dim", #["BaseRead"], #["BaseRead"], false),
+      ("a length built from a product of numerals", #["BaseProduct"], #["BaseProduct"], false),
+      ("a base-unit count above a numeral", #["BaseAbove"], #["BaseAbove"], false),
+      ("a length floored from a numeral", #["BaseFloor"], #["BaseFloor"], false),
+      ("a large multiple of the quantum", #["BaseQuanta"], #["BaseQuanta"], false),
+      ("a rational base-unit count scaled by the base", #["BaseScaled"], #["BaseScaled"], false),
+      ("a natural base-unit count against a numeral", #["BaseNatural"], #["BaseNatural"], false),
+      ("a declaration named like an equation lemma", #["BaseNamedEq"], #["BaseNamedEq"], false),
       ("empty manifest", #["Valid"], #[], false),
       ("duplicate manifest", #["Valid"], #["Valid", "Valid"], false),
       ("missing module", #["Valid"], #["Unimported"], false)] do

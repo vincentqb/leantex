@@ -87,7 +87,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (multiline.1.size == 2 &&
       multiline.1.toList.map (fun l => Ir.plainText l.1) == ["first", "second"])
   let metric : Ir.Pic.LabelMetric := fun _ _ =>
-    { w := 100, height := 40, depth := 10, boxHeight := 35, boxDepth := 8 }
+    { w := 100 * Dim.Length.quantum, height := 40 * Dim.Length.quantum, depth := 10 * Dim.Length.quantum, boxHeight := 35 * Dim.Length.quantum, boxDepth := 8 * Dim.Length.quantum }
   let measured := Picture.evalFixed { cx with metric } [nodeStmtAt "n" 0 0 [.ident "text"]]
   let p := measured.toPicture
   check ref "picture measured node emits a label" (p.shapes.size == 1)
@@ -101,7 +101,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (tiny.box metric == (((0, 0), (0, 0)) : Ir.Pic.Box) &&
       p.box metric != tiny.box metric)
   let unrelated : Ir.Pic.LabelMetric := fun _ _ =>
-    { w := 1000000000, height := 40, depth := 10 }
+    { w := Dim.inch 1000, height := 40 * Dim.Length.quantum, depth := 10 * Dim.Length.quantum }
   match measured.nodes.lookup "n" with
   | some g =>
     check ref "picture extent requires the metric that resolved the node"
@@ -113,8 +113,8 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   | none => check ref "picture extent counterexample emits its node" false
   -- Equal coordinates do not identify a label's node: two named nodes can share an anchor with different widths.
   let varying : Ir.Pic.LabelMetric := fun content _ =>
-    { w := if Ir.plainText content == "wide" then 1000000000 else 100
-      height := 40, depth := 10, boxHeight := 35, boxDepth := 8 }
+    { w := if Ir.plainText content == "wide" then Dim.inch 1000 else 100 * Dim.Length.quantum
+      height := 40 * Dim.Length.quantum, depth := 10 * Dim.Length.quantum, boxHeight := 35 * Dim.Length.quantum, boxDepth := 8 * Dim.Length.quantum }
   let coincident := Picture.evalFixed { cx with metric := varying }
     [nodeStmtAt "small" 0 0 [.ident "small"], nodeStmtAt "wide" 0 0 [.ident "wide"]]
   match coincident.nodes.lookup "small" with

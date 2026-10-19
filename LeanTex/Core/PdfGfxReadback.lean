@@ -78,22 +78,22 @@ theorem posSpell (k : Nat) : (toString ((k : Nat) : Int)).toList = Nat.toDigits 
   simp only [hn, ↓reduceIte, Int.toNat_natCast, Nat.toList_repr]
 
 /-- A length's operand as the writer spells it: an integer for whole points, else a real. -/
-def lenObj (x : Sp) : Obj :=
-  if x.toPtMilli.natAbs % 1000 = 0 then
-    .int (if x.toPtMilli < 0 then -((x.toPtMilli.natAbs / 1000 : Nat) : Int)
-      else ((x.toPtMilli.natAbs / 1000 : Nat) : Int))
-  else .real x.toPtString
+def lenObj (x : Length) : Obj :=
+  if x.toBpMilli.natAbs % 1000 = 0 then
+    .int (if x.toBpMilli < 0 then -((x.toBpMilli.natAbs / 1000 : Nat) : Int)
+      else ((x.toBpMilli.natAbs / 1000 : Nat) : Int))
+  else .real x.toBpString
 
-theorem lenObj_render (x : Sp) : (lenObj x).render = x.toPtString.toUTF8 := by
+theorem lenObj_render (x : Length) : (lenObj x).render = x.toBpString.toUTF8 := by
   unfold lenObj
   split
   · rename_i hf
     simp only [Obj.render, Obj.renderInto, ByteArray.empty_append]
     congr 1
     apply String.ext
-    rw [toPtString_chars_exact]
+    rw [toBpString_chars_exact]
     simp only [hf, ↓reduceIte, List.append_nil]
-    by_cases hm : x.toPtMilli < 0
+    by_cases hm : x.toBpMilli < 0
     · rw [ite_eq_left hm, ite_eq_left hm]
       exact negSpell _ (by omega)
     · rw [ite_eq_right hm, ite_eq_right hm, List.nil_append]
@@ -146,17 +146,17 @@ theorem numParts_decimal (s : String) (neg : Bool) (ds fd : List Char)
     · rw [← List.cons_append, hread]
       rfl
 
-theorem lenObj_spelled (x : Sp) : PdfContentLex.ValSpelled (lenObj x) := by
+theorem lenObj_spelled (x : Length) : PdfContentLex.ValSpelled (lenObj x) := by
   refine ⟨?_, fun n g h => by unfold lenObj at h; split at h <;> cases h⟩
   unfold lenObj
   split
   · exact .int _
   · rename_i hf
     refine .real ⟨?_, ?_⟩
-    · rw [toPtString_chars_exact]
+    · rw [toBpString_chars_exact]
       simp [hf]
     · intro c hc
-      rw [toPtString_chars_exact] at hc
+      rw [toBpString_chars_exact] at hc
       simp only [hf, ↓reduceIte, List.mem_append, List.mem_cons] at hc
       rcases hc with (hc | hc) | hc | hc
       · split at hc <;> simp_all [PdfLex.numByte]
@@ -164,64 +164,70 @@ theorem lenObj_spelled (x : Sp) : PdfContentLex.ValSpelled (lenObj x) := by
       · subst hc; decide
       · exact numByte_digit (fracDigits_digits 3 _ c hc)
 
-theorem spOf_lenObj (x : Sp) : spOf (lenObj x) = some (qSp x) := by
+theorem spOf_lenObj (x : Length) : spOf (lenObj x) = some (qSp x) := by
+  have hN : bpN = (bp 1).units.toNat := rfl
+  simp only [bp, unitsPerInch, Int.reduceMul, Int.reduceDiv, Int.reduceToNat] at hN
   unfold lenObj spOf
   split
   · rename_i hf
     simp only [PdfContentLex.numParts?, Option.map_some]
     congr 1
     simp only [qSp, spOfParts]
-    by_cases hm : x.toPtMilli < 0
-    · have hip : 0 < x.toPtMilli.natAbs / 1000 := by omega
-      generalize hk : x.toPtMilli.natAbs / 1000 = k at hip
-      have hmk : x.toPtMilli = -((1000 * k : Nat) : Int) := by omega
+    by_cases hm : x.toBpMilli < 0
+    · have hip : 0 < x.toBpMilli.natAbs / 1000 := by omega
+      generalize hk : x.toBpMilli.natAbs / 1000 = k at hip
+      have hmk : x.toBpMilli = -((1000 * k : Nat) : Int) := by omega
       simp only [hm, ↓reduceIte]
       rw [hmk]
       have hneg : decide (-((k : Nat) : Int) < 0) = true := by simp; omega
-      simp only [hneg, ↓reduceIte, Int.natAbs_neg, Int.natAbs_natCast, Nat.mul_one, Int.neg_neg]
-      show (_ : Int) = (_ : Int)
-      omega
-    · generalize hk : x.toPtMilli.natAbs / 1000 = k
-      have hmk : x.toPtMilli = ((1000 * k : Nat) : Int) := by omega
+      simp only [hneg, ↓reduceIte, Int.natAbs_neg, Int.natAbs_natCast, Nat.mul_one]
+      rw [Length.ext_iff']
+      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      split <;> ((try dsimp only) ; omega)
+    · generalize hk : x.toBpMilli.natAbs / 1000 = k
+      have hmk : x.toBpMilli = ((1000 * k : Nat) : Int) := by omega
       simp only [hm, ↓reduceIte]
       rw [hmk]
       have hneg : decide (((k : Nat) : Int) < 0) = false := by simp
       simp only [hneg, Bool.false_eq_true, ↓reduceIte, Int.natAbs_natCast, Nat.mul_one]
-      show (_ : Int) = (_ : Int)
-      omega
+      rw [Length.ext_iff']
+      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      split <;> ((try dsimp only) ; omega)
   · rename_i hf
-    have hfr := fracDigits_value_exact 3 (x.toPtMilli.natAbs % 1000) (Nat.mod_lt _ (by decide)) hf
+    have hfr := fracDigits_value_exact 3 (x.toBpMilli.natAbs % 1000) (Nat.mod_lt _ (by decide)) hf
     obtain ⟨hne, hlen, hval⟩ := hfr
-    have hp := numParts_decimal x.toPtString (decide (x.toPtMilli < 0))
-      (Nat.toDigits 10 (x.toPtMilli.natAbs / 1000)) (fracDigits 3 (x.toPtMilli.natAbs % 1000))
-      (by rw [toPtString_chars_exact]; simp [hf])
+    have hp := numParts_decimal x.toBpString (decide (x.toBpMilli < 0))
+      (Nat.toDigits 10 (x.toBpMilli.natAbs / 1000)) (fracDigits 3 (x.toBpMilli.natAbs % 1000))
+      (by rw [toBpString_chars_exact]; simp [hf])
       (toDigits_digits _) Nat.toDigits_ne_nil (fracDigits_digits 3 _)
     rw [hp]
     simp only [Option.map_some]
     congr 1
     rw [digitsVal_toDigits]
-    generalize hL : (fracDigits 3 (x.toPtMilli.natAbs % 1000)).length = L at hlen hval hne
-    generalize digitsVal (fracDigits 3 (x.toPtMilli.natAbs % 1000)) = dv at hval
+    generalize hL : (fracDigits 3 (x.toBpMilli.natAbs % 1000)).length = L at hlen hval hne
+    generalize digitsVal (fracDigits 3 (x.toBpMilli.natAbs % 1000)) = dv at hval
     have hL1 : 1 ≤ L := by
       rcases Nat.eq_zero_or_pos L with h0 | h0
       · subst h0
         exact absurd (List.eq_nil_of_length_eq_zero hL) hne
       · exact h0
     simp only [qSp, spOfParts]
-    have key : ((2 * 65536 * (x.toPtMilli.natAbs / 1000 * 10 ^ L + dv) + 10 ^ L) / (2 * 10 ^ L)) =
-        (x.toPtMilli.natAbs * 65536 + 500) / 1000 := by
-      generalize x.toPtMilli.natAbs = N at hval ⊢
+    have key : ((2 * bpN * (x.toBpMilli.natAbs / 1000 * 10 ^ L + dv) + 10 ^ L) / (2 * 10 ^ L)) =
+        (x.toBpMilli.natAbs * bpN + 500) / 1000 := by
+      generalize x.toBpMilli.natAbs = N at hval ⊢
       obtain rfl | rfl | rfl : L = 1 ∨ L = 2 ∨ L = 3 := by omega
-      all_goals (simp only [Nat.reducePow, Nat.reduceSub, Nat.reduceMul] at hval ⊢; omega)
-    by_cases hneg : x.toPtMilli < 0
+      all_goals (simp only [hN, Nat.reducePow, Nat.reduceSub, Nat.reduceMul] at hval ⊢; omega)
+    by_cases hneg : x.toBpMilli < 0
     · simp only [hneg, decide_true, ↓reduceIte]
       rw [key]
-      show (_ : Int) = (_ : Int)
-      omega
+      rw [Length.ext_iff']
+      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      split <;> ((try dsimp only) ; omega)
     · simp only [hneg, decide_false, Bool.false_eq_true, ↓reduceIte]
       rw [key]
-      show (_ : Int) = (_ : Int)
-      omega
+      rw [Length.ext_iff']
+      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      split <;> ((try dsimp only) ; omega)
 
 /-- What `Dim.ratString` prints of `p / q` before its point is placed: the
 magnitude in billionths, rounded half away from zero. -/
@@ -591,7 +597,7 @@ def wordsChars (ws : List Word) : List Char := (ws.map Word.chars).flatten
 
 def opW (n : String) : Word := ⟨.op n, n, 32⟩
 
-def lenW (x : Sp) : Word := ⟨.val (lenObj x), x.toPtString, 32⟩
+def lenW (x : Length) : Word := ⟨.val (lenObj x), x.toBpString, 32⟩
 
 /-- A colour channel's thousandth (`Ir.Color.pdfMilli`). -/
 def milliW (v : Nat) : Word := ⟨.val (milliObj v), Ir.Color.pdfMilli v, 32⟩
@@ -602,8 +608,8 @@ def ratW (p q : Int) : Word := ⟨.val (ratObj p q), ratString p q, 32⟩
 def natW (n : Nat) : Word := ⟨.val (.int n), toString n, 32⟩
 
 /-- A dash array, its lengths one space apart in brackets. -/
-def dashW (d : Array Sp) : Word :=
-  ⟨.val (.arr (d.map lenObj)), "[" ++ " ".intercalate (d.toList.map Sp.toPtString) ++ "]", 32⟩
+def dashW (d : Array Length) : Word :=
+  ⟨.val (.arr (d.map lenObj)), "[" ++ " ".intercalate (d.toList.map Length.toBpString) ++ "]", 32⟩
 
 /-- A word ending its line. -/
 def Word.nl (w : Word) : Word := { w with sep := 10 }
@@ -670,7 +676,7 @@ def miterWords : Option Rat → List Word
   | some r => [ratW r.num r.den, opW "M"]
   | none => []
 
-def dashWords : Option (Array Sp × Sp) → List Word
+def dashWords : Option (Array Length × Length) → List Word
   | some (d, p) => [dashW d, lenW p, opW "d"]
   | none => []
 
@@ -711,13 +717,13 @@ def miterS : Option Rat → String
   | some r => s!"{ratDecimal r} M "
   | none => ""
 
-def dashS : Option (Array Sp × Sp) → String
+def dashS : Option (Array Length × Length) → String
   | some (d, p) => Pdf.dashSpelling d p
   | none => ""
 
 theorem strokeState_some (k : Pdf.PaintStroke) :
     Pdf.strokeState (some k) =
-      s!"{Pdf.pdfPaintStroke k.paint} {k.width.toPtString} w " ++ capS k.cap ++ joinS k.join ++
+      s!"{Pdf.pdfPaintStroke k.paint} {k.width.toBpString} w " ++ capS k.cap ++ joinS k.join ++
         miterS k.miter ++ dashS k.dash := by
   obtain ⟨pp, w, cap, join, miter, dash⟩ := k
   rcases cap with _ | c <;> rcases join with _ | jn <;> rcases miter with _ | r <;>
@@ -740,7 +746,7 @@ theorem miterS_chars (m : Option Rat) : (miterS m).toList = wordsChars (miterWor
       wordsChars_nil, sep_space]
     simp
 
-theorem dashS_chars (dp : Option (Array Sp × Sp)) : (dashS dp).toList = wordsChars (dashWords dp) := by
+theorem dashS_chars (dp : Option (Array Length × Length)) : (dashS dp).toList = wordsChars (dashWords dp) := by
   rcases dp with _ | ⟨d, p⟩
   · rfl
   · simp [dashS, Pdf.dashSpelling, dashWords, dashW, lenW, opW, String.toList_append]
@@ -812,10 +818,18 @@ theorem lead_endLine (a : Word) (ws : List Word) (ha : a.sep = 32) (hs : ∀ w �
     rw [wordsChars_cons, ← this, ha]
     simp [lead]
 
+/-- A translation in base units as the fraction of a big point `unitsRatBpString` spells. -/
+@[expose] public def bpPair (r : Rat) : Int × Int := (r.num * 72, (r.den : Int) * 72 * (bp 1).units)
+
+theorem unitsRatBpString_pair (r : Rat) :
+    unitsRatBpString r = ratString (bpPair r).1 (bpPair r).2 := by
+  have hU : unitsPerInch = 72 * (bp 1).units := by decide
+  simp only [unitsRatBpString, bpPair, hU, Int.mul_assoc]
+
 /-- A matrix's words: its six operands (`Gfx.Affine.operands`) and `cm`. -/
 def cmWords (m : Affine) : List Word :=
   [ratW m.a.num m.a.den, ratW m.b.num m.b.den, ratW m.c.num m.c.den, ratW m.d.num m.d.den,
-   ratW m.e.num ((m.e.den : Int) * spPerPt), ratW m.f.num ((m.f.den : Int) * spPerPt), opW "cm"]
+   ratW (bpPair m.e).1 (bpPair m.e).2, ratW (bpPair m.f).1 (bpPair m.f).2, opW "cm"]
 
 /-- A clipping path's words: the path, `W` or `W*`, `n`. -/
 def clipWords (c : Array Pdf.PathOp × Rule) : List Word :=
@@ -856,7 +870,8 @@ theorem groupHeader_eq (m : Option Affine) (clips : Array (Array Pdf.PathOp × R
 
 theorem operands_eq (m : Affine) : m.operands =
     ratDecimal m.a ++ " " ++ ratDecimal m.b ++ " " ++ ratDecimal m.c ++ " " ++ ratDecimal m.d ++ " " ++
-      ratString m.e.num ((m.e.den : Int) * spPerPt) ++ " " ++ ratString m.f.num ((m.f.den : Int) * spPerPt) := by
+      ratString (bpPair m.e).1 (bpPair m.e).2 ++ " " ++ ratString (bpPair m.f).1 (bpPair m.f).2 := by
+  simp only [Affine.operands, unitsRatBpString_pair]
   rfl
 
 theorem cm_chars (a b c d e f : String) :
@@ -955,7 +970,7 @@ theorem groupHeader_chars (m : Option Affine) (clips : Array (Array Pdf.PathOp �
 /-- What a matrix's six printed operands read back as, each at nine decimals. -/
 @[expose] public def readAffine (m : Affine) : Affine :=
   ⟨ratRead m.a.num m.a.den, ratRead m.b.num m.b.den, ratRead m.c.num m.c.den, ratRead m.d.num m.d.den,
-   ratRead m.e.num ((m.e.den : Int) * spPerPt) * 65536, ratRead m.f.num ((m.f.den : Int) * spPerPt) * 65536⟩
+   ratRead (bpPair m.e).1 (bpPair m.e).2 * bpU, ratRead (bpPair m.f).1 (bpPair m.f).2 * bpU⟩
 
 mutual
 
@@ -1109,8 +1124,8 @@ theorem renderInto_eq (acc : ByteArray) (o : Obj) : Obj.renderInto acc o = acc +
   rw [ByteArray.append_empty] at this
   exact this
 
-theorem renderList_len (acc : ByteArray) : ∀ (d : List Sp),
-    Obj.renderList acc (d.map lenObj) = acc ++ (" ".intercalate (d.map Sp.toPtString)).toUTF8
+theorem renderList_len (acc : ByteArray) : ∀ (d : List Length),
+    Obj.renderList acc (d.map lenObj) = acc ++ (" ".intercalate (d.map Length.toBpString)).toUTF8
   | [] => by simp [Obj.renderList, String.intercalate_nil]
   | [x] => by simp [Obj.renderList, String.intercalate_singleton, renderInto_eq, lenObj_render]
   | x :: y :: rest => by
@@ -1125,16 +1140,16 @@ theorem renderList_len (acc : ByteArray) : ∀ (d : List Sp),
       simp only [Array.append_assoc]
     · simp
 
-theorem dash_render (d : Array Sp) :
-    (Obj.arr (d.map lenObj)).render = ("[" ++ " ".intercalate (d.toList.map Sp.toPtString) ++ "]").toUTF8 := by
+theorem dash_render (d : Array Length) :
+    (Obj.arr (d.map lenObj)).render = ("[" ++ " ".intercalate (d.toList.map Length.toBpString) ++ "]").toUTF8 := by
   simp only [Obj.render, Obj.renderInto, Array.toList_map, renderList_len]
   apply ByteArray.ext
   simp [ByteArray.data_append, ByteArray.data_push, String.toByteArray_append]
   rfl
 
-theorem lenObj_repr (x : Sp) : (lenObj x).Representable := (lenObj_spelled x).1
+theorem lenObj_repr (x : Length) : (lenObj x).Representable := (lenObj_spelled x).1
 
-theorem dash_spelled (d : Array Sp) : PdfContentLex.ValSpelled (.arr (d.map lenObj)) := by
+theorem dash_spelled (d : Array Length) : PdfContentLex.ValSpelled (.arr (d.map lenObj)) := by
   refine ⟨.arr fun x hx => ?_, fun _ _ h => by cases h⟩
   obtain ⟨y, _, rfl⟩ := Array.mem_map.mp hx
   exact lenObj_repr y
@@ -1144,7 +1159,7 @@ macro "opspelled" : tactic =>
 
 theorem opW_ok (n : String) (h : PdfContentLex.OpSpelled n) : WordOk (opW n) := ⟨rfl, h, Or.inl rfl⟩
 
-theorem lenW_ok (x : Sp) : WordOk (lenW x) := ⟨lenObj_render x, lenObj_spelled x, Or.inl rfl⟩
+theorem lenW_ok (x : Length) : WordOk (lenW x) := ⟨lenObj_render x, lenObj_spelled x, Or.inl rfl⟩
 
 theorem milliW_ok (v : Nat) (hv : v ≤ 1000) : WordOk (milliW v) :=
   ⟨milliObj_render v, milliObj_spelled v hv, Or.inl rfl⟩
@@ -1169,7 +1184,7 @@ theorem ratW_ok (p q : Int) : WordOk (ratW p q) := by
 theorem natW_ok (n : Nat) : WordOk (natW n) :=
   ⟨intRender n, ⟨.int _, fun _ _ h => by cases h⟩, Or.inl rfl⟩
 
-theorem dashW_ok (d : Array Sp) : WordOk (dashW d) := ⟨dash_render d, dash_spelled d, Or.inl rfl⟩
+theorem dashW_ok (d : Array Length) : WordOk (dashW d) := ⟨dash_render d, dash_spelled d, Or.inl rfl⟩
 
 theorem nl_ok {w : Word} (h : WordOk w) : WordOk w.nl := ⟨h.spell, h.tok, Or.inr rfl⟩
 
@@ -1355,7 +1370,7 @@ theorem good_free (ws : List Word) (ht : ∀ w ∈ ws, PdfContentLex.TokSpelled 
     rw [hf w (by simp) o h] at hr
     exact absurd hr (by decide)
 
-theorem readByObj_lenObj (x : Sp) : PdfContentLex.readByObj (lenObj x) = false := by
+theorem readByObj_lenObj (x : Length) : PdfContentLex.readByObj (lenObj x) = false := by
   unfold lenObj; split <;> rfl
 
 theorem readByObj_milliObj (v : Nat) : PdfContentLex.readByObj (milliObj v) = false := by
@@ -1368,7 +1383,7 @@ theorem readByObj_ratObj (p q : Int) : PdfContentLex.readByObj (ratObj p q) = fa
 /-- A word whose token is no operand the object reader reads. -/
 def FreeW (w : Word) : Prop := ∀ o, w.tok = .val o → PdfContentLex.readByObj o = false
 
-@[simp] theorem free_lenW (x : Sp) : FreeW (lenW x) := by
+@[simp] theorem free_lenW (x : Length) : FreeW (lenW x) := by
   intro o h; simp only [lenW, Tok.val.injEq] at h; subst h; exact readByObj_lenObj x
 
 @[simp] theorem free_milliW (v : Nat) : FreeW (milliW v) := by
@@ -1638,7 +1653,7 @@ theorem stepOp_Q (cx : Ctx) (e : Entered) (st : St) (g : GState) (k : Nat)
   simp [h]
 
 /-- The operands as lengths. -/
-def spAt (st : St) (i : Nat) : Sp := (st.ops.filterMap spOf)[i]?.getD 0
+def spAt (st : St) (i : Nat) : Length := (st.ops.filterMap spOf)[i]?.getD 0
 
 /-- The operands as numbers. -/
 def numAt (st : St) (i : Nat) : Rat := (st.ops.filterMap ratOf)[i]?.getD 0
@@ -1839,7 +1854,7 @@ theorem run_one (cx : Ctx) (e : Entered) (st : St) (o : Obj) (n : String) (hq : 
   rw [stepOp_rest _ _ _ _ hq hQ]
   simp [hops]
 
-theorem run_width (cx : Ctx) (e : Entered) (st : St) (w : Sp) (hops : st.ops = #[]) :
+theorem run_width (cx : Ctx) (e : Entered) (st : St) (w : Length) (hops : st.ops = #[]) :
     run cx e st [lenW w, opW "w"] = { st with gs := { st.gs with width := qSp w } } := by
   rw [run_one cx e st (lenObj w) "w" (by decide) (by decide) hops _ _ rfl rfl, stepRest_w]
   simp [spAt, spOf_lenObj, hops]
@@ -1872,7 +1887,7 @@ theorem run_miterWords (cx : Ctx) (e : Entered) (st : St) (m : Option Rat) (hops
       stepRest_M]
     simp [hops, numAt, ratOf_ratObj]
 
-theorem run_dashWords (cx : Ctx) (e : Entered) (st : St) (dp : Option (Array Sp × Sp)) (hops : st.ops = #[]) :
+theorem run_dashWords (cx : Ctx) (e : Entered) (st : St) (dp : Option (Array Length × Length)) (hops : st.ops = #[]) :
     run cx e st (dashWords dp) =
       { st with gs := { st.gs with
           dash := (dp.map fun dp => dp.1.map qSp).getD st.gs.dash
@@ -2259,8 +2274,8 @@ theorem paintPath_clip (cx : Ctx) (st : St) (r : Rule) (hc : st.clip = some r) (
 
 theorem affineOf_cm (mm : Affine) :
     affineOf ((#[ratObj mm.a.num mm.a.den, ratObj mm.b.num mm.b.den, ratObj mm.c.num mm.c.den,
-      ratObj mm.d.num mm.d.den, ratObj mm.e.num ((mm.e.den : Int) * spPerPt),
-      ratObj mm.f.num ((mm.f.den : Int) * spPerPt)] : Array Obj).filterMap ratOf) = some (readAffine mm) := by
+      ratObj mm.d.num mm.d.den, ratObj (bpPair mm.e).1 (bpPair mm.e).2,
+      ratObj (bpPair mm.f).1 (bpPair mm.f).2] : Array Obj).filterMap ratOf) = some (readAffine mm) := by
   simp [affineOf, ratOf_ratObj, readAffine]
 
 theorem run_cmWords (cx : Ctx) (e : Entered) (st : St) (mm : Affine) (hops : st.ops = #[])
@@ -2752,13 +2767,19 @@ theorem stGeom_drawn (P : Array Pdf.PathOp) (d : Bool) :
         rcases hn with hn | hn
         · exact absurd hw (Int.lt_asymm hn)
         · exact absurd hh (Int.lt_asymm hn)
-      cases d <;> simp [Geom.drawn, Geom.traced, Geom.normal, hn']
+      have hnu : 0 < w.units → h.units ≤ 0 := fun hw => by
+        have := hn'
+        length_omega
+      cases d
+      · simp only [Geom.drawn, Geom.traced, Geom.normal]
+        simpa using hnu
+      · simp [Geom.drawn, Geom.traced]
     · rw [ite_eq_right hn]
   · next a b c e hr => rw [hr]
   · next subs hr => rw [hr]
 
 theorem isoId_toAffine : isoId.inv.toAffine = Affine.unit := by
-  simp [isoId, Iso.inv, Iso.toAffine, Affine.unit]
+  simp [isoId, Iso.inv, Iso.toAffine, Affine.unit, Length.toRat]
 
 /-- Where the importer's figure walk and PDF's own reading stand together:
 one frame, one clip stack, no group alpha but the one each reads, PDF's
@@ -3109,7 +3130,7 @@ theorem geomOps_ne (g : Geom) (h : geomInked g = true) : GfxPdf.geomOps g ≠ []
     exact flatMap_subpathOps_ne _ (by simpa using h)
 
 theorem isoId_toAffine' : isoId.toAffine = Affine.unit := by
-  simp [isoId, Iso.toAffine, Affine.unit]
+  simp [isoId, Iso.toAffine, Affine.unit, Length.toRat]
 
 theorem frameOps_ne (fr : GfxPdf.Frame) (hfr : fr.iso = some isoId ∨ fr.iso = none) (g : Geom)
     (h : geomInked g = true) (d : Bool) : fr.geomOps g d ≠ [] := by

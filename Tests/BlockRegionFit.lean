@@ -30,12 +30,12 @@ private def insideMedium (geom : Layout.Geom) (fill : Layout.Fill) : Bool :=
 
 /-- beamer's colour boxes are `\textwidth` wide at every depth: a child shares its parent's reach
 and stands at least the parent's inset inside it. -/
-private def encloses (pad : Dim.Sp) (outer inner : Layout.Fill) : Bool :=
+private def encloses (pad : Dim.Length) (outer inner : Layout.Fill) : Bool :=
   0 < pad && outer.x == inner.x && outer.w == inner.w && outer.y + pad ≤ inner.y &&
     inner.y + inner.h + pad ≤ outer.y + outer.h
 
 /-- The child's whole painted extent, title bar included, against the parent's insets. -/
-private def parentInsets (page : Layout.PageOut) (pad : Dim.Sp)
+private def parentInsets (page : Layout.PageOut) (pad : Dim.Length)
     (childBar : Ir.Color) : Bool :=
   page.fills.all fun child =>
     if child.color == innerColor || child.color == childBar then

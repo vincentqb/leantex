@@ -219,7 +219,7 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The overruns the paragraphs' re-flowed lines hold, and how far each runs past.
   let carriedOf (o : Layout.Out) : Nat :=
     o.paragraphBreaks.foldl (fun n p => p.lines.foldl (fun m l => m + l.over.size) n) 0
-  let excesses (o : Layout.Out) : Array Dim.Sp :=
+  let excesses (o : Layout.Out) : Array Dim.Length :=
     o.paragraphBreaks.flatMap fun p => p.lines.flatMap fun l => l.over.map (·.excess)
   let runsPast (d : Diag) : Bool := d.carries.contains .W0005
   let source := String.intercalate "\n" [
@@ -315,10 +315,10 @@ which names where each overrun opens ({cReflows.map siteOf}, {cReflows.map (·.d
   let mSteps := excesses measured
   let mMost := mSteps.foldl max 0
   t s!"reflow account: steps measuring one declared line's overrun apart are one record, at \
-the most ({mSteps.map (·.toPtString)}, {mReflows.map (·.detail)})"
+the most ({mSteps.map (·.toBpString)}, {mReflows.map (·.detail)})"
     (mSteps.size == 2 && mSteps[0]? != mSteps[1]? && mReflows.size == 1 &&
       mReflows.all fun d => runsPast d &&
-        d.detail.any (hasStr · s!"by up to {mMost.toPtString}pt, at 5:55"))
+        d.detail.any (hasStr · s!"by up to {mMost.toBpString}pt, at 5:55"))
   let onlyOne := deckOf ["Opening.\\\\",
     prose 6 ++ " \\alt<2>{" ++ wide ++ "}{short} end.\\\\", "Closing.", "\\pause", "", "One."]
   let oReflows := onlyOne.diags.filter (·.kind == .W0386)
@@ -361,17 +361,17 @@ def frameOverfullChecks (ref : IO.Ref (List String)) : IO Unit := do
   let poster := layoutOf fs (located (String.intercalate "\n" [
     "\\documentclass{poster}", "\\begin{document}", wide ++ wide ++ wide, "\\end{document}"]))
   let overfull (o : Layout.Out) := o.diags.filter (·.kind == .W0005)
-  let furthest (o : Layout.Out) (right : Dim.Sp) : Dim.Sp :=
+  let furthest (o : Layout.Out) (right : Dim.Length) : Dim.Length :=
     (bodyLines o).foldl (fun m l => if hasStr (lineText l) wide then max m (l.x + l.setWidth - right)
       else m) 0
   let (deckHtml, _, _) ← sink plain #[] deck.diags #[.html]
   let deckRight := deckDoc.page.width - deckDoc.page.hmargin
   t s!"frame overfull: a stage's line past its measure is one record for both artifacts, in its own \
 words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
-{(furthest deck deckRight).toPtString})"
+{(furthest deck deckRight).toBpString})"
     ((overfull deck).size == 1 && (overfull deck).all fun d =>
       d.output.isNone && d.message.startsWith "a frame's line runs past its measure" &&
-      d.detail == some s!"frame 1: {(furthest deck deckRight).toPtString}pt too wide")
+      d.detail == some s!"frame 1: {(furthest deck deckRight).toBpString}pt too wide")
   t "frame overfull: an HTML build of the deck prints it once"
     ((headLines deckHtml "W0005").length == 1 && hasStr deckHtml "frame 1: " &&
       hasStr deckHtml "pt too wide")
@@ -383,10 +383,10 @@ words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
       (headLines deckHtml "W0386").length == 1)
   let flowRight := flowDoc.page.width - flowDoc.page.hmargin
   t s!"frame overfull: a flow page's overfull line states how far it runs and names no frame \
-({(overfull flow).map (·.detail)}, {(furthest flow flowRight).toPtString})"
+({(overfull flow).map (·.detail)}, {(furthest flow flowRight).toBpString})"
     ((overfull flow).size == 1 && (overfull flow).all fun d =>
       d.message == "overfull line; no feasible break" &&
-      d.detail == some s!"{(furthest flow flowRight).toPtString}pt too wide")
+      d.detail == some s!"{(furthest flow flowRight).toBpString}pt too wide")
   t s!"frame overfull: a poster, a face the web page re-flows, keeps its lines the PDF's \
 ({(overfull poster).map (·.output.map (·.label))})"
     (!(overfull poster).isEmpty && (overfull poster).all (·.output == some .pdf))
@@ -425,10 +425,10 @@ artifacts, a record of their own ({(said "a frame's columns").map (·.detail)})"
   let hung := (bodyLines protruded).filter fun l => hasStr (lineText l) zeds
   let ran := hung.foldl (fun m l => max m (l.x + l.setWidth - flowRight)) 0
   t s!"frame overfull: a protruding line states how far its ink runs past the measure, as TeX's \
-margin kerns stand inside its box ({(overfull protruded).map (·.detail)}, {ran.toPtString}, \
-{hung.map (·.x.toPtString)})"
+margin kerns stand inside its box ({(overfull protruded).map (·.detail)}, {ran.toBpString}, \
+{hung.map (·.x.toBpString)})"
     ((overfull protruded).size == 1 && hung.any (·.x < Dim.pt 20) &&
-      (overfull protruded).all fun d => d.detail == some s!"{ran.toPtString}pt too wide")
+      (overfull protruded).all fun d => d.detail == some s!"{ran.toBpString}pt too wide")
 
 /-- The doors a diagnostic is made through, by their call heads, with whether each takes a subject. -/
 def receiverDoors : List (String × Bool) := [("diag", false), ("diagOf", true), ("warn", false)]

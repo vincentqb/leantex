@@ -8,9 +8,9 @@ open LeanTex.Core LeanTex.Core.Dim
 
 private structure ColumnGeomInk where
   page : Nat
-  x : Sp
-  y : Sp
-  width : Sp
+  x : Length
+  y : Length
+  width : Length
 
 -- A full-line rule exposes the column's assigned measure, whatever the words and justification.
 private def columnGeomInk (out : Layout.Out) : Array ColumnGeomInk :=
@@ -20,7 +20,7 @@ private def columnGeomInk (out : Layout.Out) : Array ColumnGeomInk :=
     | #[.rule w _ _ _] => some ⟨i, line.x, line.y, w⟩
     | _ => none
 
-private def columnGeomAtom (s : String) (measure : Sp) : Option Sp := do
+private def columnGeomAtom (s : String) (measure : Length) : Option Length := do
   if s == "0" then return 0
   let (number, unit) ←
     if s.endsWith "pt" then some ((s.dropEnd 2).toString, pt 1)
@@ -31,11 +31,11 @@ private def columnGeomAtom (s : String) (measure : Sp) : Option Sp := do
     some (n * unit / ((d : Int) * if s.endsWith "%" then 100 else 1))
 
 -- The emitted affine CSS, read independently of `Ir.Track`'s writer; unknown units fail closed.
-private def columnGeomLength (s : String) (measure : Sp) : Option Sp := do
+private def columnGeomLength (s : String) (measure : Length) : Option Length := do
   if !(s.startsWith "calc(" && s.endsWith ")") then
     return ← columnGeomAtom s measure
   let terms := (((s.drop 5).toString.dropEnd 1).toString.splitOn " ").filter (!·.isEmpty)
-  let mut total : Sp := 0
+  let mut total : Length := 0
   let mut sign : Int := 1
   let mut needTerm := true
   for term in terms do
@@ -68,7 +68,7 @@ private def columnGeomTracks (s : String) : Option (Array String) := do
   if depth != 0 then return ← none
   return if term.isEmpty then terms else terms.push term
 
-private def columnGeomTrack (s : String) (measure : Sp) : Option (Sp × Int) := do
+private def columnGeomTrack (s : String) (measure : Length) : Option (Length × Int) := do
   let s ←
     if s.startsWith "minmax(" && s.endsWith ")" then do
       let [lower, upper] := ((s.drop 7).toString.dropEnd 1).toString.splitOn "," | none
@@ -81,13 +81,13 @@ private def columnGeomTrack (s : String) (measure : Sp) : Option (Sp × Int) := 
     return (← columnGeomLength s measure, 0)
 
 private structure ColumnGeomRow where
-  left : Sp
-  gap : Sp
-  right : Sp
+  left : Length
+  gap : Length
+  right : Length
   deriving BEq, Repr
 
 -- The browser's track arithmetic at the PDF's declared measure.
-private def columnGeomHtml (style : String) (measure : Sp) : Option ColumnGeomRow := do
+private def columnGeomHtml (style : String) (measure : Length) : Option ColumnGeomRow := do
   if cssProperty style "display" != some "grid" then return ← none
   let gap ← columnGeomLength ((cssProperty style "column-gap").getD "0pt") measure
   let #[a, b] ← columnGeomTracks (← cssProperty style "grid-template-columns") | none
@@ -134,18 +134,18 @@ private def columnGeomPair : String :=
   "\\begin{paracol}{2}\n" ++ columnGeomRule ++ "L.\\par\n\\switchcolumn\n" ++
     columnGeomRule ++ "R.\\par\n\\end{paracol}\n"
 
-private def columnGeomExpected (measure gap : Sp) (quarter : Int) : ColumnGeomRow :=
+private def columnGeomExpected (measure gap : Length) (quarter : Int) : ColumnGeomRow :=
   let left := (measure - gap) * quarter / 4
   ⟨left, gap, measure - gap - left⟩
 
-private def columnGeomPlaces (out : Layout.Out) (text : String) : Array (Nat × Sp × Sp) :=
+private def columnGeomPlaces (out : Layout.Out) (text : String) : Array (Nat × Length × Length) :=
   out.pages.zipIdx.flatMap fun (page, i) => page.lines.filterMap fun line =>
     if !line.furniture && (lineText line false).trimAscii.toString == text then
       (lineRuns line)[0]?.map fun (_, _, x, _) => (i, x, line.y)
     else none
 
 private def columnGeomCase (ref : IO.Ref (List String)) (fonts : Font.FontSet)
-    (name src : String) (measure : Sp) (expected : Array ColumnGeomRow) : IO Unit := do
+    (name src : String) (measure : Length) (expected : Array ColumnGeomRow) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr src
   let out := layoutOf fonts doc
@@ -193,7 +193,7 @@ private def columnGeomParagraphs (label : String) (count : Nat) : String :=
   String.join ((List.range count).map fun i =>
     columnGeomRule ++ s!"{label}{i + 1}.\\par\n")
 
-private def columnGeomBefore (a b : Nat × Sp × Sp) : Bool :=
+private def columnGeomBefore (a b : Nat × Length × Length) : Bool :=
   a.1 < b.1 || (a.1 == b.1 && a.2.2 < b.2.2)
 
 private def columnGeomScopeContinuation (ref : IO.Ref (List String))

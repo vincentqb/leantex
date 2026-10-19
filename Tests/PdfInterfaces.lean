@@ -19,7 +19,7 @@ example : Pdf.Rect → String := Pdf.Rect.render
 example (_rect : Pdf.Rect) : True := by
   fail_if_success
     have : _rect.render =
-        s!"[{Dim.Sp.toPtString _rect.x0} {Dim.Sp.toPtString _rect.y0} {Dim.Sp.toPtString _rect.x1} {Dim.Sp.toPtString _rect.y1}]" :=
+        s!"[{Dim.Length.toBpString _rect.x0} {Dim.Length.toBpString _rect.y0} {Dim.Length.toBpString _rect.x1} {Dim.Length.toBpString _rect.y1}]" :=
       by rfl
   trivial
 

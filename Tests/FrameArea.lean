@@ -89,7 +89,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   -- A title page's slots each set from its page's top; lualatex sets both section pages at 127.894.
   let (sdoc, _) := elabStr slottedDeck
   let sout := layoutOf fira sdoc (Layout.Geom.ofPage sdoc.page)
-  let sectionY (page : Nat) : Option Dim.Sp :=
+  let sectionY (page : Nat) : Option Dim.Length :=
     sout.pages[page]?.bind fun p =>
       (p.lines.find? fun l => hasStr (lineText l) "Hotel").map (·.y)
   t "frame area: a section page on a title page's heels opens as every section page does"
@@ -98,7 +98,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
      | _, _ => false)
   let geom := Layout.Geom.ofPage doc.page
   let band := ((out.pages[6]?.map (·.lines)).getD #[]).filter (·.furniture)
-  let box := band.foldl (fun (acc : Dim.Sp × Dim.Sp) l =>
+  let box := band.foldl (fun (acc : Dim.Length × Dim.Length) l =>
     let (h, d) := Layout.segsInk fira l.segs
     (max acc.1 h, max acc.2 d)) (0, 0)
   t "frame area: a bottom-aligned frame's content ends on its text area's floor"
@@ -122,7 +122,7 @@ def classAlignChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fira ← shippedFira | t "class t: the shipped Fira Sans parses" false
   let (tdoc, tds) := elabStr (classDeck ",t" "")
   let (edoc, eds) := elabStr (classDeck "" "[t]")
-  let ys (doc : Ir.Doc) : Array (Array Dim.Sp) :=
+  let ys (doc : Ir.Doc) : Array (Array Dim.Length) :=
     (layoutOf fira doc (Layout.Geom.ofPage doc.page)).pages.map (·.lines.map (·.y))
   t "class t: the deck sets every bare frame as an explicit [t] sets it"
     (ys tdoc == ys edoc && (HtmlDoc.emit {} tdoc).1 == (HtmlDoc.emit {} edoc).1 &&
@@ -160,7 +160,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fira ← shippedFira | t "frame opening: the shipped Fira Sans parses" false
   let (doc, _) := elabStr openDeck
   let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-  let first (page : Nat) : Option Dim.Sp :=
+  let first (page : Nat) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) "Kilo").map (·.y)
   let near := withinSp (ptMilli 500)
@@ -169,14 +169,14 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let skip := (Ir.frameBodySkip false .top).resolve size 0
   t "frame opening: a paragraph's first baseline stands one baselineskip below the opening, as lualatex's"
     ((first 0).any fun y => y == skip + lead && near y (ptMilli 17620))
-  let listOpen : Option Dim.Sp := (Ir.listSkips doc.docClass.record.lists size 1).map fun sk =>
+  let listOpen : Option Dim.Length := (Ir.listSkips doc.docClass.record.lists size 1).map fun sk =>
     sk.topsep.width.sp + (Ir.partopsepFor doc.docClass.record.lists size 1 doc.tokens).width.sp
   t "frame opening: a list's first item stands its topsepadd lower, as lualatex's"
     (match first 1, first 2, listOpen with
      | some a, some b, some o => a == skip + o + lead && b == a && near a (ptMilli 20610)
      | _, _, _ => false)
   -- An image's box takes TeX's interline glue at its paragraph's `\baselineskip`.
-  let imageY (page : Nat) : Option Dim.Sp :=
+  let imageY (page : Nat) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
   t "frame opening: an image stands TeX's interline glue below the opening, as lualatex's"
@@ -243,10 +243,10 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lead := Ir.leadingFor size doc.page.leading
   let skip := (Ir.frameBodySkip false .top).resolve size 0
   let topsep := (Ir.trivlistSkipFor lists doc.tokens size 0).width.sp
-  let lineY (page : Nat) (word : String) : Option Dim.Sp :=
+  let lineY (page : Nat) (word : String) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) word).map (·.y)
-  let imageY (page : Nat) : Option Dim.Sp :=
+  let imageY (page : Nat) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
   t "trivlist opening: a frame's trivlist spends LaTeX's top-level topsep, size10's 8pt"
@@ -409,7 +409,8 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((cssProperty d "height").bind fun h =>
         if hasStr h "em - var(--progressheight" then
           cssEmMilli (((h.drop 5).takeWhile (· != ' ')).toString) else none).any fun m =>
-        size * m / 1000 - 4 ≤ pdfStrut && pdfStrut ≤ size * m / 1000)
+        size * m / (1000 : Int) - 4 * Dim.Length.quantum ≤ pdfStrut &&
+          pdfStrut ≤ size * m / (1000 : Int))
   let feet := elemAttrsList (· == "footer") #[] body.toList
   t "frame area html: a restored scriptsize note sizes its footline's box"
     (feet.any fun (_, attrs) =>
@@ -563,7 +564,7 @@ def footBoxChecks (ref : IO.Ref (List String)) : IO Unit := do
   let geom := Layout.Geom.ofPage doc.page
   let out := layoutOf fira doc geom
   let feet := ((out.pages[0]?.map (·.lines)).getD #[]).filter (·.furniture)
-  let (h, d) := feet.foldl (fun (acc : Dim.Sp × Dim.Sp) l =>
+  let (h, d) := feet.foldl (fun (acc : Dim.Length × Dim.Length) l =>
     let (lh, ld) := Layout.segsInk fira l.segs
     (max acc.1 lh, max acc.2 ld)) (0, 0)
   let (_, body, _) := HtmlDoc.emitTree
@@ -596,11 +597,11 @@ def frameNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := elabStr noteFrames
   let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
   let near := withinSp (ptMilli 500)
-  let ys (page : Nat) (note : Bool) : List Dim.Sp :=
+  let ys (page : Nat) (note : Bool) : List Dim.Length :=
     ((out.pages[page]?.map fun p => (p.lines.filter fun l =>
       l.note == note && !l.furniture &&
         (if note then !(lineText l).isEmpty else hasStr (lineText l) "Kilo")).map (·.y)).getD #[]).toList
-  let at? (got : List Dim.Sp) (milli : List Int) : Bool :=
+  let at? (got : List Dim.Length) (milli : List Int) : Bool :=
     got.length == milli.length && (got.zip milli).all fun (a, m) => near a (ptMilli m)
   t "frame notes: a frame's notes stand their last baseline on the text area's floor, as lualatex does"
     (at? (ys 0 true) [260820] && at? (ys 1 true) [260770] && at? (ys 2 true) [251000, 260710])

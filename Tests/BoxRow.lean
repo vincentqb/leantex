@@ -27,7 +27,7 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t "two boxes with a fill between stand on one line" (l.y == r.y)
     t "the first box stands at the margin" (l.x == geom.hmargin)
     t "the second box starts where its declared width ends the measure"
-      (decide (r.x ≥ geom.hmargin + geom.textWidth - geom.textWidth * 45 / 100 - 1))
+      (decide (r.x ≥ geom.hmargin + geom.textWidth - geom.textWidth * 45 / 100 - Dim.Length.quantum))
     t "each box keeps its declared width"
       (decide (l.setWidth ≤ geom.textWidth * 45 / 100) &&
         decide (r.setWidth ≤ geom.textWidth * 45 / 100))
@@ -59,7 +59,7 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- A painted block is as tall as its title's glyphs, so titles differ by a fraction of a point.
   t "two titled panels in a frame stand side by side"
     (match lineWith fls "First", lineWith fls "Second" with
-     | some a, some b => decide ((a.y - b.y).natAbs < (Dim.pt 1).natAbs) && decide (a.x < b.x)
+     | some a, some b => decide ((a.y - b.y).abs < (Dim.pt 1).abs) && decide (a.x < b.x)
      | _, _ => false)
   t "the frame of two side-by-side panels is one page, with no spill named"
     (fout.pages.size == 1 && (fds ++ fout.diags).all (·.code != "W0384"))
@@ -76,9 +76,9 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let linesOf (src : String) : Array Layout.LineOut :=
     (allLines (layoutOf oneFace (elabStr src).1 geom)).filter
       fun l => !l.furniture && !l.segs.isEmpty
-  let ys (src : String) (needle : String) : List Dim.Sp :=
+  let ys (src : String) (needle : String) : List Dim.Length :=
     ((linesOf src).filter fun l => hasStr (lineText l) needle).toList.map (·.y)
-  let tallYs (src : String) : List Dim.Sp :=
+  let tallYs (src : String) : List Dim.Length :=
     ((linesOf src).filter fun l => !hasStr (lineText l) "Short").toList.map (·.y)
   let bRow := two "[b]" "Short." tall
   t "a [b] row stands each box on its last baseline"
@@ -96,7 +96,7 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (match ys cRow "Short", tallYs cRow with
      | [s], y1 :: rest@(_ :: _) =>
        let yn := rest.getLast?.getD y1
-       decide (s - (y1 + yn) / 2 ≤ 1 ∧ (y1 + yn) / 2 - s ≤ 1)
+       decide (s - (y1 + yn) / 2 ≤ Dim.Length.quantum ∧ (y1 + yn) / 2 - s ≤ Dim.Length.quantum)
      | _, _ => false)
   t "an honoured box position names nothing"
     (!((elabStr bRow).2.any (·.code == "N0102")) && !((elabStr tRow).2.any (·.code == "N0102")))
@@ -132,14 +132,14 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let based (opts : String) : Ir.Doc :=
     (elabM (dvDoc "" ("\\raggedright\n\n\\parbox[t]{.2\\textwidth}{\\emph{Lab}}\n" ++
       "\\begin{tikzpicture}[" ++ opts ++ "]\n\\node (x) {Nodea};\n\\end{tikzpicture}\n"))).1
-  let rise (opts : String) : Option Int :=
+  let rise (opts : String) : Option Dim.Length :=
     let ls := (allLines (layoutOf oneFace (based opts))).filter fun l => !l.furniture && !l.segs.isEmpty
     match ls.find? (fun l => hasStr (lineText l) "Lab"), ls.find? (fun l => hasStr (lineText l) "Nodea") with
     | some lab, some node => some (node.y - lab.y)
     | _, _ => none
-  let near (a b : Option Int) : Bool :=
+  let near (a b : Option Dim.Length) : Bool :=
     match a, b with
-    | some x, some y => decide (x - y ≤ 2 ∧ y - x ≤ 2)
+    | some x, some y => decide (x - y ≤ 2 * Dim.Length.quantum ∧ y - x ≤ 2 * Dim.Length.quantum)
     | _, _ => false
   t "a baseline coordinate's y in points stands the picture as that length does"
     (near (rise "baseline={(0,5pt)}") (rise "baseline=5pt") &&

@@ -30,14 +30,14 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   let c := page doc
   let lineOf (s : String) : Option CensusLine :=
     (c[0]?.bind fun p => p.lines.find? fun l => l.text.trimAscii.toString == s)
-  let centre (l : CensusLine) : Dim.Sp := l.x + l.width / 2
+  let centre (l : CensusLine) : Dim.Length := l.x + l.width / 2
   t "diagram geometry: a row's cells share their baseline"
     (match lineOf "Alpha", lineOf "Beta" with
      | some a, some b => a.y == b.y && a.x < b.x
      | _, _ => false)
   t "diagram geometry: a column's cells share their centre, the lower row below"
     (match lineOf "Beta", lineOf "Gamma" with
-     | some b, some g => decide (centre b - centre g ≤ 2 ∧ centre g - centre b ≤ 2) && b.y < g.y
+     | some b, some g => decide (centre b - centre g ≤ 2 * Dim.Length.quantum ∧ centre g - centre b ≤ 2 * Dim.Length.quantum) && b.y < g.y
      | _, _ => false)
   let shafts : Array (Array Ir.Pic.PathSeg) :=
     ((layoutOf mathSet doc).pages.flatMap pageDraws).filterMap fun (g, _, st) =>
@@ -56,7 +56,7 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
     "\\[\\begin{tikzcd}[column sep=large] \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]")
   let (narrow, _) := firstPass (dvDoc pre
     "\\[\\begin{tikzcd}[column sep=tiny] \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]")
-  let gap (d : Ir.Doc) : Option Dim.Sp :=
+  let gap (d : Ir.Doc) : Option Dim.Length :=
     let c := page d
     match (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == "Alpha")),
           (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == "Beta")) with
@@ -97,7 +97,7 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   t "diagram natively: and on the PDF's page, where its link lands"
     ((Layout.destination? lpages "cd").isSome && (Layout.destination? lpages "al").isSome)
   let diagram := "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]"
-  let around (lead : String) : Option Dim.Sp :=
+  let around (lead : String) : Option Dim.Length :=
     let c := page (firstPass (dvDoc pre (lead ++ "\n" ++ diagram ++ "\nAfter."))).1
     match (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == lead)),
           (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == "After.")) with
@@ -138,7 +138,7 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
       let n := HtmlDoc.blockNode {} b
       (attrValuesOf (· == "p") "class" n).contains "display" &&
         (elemNodesOne (· == "svg") #[] n).size == 1)
-  let widthOf (src : String) (word : String) : Option Dim.Sp :=
+  let widthOf (src : String) (word : String) : Option Dim.Length :=
     let c := page (firstPass src).1
     (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == word)).map (·.width)
   let one := "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]"

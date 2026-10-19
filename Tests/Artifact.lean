@@ -14,7 +14,7 @@ from the file alone and judged against the declared geometry. -/
 /-- One token of a content stream (ISO 32000-2 §7.2); a number carries its value in sp beside its
 raw spelling. -/
 inductive CTok where
-  | num (v : Dim.Sp) (raw : String)
+  | num (v : Dim.Length) (raw : String)
   | name (n : String)
   /-- A hexadecimal string's digits, whitespace removed. -/
   | hex (digits : String)
@@ -107,15 +107,15 @@ def artUtf16 (digits : String) : String := Id.run do
 `/FontDescriptor` extent. -/
 structure ArtFont where
   toUni : Std.HashMap Nat String
-  /-- Glyph advances, in thousandths of the em times `Dim.spPerPt` — the
+  /-- Glyph advances, in thousandths of the em, each read as a length of that many points — the
   units `artMille` reads. -/
-  widths : Std.HashMap Nat Int
-  defaultWidth : Int
-  ascent : Int
-  descent : Int
+  widths : Std.HashMap Nat Dim.Length
+  defaultWidth : Dim.Length
+  ascent : Dim.Length
+  descent : Dim.Length
   /-- `/CapHeight`: the height a line of text measures from its glyphs, the engine's text-area
   measure. -/
-  capHeight : Int
+  capHeight : Dim.Length
   deriving Inhabited
 
 /-- The `bfchar` pairs of a `/ToUnicode` CMap: CID, then its text. -/
@@ -141,14 +141,14 @@ def artToUniMap (toks : Array CTok) : Std.HashMap Nat String := Id.run do
     | _ => pure ()
   return m
 
-/-- A font-dictionary metric read exactly, in thousandths of the em times `Dim.spPerPt`; a real
-number is not truncated. -/
-def artMille (o : Obj) : Option Int := o.sp?
+/-- A font-dictionary metric in thousandths of the em, read as that many points; a real number is
+not truncated. -/
+def artMille (o : Obj) : Option Dim.Length := o.sp?
 
 /-- A `/W` array (§9.7.4.3) in both forms, the range form capped so a malformed pair cannot make the
 reading unbounded. -/
-def artWidthMap (o : Obj) : Std.HashMap Nat Int := Id.run do
-  let mut m : Std.HashMap Nat Int := {}
+def artWidthMap (o : Obj) : Std.HashMap Nat Dim.Length := Id.run do
+  let mut m : Std.HashMap Nat Dim.Length := {}
   let .arr xs := o | return m
   let mut i := 0
   for _ in [0:xs.size + 1] do
@@ -184,14 +184,14 @@ def artFontOf (es : Array Entry) (o : Obj) : ArtFont :=
     | .arr xs => deref (xs[0]?.getD .null)
     | d => d
   let fd := deref ((cid.get? "FontDescriptor").getD .null)
-  let milleOf (d : Obj) (k : String) (dflt : Int) : Int :=
+  let milleOf (d : Obj) (k : String) (dflt : Dim.Length) : Dim.Length :=
     (((d.get? k).map deref).bind artMille).getD dflt
   { toUni
     widths := artWidthMap (deref ((cid.get? "W").getD .null))
-    defaultWidth := milleOf cid "DW" (1000 * Dim.spPerPt)
-    ascent := milleOf fd "Ascent" (1000 * Dim.spPerPt)
-    descent := milleOf fd "Descent" (-300 * Dim.spPerPt)
-    capHeight := milleOf fd "CapHeight" (milleOf fd "Ascent" (1000 * Dim.spPerPt)) }
+    defaultWidth := milleOf cid "DW" (Dim.bp 1000)
+    ascent := milleOf fd "Ascent" (Dim.bp 1000)
+    descent := milleOf fd "Descent" (Dim.bp (-300))
+    capHeight := milleOf fd "CapHeight" (milleOf fd "Ascent" (Dim.bp 1000)) }
 
 /-- The marked-content sequence a painting operator stands inside (§14.6): content with its
 structure type and identifier, or an artifact with its declared type. -/
@@ -213,23 +213,23 @@ def ArtMark.render : ArtMark → String
 text its `/ToUnicode` spells. -/
 structure ArtRun where
   marks : Array ArtMark
-  x : Dim.Sp
-  y : Dim.Sp
-  w : Dim.Sp
-  size : Dim.Sp
+  x : Dim.Length
+  y : Dim.Length
+  w : Dim.Length
+  size : Dim.Length
   /-- The face's declared `/Ascent` at this size: the generous box, which
   the page-box claim reads. -/
-  ascent : Dim.Sp
+  ascent : Dim.Length
   /-- The face's declared `/CapHeight` at this size: the measure the
   engine judges its own text area by. -/
-  inkAscent : Dim.Sp
-  descent : Dim.Sp
+  inkAscent : Dim.Length
+  descent : Dim.Length
   /-- The widest advance among the run's glyphs: the slack character protrusion may hang into the
   margin. -/
-  widest : Dim.Sp
+  widest : Dim.Length
   text : String
   /-- Where each glyph starts, in PDF user space, with its `/ToUnicode` text. -/
-  glyphs : Array (Dim.Sp × String) := #[]
+  glyphs : Array (Dim.Length × String) := #[]
   /-- The font resource the run's `Tf` named. -/
   face : String := ""
   deriving Repr, Inhabited
@@ -240,25 +240,25 @@ standing where an image did not load. -/
 structure ArtBox where
   marks : Array ArtMark
   kind : String
-  x0 : Dim.Sp
-  y0 : Dim.Sp
-  x1 : Dim.Sp
-  y1 : Dim.Sp
+  x0 : Dim.Length
+  y0 : Dim.Length
+  x1 : Dim.Length
+  y1 : Dim.Length
   deriving Repr, Inhabited
 
-def ArtRun.x1 (r : ArtRun) : Dim.Sp := r.x + r.w
+def ArtRun.x1 (r : ArtRun) : Dim.Length := r.x + r.w
 
 /-- A run's top edge under the generous box: the baseline plus the
 declared `/Ascent` at the set size. -/
-def ArtRun.top (r : ArtRun) : Dim.Sp := r.y + r.ascent
+def ArtRun.top (r : ArtRun) : Dim.Length := r.y + r.ascent
 
 /-- A run's top edge under the engine's own ink measure: the baseline plus
 the declared `/CapHeight`. -/
-def ArtRun.inkTop (r : ArtRun) : Dim.Sp := r.y + r.inkAscent
+def ArtRun.inkTop (r : ArtRun) : Dim.Length := r.y + r.inkAscent
 
 /-- A run's bottom edge: the baseline plus the descriptor's descent
 (negative) at the set size. -/
-def ArtRun.bottom (r : ArtRun) : Dim.Sp := r.y + r.descent
+def ArtRun.bottom (r : ArtRun) : Dim.Length := r.y + r.descent
 
 def ArtRun.isArtifact (r : ArtRun) : Bool := r.marks.any ArtMark.isArtifact
 
@@ -287,24 +287,24 @@ private structure ArtSt where
   boxes : Array ArtBox := #[]
   marks : Array ArtMark := #[]
   stack : Array CTok := #[]
-  x : Dim.Sp := 0
-  y : Dim.Sp := 0
-  size : Dim.Sp := 0
+  x : Dim.Length := 0
+  y : Dim.Length := 0
+  size : Dim.Length := 0
   th : Int := 1000
   font : Option ArtFont := none
   face : String := ""
-  path : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
-  cm : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
-  saved : Array (Dim.Sp × Int × Option ArtFont × String) := #[]
+  path : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) := none
+  cm : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) := none
+  saved : Array (Dim.Length × Int × Option ArtFont × String) := #[]
 
-private def artExtend (p : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp))
-    (x y : Dim.Sp) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
+private def artExtend (p : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length))
+    (x y : Dim.Length) : Option (Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
   match p with
   | none => some (x, y, x, y)
   | some (x0, y0, x1, y1) => some (min x0 x, min y0 y, max x1 x, max y1 y)
 
 /-- The numeric operands of an operator, in order. -/
-private def artNums (stack : Array CTok) : Array Dim.Sp :=
+private def artNums (stack : Array CTok) : Array Dim.Length :=
   stack.filterMap fun t => match t with
     | .num v _ => some v
     | _ => none
@@ -317,7 +317,7 @@ private def artPaintOps : List String :=
 /-- The face a `TJ` with no `Tf` in force sets in: its glyphs unmapped and its box zero-height,
 still recorded. -/
 def artNoFont : ArtFont :=
-  { toUni := {}, widths := {}, defaultWidth := 1000 * Dim.spPerPt, ascent := 0
+  { toUni := {}, widths := {}, defaultWidth := Dim.bp 1000, ascent := 0
     descent := 0, capHeight := 0 }
 
 /-- What a CID with no `/ToUnicode` entry reads as: U+FFFD, so an
@@ -344,20 +344,20 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
         s := { s with font := fonts[nm]?, face := nm, size := (ns[0]?).getD s.size }
       else if o == "Tz" then
         -- The operand is a percentage, kept in per mille and rounded.
-        s := { s with th := (((ns[0]?).getD (Dim.pt 100)) * 10 + Dim.spPerPt / 2) / Dim.spPerPt }
+        s := { s with th := (((ns[0]?).getD (Dim.bp 100)) * (10 : Int) + Dim.bp 1 / 2) / Dim.bp 1 }
       else if o == "TJ" || o == "Tj" then
         for it in s.stack do
           match it with
           | .hex d =>
             let f := s.font.getD artNoFont
             let cids := artCodes d
-            let mut adv : Dim.Sp := 0
-            let mut widest : Dim.Sp := 0
+            let mut adv : Dim.Length := 0
+            let mut widest : Dim.Length := 0
             let mut txt := ""
-            let mut gs : Array (Dim.Sp × String) := #[]
+            let mut gs : Array (Dim.Length × String) := #[]
             for g in cids do
-              let one := (f.widths[g]?.getD f.defaultWidth) * s.size * s.th
-                / (1000000 * Dim.spPerPt)
+              let one := ((f.widths[g]?.getD f.defaultWidth) * s.th).mulDiv s.size
+                ((1000000 : Int) * Dim.bp 1)
               gs := gs.push (s.x + adv, f.toUni[g]?.getD artUnmapped)
               adv := adv + one
               widest := max widest one
@@ -365,14 +365,14 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
             s := { s with
               runs := s.runs.push
                 { marks := s.marks, x := s.x, y := s.y, w := adv, size := s.size,
-                  ascent := f.ascent * s.size / (1000 * Dim.spPerPt),
-                  inkAscent := f.capHeight * s.size / (1000 * Dim.spPerPt),
-                  descent := f.descent * s.size / (1000 * Dim.spPerPt)
+                  ascent := f.ascent.mulDiv s.size ((1000 : Int) * Dim.bp 1),
+                  inkAscent := f.capHeight.mulDiv s.size ((1000 : Int) * Dim.bp 1),
+                  descent := f.descent.mulDiv s.size ((1000 : Int) * Dim.bp 1)
                   widest := widest, text := txt, glyphs := gs, face := s.face }
               x := s.x + adv }
           | .num _ raw =>
             let d := raw.toInt?.getD 0
-            s := { s with x := s.x - d * s.size * s.th / 1000000 }
+            s := { s with x := s.x - s.size * (d * s.th) / (1000000 : Int) }
           | _ => pure ()
       else if o == "m" || o == "l" then
         if 2 ≤ ns.size then s := { s with path := artExtend s.path ns[0]! ns[1]! }
@@ -429,19 +429,19 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
 its resources name, its content stream's bytes, and the ink those bytes
 paint. -/
 structure ArtPage where
-  media : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp
+  media : Dim.Length × Dim.Length × Dim.Length × Dim.Length
   runs : Array ArtRun
   boxes : Array ArtBox
   content : ByteArray
   deriving Inhabited
 
-def ArtPage.mediaH (p : ArtPage) : Dim.Sp := p.media.2.2.2 - p.media.2.1
+def ArtPage.mediaH (p : ArtPage) : Dim.Length := p.media.2.2.2 - p.media.2.1
 
 /-- A rectangle array read in sp, or the null rectangle. -/
-private def artRect (o : Obj) : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp :=
+private def artRect (o : Obj) : Dim.Length × Dim.Length × Dim.Length × Dim.Length :=
   match o with
   | .arr xs =>
-    let v (k : Nat) : Dim.Sp := ((xs[k]?).bind Obj.sp?).getD 0
+    let v (k : Nat) : Dim.Length := ((xs[k]?).bind Obj.sp?).getD 0
     (v 0, v 1, v 2, v 3)
   | _ => (0, 0, 0, 0)
 
@@ -499,17 +499,17 @@ def driverPdf (fs : Font.FontSet) (geom : Layout.Geom) (doc : Ir.Doc)
 /-- A rectangle in PDF user space, as the region vocabulary the claims
 read: `x0 ≤ x1` and `y0 ≤ y1`. -/
 structure ArtRect where
-  x0 : Dim.Sp
-  y0 : Dim.Sp
-  x1 : Dim.Sp
-  y1 : Dim.Sp
+  x0 : Dim.Length
+  y0 : Dim.Length
+  x1 : Dim.Length
+  y1 : Dim.Length
   deriving Repr, Inhabited
 
 def ArtRect.render (r : ArtRect) : String :=
-  s!"[{r.x0.toPtString} {r.y0.toPtString} {r.x1.toPtString} {r.y1.toPtString}]"
+  s!"[{r.x0.toBpString} {r.y0.toBpString} {r.x1.toBpString} {r.y1.toBpString}]"
 
 /-- Whether the box lies inside `r`, allowing `hslack` left and right and `vslack` above and below. -/
-def ArtRect.holds (r : ArtRect) (hslack vslack bx0 by0 bx1 by1 : Dim.Sp) : Bool :=
+def ArtRect.holds (r : ArtRect) (hslack vslack bx0 by0 bx1 by1 : Dim.Length) : Bool :=
   r.x0 - hslack ≤ bx0 && r.y0 - vslack ≤ by0 && bx1 ≤ r.x1 + hslack && by1 ≤ r.y1 + vslack
 
 /-- Whether two rectangles share area, touching edges not counting. -/
@@ -560,7 +560,7 @@ def artInnerTag (marks : Array ArtMark) : Option String :=
   (marks.reverse.findSome? ArtMark.tag?)
 
 /-- The precision at which the file can state a coordinate: one hundredth of a point. -/
-def artSpellSlack : Dim.Sp := Dim.pt 1 / 100
+def artSpellSlack : Dim.Length := Dim.pt 1 / 100
 
 /-- The artifact claims, one per shape, so a recorded offence names the property it breaks. -/
 inductive ArtProp where
@@ -623,12 +623,12 @@ def artOffences (r : ArtReading) : ArtProp → Array String
       let box := p.box
       for run in p.runs do
         unless box.holds artSpellSlack artSpellSlack run.x run.bottom run.x1 run.top do
-          out := out.push s!"p{i + 1} glyph run [{run.x.toPtString} {run.bottom.toPtString} \
-{run.x1.toPtString} {run.top.toPtString}] outside {box.render}: {run.text}"
+          out := out.push s!"p{i + 1} glyph run [{run.x.toBpString} {run.bottom.toBpString} \
+{run.x1.toBpString} {run.top.toBpString}] outside {box.render}: {run.text}"
       for b in p.boxes do
         unless box.holds artSpellSlack artSpellSlack b.x0 b.y0 b.x1 b.y1 do
-          out := out.push s!"p{i + 1} {b.kind} [{b.x0.toPtString} {b.y0.toPtString} \
-{b.x1.toPtString} {b.y1.toPtString}] outside {box.render}"
+          out := out.push s!"p{i + 1} {b.kind} [{b.x0.toBpString} {b.y0.toBpString} \
+{b.x1.toBpString} {b.y1.toBpString}] outside {box.render}"
     return out
   | .bodyArea => Id.run do
     let mut out : Array String := #[]
@@ -704,7 +704,7 @@ mutual
 
 /-- Every `Tm` inside a text object displaced, optionally only inside
 content sequences (leaving running furniture where it was). -/
-def artMoveTextOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.TextOp → Pdf.TextOp
+def artMoveTextOp (onlyContent : Bool) (dx dy : Dim.Length) : Pdf.TextOp → Pdf.TextOp
   | .move x y => .move (x + dx) (y + dy)
   | .marked t body =>
     if onlyContent && artTagIsArtifact t then .marked t body
@@ -714,7 +714,7 @@ def artMoveTextOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.TextOp → Pdf.Tex
   | o@(.color _) => o
   | o@(.show _) => o
 
-def artMoveTextList (onlyContent : Bool) (dx dy : Dim.Sp) (acc : Array Pdf.TextOp) :
+def artMoveTextList (onlyContent : Bool) (dx dy : Dim.Length) (acc : Array Pdf.TextOp) :
     List Pdf.TextOp → Array Pdf.TextOp
   | [] => acc
   | o :: rest => artMoveTextList onlyContent dx dy (acc.push (artMoveTextOp onlyContent dx dy o)) rest
@@ -724,7 +724,7 @@ end
 mutual
 
 /-- One page's operators with its text displaced, its fills and paths in place. -/
-def artMoveOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.ContentOp → Pdf.ContentOp
+def artMoveOp (onlyContent : Bool) (dx dy : Dim.Length) : Pdf.ContentOp → Pdf.ContentOp
   | .text ops => .text (artMoveTextList onlyContent dx dy #[] ops.toList)
   | .marked t body => .marked t (artMoveList onlyContent dx dy #[] body.toList)
   | o@(.fill _ _ _ _ _) => o
@@ -736,7 +736,7 @@ def artMoveOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.ContentOp → Pdf.Cont
   | o@(.image _ _ _ _ _) => o
   | o@(.imageMissing _ _ _ _) => o
 
-def artMoveList (onlyContent : Bool) (dx dy : Dim.Sp) (acc : Array Pdf.ContentOp) :
+def artMoveList (onlyContent : Bool) (dx dy : Dim.Length) (acc : Array Pdf.ContentOp) :
     List Pdf.ContentOp → Array Pdf.ContentOp
   | [] => acc
   | o :: rest => artMoveList onlyContent dx dy (acc.push (artMoveOp onlyContent dx dy o)) rest
@@ -821,14 +821,14 @@ def artAccounted (diags : Array Diag) : Bool :=
 
 /-- Where the layout put each glyph of a page, in PDF user space and stream order, by
 `Layout.setLine`'s scaling rule. -/
-def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id.run do
-  let mut out : Array Dim.Sp := #[]
+def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Length := Id.run do
+  let mut out : Array Dim.Length := #[]
   for l in Pdf.paintLines p do
     let mut x := geom.bleed + l.x
     for s in l.segs do
       match s with
       | .run _ _ _ w glyphs _ _ _ _ _ _ =>
-        let mut adv : Dim.Sp := 0
+        let mut adv : Dim.Length := 0
         for (_, _, a) in glyphs do
           out := out.push (x + adv + adv * l.expand / 1000)
           adv := adv + a
@@ -841,7 +841,7 @@ def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id
 
 /-- Glyphs whose painted start misses the layout's by more than the file can state (half a
 thousandth of the size plus `artSpellSlack`), the pen advanced by the file's own spellings. -/
-def artGlyphPlacementOffences (laid : Array Dim.Sp) (painted : Array (Dim.Sp × Dim.Sp)) :
+def artGlyphPlacementOffences (laid : Array Dim.Length) (painted : Array (Dim.Length × Dim.Length)) :
     Array String := Id.run do
   if laid.size != painted.size then
     return #[s!"{painted.size} glyphs painted where the layout placed {laid.size}"]
@@ -849,12 +849,12 @@ def artGlyphPlacementOffences (laid : Array Dim.Sp) (painted : Array (Dim.Sp × 
   for h : k in [0:laid.size] do
     let (x, size) := painted[k]!
     let d := x - laid[k]
-    if d.natAbs > (artSpellSlack + size / 2000).natAbs then
-      out := out.push s!"glyph {k}: painted {(d : Dim.Sp).toPtString}pt from its layout x"
+    if d.abs > (artSpellSlack + size / 2000).abs then
+      out := out.push s!"glyph {k}: painted {(d : Dim.Length).toBpString}pt from its layout x"
   return out
 
 /-- A page's painted glyph starts, in stream order, each with its run's size. -/
-def artPaintedGlyphs (p : ArtPage) : Array (Dim.Sp × Dim.Sp) :=
+def artPaintedGlyphs (p : ArtPage) : Array (Dim.Length × Dim.Length) :=
   p.runs.flatMap fun r => r.glyphs.map fun (x, _) => (x, r.size)
 
 /-- A font name without its subset tag, the six capitals and a plus a
@@ -932,7 +932,7 @@ def artFormRuns (pdf : ByteArray) : Except String (Array ArtRun) := do
 
 /-- Each stretch the store's drawn figures set, with its size and every glyph's pen x from the run's
 text origin. -/
-def artFigureStretches (store : Image.Store) : Array (Array Dim.Sp × Dim.Sp) :=
+def artFigureStretches (store : Image.Store) : Array (Array Dim.Length × Dim.Length) :=
   store.shaped.foldl (fun out fig? => match fig? with
     | some fig =>
       -- A symbol's text is written once, in its own form, however many uses paint it.
@@ -945,17 +945,17 @@ def artFigureStretches (store : Image.Store) : Array (Array Dim.Sp × Dim.Sp) :=
     | none => out) #[]
 
 /-- Shaped stretches no painted run sets where shaping put them, within what the file can state. -/
-def artFigureGlyphOffences (expected : Array (Array Dim.Sp × Dim.Sp)) (painted : Array ArtRun) :
+def artFigureGlyphOffences (expected : Array (Array Dim.Length × Dim.Length)) (painted : Array ArtRun) :
     Array String := Id.run do
   let mut free := painted
   let mut out : Array String := #[]
   for (xs, size) in expected do
     let near (r : ArtRun) : Bool :=
       r.glyphs.size == xs.size && (r.glyphs.zip xs).all fun ((px, _), x) =>
-        (px - x).natAbs ≤ (artSpellSlack + size / 2000).natAbs
+        (px - x).abs ≤ (artSpellSlack + size / 2000).abs
     match free.findIdx? near with
     | some i => free := free.eraseIdx! i
-    | none => out := out.push s!"a stretch of {xs.size} glyphs at {(xs[0]?.getD 0).toPtString}pt is painted nowhere it was shaped"
+    | none => out := out.push s!"a stretch of {xs.size} glyphs at {(xs[0]?.getD 0).toBpString}pt is painted nowhere it was shaped"
   return out
 
 /-- A PDF matrix `[a b c d e f]` in points, as `Rat`. -/
@@ -981,7 +981,7 @@ def formGlyphOffences (pdf : ByteArray) (fs : Font.FontSet)
   let es ← PdfRead.objects pdf
   let esv := es.val
   let deref := PdfCensus.deref esv
-  let pt (v : Int) : Rat := (v : Rat) / 65536
+  let pt (v : Dim.Length) : Rat := v.toRat / (Dim.bp 1).toRat
   let mut seen := 0
   let mut out : Array String := #[]
   for e in esv do
@@ -1191,7 +1191,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         t s!"artifact mutant {label}: the control passes {prop.name}: {offs.toList}" offs.isEmpty
   let (fs, geom, doc, out, store) ← build "paragraphs"
   let plain := driverPdf fs geom doc out store
-  let moved (onlyContent : Bool) (dx dy : Dim.Sp) (page : Nat)
+  let moved (onlyContent : Bool) (dx dy : Dim.Length) (page : Nat)
       (f : Font.FontSet) (g : Layout.Geom) (d : Ir.Doc) (o : Layout.Out)
       (s : Image.Store) : ByteArray :=
     artWriteWith f g d o s (artOnPage page (artMoveList onlyContent dx dy #[] ·.toList))
@@ -1211,7 +1211,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   judge "paragraphs untouched" .glyphNames geom plain false
   -- The lift is read off the layout, never a fitted constant.
   let (cf, cg, cd, co, cs) ← build "chrome"
-  let lift : Dim.Sp := ((co.pages[2]?).bind fun p => p.band.bind fun band =>
+  let lift : Dim.Length := ((co.pages[2]?).bind fun p => p.band.bind fun band =>
     (p.lines.find? fun l => !l.furniture && l.y > band).map fun l => l.y - band / 2).getD 0
   t "artifact mutant: the chrome fixture's third frame has a band and a body line below it"
     (0 < lift)
@@ -2017,7 +2017,7 @@ def artFaceChangeOffences (pages : Array ArtPage) : Array String := Id.run do
       let b := rs[k]!
       if a.y == b.y && a.face != b.face && b.x < a.x1 - artSpellSlack then
         out := out.push
-          s!"page {i + 1}: '{b.text}' starts {(a.x1 - b.x).toPtString}pt inside '{a.text}'"
+          s!"page {i + 1}: '{b.text}' starts {(a.x1 - b.x).toBpString}pt inside '{a.text}'"
   return out
 
 def kernPlacementChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -2048,5 +2048,5 @@ def kernPlacementChecks (ref : IO.Ref (List String)) : IO Unit := do
     let x1 := line.foldl (fun m r => max m r.x1) 0
     let area := artBodyArea geom
     let off := (x0 + x1) - (area.x0 + area.x1)
-    t s!"kerns: the centred line is centred as painted ({(off / 2).toPtString}pt off its axis)"
-      (!line.isEmpty && off.natAbs ≤ 2 * artSpellSlack.natAbs)
+    t s!"kerns: the centred line is centred as painted ({(off / 2).toBpString}pt off its axis)"
+      (!line.isEmpty && off.abs ≤ 2 * artSpellSlack.abs)

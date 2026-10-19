@@ -90,7 +90,7 @@ def ruleAttrs (rule : Option Int) (em : Option Int) : Array (String × String) :
     #[("linethickness", length)]
 where
   points (width : Int) : String :=
-    let m := width * 1000 / 65536
+    let m := width * 1000 / (Dim.bp 1).units
     let fs := toString (m % 1000)
     if m == 0 then "0"
     else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt"

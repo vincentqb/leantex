@@ -54,13 +54,13 @@ public def Origin.mark : Origin → MarkTag
   | .leaf k tag => .content tag 0 k
 
 public def PathOp.render : PathOp → String
-  | .moveTo x y => s!"{x.toPtString} {y.toPtString} m "
-  | .lineTo x y => s!"{x.toPtString} {y.toPtString} l "
+  | .moveTo x y => s!"{x.toBpString} {y.toBpString} m "
+  | .lineTo x y => s!"{x.toBpString} {y.toBpString} l "
   | .curveTo x1 y1 x2 y2 x3 y3 =>
-    s!"{x1.toPtString} {y1.toPtString} {x2.toPtString} {y2.toPtString} \
-{x3.toPtString} {y3.toPtString} c "
+    s!"{x1.toBpString} {y1.toBpString} {x2.toBpString} {y2.toBpString} \
+{x3.toBpString} {y3.toBpString} c "
   | .close => "h "
-  | .rect x y w h => s!"{x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} re "
+  | .rect x y w h => s!"{x.toBpString} {y.toBpString} {w.toBpString} {h.toBpString} re "
 
 public def TextItem.render : TextItem → String
   | .glyphs gids => (gids.foldl pushGid "<").push '>'
@@ -79,8 +79,8 @@ mutual
 its own. -/
 public def TextOp.render : TextOp → String
   | .scale p => s!"{p / 10}.{p % 10} Tz"
-  | .move x y => s!"1 0 0 1 {x.toPtString} {y.toPtString} Tm"
-  | .font res size => s!"/F{res + 1} {size.toPtString} Tf"
+  | .move x y => s!"1 0 0 1 {x.toBpString} {y.toBpString} Tm"
+  | .font res size => s!"/F{res + 1} {size.toBpString} Tf"
   | .color c => c.pdfFill
   | .show items => (items.foldl (fun acc it => acc ++ it.render) "[") ++ "] TJ"
   | .marked t body => TextOp.renderLines (t.opener ++ "\n") body.toList ++ "EMC"
@@ -109,8 +109,8 @@ private def joinCode : Gfx.Join → Nat
   | .round => 1
   | .bevel => 2
 
-private def dashSpelling (d : Array Sp) (p : Sp) : String :=
-  "[" ++ " ".intercalate (d.toList.map Sp.toPtString) ++ "] " ++ p.toPtString ++ " d "
+private def dashSpelling (d : Array Length) (p : Length) : String :=
+  "[" ++ " ".intercalate (d.toList.map Length.toBpString) ++ "] " ++ p.toBpString ++ " d "
 
 private def fillState : Option PaintFill → String
   | some f => pdfPaintFill f.paint ++ " "
@@ -118,7 +118,7 @@ private def fillState : Option PaintFill → String
 
 private def strokeState : Option PaintStroke → String
   | some st =>
-    s!"{pdfPaintStroke st.paint} {st.width.toPtString} w " ++
+    s!"{pdfPaintStroke st.paint} {st.width.toBpString} w " ++
       (match st.cap with
        | some c => s!"{capCode c} J "
        | none => "") ++
@@ -188,18 +188,18 @@ mutual
 
 public def ContentOp.render : ContentOp → String
   | .fill c x y w h =>
-    s!"q {c.pdfFill} {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} re f Q"
+    s!"q {c.pdfFill} {x.toBpString} {y.toBpString} {w.toBpString} {h.toBpString} re f Q"
   | .paint fl st gs segs =>
     let head := "q " ++ gsState gs ++ fillState fl ++ (strokeState st)
     let body := segs.foldl (fun acc seg => acc ++ seg.render) head
     body ++ paintOp fl st ++ " Q"
   | .text ops => (ops.foldl (fun acc op => acc ++ op.render ++ "\n") "BT\n") ++ "ET"
   | .image x y w h res =>
-    s!"q {w.toPtString} 0 0 {h.toPtString} {x.toPtString} {y.toPtString} cm /Im{res + 1} Do Q"
+    s!"q {w.toBpString} 0 0 {h.toBpString} {x.toBpString} {y.toBpString} cm /Im{res + 1} Do Q"
   | .imageMissing x y w h =>
     -- A neutral grey hairline box marks where the figure would stand.
-    s!"q 0.62 0.62 0.66 RG 0.75 w {x.toPtString} {y.toPtString} {w.toPtString} \
-{h.toPtString} re S Q"
+    s!"q 0.62 0.62 0.66 RG 0.75 w {x.toBpString} {y.toBpString} {w.toBpString} \
+{h.toBpString} re S Q"
   | .marked t body => ContentOp.renderLines (t.opener ++ "\n") body.toList ++ "EMC"
   | .group m gs clips body => ContentOp.renderLines (groupHeader m gs clips ++ "\n") body.toList ++ "Q"
   | .shade res _ => s!"/Sh{res + 1} sh"
@@ -228,10 +228,10 @@ public def render (ops : Array ContentOp) : String := (ops.foldl renderStep none
 /-- An image the text walk gathered for painting after `ET`: its box, its XObject when it loaded,
 and its line's origin. -/
 public structure ImgOut where
-  x : Sp
-  y : Sp
-  w : Sp
-  h : Sp
+  x : Length
+  y : Length
+  w : Length
+  h : Length
   res : Option Nat
   origin : Origin
   /-- The store entry the image is, when it loaded one. -/
@@ -251,7 +251,7 @@ public def widthTable (fonts : Array Font) (keep : Array Nat) : Array (Array Int
 /-- The viewer's pen in the open `TJ` array, as the writer computes it from what it wrote (§9.4.4). -/
 public structure Pen where
   xm : Int
-  y : Sp
+  y : Length
   adv : Int
   deriving Repr, BEq, Inhabited
 
@@ -260,18 +260,18 @@ public structure TextSt where
   ops : Array TextOp := #[]
   items : Array TextItem := #[]
   font : Int := -1
-  size : Sp := -1
+  size : Length := -Length.quantum
   color : Ir.Color := Ir.Color.black
   tz : Int := 0
-  x : Sp := 0
+  x : Length := 0
   pen : Option Pen := none
   widths : Array (Array Int) := #[]
-  rules : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
+  rules : Array (Ir.Color × Length × Length × Length × Length) := #[]
   /-- The marks the lines carried (`Ir.Decoration.isMark`), in page coordinates, painted under the
   text after the page's fills. -/
-  marks : Array (Ir.Color × Sp × Sp × Sp × Sp) := #[]
+  marks : Array (Ir.Color × Length × Length × Length × Length) := #[]
   /-- The filled polygons the lines carried, in page coordinates. -/
-  polys : Array (Ir.Color × Array (Sp × Sp)) := #[]
+  polys : Array (Ir.Color × Array (Length × Length)) := #[]
   images : Array ImgOut := #[]
 
 private def TextSt.op (st : TextSt) (o : TextOp) : TextSt := { st with ops := st.ops.push o }
@@ -284,15 +284,18 @@ private def TextSt.closeTJ (st : TextSt) : TextSt :=
     let q : Nat := (2 * num + den) / (2 * den)
     if neg then -(q : Int) else q
 
-private def penTarget (sm tz xm : Int) (x : Sp) : Int :=
-  let den : Nat := 128 * sm.toNat * (1000 + tz).toNat
-  let pos : Nat := 1000 * x.toNat + 65536 * (-xm).toNat
-  let neg : Nat := 65536 * xm.toNat + 1000 * (-x).toNat
-  if neg ≤ pos then roundDiv false ((pos - neg) * 1953125) den
-  else roundDiv true ((neg - pos) * 1953125) den
+/-- Base units in a big point, the factor between a length and a milli-point count. -/
+private def bpUnits : Nat := (bp 1).units.toNat
 
-@[inline] private def runOffset (sm : Int) (P : Sp) : Int :=
-  roundDiv (P < 0) (P.natAbs * 1953125) (128 * sm.natAbs)
+private def penTarget (sm tz xm : Int) (x : Length) : Int :=
+  let den : Nat := bpUnits * sm.toNat * (1000 + tz).toNat
+  let pos : Nat := (x * (1000 : Int)).units.toNat + bpUnits * (-xm).toNat
+  let neg : Nat := bpUnits * xm.toNat + (-x * (1000 : Int)).units.toNat
+  if neg ≤ pos then roundDiv false ((pos - neg) * 1000000000) den
+  else roundDiv true ((neg - pos) * 1000000000) den
+
+@[inline] private def runOffset (sm : Int) (P : Length) : Int :=
+  roundDiv (P < 0) (P * (1000000000 : Int)).units.natAbs (bpUnits * sm.natAbs)
 
 /-- The `TJ` number that brings a pen `d` millionths past its target to within half a thousandth. -/
 @[inline] public def nudge (d : Int) : Int := (d + 500) / 1000
@@ -302,14 +305,14 @@ public theorem nudge_between (d : Int) :
   unfold nudge
   omega
 
-private def TextSt.moveTo (st : TextSt) (runY : Sp) : TextSt :=
+private def TextSt.moveTo (st : TextSt) (runY : Length) : TextSt :=
   { st.closeTJ.op (.move st.x runY) with
-    pen := some { xm := st.x.toPtMilli, y := runY, adv := 0 } }
+    pen := some { xm := st.x.toBpMilli, y := runY, adv := 0 } }
 
-private def TextSt.toPen (st : TextSt) (changes : Bool) (runY : Sp) : TextSt :=
+private def TextSt.toPen (st : TextSt) (changes : Bool) (runY : Length) : TextSt :=
   match st.pen with
   | some p =>
-    let n := nudge (p.adv - penTarget st.size.toPtMilli st.tz p.xm st.x)
+    let n := nudge (p.adv - penTarget st.size.toBpMilli st.tz p.xm st.x)
     if !st.items.isEmpty && !changes && p.y == runY && n.natAbs ≤ 32000 then
       if n == 0 then st
       else { st with items := st.items.push (.adjust n),
@@ -317,7 +320,7 @@ private def TextSt.toPen (st : TextSt) (changes : Bool) (runY : Sp) : TextSt :=
     else st.moveTo runY
   | none => st.moveTo runY
 
-private def TextSt.setFont (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) : TextSt :=
+private def TextSt.setFont (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length) : TextSt :=
   if st.font != (idx : Int) || st.size != size then
     { st.op (.font (remap[idx]?.getD 0) size) with font := idx, size := size }
   else st
@@ -325,7 +328,7 @@ private def TextSt.setFont (st : TextSt) (remap : Array Nat) (idx : Nat) (size :
 private def TextSt.setColor (st : TextSt) (color : Ir.Color) : TextSt :=
   if st.color != color then { st.op (.color color) with color := color } else st
 
-private def TextSt.setFace (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
+private def TextSt.setFace (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length)
     (color : Ir.Color) : TextSt :=
   ((st.closeTJ).setFont remap idx size).setColor color
 
@@ -334,19 +337,19 @@ public structure PlaceSt where
   gids : Array Nat
   nums : Array Int
   adv : Int
-  P : Sp
+  P : Length
 
 /-- One glyph of a run onto its string: the number that brings the pen to its layout position,
 then the glyph. -/
-@[inline] public def placeStep (wμ : Nat → Int) (tgt : Sp → Int) (st : PlaceSt) :
-    Nat × Char × Sp → PlaceSt
+@[inline] public def placeStep (wμ : Nat → Int) (tgt : Length → Int) (st : PlaceSt) :
+    Nat × Char × Length → PlaceSt
   | (g, _, a) =>
     let n := nudge (st.adv - tgt st.P)
     ⟨st.gids.push g, st.nums.push n, st.adv - 1000 * n + wμ g, st.P + a⟩
 
 /-- `placeStep`'s string as a list: each glyph with the number set before it. -/
-public def placeSpec (wμ : Nat → Int) (tgt : Sp → Int) :
-    Int → Sp → List (Nat × Char × Sp) → List (Nat × Int)
+public def placeSpec (wμ : Nat → Int) (tgt : Length → Int) :
+    Int → Length → List (Nat × Char × Length) → List (Nat × Int)
   | _, _, [] => []
   | adv, P, (g, _, a) :: rest =>
     let n := nudge (adv - tgt P)
@@ -358,12 +361,12 @@ public def penStarts (wμ : Nat → Int) : Int → List (Nat × Int) → List In
   | p, (g, n) :: rest => (p - 1000 * n) :: penStarts wμ (p - 1000 * n + wμ g) rest
 
 /-- Each glyph's laid-out advance from the run's start. -/
-public def glyphStarts : Sp → List (Nat × Char × Sp) → List Sp
+public def glyphStarts : Length → List (Nat × Char × Length) → List Length
   | _, [] => []
   | P, (_, _, a) :: rest => P :: glyphStarts (P + a) rest
 
-public theorem placeStep_fold_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
-    (ga : Array Nat) (na : Array Int) (adv : Int) (P : Sp) :
+public theorem placeStep_fold_exact (wμ : Nat → Int) (tgt : Length → Int) (gs : List (Nat × Char × Length))
+    (ga : Array Nat) (na : Array Int) (adv : Int) (P : Length) :
     (gs.foldl (placeStep wμ tgt) ⟨ga, na, adv, P⟩).gids.toList
         = ga.toList ++ (placeSpec wμ tgt adv P gs).map (·.1)
       ∧ (gs.foldl (placeStep wμ tgt) ⟨ga, na, adv, P⟩).nums.toList
@@ -377,29 +380,29 @@ public theorem placeStep_fold_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs :
       (adv - 1000 * nudge (adv - tgt P) + wμ g) (P + a)
     exact ⟨by rw [h1]; simp, by rw [h2]; simp⟩
 
-public theorem placeSpec_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
-    (adv : Int) (P : Sp) : (placeSpec wμ tgt adv P gs).map (·.1) = gs.map (·.1) := by
+public theorem placeSpec_glyphs_id (wμ : Nat → Int) (tgt : Length → Int) (gs : List (Nat × Char × Length))
+    (adv : Int) (P : Length) : (placeSpec wμ tgt adv P gs).map (·.1) = gs.map (·.1) := by
   induction gs generalizing adv P with
   | nil => rfl
   | cons x rest ih =>
     obtain ⟨g, c, a⟩ := x
     simp [placeSpec, ih]
 
-public theorem place_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
+public theorem place_glyphs_id (wμ : Nat → Int) (tgt : Length → Int) (glyphs : Array (Nat × Char × Length))
     (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).gids = glyphs.map (·.1) := by
   apply Array.toList_inj.mp
   rw [Array.toList_map, ← Array.foldl_toList, (placeStep_fold_exact ..).1]
   simpa using placeSpec_glyphs_id wμ tgt glyphs.toList adv 0
 
-public theorem placeSpec_length_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
-    (adv : Int) (P : Sp) : (penStarts wμ adv (placeSpec wμ tgt adv P gs)).length = gs.length := by
+public theorem placeSpec_length_exact (wμ : Nat → Int) (tgt : Length → Int) (gs : List (Nat × Char × Length))
+    (adv : Int) (P : Length) : (penStarts wμ adv (placeSpec wμ tgt adv P gs)).length = gs.length := by
   induction gs generalizing adv P with
   | nil => rfl
   | cons x rest ih =>
     obtain ⟨g, c, a⟩ := x
     simp [placeSpec, penStarts, ih]
 
-public theorem glyphStarts_length_exact (P : Sp) (gs : List (Nat × Char × Sp)) :
+public theorem glyphStarts_length_exact (P : Length) (gs : List (Nat × Char × Length)) :
     (glyphStarts P gs).length = gs.length := by
   induction gs generalizing P with
   | nil => rfl
@@ -407,8 +410,8 @@ public theorem glyphStarts_length_exact (P : Sp) (gs : List (Nat × Char × Sp))
     obtain ⟨g, c, a⟩ := x
     simp [glyphStarts, ih]
 
-public theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) (P : Sp)
-    (gs : List (Nat × Char × Sp)) :
+public theorem place_between (wμ : Nat → Int) (tgt : Length → Int) (adv : Int) (P : Length)
+    (gs : List (Nat × Char × Length)) :
     ∀ d ∈ List.zipWith (· - ·) (penStarts wμ adv (placeSpec wμ tgt adv P gs))
         ((glyphStarts P gs).map tgt), -500 ≤ d ∧ d ≤ 499 := by
   induction gs generalizing adv P with
@@ -425,11 +428,11 @@ public theorem place_between (wμ : Nat → Int) (tgt : Sp → Int) (adv : Int) 
 private def runItem (gids : Array Nat) (nums : Array Int) : TextItem :=
   if nums.all (· == 0) then .glyphs gids else .kerned gids nums
 
-private def TextSt.pushRun (st : TextSt) (item : TextItem) (w : Sp) (pen : Pen) : TextSt :=
+private def TextSt.pushRun (st : TextSt) (item : TextItem) (w : Length) (pen : Pen) : TextSt :=
   { st with items := st.items.push item, x := st.x + w, pen := some pen }
 
-private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx : Nat)
-    (color : Ir.Color) (w : Sp) (glyphs : Array (Nat × Char × Sp)) (segSize raise : Sp) :
+private def stepRun (remap : Array Nat) (lineSize ypdf : Length) (st : TextSt) (idx : Nat)
+    (color : Ir.Color) (w : Length) (glyphs : Array (Nat × Char × Length)) (segSize raise : Length) :
     TextSt :=
   if glyphs.isEmpty then { st with x := st.x + w } else
   let runY := ypdf + raise
@@ -437,8 +440,8 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx 
   let changes := st.font != (idx : Int) || st.size != size || st.color != color
   let st := st.toPen changes runY
   let st := if changes then st.setFace remap idx size color else st
-  let p := st.pen.getD { xm := st.x.toPtMilli, y := runY, adv := 0 }
-  let sm := st.size.toPtMilli
+  let p := st.pen.getD { xm := st.x.toBpMilli, y := runY, adv := 0 }
+  let sm := st.size.toBpMilli
   let t0 := penTarget sm st.tz p.xm st.x
   let wf := st.widths.getD idx #[]
   -- Reserved at full length, so the fold never regrows its arrays.
@@ -446,7 +449,7 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Sp) (st : TextSt) (idx 
     ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, p.adv, 0⟩
   st.pushRun (runItem r.gids r.nums) w { p with adv := r.adv }
 
-private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Sp)
+private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Length)
     (og : Origin) (st : TextSt) : Seg → TextSt
   | .rule w thickness raise color =>
     { st with rules := st.rules.push (color, st.x, ypdf + raise, w, thickness), x := st.x + w }
@@ -474,13 +477,13 @@ private def lineSt (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat
   let st := { st with x := geom.bleed + l.x, pen := none }
   (l.segs.foldl (stepSeg remap imgMap l.size ypdf og) st).closeTJ
 
-private def polyPath (pts : Array (Sp × Sp)) : Array PathOp :=
+private def polyPath (pts : Array (Length × Length)) : Array PathOp :=
   match pts.toList with
   | [] => #[]
   | (x, y) :: rest =>
     (rest.foldl (fun acc (x, y) => acc.push (.lineTo x y)) #[.moveTo x y]).push .close
 
-private def polyOp (p : Ir.Color × Array (Sp × Sp)) : ContentOp :=
+private def polyOp (p : Ir.Color × Array (Length × Length)) : ContentOp :=
   .paint (some { paint := .solid p.1, evenOdd := false }) none none (polyPath p.2)
 
 private def furnitureTag : MarkTag := .artifact (some .pagination)
@@ -592,12 +595,12 @@ public structure FigForm where
   deriving Repr, BEq, Inhabited
 
 /-- The exact matrix that sets a figure's box onto an image's rectangle `(x, y, w, h)`. -/
-@[expose] public def figPlace (x y w h : Sp) (box : Gfx.Box) : Gfx.Affine :=
+@[expose] public def figPlace (x y w h : Length) (box : Gfx.Box) : Gfx.Affine :=
   let bw := box.2.1 - box.1.1
   let bh := box.2.2 - box.1.2
-  let sx : Rat := if bw == 0 then 1 else (w : Rat) / (bw : Rat)
-  let sy : Rat := if bh == 0 then 1 else (h : Rat) / (bh : Rat)
-  ⟨sx, 0, 0, sy, (x : Rat) - (box.1.1 : Rat) * sx, (y : Rat) - (box.1.2 : Rat) * sy⟩
+  let sx : Rat := if bw == 0 then 1 else w.toRat / bw.toRat
+  let sy : Rat := if bh == 0 then 1 else h.toRat / bh.toRat
+  ⟨sx, 0, 0, sy, x.toRat - box.1.1.toRat * sx, y.toRat - box.1.2.toRat * sy⟩
 
 /-- The figure an image places, when its store entry is a drawn figure. -/
 @[expose] public def figOf (figs : Array (Option FigForm)) (i : ImgOut) : Option FigForm :=
@@ -628,21 +631,21 @@ private def imageOpPlain (ix : GfxPdf.Request → Nat) (figs : Array (Option Fig
 
 /-- One face's stretch of a shaped run as text operators, each glyph placed by the viewer's arithmetic. -/
 public def figureStretchOps (remap : Array Nat) (widths : Array (Array Int)) (color : Ir.Color)
-    (size : Sp) (face : Nat) (glyphs : Array (Nat × Char × Sp)) (x0 : Sp) : Array TextOp :=
-  let sm := size.toPtMilli
+    (size : Length) (face : Nat) (glyphs : Array (Nat × Char × Length)) (x0 : Length) : Array TextOp :=
+  let sm := size.toBpMilli
   let wf := widths.getD face #[]
   let r := glyphs.foldl (placeStep (wf.getD · 0) (fun P => runOffset sm P))
     ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, 0, 0⟩
   #[.font (remap[face]?.getD 0) size, .color color, .move x0 0, .show #[runItem r.gids r.nums]]
 
 /-- A shaped run's glyphs split into one-face stretches, each with its start. -/
-public def figureStretches (glyphs : Array (Nat × Nat × Char × Sp)) :
-    Array (Nat × Array (Nat × Char × Sp) × Sp) := Id.run do
-  let mut out : Array (Nat × Array (Nat × Char × Sp) × Sp) := #[]
-  let mut cur : Option (Nat × Array (Nat × Char × Sp) × Sp) := none
+public def figureStretches (glyphs : Array (Nat × Nat × Char × Length)) :
+    Array (Nat × Array (Nat × Char × Length) × Length) := Id.run do
+  let mut out : Array (Nat × Array (Nat × Char × Length) × Length) := #[]
+  let mut cur : Option (Nat × Array (Nat × Char × Length) × Length) := none
   for h : k in [0:glyphs.size] do
     let (f, g, c, x) := glyphs[k]
-    let next : Sp := match glyphs[k + 1]? with
+    let next : Length := match glyphs[k + 1]? with
       | some (_, _, _, nx) => nx - x
       | none => 0
     match cur with
@@ -1343,12 +1346,12 @@ private theorem closeTJ_items (st : TextSt) : st.closeTJ.items = #[] := by
     exact Array.isEmpty_iff.mp h
   · rfl
 
-private theorem moveTo_runs (st : TextSt) (y : Sp) : (st.moveTo y).runs = st.runs := by
+private theorem moveTo_runs (st : TextSt) (y : Length) : (st.moveTo y).runs = st.runs := by
   have h := op_runs st.closeTJ (.move st.x y) rfl
   rw [closeTJ_runs] at h
   exact h
 
-private theorem toPen_runs (st : TextSt) (c : Bool) (y : Sp) : (st.toPen c y).runs = st.runs := by
+private theorem toPen_runs (st : TextSt) (c : Bool) (y : Length) : (st.toPen c y).runs = st.runs := by
   unfold TextSt.toPen
   split
   · simp only []
@@ -1359,7 +1362,7 @@ private theorem toPen_runs (st : TextSt) (c : Bool) (y : Sp) : (st.toPen c y).ru
     · exact moveTo_runs st y
   · exact moveTo_runs st y
 
-private theorem setFont_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) :
+private theorem setFont_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length) :
     (st.setFont remap idx size).runs = st.runs := by
   unfold TextSt.setFont
   split
@@ -1372,7 +1375,7 @@ private theorem setColor_runs (st : TextSt) (c : Ir.Color) : (st.setColor c).run
   · exact op_runs _ _ rfl
   · rfl
 
-private theorem setFace_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) (c : Ir.Color) :
+private theorem setFace_runs (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length) (c : Ir.Color) :
     (st.setFace remap idx size c).runs = st.runs := by
   unfold TextSt.setFace
   rw [setColor_runs, setFont_runs, closeTJ_runs]
@@ -1381,12 +1384,12 @@ private theorem runItem_runs (gids : Array Nat) (nums : Array Int) : (runItem gi
   unfold runItem
   split <;> rfl
 
-private theorem pushRun_runs (st : TextSt) (i : TextItem) (w : Sp) (p : Pen) :
+private theorem pushRun_runs (st : TextSt) (i : TextItem) (w : Length) (p : Pen) :
     (st.pushRun i w p).runs = st.runs ++ i.runs := by
   simp [TextSt.pushRun, TextSt.runs]
 
-private theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (c : Ir.Color)
-    (w : Sp) (glyphs : Array (Nat × Char × Sp)) (ss raise : Sp) :
+private theorem stepRun_runs (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat) (c : Ir.Color)
+    (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length) :
     (stepRun remap ls y st idx c w glyphs ss raise).runs
       = st.runs ++ (if glyphs.isEmpty then [] else [glyphs.map (·.1)]) := by
   unfold stepRun
@@ -1396,7 +1399,7 @@ private theorem stepRun_runs (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx 
     congr 1
     simp only [apply_ite TextSt.runs, setFace_runs, toPen_runs, ite_self]
 
-private theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp) (og : Origin)
+private theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length) (og : Origin)
     (st : TextSt) (seg : Seg) : (stepSeg remap imgMap ls y og st seg).runs = st.runs ++ segRuns seg := by
   cases seg with
   | rule | decoration => simp [stepSeg, TextSt.runs, segRuns]
@@ -1405,7 +1408,7 @@ private theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (
   | poly => simp [stepSeg, TextSt.runs, segRuns]
   | run => exact stepRun_runs ..
 
-private theorem foldl_segs_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+private theorem foldl_segs_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (segs : List Seg) (st : TextSt) :
     (segs.foldl (stepSeg remap imgMap ls y og) st).runs = st.runs ++ segs.flatMap segRuns := by
   induction segs generalizing st with
@@ -1505,10 +1508,10 @@ private theorem closeTJ_images (st : TextSt) : st.closeTJ.images = st.images := 
   unfold TextSt.closeTJ
   split <;> rfl
 
-private theorem moveTo_images (st : TextSt) (y : Sp) : (st.moveTo y).images = st.images := by
+private theorem moveTo_images (st : TextSt) (y : Length) : (st.moveTo y).images = st.images := by
   simp [TextSt.moveTo, TextSt.op, closeTJ_images]
 
-private theorem toPen_images (st : TextSt) (changes : Bool) (y : Sp) :
+private theorem toPen_images (st : TextSt) (changes : Bool) (y : Length) :
     (st.toPen changes y).images = st.images := by
   unfold TextSt.toPen
   split
@@ -1518,13 +1521,13 @@ private theorem toPen_images (st : TextSt) (changes : Bool) (y : Sp) :
     · exact moveTo_images _ _
   · exact moveTo_images _ _
 
-private theorem setFace_images (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
+private theorem setFace_images (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length)
     (c : Ir.Color) : (st.setFace remap idx size c).images = st.images := by
   unfold TextSt.setFace TextSt.setColor TextSt.setFont
   split <;> split <;> simp [TextSt.op, closeTJ_images]
 
-private theorem stepRun_images (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (c : Ir.Color)
-    (w : Sp) (glyphs : Array (Nat × Char × Sp)) (ss raise : Sp) :
+private theorem stepRun_images (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat) (c : Ir.Color)
+    (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length) :
     (stepRun remap ls y st idx c w glyphs ss raise).images = st.images := by
   unfold stepRun
   split
@@ -1532,7 +1535,7 @@ private theorem stepRun_images (remap : Array Nat) (ls y : Sp) (st : TextSt) (id
   · dsimp only
     simp only [TextSt.pushRun, apply_ite TextSt.images, setFace_images, toPen_images, ite_self]
 
-private theorem stepSeg_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+private theorem stepSeg_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (st : TextSt) (seg : Seg) :
     (stepSeg remap imgMap ls y og st seg).stores = st.stores ++ segStores seg := by
   cases seg with
@@ -1540,7 +1543,7 @@ private theorem stepSeg_stores (remap : Array Nat) (imgMap : Array (Option Nat))
   | run => simp [stepSeg, TextSt.stores, segStores, stepRun_images]
   | rule | decoration | gap | decoratedGap | poly => simp [stepSeg, TextSt.stores, segStores]
 
-private theorem foldl_segs_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+private theorem foldl_segs_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (segs : List Seg) (st : TextSt) :
     (segs.foldl (stepSeg remap imgMap ls y og) st).stores = st.stores ++ segs.flatMap segStores := by
   induction segs generalizing st with
@@ -1788,12 +1791,12 @@ public theorem glyphs_inj {a b : Array Nat} (ha : ∀ g ∈ a, g < 65536) (hb : 
     (fun g hg => hb g (Array.mem_toList_iff.mp hg)) h)
 
 public theorem render_not_inj : ∃ a b : Array ContentOp, a ≠ b ∧ render a = render b :=
-  ⟨#[.fill Ir.Color.black 0 0 1 1],
-    #[.paint (some { paint := .solid Ir.Color.black, evenOdd := false }) none none #[.rect 0 0 1 1]],
+  ⟨#[.fill Ir.Color.black 0 0 (bp 1) (bp 1)],
+    #[.paint (some { paint := .solid Ir.Color.black, evenOdd := false }) none none #[.rect 0 0 (bp 1) (bp 1)]],
     fun h => by have := congrArg (·[0]?) h; simp at this, by
-      change (ContentOp.fill Ir.Color.black 0 0 1 1).render =
+      change (ContentOp.fill Ir.Color.black 0 0 (bp 1) (bp 1)).render =
         (ContentOp.paint (some { paint := .solid Ir.Color.black, evenOdd := false }) none none
-          #[.rect 0 0 1 1]).render
+          #[.rect 0 0 (bp 1) (bp 1)]).render
       rw [paint_render_exact]
       simp [ContentOp.render, PathOp.render, fillState, strokeState, gsState, paintOp,
         pdfPaintFill, String.append_assoc]
@@ -2206,11 +2209,11 @@ private theorem closeTJ_plainOps (st : TextSt) (h : inkText st.ops = st.ops) :
   · exact h
   · exact op_plainOps st _ h (by simp [TextOp.ink])
 
-private theorem moveTo_plainOps (st : TextSt) (y : Sp) (h : inkText st.ops = st.ops) :
+private theorem moveTo_plainOps (st : TextSt) (y : Length) (h : inkText st.ops = st.ops) :
     inkText (st.moveTo y).ops = (st.moveTo y).ops :=
   op_plainOps _ _ (closeTJ_plainOps st h) (by simp [TextOp.ink])
 
-private theorem toPen_plainOps (st : TextSt) (c : Bool) (y : Sp) (h : inkText st.ops = st.ops) :
+private theorem toPen_plainOps (st : TextSt) (c : Bool) (y : Length) (h : inkText st.ops = st.ops) :
     inkText (st.toPen c y).ops = (st.toPen c y).ops := by
   unfold TextSt.toPen
   split
@@ -2222,7 +2225,7 @@ private theorem toPen_plainOps (st : TextSt) (c : Bool) (y : Sp) (h : inkText st
     · exact moveTo_plainOps st y h
   · exact moveTo_plainOps st y h
 
-private theorem setFont_plainOps (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp)
+private theorem setFont_plainOps (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length)
     (h : inkText st.ops = st.ops) :
     inkText (st.setFont remap idx size).ops = (st.setFont remap idx size).ops := by
   unfold TextSt.setFont
@@ -2237,13 +2240,13 @@ private theorem setColor_plainOps (st : TextSt) (c : Ir.Color) (h : inkText st.o
   · exact op_plainOps _ _ h (by simp [TextOp.ink])
   · exact h
 
-private theorem setFace_plainOps (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Sp) (c : Ir.Color)
+private theorem setFace_plainOps (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length) (c : Ir.Color)
     (h : inkText st.ops = st.ops) :
     inkText (st.setFace remap idx size c).ops = (st.setFace remap idx size c).ops :=
   setColor_plainOps _ _ (setFont_plainOps _ _ _ _ (closeTJ_plainOps _ h))
 
-private theorem stepRun_plainOps (remap : Array Nat) (ls y : Sp) (st : TextSt) (idx : Nat) (c : Ir.Color)
-    (w : Sp) (glyphs : Array (Nat × Char × Sp)) (ss raise : Sp) (h : inkText st.ops = st.ops) :
+private theorem stepRun_plainOps (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat) (c : Ir.Color)
+    (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length) (h : inkText st.ops = st.ops) :
     inkText (stepRun remap ls y st idx c w glyphs ss raise).ops
       = (stepRun remap ls y st idx c w glyphs ss raise).ops := by
   unfold stepRun
@@ -2255,7 +2258,7 @@ private theorem stepRun_plainOps (remap : Array Nat) (ls y : Sp) (st : TextSt) (
       | exact setFace_plainOps _ _ _ _ _ (toPen_plainOps _ _ _ h)
       | exact toPen_plainOps _ _ _ h
 
-private theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+private theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (st : TextSt) (seg : Seg) (h : inkText st.ops = st.ops) :
     inkText (stepSeg remap imgMap ls y og st seg).ops = (stepSeg remap imgMap ls y og st seg).ops := by
   cases seg with
@@ -2265,7 +2268,7 @@ private theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat
   | poly => exact h
   | run => exact stepRun_plainOps _ _ _ _ _ _ _ _ _ _ h
 
-private theorem foldl_segs_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Sp)
+private theorem foldl_segs_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (segs : List Seg) (st : TextSt) (h : inkText st.ops = st.ops) :
     inkText (segs.foldl (stepSeg remap imgMap ls y og) st).ops
       = (segs.foldl (stepSeg remap imgMap ls y og) st).ops := by
@@ -2916,9 +2919,9 @@ public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array 
   rw [inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)
       (geom.bleed + geom.pageH - f.y - f.h) f.w f.h) _ (fun f => by simp [ContentOp.ink]),
     inkList_map _ (imageOpPlain ix figs) _ (imageOp_ink ix figs),
-    inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
+    inkList_map _ (fun (t : Ir.Color × Length × Length × Length × Length) =>
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
-    inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
+    inkList_map _ (fun (t : Ir.Color × Length × Length × Length × Length) =>
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
     inkList_map _ polyOp _ (fun p => by simp [polyOp, ContentOp.ink]),
     inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)

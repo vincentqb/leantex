@@ -6,6 +6,9 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- Lengths print as their base-unit counts in failure messages. -/
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-- The heads the accounting row ranges over: every `\if…` primitive of TeX82's table
 (`Compat.texPrimitives`) and e-TeX's three. -/
 def condProbeHeads : List String :=
@@ -405,8 +408,8 @@ def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       ("Ln", "010][8.0"), ("Lo", "1 + 1"), ("Lq", "1 ][ 2"), ("Lq", "3][ 4 ")] do
     t s!"a label sets {want} where lualatex sets it" (hasStr text (label ++ "[" ++ want ++ "]"))
   t "a dimension's points are spelled as TeX's \\the spells them"
-    ([1864679, 131072, 21845, 6554, -1, 0, 65535, 98304, 13108, -6554, 1073741823, 1, 32768,
-        100].map Picture.texPoints ==
+    (([1864679, 131072, 21845, 6554, -1, 0, 65535, 98304, 13108, -6554, 1073741823, 1, 32768,
+        100] : List Int).map (Picture.texPoints ∘ Dim.Length.ofSp) ==
       ["28.45274", "2.0", "0.33333", "0.1", "-0.00002", "0.0", "0.99998", "1.5", "0.20001",
         "-0.1", "16383.99998", "0.00002", "0.5", "0.00153"])
 

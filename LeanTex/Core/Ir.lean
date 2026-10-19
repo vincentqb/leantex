@@ -31,56 +31,53 @@ namespace LeanTex.Core.Ir
 
 open LeanTex.Core LeanTex.Core.Dim
 
-@[expose] public def baseFontSize : Sp := Dim.pt 10
+@[expose] public def baseFontSize : Length := Dim.pt 10
 
 /-- Baseline distance as a per-mille of the font size. -/
 @[expose] public def leadingMilli : Nat := 1200
 
 /-- Baseline distance for a size: `leadingMilli` of it, scaled by the page's `leading` factor. -/
-@[expose] public def leadingFor (size : Sp) (factor : Nat := 1000) : Sp :=
-  size * (leadingMilli : Int) / 1000 * factor / 1000
+@[expose] public def leadingFor (size : Length) (factor : Nat := 1000) : Length :=
+  size * (leadingMilli : Int) / (1000 : Int) * (factor : Int) / (1000 : Int)
 
-@[expose] public def rhythmQuantum (size : Sp) (factor : Nat := 1000) : Sp :=
+@[expose] public def rhythmQuantum (size : Length) (factor : Nat := 1000) : Length :=
   leadingFor size factor / 2
 
 /-- The default gap between peer paragraphs: one rhythm quantum of the governing size. -/
-@[expose] public def parskipDefault (size : Sp) : SymGlue :=
-  { width := Dim.Length.ofSp (rhythmQuantum size) }
+@[expose] public def parskipDefault (size : Length) : SymGlue :=
+  { width := Dim.SymLength.ofLength (rhythmQuantum size) }
 
 /-- TeX's own `\parskip` where nothing declares one: latex.ltx's `\parskip 0pt plus 1pt`. -/
-public def texParskipDefault : SymGlue := { stretch := Dim.Length.ofSp (Dim.pt 1) }
+public def texParskipDefault : SymGlue := { stretch := Dim.SymLength.ofLength (Dim.pt 1) }
 
-public theorem rhythmQuantum_pos (size : Int) (h : Dim.pt 1 ≤ size) :
+public theorem rhythmQuantum_pos (size : Length) (h : Dim.pt 1 ≤ size) :
     0 < rhythmQuantum size := by
-  have hx : (65536 : Int) ≤ size := h
-  show 0 < size * 1200 / 1000 * 1000 / 1000 / 2
-  omega
+  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, Dim.bp, unitsPerInch] at h ⊢
+  length_omega
 
-public theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
+public theorem rhythmQuantum_lt_double (size : Length) (h : Dim.pt 1 ≤ size) :
     rhythmQuantum size < 2 * rhythmQuantum size := by
-  have hx : (65536 : Int) ≤ size := h
-  show size * 1200 / 1000 * 1000 / 1000 / 2
-    < 2 * (size * 1200 / 1000 * 1000 / 1000 / 2)
-  omega
+  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, Dim.bp, unitsPerInch] at h ⊢
+  length_omega
 
 /-- The default gap between a cut mark's inner end and the trim, wider than
 guillotine cutting tolerance (1/16 in). -/
-public def cutMarkGap : Sp := inch 3 / 40
+public def cutMarkGap : Length := inch 3 / 40
 
 /-- The default cut-mark thickness: a 0.5 bp hairline, with `bp` read as `pt`. -/
-public def cutMarkThickness : Sp := pt 1 / 2
+public def cutMarkThickness : Length := pt 1 / 2
 
 /-- The line-through rule thickness both backends draw: ulem's default `\ULthickness`. -/
-@[expose] public def lineThroughThickness : Sp := pt 2 / 5
+@[expose] public def lineThroughThickness : Length := pt 2 / 5
 
 /-- One rule a shipout hook draws on every printed sheet, so the PDF's alone: its box in medium
 coordinates, x right and y down from the top-left corner, its palette name, and whether it paints
 over the content, as `shipout/foreground` draws. -/
 public structure DrawnRule where
-  x : Sp
-  y : Sp
-  w : Sp
-  h : Sp
+  x : Length
+  y : Length
+  w : Length
+  h : Length
   color : String
   front : Bool
   deriving Repr, BEq, Inhabited
@@ -104,45 +101,45 @@ public inductive BoxKind where
 lower-left corner, lower-left corner first, and where it was declared. -/
 public structure PageBox where
   kind : BoxKind
-  x0 : Sp
-  y0 : Sp
-  x1 : Sp
-  y1 : Sp
+  x0 : Length
+  y0 : Length
+  x1 : Length
+  y1 : Length
   span : Option Span
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The box within a medium `w` by `h`, each corner moved inside it. -/
-@[expose] public def PageBox.clampTo (b : PageBox) (w h : Sp) : PageBox :=
-  let c (lo hi v : Sp) : Sp := max lo (min hi v)
+@[expose] public def PageBox.clampTo (b : PageBox) (w h : Length) : PageBox :=
+  let c (lo hi v : Length) : Length := max lo (min hi v)
   { b with x0 := c 0 w b.x0, y0 := c 0 h b.y0, x1 := c 0 w b.x1, y1 := c 0 h b.y1 }
 
 @[expose] public def PageBox.hasArea (b : PageBox) : Bool := b.x0 < b.x1 && b.y0 < b.y1
 
 /-- The declared boxes a medium `w` by `h` ships: each moved inside it, one with no area there
 dropped. -/
-@[expose] public def PageBox.shipped (boxes : Array PageBox) (w h : Sp) : Array PageBox :=
+@[expose] public def PageBox.shipped (boxes : Array PageBox) (w h : Length) : Array PageBox :=
   (boxes.map (·.clampTo w h)).filter (·.hasArea)
 
 /-- A page's declared vertical keys, which place its text block once the class settles the page. -/
 public structure TextBlockDecl where
-  top : Option Sp := none
-  bottom : Option Sp := none
-  height : Option Sp := none
+  top : Option Length := none
+  bottom : Option Length := none
+  height : Option Length := none
   ratio : Option (Nat × Nat) := none
   /-- The height as thousandths of the page's, where no height is declared (geometry's `vscale`). -/
   scale : Option Nat := none
   deriving Repr, BEq, Inhabited
 
 /-- The declaration with its scaled height fixed on a page `page` tall. -/
-public def TextBlockDecl.scaled (b : TextBlockDecl) (page : Sp) : TextBlockDecl :=
+public def TextBlockDecl.scaled (b : TextBlockDecl) (page : Length) : TextBlockDecl :=
   match b.height, b.scale with
   | none, some s => { b with height := some (page * (s : Int) / 1000) }
   | _, _ => b
 
 /-- The margins a declaration leaves on a page `page` tall, else at `vm` and `bm`: a declared top, or
 one a height places above a declared bottom or by a ratio, with a declared height under it. -/
-@[expose] public def TextBlockDecl.place (b : TextBlockDecl) (page vm bm : Sp) : Sp × Sp :=
-  let top : Sp := match b.top, b.bottom, b.height, b.ratio with
+@[expose] public def TextBlockDecl.place (b : TextBlockDecl) (page vm bm : Length) : Length × Length :=
+  let top : Length := match b.top, b.bottom, b.height, b.ratio with
     | some t, _, _, _ => t
     | none, some m, some h, _ => page - m - h
     | none, none, some h, some (a, r) => (page - h) * (a : Int) / ((a + r : Nat) : Int)
@@ -151,18 +148,18 @@ one a height places above a declared bottom or by a ratio, with a declared heigh
   | some h => (top, page - top - h)
   | none => (top, b.bottom.getD bm)
 
-private theorem place_under (page t h : Int) : page - t - (page - t - h) = h := by omega
+private theorem place_under (page t h : Length) : page - t - (page - t - h) = h := by length_omega
 
 /-- A declared height is the text block's height. -/
-public theorem TextBlockDecl.place_height (b : TextBlockDecl) (page vm bm h : Sp)
+public theorem TextBlockDecl.place_height (b : TextBlockDecl) (page vm bm h : Length)
     (hh : b.height = some h) : page - (b.place page vm bm).1 - (b.place page vm bm).2 = h := by
   simp only [TextBlockDecl.place, hh]
   exact place_under _ _ _
 
-private theorem place_over (page m h : Int) : page - (page - m - h) - h = m := by omega
+private theorem place_over (page m h : Length) : page - (page - m - h) - h = m := by length_omega
 
 /-- A height beside a declared bottom and no declared top stands on that bottom. -/
-public theorem TextBlockDecl.place_bottom (b : TextBlockDecl) (page vm bm h m : Sp)
+public theorem TextBlockDecl.place_bottom (b : TextBlockDecl) (page vm bm h m : Length)
     (hh : b.height = some h) (hm : b.bottom = some m) (ht : b.top = none) :
     (b.place page vm bm).2 = m := by
   simp only [TextBlockDecl.place, hh, hm, ht]
@@ -178,37 +175,37 @@ public structure PagePenalties where
 
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
-  width : Sp := pt 612
-  height : Sp := pt 792
-  vmargin : Sp := inch 1
+  width : Length := pt 612
+  height : Length := pt 792
+  vmargin : Length := inch 1
   /-- The bottom margin where the page declares one apart from the top's (`vmargin`). -/
-  bmargin : Option Sp := none
+  bmargin : Option Length := none
   /-- The vertical keys declared so far, placed by `PageSpec.placed`. -/
   block : TextBlockDecl := {}
-  hmargin : Sp := inch 1
+  hmargin : Length := inch 1
   /-- The body size, from `\page{ fontsize }` or the class option. -/
-  fontSize : Sp := baseFontSize
+  fontSize : Length := baseFontSize
   /-- Line spacing as a factor over the default 1.2, in thousandths. -/
   leading : Nat := 1000
   /-- `\linespread` (`\page{ leading = … }`), in thousandths. -/
   spread : Nat := 1000
   /-- The body's `\baselineskip` as a class's `\normalsize` declares it;
   `none` keeps the 6⁄5 rule. -/
-  bodySkip : Option Sp := none
+  bodySkip : Option Length := none
   /-- The gap between peer paragraphs, with its rubber; `none` is the engine's default. -/
   parskip : Option SymGlue := none
   /-- Whether the measure is checked against the readable band;
   `\page{ measure = free }` turns the check off. -/
   measureChecked : Bool := true
   /-- How far past the trim edge the PDF page extends on every side, for print finishing. -/
-  bleed : Sp := 0
+  bleed : Length := 0
   /-- Whether the pages ship printer's cut marks (`\page{ marks = cut }`). -/
   marks : Bool := false
   /-- The clearance between a cut mark's inward end and the trim line
   (`\page{ mark-gap = ... }`). -/
-  markGap : Sp := cutMarkGap
+  markGap : Length := cutMarkGap
   /-- The cut marks' stroke thickness (`\page{ mark-thickness = ... }`). -/
-  markThickness : Sp := cutMarkThickness
+  markThickness : Length := cutMarkThickness
   /-- The document's size ladder, per mille of the body; `none` is the engine's `sizeScale`. -/
   sizes : Option (List (String × Nat)) := none
   /-- Each named size's declared `\baselineskip`, per mille of the body size;
@@ -235,11 +232,11 @@ public structure PageSpec where
   `\modulolinenumbers[n]`); `none` prints every counted line. -/
   lineModulo : Option Nat := none
   /-- The distance from the running head's and foot's body-side ink edge to the body area. -/
-  furnitureGap : Option Sp := none
+  furnitureGap : Option Length := none
   /-- LaTeX's `\headsep`, as declared: it positions the header's baseline against the body. -/
-  headsep : Option Sp := none
+  headsep : Option Length := none
   /-- LaTeX's `\footskip`, as declared: from the text area's floor to the foot's baseline. -/
-  footskip : Option Sp := none
+  footskip : Option Length := none
   /-- LaTeX's `\flushbottom` (`some true`) or `\raggedbottom` (`some false`);
   `none` is the class's own. -/
   flushBottom : Option Bool := none
@@ -254,12 +251,12 @@ public structure PageSpec where
   widthSized : Bool := false
   heightSized : Bool := false
   /-- The text block's declared width, which centres it on the page the class settles. -/
-  blockWidth : Option Sp := none
+  blockWidth : Option Length := none
   /-- The text block's width as thousandths of the page's (geometry's `hscale`), centred likewise. -/
   widthScale : Option Nat := none
   deriving Repr, BEq, Inhabited
 
-public def PageSpec.bottomMargin (spec : PageSpec) : Sp := spec.bmargin.getD spec.vmargin
+public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin
 
 /-- Whether a declaration named the page's size on either axis. -/
 public def PageSpec.sized (spec : PageSpec) : Bool := spec.widthSized || spec.heightSized
@@ -270,10 +267,10 @@ public def PageSpec.placed (spec : PageSpec) : PageSpec :=
   { spec with vmargin := t, bmargin := if m == t then none else some m, block := {} }
 
 /-- The medium a page spec ships on: its page and the bleed on every side. -/
-@[expose] public def PageSpec.medium (spec : PageSpec) : Sp × Sp :=
+@[expose] public def PageSpec.medium (spec : PageSpec) : Length × Length :=
   (spec.width + 2 * spec.bleed, spec.height + 2 * spec.bleed)
 
-public theorem PageBox.clampTo_inside (b : PageBox) (w h : Sp) (hw : 0 ≤ w) (hh : 0 ≤ h) :
+public theorem PageBox.clampTo_inside (b : PageBox) (w h : Length) (hw : 0 ≤ w) (hh : 0 ≤ h) :
     0 ≤ (b.clampTo w h).x0 ∧ (b.clampTo w h).x0 ≤ w ∧ 0 ≤ (b.clampTo w h).y0 ∧
       (b.clampTo w h).y0 ≤ h ∧ 0 ≤ (b.clampTo w h).x1 ∧ (b.clampTo w h).x1 ≤ w ∧
       0 ≤ (b.clampTo w h).y1 ∧ (b.clampTo w h).y1 ≤ h := by
@@ -284,7 +281,7 @@ public theorem PageBox.clampTo_inside (b : PageBox) (w h : Sp) (hw : 0 ≤ w) (h
     Int.le_max_left _ _, Int.max_le.mpr ⟨hh, Int.min_le_left _ _⟩⟩
 
 /-- Every box the medium ships lies inside it and encloses some area. -/
-public theorem PageBox.shipped_inside (boxes : Array PageBox) (w h : Sp) (hw : 0 ≤ w)
+public theorem PageBox.shipped_inside (boxes : Array PageBox) (w h : Length) (hw : 0 ≤ w)
     (hh : 0 ≤ h) : ∀ b ∈ PageBox.shipped boxes w h,
       0 ≤ b.x0 ∧ b.x0 < b.x1 ∧ b.x1 ≤ w ∧ 0 ≤ b.y0 ∧ b.y0 < b.y1 ∧ b.y1 ≤ h := by
   intro b hb
@@ -298,14 +295,14 @@ public theorem PageBox.shipped_inside (boxes : Array PageBox) (w h : Sp) (hw : 0
 is written inside it, and one with no area there is not written. -/
 public def boxDiags (spec : PageSpec) : Array Diag :=
   let (w, h) := spec.medium
-  let medium := s!"[0 0 {w.toPtString} {h.toPtString}]"
+  let medium := s!"[0 0 {w.toBpString} {h.toBpString}]"
   spec.boxes.filterMap fun b =>
     let c := b.clampTo w h
     let diag (msg : String) : Diag := Diag.of .W0442 msg b.span
       (help := some s!"keep the box within the medium, '{medium}' in PDF points")
       (subject := some s!"pagebox:{b.kind.key}") (output := some .pdf)
-      (detail := some s!"[{b.x0.toPtString} {b.y0.toPtString} {b.x1.toPtString} \
-{b.y1.toPtString}] against the medium's {medium}")
+      (detail := some s!"[{b.x0.toBpString} {b.y0.toBpString} {b.x1.toBpString} \
+{b.y1.toBpString}] against the medium's {medium}")
     if !c.hasArea then
       some (diag s!"the {b.kind.key} has no area inside the page's medium; it is not written")
     else if c == b then none
@@ -313,28 +310,28 @@ public def boxDiags (spec : PageSpec) : Array Diag :=
 
 public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
 
-public def baselineSkipOf (spec : PageSpec) : Sp := leadingFor spec.fontSize spec.leading
+public def baselineSkipOf (spec : PageSpec) : Length := leadingFor spec.fontSize spec.leading
 
 /-- The text block of an undeclared letter page: 26 picas, Bringhurst's
 copy-fitting measure for a 10 pt text face. -/
-public def articleTextBlock : Sp := pt 312
+public def articleTextBlock : Length := pt 312
 
 /-- The text block of a markdown page: 32 picas, which keeps every default
 family within 75 to 85 characters per line. -/
-public def markdownTextBlock : Sp := pt 384
+public def markdownTextBlock : Length := pt 384
 
 /-- The text block an undeclared flow page takes on this surface. -/
-public def Surface.textBlock : Surface → Sp
+public def Surface.textBlock : Surface → Length
   | .tex => articleTextBlock
   | .markdown | .code _ => markdownTextBlock
 
 /-- Beamer's default slides stage, 128×96 mm. -/
-@[expose] public def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
-@[expose] public def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
+@[expose] public def slidesStage43 : Length × Length := (Dim.mm 128, Dim.mm 96)
+@[expose] public def slidesStage169 : Length × Length := (Dim.mm 160, Dim.mm 90)
 
 /-- Beamer's `aspectratio` table: each stage named by its ratio, with
 `beamer.cls`'s millimetre pairs. -/
-@[expose] public def slidesStages : Array (String × Sp × Sp) :=
+@[expose] public def slidesStages : Array (String × Length × Length) :=
   #[("4:3", slidesStage43),
     ("16:9", slidesStage169),
     ("16:10", Dim.mm 160, Dim.mm 100),
@@ -344,26 +341,26 @@ public def Surface.textBlock : Surface → Sp
     ("3:2", Dim.mm 135, Dim.mm 90)]
 
 /-- The stage a ratio name selects, colon elided on both sides. -/
-public def slidesStageNamed (name : String) : Option (Sp × Sp) :=
+public def slidesStageNamed (name : String) : Option (Length × Length) :=
   let strip := fun (s : String) => String.ofList (s.toList.filter (· != ':'))
   (slidesStages.find? fun r => strip r.1 == strip name).map (·.2)
 
-public def slidesHMargin : Sp := Dim.mm 10
-@[expose] public def slidesFontSize : Sp := Dim.pt 11
-@[expose] public def slidesVMargin : Sp := 2 * leadingFor slidesFontSize
+public def slidesHMargin : Length := Dim.mm 10
+@[expose] public def slidesFontSize : Length := Dim.pt 11
+@[expose] public def slidesVMargin : Length := 2 * leadingFor slidesFontSize
 
 public theorem vmargin_on_rhythm :
     ({} : PageSpec).vmargin = 6 * leadingFor baseFontSize := by decide
 
 /-- The card class's legibility floor: a 1.4 mm x-height, 0.2° at a 40 cm
 reading distance (Legge & Bigelow 2011). -/
-public def cardXHeightFloor : Sp := Dim.mm100 140
+public def cardXHeightFloor : Length := Dim.mm100 140
 /-- The poster class's body size: beamerposter's scale-1 normalsize, 24.88 pt. -/
-public def posterFontSize : Sp := Dim.pt 2488 / 100
+public def posterFontSize : Length := Dim.pt 2488 / 100
 
 /-- The poster class's legibility floor: the card's angular x-height bound at
 a 1 m viewing distance. -/
-public def posterXHeightFloor : Sp := Dim.mm100 350
+public def posterXHeightFloor : Length := Dim.mm100 350
 
 /-- Equality for a lookup that selects source-bearing data, stronger than screen equality. -/
 public def Color.sameSource (a b : Color) : Bool :=
@@ -695,35 +692,35 @@ public theorem Tokens.declare_keeps_others (t : Tokens) (k k' : String) (g : Sym
 -- Table rule weights and paddings: booktabs.dtx defaults, resolved in the preamble's font.
 
 /-- `\toprule`/`\bottomrule` weight: booktabs `\heavyrulewidth` (.08em). -/
-public def heavyRuleWidth : Dim.Length := { em := 80 }
+public def heavyRuleWidth : Dim.SymLength := { em := 80 }
 /-- `\midrule` weight: booktabs `\lightrulewidth` (.05em). -/
-public def lightRuleWidth : Dim.Length := { em := 50 }
+public def lightRuleWidth : Dim.SymLength := { em := 50 }
 /-- `\cmidrule` weight: booktabs `\cmidrulewidth` (.03em). -/
-public def cmidRuleWidth : Dim.Length := { em := 30 }
+public def cmidRuleWidth : Dim.SymLength := { em := 30 }
 /-- Space under a rule, above the content it heads: booktabs
 `\belowrulesep` (.65ex). -/
-public def belowRuleSep : Dim.Length := { ex := 650 }
+public def belowRuleSep : Dim.SymLength := { ex := 650 }
 /-- Space over a rule, under the content above it: booktabs `\aboverulesep`
 (.4ex). -/
-public def aboveRuleSep : Dim.Length := { ex := 400 }
+public def aboveRuleSep : Dim.SymLength := { ex := 400 }
 /-- Space over a `\toprule`: zero, as booktabs' `\abovetopsep`. -/
-public def aboveTopSep : Dim.Length := {}
+public def aboveTopSep : Dim.SymLength := {}
 /-- Space under a `\bottomrule`: zero, as booktabs' `\belowbottomsep`. -/
-public def belowBottomSep : Dim.Length := {}
+public def belowBottomSep : Dim.SymLength := {}
 /-- Default end-trim of a trimmed `\cmidrule`: booktabs `\cmidrulekern`
 (.5em). -/
-public def cmidRuleKern : Dim.Length := { em := 500 }
+public def cmidRuleKern : Dim.SymLength := { em := 500 }
 /-- `\addlinespace` default: booktabs `\defaultaddspace` (.5em). -/
-public def defaultAddSpace : Dim.Length := { em := 500 }
+public def defaultAddSpace : Dim.SymLength := { em := 500 }
 /-- Half the gap between two table columns: LaTeX's `\tabcolsep`, 6pt. -/
-public def tabColSep : Dim.Length := { sp := Dim.pt 6 }
+public def tabColSep : Dim.SymLength := { sp := Dim.pt 6 }
 /-- The gap between text columns: LaTeX's `\columnsep`, 10pt. -/
-public def columnSep : Dim.Length := { sp := Dim.pt 10 }
+public def columnSep : Dim.SymLength := { sp := Dim.pt 10 }
 /-- The gap between two stacked full rules: LaTeX's `\doublerulesep`, 2pt. -/
-public def doubleRuleSep : Dim.Length := { sp := Dim.pt 2 }
+public def doubleRuleSep : Dim.SymLength := { sp := Dim.pt 2 }
 
 /-- The lengths a formal table reads, under their LaTeX names, each with its undeclared default. -/
-public def tableLengths : List (String × Dim.Length) :=
+public def tableLengths : List (String × Dim.SymLength) :=
   [("tabcolsep", tabColSep), ("doublerulesep", doubleRuleSep),
    ("heavyrulewidth", heavyRuleWidth), ("lightrulewidth", lightRuleWidth),
    ("cmidrulewidth", cmidRuleWidth), ("cmidrulekern", cmidRuleKern),
@@ -731,19 +728,19 @@ public def tableLengths : List (String × Dim.Length) :=
    ("abovetopsep", aboveTopSep), ("belowbottomsep", belowBottomSep)]
 
 /-- A table length's default; zero for a name `tableLengths` lacks. -/
-public def tableLengthDefault (name : String) : Dim.Length :=
+public def tableLengthDefault (name : String) : Dim.SymLength :=
   (tableLengths.lookup name).getD {}
 
 /-- The kernel values of latex.ltx's `\smallskipamount`, `\medskipamount` and `\bigskipamount`. -/
 public def kernelSkip : String → Option SymGlue
   | "smallskipamount" =>
-    some { width := .ofSp (Dim.pt 3), stretch := .ofSp (Dim.pt 1), shrink := .ofSp (Dim.pt 1) }
+    some { width := .ofLength (Dim.pt 3), stretch := .ofLength (Dim.pt 1), shrink := .ofLength (Dim.pt 1) }
   | "medskipamount" =>
-    some { width := .ofSp (Dim.pt 6), stretch := .ofSp (Dim.pt 2), shrink := .ofSp (Dim.pt 2) }
+    some { width := .ofLength (Dim.pt 6), stretch := .ofLength (Dim.pt 2), shrink := .ofLength (Dim.pt 2) }
   | "bigskipamount" =>
-    some { width := .ofSp (Dim.pt 12), stretch := .ofSp (Dim.pt 4), shrink := .ofSp (Dim.pt 4) }
-  | "fboxsep" => some { width := .ofSp (Dim.pt 3) }
-  | "fboxrule" => some { width := .ofSp (Dim.pt 2 / 5) }
+    some { width := .ofLength (Dim.pt 12), stretch := .ofLength (Dim.pt 4), shrink := .ofLength (Dim.pt 4) }
+  | "fboxsep" => some { width := .ofLength (Dim.pt 3) }
+  | "fboxrule" => some { width := .ofLength (Dim.pt 2 / 5) }
   | _ => none
 
 /-- A skip register's value: the document's setting where declared, else the kernel's. -/
@@ -759,15 +756,15 @@ public theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < bel
 
 /-- Gap between a float's object and its caption, on the object side only: one
 rhythm quantum of the governing size. -/
-@[expose] public def captionSepDefault (size : Sp) : SymGlue :=
+@[expose] public def captionSepDefault (size : Length) : SymGlue :=
   { width := { sp := rhythmQuantum size } }
 /-- Gap between a float and the text around it: one full rhythm unit of the governing size. -/
-@[expose] public def floatSepDefault (size : Sp) : SymGlue :=
+@[expose] public def floatSepDefault (size : Length) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 
 /-- Gap between the last body line and the footnote region: `\skip\footins`,
 quantized to one leading. -/
-public def footinsDefault (size : Sp) : SymGlue :=
+public def footinsDefault (size : Length) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 
 public theorem footins_within_glue :
@@ -778,7 +775,7 @@ public theorem footins_within_glue :
 
 /-- The space a trivlist environment opens above and below: LaTeX's top-level
 `\topsep`, quantized to one rhythm quantum. -/
-@[expose] public def trivlistSkipDefault (size : Sp) : SymGlue :=
+@[expose] public def trivlistSkipDefault (size : Length) : SymGlue :=
   { width := { sp := rhythmQuantum size }
     stretch := { sp := size / 5 }
     shrink := { sp := size * 2 / 5 } }
@@ -787,7 +784,7 @@ public def trivlistSkipName : String := "topsep"
 
 /-- A trivlist's space: the document's token where declared, else the rhythm
 default at the governing size. -/
-public def trivlistSkip (tokens : Tokens) (size : Sp) : SymGlue :=
+public def trivlistSkip (tokens : Tokens) (size : Length) : SymGlue :=
   (tokens.find? trivlistSkipName).getD (trivlistSkipDefault size)
 
 /-- natbib's hanging indent for an author-year reference list, `\bibhang`. -/
@@ -799,8 +796,8 @@ public def bibHang (tokens : Tokens) : SymGlue :=
 /-- natbib's gap between reference-list entries, `\bibsep`. -/
 public def bibSepName : String := "bibsep"
 
-public def bibSepDefault (size : Sp) : SymGlue :=
-  let g (w s h : Sp) : SymGlue :=
+public def bibSepDefault (size : Length) : SymGlue :=
+  let g (w s h : Length) : SymGlue :=
     { width := { sp := w }, stretch := { sp := s }, shrink := { sp := h } }
   if size == Dim.pt 10 then g (Dim.pt 8) (Dim.pt 4) (Dim.pt 2)
   else if size == Dim.pt 11 then g (Dim.pt 9) (Dim.pt 4) (Dim.pt 2)
@@ -809,7 +806,7 @@ public def bibSepDefault (size : Sp) : SymGlue :=
 
 /-- The gap between reference-list entries: the document's `\bibsep` where
 declared, else natbib's default at the governing size. -/
-public def bibSep (tokens : Tokens) (size : Sp) : SymGlue :=
+public def bibSep (tokens : Tokens) (size : Length) : SymGlue :=
   (tokens.find? bibSepName).getD (bibSepDefault size)
 
 /-- The role a trivlist environment's body rides in, marking the `\topsep` it opens. -/
@@ -991,12 +988,12 @@ private def listSkipsTable : ListLineage → Nat → Nat → ListSkips
   | .web, _, _ => ⟨{}, {}, {}, none⟩
 
 /-- The size file a body size reads: `10pt`, `11pt` or `12pt`, the nearest for any other size. -/
-private def sizeFileOf (size : Sp) : Nat :=
+private def sizeFileOf (size : Length) : Nat :=
   if size < Dim.pt 21 / 2 then 10 else if size < Dim.pt 23 / 2 then 11 else 12
 
 /-- A list level's spacing: the lineage's sourced values at the body size and
 nesting level, `none` for the web's. -/
-public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSkips :=
+public def listSkips (l : ListLineage) (size : Length) (level : Nat) : Option ListSkips :=
   let lv := min (max level 1) 3
   match l with
   | .web => none
@@ -1006,18 +1003,18 @@ public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSk
     let s := listSkipsTable .sizeFile f lv
     let base := Dim.pt f
     if size == base then some s
-    else some { topsep := s.topsep.scale size base.toNat
-                itemsep := s.itemsep.scale size base.toNat
-                parsep := s.parsep.scale size base.toNat
-                partopsep := s.partopsep.map (·.scale size base.toNat) }
+    else some { topsep := s.topsep.scaleRatio size base
+                itemsep := s.itemsep.scaleRatio size base
+                parsep := s.parsep.scaleRatio size base
+                partopsep := s.partopsep.map (·.scaleRatio size base) }
 
-public theorem listSkips_web_exact (size : Sp) (level : Nat) :
+public theorem listSkips_web_exact (size : Length) (level : Nat) :
     listSkips .web size level = none := by
   simp only [listSkips]
 
 /-- The class options a display's size file is read from, each with the
 `\normalsize` its file sets. -/
-private def displayOptions : List (Nat × Sp) :=
+private def displayOptions : List (Nat × Length) :=
   [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
    (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
 
@@ -1028,12 +1025,12 @@ private def beamerTopsepTable : List (Nat × SymGlue) :=
    (17, ptsGlue 1400 600 800), (20, ptsGlue 1600 700 900)]
 
 /-- The class option a beamer body declares, else beamer's default `11pt`. -/
-private def beamerOptionOf (size : Sp) : Nat :=
+private def beamerOptionOf (size : Length) : Nat :=
   ((displayOptions.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
 
 /-- The `\topsep` in force at a list depth: outside every list the document's where declared, else
 the size file's `\@listI` or beamer's option's; inside, the level's; the web's `trivlistSkip`. -/
-public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
+public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Length) (depth : Nat) :
     SymGlue :=
   match l with
   | .beamer =>
@@ -1048,7 +1045,7 @@ public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (dept
 
 /-- A float's space against the text at its list depth, with whether the
 paragraph gap stands on top of it. -/
-public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
+public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Length) (depth : Nat) :
     SymGlue × Bool :=
   match tokens.find? "floatsep", l with
   | some g, _ => (g, false)
@@ -1056,7 +1053,7 @@ public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth 
   | none, .sizeFile | none, .web => (floatSepDefault size, false)
 
 /-- The class's `\partopsep` where no list level sets its own. -/
-public def partopsepDefault (l : ListLineage) (size : Sp) : SymGlue :=
+public def partopsepDefault (l : ListLineage) (size : Length) : SymGlue :=
   match l with
   | .sizeFile =>
     let f := sizeFileOf size
@@ -1064,12 +1061,12 @@ public def partopsepDefault (l : ListLineage) (size : Sp) : SymGlue :=
       | 10 => ptsGlue 200 100 100
       | 11 => ptsGlue 300 100 100
       | _ => ptsGlue 300 200 200
-    if size == Dim.pt f then g else g.scale size (Dim.pt f).toNat
+    if size == Dim.pt f then g else g.scaleRatio size (Dim.pt f)
   | .beamer | .web => {}
 
 /-- A list's `\partopsep`, which `\@trivlist` adds to `\topsep` where the list
 opens in vertical mode. -/
-public def partopsepFor (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) : SymGlue :=
+public def partopsepFor (l : ListLineage) (size : Length) (level : Nat) (tokens : Tokens) : SymGlue :=
   match (listSkips l size level).bind (·.partopsep) with
   | some g => g
   | none => (tokens.find? "partopsep").getD (partopsepDefault l size)
@@ -1108,7 +1105,7 @@ public theorem ListSet.over_absorb (s t : ListSet) : (s.over t).over t = s.over 
 /-- What a list at `\@listdepth` `level` keeps of its enclosing list's declared values: those its
 class's level macro does not set again, the three skips at every level a size file or beamer
 defines and `\partopsep` where the level sets its own. -/
-public def ListSet.within (l : ListLineage) (size : Sp) (level : Nat) (outer : ListSet) :
+public def ListSet.within (l : ListLineage) (size : Length) (level : Nat) (outer : ListSet) :
     ListSet :=
   let resets : Bool := match l with
     | .sizeFile => level ≤ 3
@@ -1122,7 +1119,7 @@ public def ListSet.within (l : ListLineage) (size : Sp) (level : Nat) (outer : L
 
 /-- A list's spacing and `\partopsep`: its level's, under its declared values; the web's lists
 declare over zero. -/
-public def listSpacing (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
+public def listSpacing (l : ListLineage) (size : Length) (level : Nat) (tokens : Tokens)
     (set : ListSet) : Option (ListSkips × SymGlue) :=
   match listSkips l size level with
   | some sk =>
@@ -1134,14 +1131,14 @@ public def listSpacing (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tok
     else some (⟨set.topsep.getD {}, set.itemsep.getD {}, set.parsep.getD {}, none⟩,
       set.partopsep.getD {})
 
-public theorem listSpacing_undeclared_exact (l : ListLineage) (size : Sp) (level : Nat)
+public theorem listSpacing_undeclared_exact (l : ListLineage) (size : Length) (level : Nat)
     (tokens : Tokens) :
     listSpacing l size level tokens {} =
       (listSkips l size level).map (·, partopsepFor l size level tokens) := by
   unfold listSpacing
   cases listSkips l size level <;> rfl
 
-public theorem listSpacing_declared_exact (l : ListLineage) (size : Sp) (level : Nat)
+public theorem listSpacing_declared_exact (l : ListLineage) (size : Length) (level : Nat)
     (tokens : Tokens) (set : ListSet) (sk : ListSkips) (p : SymGlue)
     (h : listSpacing l size level tokens set = some (sk, p)) :
     (∀ g, set.topsep = some g → sk.topsep = g) ∧ (∀ g, set.itemsep = some g → sk.itemsep = g) ∧
@@ -1168,7 +1165,7 @@ public inductive ListExtra where
 
 /-- What a list level's macro sets over its size file's values from the `\parskip` in force where
 the list opens, its natural width read at the body size. -/
-public def ListExtra.over (e : ListExtra) (size : Sp) (level : Nat) (inForce : SymGlue) : ListSet :=
+public def ListExtra.over (e : ListExtra) (size : Length) (level : Nat) (inForce : SymGlue) : ListSet :=
   match e with
   | .none => {}
   | .koma =>
@@ -1176,7 +1173,7 @@ public def ListExtra.over (e : ListExtra) (size : Sp) (level : Nat) (inForce : S
       { topsep := some {}, itemsep := some {}, parsep := some inForce }
     else {}
 
-public theorem ListExtra.koma_exact (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
+public theorem ListExtra.koma_exact (l : ListLineage) (size : Length) (level : Nat) (tokens : Tokens)
     (inForce : SymGlue) (declared : ListSet) (sk : ListSkips) (p : SymGlue) (hl : level ≤ 3)
     (hpos : 0 < inForce.width.resolve size (size / 2))
     (h : listSpacing l size level tokens ((ListExtra.koma.over size level inForce).over declared) =
@@ -1204,14 +1201,14 @@ public def TrivIn.add (t : TrivIn) (vertical : Bool) : SymGlue :=
 
 /-- Outside every list: the document's `\topsep` and `\partopsep` where declared, else the
 class's. -/
-public def TrivIn.top (l : ListLineage) (tokens : Tokens) (size : Sp) : TrivIn :=
+public def TrivIn.top (l : ListLineage) (tokens : Tokens) (size : Length) : TrivIn :=
   { topsep := trivlistSkipFor l tokens size 0
     partopsep := (tokens.find? "partopsep").getD (partopsepDefault l size) }
 
 /-- Inside a list at `level` spaced `sk`, `pts` (`listSpacing`): the level's `\topsep` or the zero
 the class's extra leaves, which enumitem's `\trivlist` sets again over a declared one, and the
 list's `\partopsep`; a lineage without levels keeps `outer`. -/
-public def TrivIn.within (l : ListLineage) (extra : ListExtra) (size : Sp) (level : Nat)
+public def TrivIn.within (l : ListLineage) (extra : ListExtra) (size : Length) (level : Nat)
     (sk : ListSkips) (pts : SymGlue) (outer : TrivIn) : TrivIn :=
   match listSkips l size level with
   | none => outer
@@ -1227,7 +1224,7 @@ public def ListLineage.trivTexParskip : ListLineage → Bool
   | .sizeFile => true
   | .beamer | .web => false
 
-public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Sp) (level : Nat)
+public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Length) (level : Nat)
     (tokens : Tokens) (set : ListSet) (sk : ListSkips) (pts : SymGlue) (outer : TrivIn)
     (lv : ListSkips) (hl : listSkips l size level = some lv)
     (h : listSpacing l size level tokens set = some (sk, pts)) :
@@ -1242,7 +1239,7 @@ public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Sp) (level
   simp only [TrivIn.within, hl, ListExtra.over, hk, Bool.false_and]
   split <;> simp_all
 
-public theorem TrivIn.within_koma_exact (l : ListLineage) (size : Sp) (level : Nat)
+public theorem TrivIn.within_koma_exact (l : ListLineage) (size : Length) (level : Nat)
     (sk : ListSkips) (pts : SymGlue) (outer : TrivIn) (lv : ListSkips)
     (hl : listSkips l size level = some lv) (hd : (sk.topsep == lv.topsep) = false)
     (hz : (sk.topsep == {}) = false) (hlv : level ≤ 3)
@@ -1278,30 +1275,30 @@ private def displaySkipsTable : Nat → DisplaySkips
 
 /-- The `\normalsize` a class option's size file sets for a body at that
 option's point size; any other size is its own. -/
-public def optionNormalSize (size : Sp) : Sp :=
+public def optionNormalSize (size : Length) : Length :=
   ((displayOptions.find? fun o => Dim.pt o.1 == size).map (·.2)).getD size
 
 
 /-- The option whose point size stands nearest a body size. -/
-private def displaySizeFileOf (size : Sp) : Nat :=
-  (displayOptions.foldl (fun (best : Nat × Sp) (o : Nat × Sp) =>
-    if (size - Dim.pt o.1).natAbs < (size - Dim.pt best.1).natAbs then (o.1, o.2) else best)
+private def displaySizeFileOf (size : Length) : Nat :=
+  (displayOptions.foldl (fun (best : Nat × Length) (o : Nat × Length) =>
+    if (size - Dim.pt o.1).abs < (size - Dim.pt best.1).abs then (o.1, o.2) else best)
     (10, Dim.pt 10)).1
 
 /-- The display skips at a body size: the size file's own at an option's size,
 else the nearest file's scaled with the type. -/
-public def displaySkipsAt (size : Sp) : DisplaySkips :=
+public def displaySkipsAt (size : Length) : DisplaySkips :=
   let f := displaySizeFileOf size
   let s := displaySkipsTable f
   let body := ((displayOptions.lookup f).getD (Dim.pt f))
   if size == Dim.pt f || size == body then s
   else
-    let base := (Dim.pt f).toNat
-    ⟨s.above.scale size base, s.below.scale size base, s.aboveShort.scale size base,
-     s.belowShort.scale size base⟩
+    let base := Dim.pt f
+    ⟨s.above.scaleRatio size base, s.below.scaleRatio size base, s.aboveShort.scaleRatio size base,
+     s.belowShort.scaleRatio size base⟩
 
 /-- `\abovedisplayskip` at a body size, the long skip. -/
-public def displaySkipDefault (size : Sp) : SymGlue := (displaySkipsAt size).above
+public def displaySkipDefault (size : Length) : SymGlue := (displaySkipsAt size).above
 
 public theorem displaySkipDefault_base_exact :
     (displaySkipDefault baseFontSize).width.sp = Dim.pt 10 := by
@@ -1314,7 +1311,7 @@ public def displaySkipBelowShort : String := "belowdisplayshortskip"
 
 /-- The display skips: each the document's token where declared, else the size
 file's at the governing size. -/
-public def displaySkipsFor (tokens : Tokens) (size : Sp) : DisplaySkips :=
+public def displaySkipsFor (tokens : Tokens) (size : Length) : DisplaySkips :=
   let d := displaySkipsAt size
   { above := (tokens.find? displaySkipAbove).getD d.above
     below := (tokens.find? displaySkipBelow).getD d.below
@@ -1416,7 +1413,7 @@ public def proofTopsep : SymGlue := { width := { sp := Dim.pt 6 }, stretch := { 
 
 /-- A theorem-like block's space: the `\topsep` in force where it stands,
 spent as its spelling spends it. -/
-public def thmSkips (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
+public def thmSkips (l : ListLineage) (size : Length) (level : Nat) (tokens : Tokens)
     (k : ThmSpace) (vertical : Bool) : Option ThmSkips :=
   (listSkips l size level).map fun sk =>
     let pts := partopsepFor l size level tokens
@@ -1477,31 +1474,31 @@ public def leftMarginFor (l : ListLineage) (tokens : Tokens) (level : Nat) : Sym
 
 /-- The heading's default space above: one full rhythm unit, a token of its
 own rather than a multiple of the parskip. -/
-public def headingBeforeDefault (size : Sp) : SymGlue :=
+public def headingBeforeDefault (size : Length) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 /-- The heading's default space below: the half-unit. -/
-public def headingAfterDefault (size : Sp) : SymGlue :=
+public def headingAfterDefault (size : Length) : SymGlue :=
   { width := { sp := rhythmQuantum size } }
 
-public theorem heading_space_above_ge_below (size : Int) (h : Dim.pt 1 ≤ size) :
+public theorem heading_space_above_ge_below (size : Length) (h : Dim.pt 1 ≤ size) :
     (headingAfterDefault size).width.sp ≤ (headingBeforeDefault size).width.sp ∧
     (headingAfterDefault size).width.sp = rhythmQuantum size ∧
     0 < (headingAfterDefault size).width.sp :=
-  ⟨Int.le_of_lt (rhythmQuantum_lt_double size h), rfl, rhythmQuantum_pos size h⟩
+  ⟨Length.le_of_lt (rhythmQuantum_lt_double size h), rfl, rhythmQuantum_pos size h⟩
 
-public theorem default_rhythm_multiples (size : Int) (h : Dim.pt 1 ≤ size) :
+public theorem default_rhythm_multiples (size : Length) (h : Dim.pt 1 ≤ size) :
     (parskipDefault size).width.sp = rhythmQuantum size ∧
     0 < (parskipDefault size).width.sp :=
   ⟨rfl, rhythmQuantum_pos size h⟩
 
-public theorem parskip_is_quantum (size : Sp) :
+public theorem parskip_is_quantum (size : Length) :
     (parskipDefault size).width.sp = rhythmQuantum size := by rfl
 
 public theorem parskip_halves_leading_at_bases :
     2 * (parskipDefault baseFontSize).width.sp = leadingFor baseFontSize := by
   decide
 
-public theorem caption_gaps_rhythm (size : Int) (h : Dim.pt 1 ≤ size) :
+public theorem caption_gaps_rhythm (size : Length) (h : Dim.pt 1 ≤ size) :
     (captionSepDefault size).width.sp = rhythmQuantum size ∧
     (floatSepDefault size).width.sp = 2 * rhythmQuantum size ∧
     (captionSepDefault size).width.sp < (floatSepDefault size).width.sp :=
@@ -1519,20 +1516,20 @@ same on both sides. -/
 public def titleBarGap : SymGlue := { width := { em := 3 * leadingMilli / 2 } }
 
 /-- LaTeX's `\strutbox` height at a size: 0.7 of its baselineskip. -/
-public def frameTitleStrut (titleSize : Sp) : Sp := leadingFor titleSize * 7 / 10
+public def frameTitleStrut (titleSize : Length) : Length := leadingFor titleSize * 7 / 10
 
 /-- The frametitle padding: `\ht\strutbox` of the title's font, in em of the title's size. -/
 public def frameTitlePadding : SymGlue := { width := { em := 7 * leadingMilli / 10 } }
 
 /-- The frame title's side margins: 0.85 of `\ht\strutbox` in the frametitle font. -/
-public def frameTitleInset (titleSize : Sp) : Sp := frameTitleStrut titleSize * 85 / 100
+public def frameTitleInset (titleSize : Length) : Length := frameTitleStrut titleSize * 85 / 100
 
 /-- The step a frame title with no bar sets at: beamer's default font theme's `\Large`. -/
 public def plainFrameTitleStep : String := "Large"
 
 /-- Where beamer's default frametitle box ends below the title's last
 baseline: a strut's depth, less 1ex. -/
-public def defaultFrameTitleBelow (titleSize : Sp) (leading : Nat) (ex : Sp) : Sp :=
+public def defaultFrameTitleBelow (titleSize : Length) (leading : Nat) (ex : Length) : Length :=
   leadingFor titleSize leading * 3 / 10 - ex
 
 
@@ -1555,7 +1552,7 @@ both backends realize. -/
 @[expose] public def rhythmGapQuanta : List (String × Nat) :=
   [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("trivlist", 2)]
 
-public theorem rhythm_table_exact (size : Sp) :
+public theorem rhythm_table_exact (size : Length) :
     ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum size
       = (parskipDefault size).width.sp ∧
     ((rhythmGapQuanta.lookup "caption").getD 0 : Int) * rhythmQuantum size
@@ -1570,8 +1567,8 @@ public theorem rhythm_table_exact (size : Sp) :
       = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by
   refine ⟨?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
     simp [rhythmGapQuanta, parskipDefault, captionSepDefault, floatSepDefault,
-      headingBeforeDefault, trivlistSkipDefault, Dim.Length.ofSp,
-      List.lookup]; omega
+      headingBeforeDefault, trivlistSkipDefault, Dim.SymLength.ofLength,
+      List.lookup] <;> length_omega
 
 /-- The key a pairing is reported under: its name, colour and ground, as its
 contrast warning's `subject`. -/
@@ -2454,7 +2451,7 @@ public inductive AssertKind where
   | textInArea
   /-- The smallest x-height set anywhere is at least this, judged from each
   run's font at its size. -/
-  | minXHeight (min : Sp)
+  | minXHeight (min : Length)
   /-- The document conforms to the engine's judged WCAG 2.2 AA rows and declares a language. -/
   | accessibilityAA
   /-- The PDF satisfies the named conformance profile, judged on the census of
@@ -2466,7 +2463,7 @@ public def AssertKind.source : AssertKind → String
   | .pages op n => s!"pages {op.label} {n}"
   | .fontsAllEmbedded => "fonts.all_embedded"
   | .textInArea => "text.in_area"
-  | .minXHeight m => s!"text.xheight >= {m.toPtString}pt"
+  | .minXHeight m => s!"text.xheight >= {m.toBpString}pt"
   | .accessibilityAA => "accessibility = AA"
   | .pdfProfile name => s!"pdf.profile = {name}"
 
@@ -2590,9 +2587,11 @@ public inductive Style where
    ("normalsize", 1000), ("large", 1200), ("Large", 1440), ("LARGE", 1728),
    ("huge", 2074), ("Huge", 2488)]
 
+public theorem sizeScale_LARGE_exact : (sizeScale.lookup "LARGE").getD 1000 = 1728 := by decide
+
 /-- A named step of a size ladder applied to a base size; a name off the ladder is the base
 itself. -/
-@[expose] public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
+@[expose] public def scaleStepIn (scale : List (String × Nat)) (base : Length) (name : String) : Length :=
   base * ((scale.lookup name).getD 1000) / 1000
 
 /-- Each named step's `\baselineskip`, per mille of the body size:
@@ -2609,44 +2608,48 @@ off the column, and never below one. -/
 
 /-- A named step's leading at a base: the base's leading in the proportion the
 skip column gives the step's row to its `\normalsize` row. -/
-@[expose] public def stepLead (skips : List (String × Nat)) (step : String) (base : Sp) :
-    Option Sp :=
+@[expose] public def stepLead (skips : List (String × Nat)) (step : String) (base : Length) :
+    Option Length :=
   (skips.lookup step).map fun (l : Nat) => leadingFor base * (l : Int) / (skipBody skips : Int)
 
 /-- The baseline distance a run sets at: its named step's leading, else the
 6⁄5 rule of its own size. -/
-@[expose] public def stepSkip (lead : Option Sp) (size : Sp) (factor : Nat := 1000) : Sp :=
+@[expose] public def stepSkip (lead : Option Length) (size : Length) (factor : Nat := 1000) : Length :=
   match lead with
   | some l => l * factor / 1000
   | none => leadingFor size factor
 
-@[simp] public theorem stepSkip_none_exact (size : Sp) (factor : Nat) :
+@[simp] public theorem stepSkip_none_exact (size : Length) (factor : Nat) :
     stepSkip none size factor = leadingFor size factor := rfl
 
 /-- The leading a run's line box takes: its paragraph's leading, in the run's
 proportion to the paragraph's size. -/
-@[expose] public def runLead (lead : Option Sp) (nominal size : Sp) (factor : Nat := 1000) :
-    Sp :=
+@[expose] public def runLead (lead : Option Length) (nominal size : Length) (factor : Nat := 1000) :
+    Length :=
   match lead with
-  | some l => l * size / max nominal 1 * factor / 1000
+  | some l => l.mulDiv size (max nominal Length.quantum) * (factor : Int) / (1000 : Int)
   | none => leadingFor size factor
 
-public theorem runLead_exact (lead : Option Int) (nominal : Int) (h : 0 < nominal)
+public theorem runLead_exact (lead : Option Length) (nominal : Length) (h : 0 < nominal)
     (factor : Nat) : runLead lead nominal nominal factor = stepSkip lead nominal factor := by
   cases lead with
   | none => rfl
   | some l =>
-    have hm : max nominal 1 = nominal := by omega
+    have hm : max nominal Length.quantum = nominal := by length_omega
+    have hn : nominal.units ≠ 0 := by length_omega
     simp only [runLead, stepSkip, hm]
-    rw [Int.mul_ediv_cancel _ (by omega)]
+    length_units
+    rw [Int.mul_ediv_cancel _ hn]
+    rfl
 
-public theorem runLead_monotone (lead : Option Int) (nominal : Int) (factor : Nat) (a b : Int)
-    (hl : ∀ l, lead = some l → 0 ≤ l) (hab : a ≤ b) :
+public theorem runLead_monotone (lead : Option Length) (nominal : Length) (factor : Nat)
+    (a b : Length) (hl : ∀ l, lead = some l → 0 ≤ l) (hab : a ≤ b) :
     runLead lead nominal a factor ≤ runLead lead nominal b factor := by
   have hf : (0 : Int) ≤ (factor : Int) := Int.natCast_nonneg _
   cases lead with
   | none =>
     simp only [runLead, leadingFor]
+    length_units
     apply Int.ediv_le_ediv (by decide)
     apply Int.mul_le_mul_of_nonneg_right _ hf
     apply Int.ediv_le_ediv (by decide)
@@ -2654,17 +2657,19 @@ public theorem runLead_monotone (lead : Option Int) (nominal : Int) (factor : Na
   | some l =>
     have h0 := hl l rfl
     simp only [runLead]
+    length_units
     apply Int.ediv_le_ediv (by decide)
     apply Int.mul_le_mul_of_nonneg_right _ hf
     apply Int.ediv_le_ediv (by omega)
     exact Int.mul_le_mul_of_nonneg_left hab h0
 
-public theorem runLead_between (lead : Option Int) (nominal : Int) (factor : Nat) (s : Int)
+public theorem runLead_between (lead : Option Length) (nominal : Length) (factor : Nat)
+    (s : Length)
     (hn : 0 < nominal) (hl : ∀ l, lead = some l → 0 ≤ l) (hs : 0 ≤ s) (hsn : s ≤ nominal) :
     0 ≤ runLead lead nominal s factor ∧
       runLead lead nominal s factor ≤ stepSkip lead nominal factor := by
   have h0 : runLead lead nominal 0 factor = 0 := by
-    cases lead <;> simp [runLead, leadingFor]
+    cases lead <;> simp [runLead, leadingFor, Length.ext_iff']
   refine ⟨?_, ?_⟩
   · rw [← h0]
     exact runLead_monotone lead nominal factor 0 s hl hs
@@ -2679,63 +2684,47 @@ public theorem sizeSkipScale_between :
       8 * p.2 ≤ 7 * q.2 ∧ 7 * q.2 ≤ 9 * p.2 := by decide
 
 public theorem stepLead_ratio_between (skips : List (String × Nat)) (step : String)
-    (base : Sp) (k : Nat) (hk : skips.lookup step = some k) :
+    (base : Length) (k : Nat) (hk : skips.lookup step = some k) :
     ∃ l, stepLead skips step base = some l ∧
       l * (skipBody skips : Int) ≤ leadingFor base * (k : Int) ∧
-      leadingFor base * (k : Int) < (l + 1) * (skipBody skips : Int) := by
+      leadingFor base * (k : Int) < (l + Length.quantum) * (skipBody skips : Int) := by
   have hn : (0 : Int) < (skipBody skips : Int) := by
     have : 1 ≤ skipBody skips := Nat.le_max_left _ _
     omega
   refine ⟨leadingFor base * (k : Int) / (skipBody skips : Int), ?_, ?_, ?_⟩
   · simp [stepLead, hk]
-  · exact Int.ediv_mul_le _ (Int.ne_of_gt hn)
-  · exact Int.lt_ediv_add_one_mul_self _ hn
+  · length_units; exact Int.ediv_mul_le _ (Int.ne_of_gt hn)
+  · length_units; exact Int.lt_ediv_add_one_mul_self _ hn
 
-public theorem stepLead_between (base : Int) (hb : 100 ≤ base) :
+public theorem stepLead_between (base : Length) (hb : 100 * Length.quantum ≤ base) :
     ∀ p ∈ sizeScale, ∃ l, stepLead sizeSkipScale p.1 base = some l ∧
-      scaleStepIn sizeScale base p.1 < l ∧ 7 * l ≤ 9 * scaleStepIn sizeScale base p.1 + 9 := by
+      scaleStepIn sizeScale base p.1 < l ∧
+        7 * l ≤ 9 * scaleStepIn sizeScale base p.1 + 9 * Length.quantum := by
   intro p hp
+  have hb' : 100 ≤ base.units := by length_omega
   simp only [sizeScale, List.mem_cons, List.not_mem_nil, or_false] at hp
   rcases hp with h|h|h|h|h|h|h|h|h|h <;> subst h <;>
     simp only [stepLead, scaleStepIn, skipBody, sizeSkipScale, sizeScale, List.lookup,
-      leadingFor, leadingMilli] <;> simp <;>
-    first
-    | (show base * 500 / 1000 < base * 1200 / 1000 * 600 / 1200 ∧
-        7 * (base * 1200 / 1000 * 600 / 1200) ≤ 9 * (base * 500 / 1000) + 9; omega)
-    | (show base * 700 / 1000 < base * 1200 / 1000 * 800 / 1200 ∧
-        7 * (base * 1200 / 1000 * 800 / 1200) ≤ 9 * (base * 700 / 1000) + 9; omega)
-    | (show base * 800 / 1000 < base * 1200 / 1000 * 950 / 1200 ∧
-        7 * (base * 1200 / 1000 * 950 / 1200) ≤ 9 * (base * 800 / 1000) + 9; omega)
-    | (show base * 900 / 1000 < base * 1200 / 1000 * 1100 / 1200 ∧
-        7 * (base * 1200 / 1000 * 1100 / 1200) ≤ 9 * (base * 900 / 1000) + 9; omega)
-    | (show base < base * 1200 / 1000 ∧ 7 * (base * 1200 / 1000) ≤ 9 * base + 9; omega)
-    | (show base * 1200 / 1000 < base * 1200 / 1000 * 1400 / 1200 ∧
-        7 * (base * 1200 / 1000 * 1400 / 1200) ≤ 9 * (base * 1200 / 1000) + 9; omega)
-    | (show base * 1440 / 1000 < base * 1200 / 1000 * 1800 / 1200 ∧
-        7 * (base * 1200 / 1000 * 1800 / 1200) ≤ 9 * (base * 1440 / 1000) + 9; omega)
-    | (show base * 1728 / 1000 < base * 1200 / 1000 * 2200 / 1200 ∧
-        7 * (base * 1200 / 1000 * 2200 / 1200) ≤ 9 * (base * 1728 / 1000) + 9; omega)
-    | (show base * 2074 / 1000 < base * 1200 / 1000 * 2500 / 1200 ∧
-        7 * (base * 1200 / 1000 * 2500 / 1200) ≤ 9 * (base * 2074 / 1000) + 9; omega)
-    | (show base * 2488 / 1000 < base * 1200 / 1000 * 3000 / 1200 ∧
-        7 * (base * 1200 / 1000 * 3000 / 1200) ≤ 9 * (base * 2488 / 1000) + 9; omega)
+      leadingFor, leadingMilli] <;> simp <;> length_units <;> omega
 
 public theorem stepSkip_normalsize_exact (skips : List (String × Nat)) (n : Nat)
-    (hn : skips.lookup "normalsize" = some n) (hpos : 1 ≤ n) (body : Sp) (factor : Nat) :
+    (hn : skips.lookup "normalsize" = some n) (hpos : 1 ≤ n) (body : Length) (factor : Nat) :
     stepSkip (stepLead skips "normalsize" body) body factor = leadingFor body factor := by
   have hb : skipBody skips = n := by
     simp only [skipBody, hn, Option.getD_some]
     omega
   have hn0 : (n : Int) ≠ 0 := by omega
   have hl : stepLead skips "normalsize" body = some (leadingFor body) := by
-    simp only [stepLead, hn, hb, Option.map]
+    simp only [stepLead, hn, hb, Option.map, Option.some.injEq]
+    length_units
     rw [Int.mul_ediv_cancel _ hn0]
   rw [hl]
   simp only [stepSkip, leadingFor, leadingMilli]
-  have h1000 : (body * ((1200 : Nat) : Int) / 1000 * ((1000 : Nat) : Int) / 1000 : Int) =
-      body * ((1200 : Nat) : Int) / 1000 :=
-    Int.mul_ediv_cancel _ (by decide)
+  length_units
+  have h1000 : ∀ b : Int, b * ((1200 : Nat) : Int) / 1000 * ((1000 : Nat) : Int) / 1000 =
+      b * ((1200 : Nat) : Int) / 1000 := by intro b; omega
   rw [h1000]
+  rfl
 
 /-- A skip column with one row replaced; a name off the column leaves it as it was. -/
 public def setSkip (skips : List (String × Nat)) (name : String) (row : Nat) :
@@ -2744,27 +2733,30 @@ public def setSkip (skips : List (String × Nat)) (name : String) (row : Nat) :
 
 /-- A declared length's per-mille share of the body size, rounded, the length
 given a thousandfold. -/
-public def skipRowOf (milli body : Sp) : Nat :=
-  ((milli + body / 2) / max body 1).toNat
+public def skipRowOf (milli body : Length) : Nat :=
+  ((milli + body / 2) / max body Length.quantum).toNat
 
-public theorem skipRowOf_between (milli body : Int) (hs : 0 ≤ milli) (hb : 0 < body) :
+public theorem skipRowOf_between (milli body : Length) (hs : 0 ≤ milli) (hb : 0 < body) :
     (skipRowOf milli body : Int) * body ≤ milli + body / 2 ∧
       milli + body / 2 < ((skipRowOf milli body : Int) + 1) * body := by
-  have hm : max body 1 = body := by omega
-  have hq : 0 ≤ (milli + body / 2) / body := Int.ediv_nonneg (by omega) (by omega)
+  have hm : max body Length.quantum = body := by length_omega
+  have hb' : 0 < body.units := hb
+  have hq : (0 : Int) ≤ (milli + body / 2) / body := by
+    length_units; exact Int.ediv_nonneg (by omega) (by omega)
   simp only [skipRowOf, hm, Int.toNat_of_nonneg hq]
-  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hb), Int.lt_ediv_add_one_mul_self _ hb⟩
+  length_units
+  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hb'), Int.lt_ediv_add_one_mul_self _ hb'⟩
 
 /-- The size a document title sets at when no `titlepage` font template
 declares one: `\LARGE` on a flow page, `\Large` on a deck, on the document's ladder. -/
-@[expose] public def titleSize (scale : List (String × Nat)) (base : Sp) (slides : Bool) : Sp :=
+@[expose] public def titleSize (scale : List (String × Nat)) (base : Length) (slides : Bool) : Length :=
   scaleStepIn scale base (if slides then "Large" else "LARGE")
 
-@[expose] public def inkClearance : Sp := Dim.pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
+@[expose] public def inkClearance : Length := Dim.pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
 
 /-- Heading display sizes from the type scale: `\section` in `\Large`,
 `\subsection` in `\large`, `\subsubsection` in `\normalsize`. -/
-@[expose] public def headingSize (scale : List (String × Nat)) (base : Sp) : HeadingLevel → Sp
+@[expose] public def headingSize (scale : List (String × Nat)) (base : Length) : HeadingLevel → Length
   | .title | .h1 => scaleStepIn scale base "LARGE"
   | .h2 => scaleStepIn scale base "Large"
   | .h3 => scaleStepIn scale base "large"
@@ -2772,21 +2764,25 @@ declares one: `\LARGE` on a flow page, `\Large` on a deck, on the document's lad
 
 /-- The reach below its bar's top of the section-page template's last line,
 the subsection title's strut, at the document's `\large`. -/
-public def sectionPageStrut (scale : List (String × Nat)) (size : Int) (factor : Nat := 1000) :
-    Int :=
+public def sectionPageStrut (scale : List (String × Nat)) (size : Length) (factor : Nat := 1000) :
+    Length :=
   leadingFor (scaleStepIn scale size "large") factor * 13 / 10
 
-public theorem sectionPageStrut_between (size : Int) :
-    size * sectionPageStrut sizeScale 1000 / 1000 - 4 ≤ sectionPageStrut sizeScale size ∧
-      sectionPageStrut sizeScale size ≤ size * sectionPageStrut sizeScale 1000 / 1000 := by
-  have hL : ((sizeScale.lookup "large").getD 1000 : Int) = 1200 := by decide
-  -- Spelled `Int`, not `Sp`, so `omega` reads the unfolded steps.
-  have hs : ∀ x : Int,
-      sectionPageStrut sizeScale x = x * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
+public theorem sectionPageStrut_between (size : Length) :
+    size.mulDiv (sectionPageStrut sizeScale (1000 * Length.quantum)) (1000 * Length.quantum)
+        - 4 * Length.quantum ≤ sectionPageStrut sizeScale size ∧
+      sectionPageStrut sizeScale size ≤
+        size.mulDiv (sectionPageStrut sizeScale (1000 * Length.quantum)) (1000 * Length.quantum) := by
+  have hL : ((sizeScale.lookup "large").getD 1000 : Nat) = 1200 := by decide
+  have hs : ∀ x : Length, (sectionPageStrut sizeScale x).units =
+      x.units * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
     intro x
     simp only [sectionPageStrut, leadingFor, scaleStepIn, leadingMilli, hL]
+    length_units
     rfl
+  length_units
   rw [hs, hs]
+  simp only [Length.units_nmul, Length.units_quantum]
   omega
 
 /-- Adjacent steps of the scale, in order. -/
@@ -3419,19 +3415,17 @@ public inductive VAlign where
   deriving Repr, BEq, Inhabited
 
 /-- The fixed opening skip before a frame's body, separate from its distributable space. -/
-public def frameBodySkip (hasTitle : Bool) (valign : VAlign) : Length :=
+public def frameBodySkip (hasTitle : Bool) (valign : VAlign) : SymLength :=
   { sp := if valign matches .top then Dim.mm 2 else 0
     em := if hasTitle then 250 else 0 }
 
 public theorem frameBodySkip_exact (hasTitle : Bool) (valign : VAlign)
-    (size : Sp) :
+    (size : Length) :
     (frameBodySkip hasTitle valign).resolve size 0 =
       (if hasTitle then size / 4 else 0) +
         (if valign matches .top then Dim.mm 2 else 0) := by
-  have hquarter : 250 * size / 1000 = size / 4 :=
-    Int.mul_ediv_mul_of_pos size 4 (by decide : (0 : Int) < 250)
   cases hasTitle <;> cases valign <;>
-    simp [frameBodySkip, Length.resolve, hquarter, Int.add_comm]
+    simp [frameBodySkip, SymLength.resolve] <;> length_omega
 
 /-- The title-page template's glue above and below the title matter, in
 thousandths of a fil unit. -/
@@ -3461,12 +3455,12 @@ public structure FrameGlue where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The measure a section page centres its title and progress bar in: `0.7875\linewidth`. -/
-public def sectionPageMeasure (textWidth : Sp) : Sp := textWidth * 7875 / 10000
+public def sectionPageMeasure (textWidth : Length) : Length := textWidth * 7875 / 10000
 
 /-- The skip beamer's default `section page` sets between its `\sectionname` line and its title's
 line past their leading: `\vskip1em` at the body size `size`, `\lineskip` and the title box's 12pt
 `sep`, over the title's cap height in the face of size `large` (beamerinnerthemedefault.sty). -/
-public def sectionNameSkip (size large : Sp) : Sp :=
+public def sectionNameSkip (size large : Length) : Length :=
   size + Dim.pt 13 + large * 7 / 10 - leadingFor large
 
 /-- `\vfill`'s stretch, `0pt plus 1fill`, in `FrameGlue`'s thousandths. -/
@@ -3511,8 +3505,8 @@ namespace Pic
 
 /-- The line widths the subset strokes (pgf manual §15.3.1): `thin`, every
 path's default, and `thick`. -/
-public def thinWidth : Sp := Dim.pt 2 / 5
-public def thickWidth : Sp := Dim.pt 4 / 5
+public def thinWidth : Length := Dim.pt 2 / 5
+public def thickWidth : Length := Dim.pt 4 / 5
 
 /-- A dash pattern by name: `dashed` is on 3 pt off 3 pt, `dotted` on the line
 width off 1 pt (pgf manual §15.3.2). -/
@@ -3525,20 +3519,20 @@ public inductive Dash where
 /-- How a border or an edge strokes: colour, width, dash. -/
 public structure Stroke where
   color : Color := Color.black
-  width : Sp := thinWidth
+  width : Length := thinWidth
   dash : Dash := .solid
   deriving Repr, BEq, Inhabited
 
 /-- One segment of a stroked edge, endpoints explicit: a straight line or a
 cubic Bézier with its two control points. -/
 public inductive PathSeg where
-  | line (x1 y1 x2 y2 : Sp)
-  | cubic (x1 y1 c1x c1y c2x c2y x2 y2 : Sp)
+  | line (x1 y1 x2 y2 : Length)
+  | cubic (x1 y1 c1x c1y c2x c2y x2 y2 : Length)
   deriving Repr, BEq, Inhabited
 
 /-- The declared box of a segment, which bounds the drawn curve: a cubic lies
 in its control points' convex hull. -/
-public def PathSeg.box : PathSeg → (Sp × Sp) × (Sp × Sp)
+public def PathSeg.box : PathSeg → (Length × Length) × (Length × Length)
   | .line x1 y1 x2 y2 => ((min x1 x2, min y1 y2), (max x1 x2, max y1 y2))
   | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
     ((min (min x1 c1x) (min c2x x2), min (min y1 c1y) (min c2y y2)),
@@ -3546,12 +3540,12 @@ public def PathSeg.box : PathSeg → (Sp × Sp) × (Sp × Sp)
 
 /-- An arrow tip as three corner points: a filled triangle standing in for pgf's `latex` tip. -/
 public structure Tip where
-  x1 : Sp
-  y1 : Sp
-  x2 : Sp
-  y2 : Sp
-  x3 : Sp
-  y3 : Sp
+  x1 : Length
+  y1 : Length
+  x2 : Length
+  y2 : Length
+  x3 : Length
+  y3 : Length
   deriving Repr, BEq, Inhabited
 
 /-- Where a label stands relative to its point: centred, TikZ's default
@@ -3573,7 +3567,7 @@ growing upward, as TikZ has it. -/
 public inductive Shape where
   /-- A text label standing at `(x, y)` by its `align` anchor, at `scale` per
   mille of the body size. -/
-  | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
+  | label (x y : Length) (content : Array Inline) (color : Color) (scale : Nat)
       (align : LabelAlign)
   /-- One node of the vector model, which both backends emit as the figure's own. -/
   | ink (n : Gfx.Node Empty)
@@ -3616,18 +3610,18 @@ continues its subpath. -/
   { start := (t.x1, t.y1), segs := #[.line (t.x2, t.y2), .line (t.x3, t.y3)], closed := true }
 
 /-- A filled rectangle with corners `(x, y)` and `(x + w, y + h)`. -/
-@[expose] public def Shape.rect (x y w h : Sp) (color : Color) : Shape :=
+@[expose] public def Shape.rect (x y w h : Length) (color : Color) : Shape :=
   .ink (.draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
     (some (solidFill color)) none)
 
 /-- A node's circular outline: centre and radius, stroked and/or filled. -/
-@[expose] public def Shape.circle (x y r : Sp) (stroke : Option Stroke) (fill : Option Color) :
+@[expose] public def Shape.circle (x y r : Length) (stroke : Option Stroke) (fill : Option Color) :
     Shape :=
   .ink (.draw (.ellipse x y (max r (-r)) (max r (-r))) (fill.map solidFill) (stroke.map strokeOf))
 
 /-- A node's rectangular outline: `(x, y)` the min corner, `w × h` the
 extents, stroked and/or filled. -/
-@[expose] public def Shape.frame (x y w h : Sp) (stroke : Option Stroke) (fill : Option Color) :
+@[expose] public def Shape.frame (x y w h : Length) (stroke : Option Stroke) (fill : Option Color) :
     Shape :=
   .ink (.draw (.rect (min x (x + w)) (min y (y + h)) (max w (-w)) (max h (-h)))
     (fill.map solidFill) (stroke.map strokeOf))
@@ -3662,7 +3656,7 @@ the dash as its pattern. -/
 public def strokeDump : Option Gfx.Stroke → String
   | some k =>
     let dash := if k.dash.isEmpty then "" else
-      " dash " ++ String.intercalate "," (k.dash.toList.map (·.toPtString))
+      " dash " ++ String.intercalate "," (k.dash.toList.map (·.toBpString))
     let cap := match k.cap with
       | .butt => ""
       | .round => " cap round"
@@ -3671,17 +3665,17 @@ public def strokeDump : Option Gfx.Stroke → String
       | .miter => if k.miterLimit == pgfMiterLimit then "" else " miter"
       | .round => " join round"
       | .bevel => " join bevel"
-    s!" stroke {paintDumpOf k.paint} {k.width.toPtString}" ++ dash ++ cap ++ join ++
+    s!" stroke {paintDumpOf k.paint} {k.width.toBpString}" ++ dash ++ cap ++ join ++
       alphaDump k.alpha
   | none => ""
 
-private def ptDump (p : Gfx.Pt) : String := s!"({p.1.toPtString},{p.2.toPtString})"
+private def ptDump (p : Gfx.Pt) : String := s!"({p.1.toBpString},{p.2.toBpString})"
 
 /-- A geometry as the IR goldens spell it: `--` a line, `~` a curve's end, `z` a closed subpath. -/
 public def geomDump : Gfx.Geom → String
-  | .rect x y w h => s!"rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString}"
+  | .rect x y w h => s!"rect {x.toBpString} {y.toBpString} {w.toBpString} {h.toBpString}"
   | .ellipse cx cy rx ry =>
-    s!"ellipse {cx.toPtString} {cy.toPtString} {rx.toPtString} {ry.toPtString}"
+    s!"ellipse {cx.toBpString} {cy.toBpString} {rx.toBpString} {ry.toBpString}"
   | .path subs => "path" ++ String.join (subs.toList.map fun sp =>
       let segs := String.join (sp.segs.toList.map fun sg => match sg with
         | .line q => s!"--{ptDump q}"
@@ -3722,38 +3716,38 @@ public abbrev Box := Gfx.Box
 /-- Translate a measured interval beside an anchor: a positive direction puts
 its lower edge one gap beyond, a negative its upper edge one gap before, zero
 centres it. -/
-public def Box.axisOffset (anchor lo hi gap direction : Sp) : Sp :=
+public def Box.axisOffset (anchor lo hi gap direction : Length) : Length :=
   if 0 < direction then anchor + gap - lo
   else if direction < 0 then anchor - gap - hi
   else anchor - (lo + hi) / 2
 
-public theorem Box.axisOffset_contract (anchor lo hi gap direction : Int) :
+public theorem Box.axisOffset_contract (anchor lo hi gap direction : Length) :
     (0 < direction → lo + axisOffset anchor lo hi gap direction = anchor + gap) ∧
     (direction < 0 → hi + axisOffset anchor lo hi gap direction = anchor - gap) ∧
     (direction = 0 →
       2 * anchor ≤ lo + hi + 2 * axisOffset anchor lo hi gap direction ∧
-      lo + hi + 2 * axisOffset anchor lo hi gap direction ≤ 2 * anchor + 1) := by
+      lo + hi + 2 * axisOffset anchor lo hi gap direction ≤ 2 * anchor + Length.quantum) := by
   by_cases hp : 0 < direction
   · simp only [axisOffset, ite_eq_left hp]
-    omega
+    length_omega
   · by_cases hn : direction < 0
     · simp only [axisOffset, ite_eq_right hp, ite_eq_left hn]
-      omega
+      length_omega
     · simp only [axisOffset, ite_eq_right hp, ite_eq_right hn]
-      omega
+      length_omega
 
 /-- Attach a whole box beside an anchor by translation: corner placement
 constrains both axes, side placement centres the other. -/
-public def Box.attachOffset (box : Box) (anchor direction gap : Sp × Sp) : Sp × Sp :=
+public def Box.attachOffset (box : Box) (anchor direction gap : Length × Length) : Length × Length :=
   (axisOffset anchor.1 box.1.1 box.2.1 gap.1 direction.1,
    axisOffset anchor.2 box.1.2 box.2.2 gap.2 direction.2)
 
-public theorem Box.attachOffset_contract (box : Box) (anchor direction gap : Sp × Sp) :
+public theorem Box.attachOffset_contract (box : Box) (anchor direction gap : Length × Length) :
     let offset := attachOffset box anchor direction gap
-    let onAxis (a lo hi g d shift : Int) : Prop :=
+    let onAxis (a lo hi g d shift : Length) : Prop :=
       (0 < d → lo + shift = a + g) ∧
       (d < 0 → hi + shift = a - g) ∧
-      (d = 0 → 2 * a ≤ lo + hi + 2 * shift ∧ lo + hi + 2 * shift ≤ 2 * a + 1)
+      (d = 0 → 2 * a ≤ lo + hi + 2 * shift ∧ lo + hi + 2 * shift ≤ 2 * a + Length.quantum)
     onAxis anchor.1 box.1.1 box.2.1 gap.1 direction.1 offset.1 ∧
     onAxis anchor.2 box.1.2 box.2.2 gap.2 direction.2 offset.2 :=
   ⟨axisOffset_contract anchor.1 box.1.1 box.2.1 gap.1 direction.1,
@@ -3762,19 +3756,19 @@ public theorem Box.attachOffset_contract (box : Box) (anchor direction gap : Sp 
 /-- A label line's measured ink: its set width and how far its glyphs reach
 above and below its baseline. -/
 public structure LabelInk where
-  w : Sp := 0
-  height : Sp := 0
-  depth : Sp := 0
+  w : Length := 0
+  height : Length := 0
+  depth : Length := 0
   /-- How far the glyphs reach above and below the baseline: the TeX box the
   text makes, which a node's border holds. -/
-  boxHeight : Sp := 0
-  boxDepth : Sp := 0
+  boxHeight : Length := 0
+  boxDepth : Length := 0
   /-- The face's x-height at the label's size, what `ex` means in a node's options. -/
-  ex : Sp := 0
+  ex : Length := 0
   /-- The math face's axis height, fraction rule thickness and script scale at
   the label's size, from its MATH table; zero without a math face. -/
-  axis : Sp := 0
-  rule : Sp := 0
+  axis : Length := 0
+  rule : Length := 0
   script : Nat := 0
   deriving Repr, BEq, Inhabited
 
@@ -3783,7 +3777,7 @@ public abbrev LabelMetric := Array Inline → Nat → LabelInk
 
 /-- Where a label's ink stands around its anchor, given its extents: the
 anchor decides which point of the box sits on `(x, y)`. -/
-private def labelInkSpan (x y : Sp) (align : LabelAlign) (w tall : Sp) : Box :=
+private def labelInkSpan (x y : Length) (align : LabelAlign) (w tall : Length) : Box :=
   match align with
   | .center => ((x - w / 2, y - tall / 2), (x - w / 2 + w, y - tall / 2 + tall))
   | .west => ((x, y - tall / 2), (x + w, y - tall / 2 + tall))
@@ -3791,88 +3785,87 @@ private def labelInkSpan (x y : Sp) (align : LabelAlign) (w tall : Sp) : Box :=
   | .south => ((x - w / 2, y), (x - w / 2 + w, y + tall))
   | .north => ((x - w / 2, y - tall), (x - w / 2 + w, y))
 
-private theorem labelInkSpan_covers_anchor (x y : Sp) (align : LabelAlign) (w tall : Sp)
+private theorem labelInkSpan_covers_anchor (x y : Length) (align : LabelAlign) (w tall : Length)
     (hw : 0 ≤ w) (ht : 0 ≤ tall) :
     Gfx.Box.le ((x, y), (x, y)) (labelInkSpan x y align w tall) := by
-  have half : ∀ a b : Int, 0 ≤ b → a - b / 2 ≤ a ∧ a ≤ a - b / 2 + b := by
-    intro a b h; omega
-  have full : ∀ a b : Int, 0 ≤ b → a - b ≤ a := by intro a b h; omega
-  have grow : ∀ a b : Int, 0 ≤ b → a ≤ a + b := by intro a b h; omega
+  have half : ∀ a b : Length, 0 ≤ b → a - b / 2 ≤ a ∧ a ≤ a - b / 2 + b := by
+    intro a b h; length_omega
+  have full : ∀ a b : Length, 0 ≤ b → a - b ≤ a := by intro a b h; length_omega
+  have grow : ∀ a b : Length, 0 ≤ b → a ≤ a + b := by intro a b h; length_omega
   cases align
   · exact ⟨(half x w hw).1, (half y tall ht).1, (half x w hw).2, (half y tall ht).2⟩
-  · exact ⟨Int.le_refl x, (half y tall ht).1, grow x w hw, (half y tall ht).2⟩
-  · exact ⟨full x w hw, (half y tall ht).1, Int.le_refl x, (half y tall ht).2⟩
-  · exact ⟨(half x w hw).1, Int.le_refl y, (half x w hw).2, grow y tall ht⟩
-  · exact ⟨(half x w hw).1, full y tall ht, (half x w hw).2, Int.le_refl y⟩
+  · exact ⟨Length.le_refl x, (half y tall ht).1, grow x w hw, (half y tall ht).2⟩
+  · exact ⟨full x w hw, (half y tall ht).1, Length.le_refl x, (half y tall ht).2⟩
+  · exact ⟨(half x w hw).1, Length.le_refl y, (half x w hw).2, grow y tall ht⟩
+  · exact ⟨(half x w hw).1, full y tall ht, (half x w hw).2, Length.le_refl y⟩
 
 /-- Where a label's measured ink stands around its anchor, negative extents clamped away. -/
-public def labelInkBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+public def labelInkBox (x y : Length) (align : LabelAlign) (m : LabelInk) : Box :=
   labelInkSpan x y align (max m.w 0) (max (m.height + m.depth) 0)
 
 /-- Where a label's baseline sits: the top of its ink box less its height. -/
-public def labelBaseline (y : Sp) (align : LabelAlign) (m : LabelInk) : Sp :=
+public def labelBaseline (y : Length) (align : LabelAlign) (m : LabelInk) : Length :=
   (labelInkBox 0 y align m).2.2 - m.height
 
-public theorem labelBaseline_box_exact (x y : Sp) (align : LabelAlign) (m : LabelInk) :
+public theorem labelBaseline_box_exact (x y : Length) (align : LabelAlign) (m : LabelInk) :
     labelBaseline y align m = (labelInkBox x y align m).2.2 - m.height := by
   cases align <;> rfl
 
 /-- The text's measured TeX box on its resolved baseline, without the anchor
 or the font band in its vertical extent. -/
-public def labelTextBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+public def labelTextBox (x y : Length) (align : LabelAlign) (m : LabelInk) : Box :=
   let band := labelInkBox x y align m
   let b := labelBaseline y align m
   ((band.1.1, b - m.boxDepth), (band.2.1, b + m.boxHeight))
 
-public theorem labelTextBox_translate_exact (x y : Sp) (align : LabelAlign) (m : LabelInk)
-    (offset : Sp × Sp) :
+public theorem labelTextBox_translate_exact (x y : Length) (align : LabelAlign) (m : LabelInk)
+    (offset : Length × Length) :
     let box := labelTextBox x y align m
     labelTextBox (x + offset.1) (y + offset.2) align m =
       ((box.1.1 + offset.1, box.1.2 + offset.2),
        (box.2.1 + offset.1, box.2.2 + offset.2)) := by
   cases align <;>
-    simp [labelTextBox, labelBaseline, labelInkBox, labelInkSpan,
-      Int.sub_eq_add_neg, Int.add_assoc, Int.add_left_comm, Int.add_comm]
+    simp [labelTextBox, labelBaseline, labelInkBox, labelInkSpan] <;> length_omega
 
 /-- Where a label's glyphs stand: the TeX box its text makes, on the baseline the band places. -/
-@[expose] public def labelGlyphBox (x y : Sp) (align : LabelAlign) (m : LabelInk) : Box :=
+@[expose] public def labelGlyphBox (x y : Length) (align : LabelAlign) (m : LabelInk) : Box :=
   let box := labelTextBox x y align m
   ((box.1.1, min y box.1.2), (box.2.1, max y box.2.2))
 
-public theorem labelGlyphBox_covers (x y : Sp) (align : LabelAlign) (m : LabelInk) :
+public theorem labelGlyphBox_covers (x y : Length) (align : LabelAlign) (m : LabelInk) :
     Gfx.Box.le ((x, y), (x, y)) (labelGlyphBox x y align m) := by
   have hx := labelInkSpan_covers_anchor x y align (max m.w 0) (max (m.height + m.depth) 0)
-    (Int.le_max_right _ _) (Int.le_max_right _ _)
-  have lo : ∀ a b : Int, min a b ≤ a := by intro a b; omega
-  have hi : ∀ a b : Int, a ≤ max a b := by intro a b; omega
+    (Length.le_max_right _ _) (Length.le_max_right _ _)
+  have lo : ∀ a b : Length, min a b ≤ a := by intro a b; length_omega
+  have hi : ∀ a b : Length, a ≤ max a b := by intro a b; length_omega
   exact ⟨hx.1, lo _ _, hx.2.2.1, hi _ _⟩
 
-public theorem labelGlyphBox_covers_extent (x y : Sp) (align : LabelAlign) (m : LabelInk)
-    (hi lo : Sp) (hhi : hi ≤ m.boxHeight) (hlo : lo ≤ m.boxDepth) :
+public theorem labelGlyphBox_covers_extent (x y : Length) (align : LabelAlign) (m : LabelInk)
+    (hi lo : Length) (hhi : hi ≤ m.boxHeight) (hlo : lo ≤ m.boxDepth) :
     (labelGlyphBox x y align m).1.2 ≤ labelBaseline y align m - lo ∧
     labelBaseline y align m + hi ≤ (labelGlyphBox x y align m).2.2 := by
   simp only [labelGlyphBox, labelTextBox]
-  have bottom := Int.min_le_right y (labelBaseline y align m - m.boxDepth)
-  have top := Int.le_max_right y (labelBaseline y align m + m.boxHeight)
-  exact ⟨Int.le_trans bottom (Int.sub_le_sub_left hlo _),
-    Int.le_trans (Int.add_le_add_left hhi _) top⟩
+  have bottom := Length.min_le_right y (labelBaseline y align m - m.boxDepth)
+  have top := Length.le_max_right y (labelBaseline y align m + m.boxHeight)
+  exact ⟨Length.le_trans bottom (Length.sub_le_sub_left hlo _),
+    Length.le_trans (Length.add_le_add_left hhi _) top⟩
 
-public theorem labelBaseline_width_id (y w : Sp) (align : LabelAlign) (m : LabelInk) :
+public theorem labelBaseline_width_id (y w : Length) (align : LabelAlign) (m : LabelInk) :
     labelBaseline y align { m with w := w } = labelBaseline y align m := by
   cases align <;> rfl
 
-public theorem labelBaseline_between (y : Sp) (m : LabelInk)
+public theorem labelBaseline_between (y : Length) (m : LabelInk)
     (h : 0 ≤ m.height + m.depth) :
     y + (m.depth - m.height) / 2 ≤ labelBaseline y .center m ∧
-      labelBaseline y .center m ≤ y + (m.depth - m.height) / 2 + 1 := by
+      labelBaseline y .center m ≤ y + (m.depth - m.height) / 2 + Length.quantum := by
   show y + (m.depth - m.height) / 2
         ≤ y - (max (m.height + m.depth) 0) / 2 + max (m.height + m.depth) 0 - m.height ∧
       y - (max (m.height + m.depth) 0) / 2 + max (m.height + m.depth) 0 - m.height
-        ≤ y + (m.depth - m.height) / 2 + 1
-  have step : ∀ a b c : Int, 0 ≤ b + c →
+        ≤ y + (m.depth - m.height) / 2 + Length.quantum
+  have step : ∀ a b c : Length, 0 ≤ b + c →
       a + (c - b) / 2 ≤ a - (max (b + c) 0) / 2 + max (b + c) 0 - b ∧
-      a - (max (b + c) 0) / 2 + max (b + c) 0 - b ≤ a + (c - b) / 2 + 1 := by
-    intro a b c hbc; omega
+      a - (max (b + c) 0) / 2 + max (b + c) 0 - b ≤ a + (c - b) / 2 + Length.quantum := by
+    intro a b c hbc; length_omega
   exact step y m.height m.depth h
 
 /-- The componentwise join of two measurements: what a line carrying both would set to. -/
@@ -3881,24 +3874,24 @@ public def LabelInk.join (a b : LabelInk) : LabelInk :=
     boxHeight := max a.boxHeight b.boxHeight, boxDepth := max a.boxDepth b.boxDepth
     ex := max a.ex b.ex }
 
-public theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : LabelInk) :
+public theorem phantom_extent_between (x y : Length) (align : LabelAlign) (m p : LabelInk) :
     Gfx.Box.le (labelInkBox x y align m) (labelInkBox x y align (m.join p)) ∧
       (p.w ≤ m.w → p.height ≤ m.height → p.depth ≤ m.depth →
         labelInkBox x y align (m.join p) = labelInkBox x y align m) := by
   refine ⟨?_, ?_⟩
-  · have mid : ∀ v s t : Int, s ≤ t →
+  · have mid : ∀ v s t : Length, s ≤ t →
         v - t / 2 ≤ v - s / 2 ∧ v - s / 2 + s ≤ v - t / 2 + t := by
-      intro v s t h; omega
-    have near : ∀ v s t : Int, s ≤ t → v ≤ v ∧ v + s ≤ v + t := by
-      intro v s t h; omega
-    have far : ∀ v s t : Int, s ≤ t → v - t ≤ v - s ∧ v ≤ v := by
-      intro v s t h; omega
+      intro v s t h; length_omega
+    have near : ∀ v s t : Length, s ≤ t → v ≤ v ∧ v + s ≤ v + t := by
+      intro v s t h; length_omega
+    have far : ∀ v s t : Length, s ≤ t → v - t ≤ v - s ∧ v ≤ v := by
+      intro v s t h; length_omega
     have gw : max m.w 0 ≤ max (m.join p).w 0 := by
-      have jw : ∀ a b : Int, max a 0 ≤ max (max a b) 0 := by intro a b; omega
+      have jw : ∀ a b : Length, max a 0 ≤ max (max a b) 0 := by intro a b; length_omega
       exact jw m.w p.w
     have gt : max (m.height + m.depth) 0 ≤ max ((m.join p).height + (m.join p).depth) 0 := by
-      have jt : ∀ a b c d : Int, max (a + c) 0 ≤ max (max a b + max c d) 0 := by
-        intro a b c d; omega
+      have jt : ∀ a b c d : Length, max (a + c) 0 ≤ max (max a b + max c d) 0 := by
+        intro a b c d; length_omega
       exact jt m.height p.height m.depth p.depth
     cases align
     · exact ⟨(mid x _ _ gw).1, (mid y _ _ gt).1, (mid x _ _ gw).2, (mid y _ _ gt).2⟩
@@ -3907,7 +3900,7 @@ public theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : Lab
     · exact ⟨(mid x _ _ gw).1, (near y _ _ gt).1, (mid x _ _ gw).2, (near y _ _ gt).2⟩
     · exact ⟨(mid x _ _ gw).1, (far y _ _ gt).1, (mid x _ _ gw).2, (far y _ _ gt).2⟩
   · intro hw hh hd
-    have dom : ∀ a b : Int, b ≤ a → max a b = a := by intro a b h; omega
+    have dom : ∀ a b : Length, b ≤ a → max a b = a := by intro a b h; length_omega
     have ew : (m.join p).w = m.w := dom m.w p.w hw
     have eh : (m.join p).height = m.height := dom m.height p.height hh
     have ed : (m.join p).depth = m.depth := dom m.depth p.depth hd
@@ -3940,7 +3933,7 @@ public structure Picture where
   borders : Array Box := #[]
   /-- The height the surrounding line's baseline passes through, in picture
   coordinates, when the picture declares one (`baseline=`). -/
-  baseline : Option Sp := none
+  baseline : Option Length := none
   /-- The alternative the author declared on the picture (`alt={...}` or `artifact`). -/
   alt : Alt := .undeclared
   deriving Repr, BEq, Inhabited
@@ -3956,7 +3949,7 @@ public structure Picture where
 
 /-- The solid colour a geometry's fill paints at a point, when the geometry
 holds it; a path is not asked. -/
-public def geomFillAt (x y : Sp) (c : Color) : Gfx.Geom → Option Color
+public def geomFillAt (x y : Length) (c : Color) : Gfx.Geom → Option Color
   | .rect rx ry w h => if rx ≤ x ∧ x ≤ rx + w ∧ ry ≤ y ∧ y ≤ ry + h then some c else none
   | .ellipse cx cy rx ry =>
     if rx == ry then
@@ -3981,7 +3974,7 @@ mutual
 
 -- conserves: none — a point reading.
 /-- The ground one node leaves at a point over the ground `under` it paints on. -/
-public def inkGroundAt (x y : Sp) (under : Option Color) : Gfx.Node Empty → Option Color
+public def inkGroundAt (x y : Length) (under : Option Color) : Gfx.Node Empty → Option Color
   | .draw g (some { paint := .solid c, alpha, .. }) _ =>
     match geomFillAt x y c g with
     | some c => c.over alpha under
@@ -3999,7 +3992,7 @@ public def inkGroundAt (x y : Sp) (under : Option Color) : Gfx.Node Empty → Op
   | .label l => nomatch l
   | .words _ => under
 
-public def inkGroundAtList (x y : Sp) (under : Option Color) :
+public def inkGroundAtList (x y : Length) (under : Option Color) :
     List (Gfx.Node Empty) → Option Color
   | [] => under
   | n :: rest => inkGroundAtList x y (inkGroundAt x y under n) rest
@@ -4008,13 +4001,13 @@ end
 
 /-- The ground a shape leaves at a point over `under`: a label's glyphs are
 no one's ground. -/
-public def Shape.groundAt (x y : Sp) (under : Option Color) : Shape → Option Color
+public def Shape.groundAt (x y : Length) (under : Option Color) : Shape → Option Color
   | .label _ _ _ _ _ _ => under
   | .ink n => inkGroundAt x y under n
 
 /-- The ground a label's ink stands on: `base` with every shape drawn before
 the label composited over it at the label's anchor. -/
-public def fillUnder (base : Option Color) (drawn : Array Shape) (x y : Sp) : Option Color :=
+public def fillUnder (base : Option Color) (drawn : Array Shape) (x y : Length) : Option Color :=
   drawn.foldl (fun g s => s.groundAt x y g) base
 
 /-- The inline content each label sets: every glyph a picture can ask a face for. -/
@@ -4056,26 +4049,26 @@ every shape but a label. -/
 
 /-- The half-extents a label of this width and height asks of the node it
 hangs on, read off `labelInkSpan`. -/
-public def labelHalfExtent (align : LabelAlign) (w tall : Sp) : Sp × Sp :=
+public def labelHalfExtent (align : LabelAlign) (w tall : Length) : Length × Length :=
   let ((x0, y0), (x1, y1)) := labelInkSpan 0 0 align w tall
   (max (-x0) x1, max (-y0) y1)
 
-@[expose] public def nodeExtentBox (x y a b : Sp) : Box := ((x - a, y - b), (x + a, y + b))
+@[expose] public def nodeExtentBox (x y a b : Length) : Box := ((x - a, y - b), (x + a, y + b))
 
-private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
+private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Length) :
     Gfx.Box.le (labelInkSpan x y align w tall)
       (nodeExtentBox x y (labelHalfExtent align w tall).1
         (labelHalfExtent align w tall).2) := by
-  have mid : ∀ v d : Int,
+  have mid : ∀ v d : Length,
       v - max (-(0 - d / 2)) (0 - d / 2 + d) ≤ v - d / 2 ∧
       v - d / 2 + d ≤ v + max (-(0 - d / 2)) (0 - d / 2 + d) := by
-    intro v d; omega
-  have near : ∀ v d : Int,
+    intro v d; length_omega
+  have near : ∀ v d : Length,
       v - max (-0) (0 + d) ≤ v ∧ v + d ≤ v + max (-0) (0 + d) := by
-    intro v d; omega
-  have far : ∀ v d : Int,
+    intro v d; length_omega
+  have far : ∀ v d : Length,
       v - max (-(0 - d)) 0 ≤ v - d ∧ v ≤ v + max (-(0 - d)) 0 := by
-    intro v d; omega
+    intro v d; length_omega
   cases align
   · exact ⟨(mid x w).1, (mid y tall).1, (mid x w).2, (mid y tall).2⟩
   · exact ⟨(near x w).1, (mid y tall).1, (near x w).2, (mid y tall).2⟩
@@ -4083,31 +4076,31 @@ private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
   · exact ⟨(mid x w).1, (near y tall).1, (mid x w).2, (near y tall).2⟩
   · exact ⟨(mid x w).1, (far y tall).1, (mid x w).2, (far y tall).2⟩
 
-public theorem nodeExtentBox_monotone (x y a b a' b' : Sp) (ha : a ≤ a') (hb : b ≤ b') :
+public theorem nodeExtentBox_monotone (x y a b a' b' : Length) (ha : a ≤ a') (hb : b ≤ b') :
     Gfx.Box.le (nodeExtentBox x y a b) (nodeExtentBox x y a' b') := by
-  have step : ∀ v p q : Int, p ≤ q → v - q ≤ v - p ∧ v + p ≤ v + q := by
-    intro v p q h; omega
+  have step : ∀ v p q : Length, p ≤ q → v - q ≤ v - p ∧ v + p ≤ v + q := by
+    intro v p q h; length_omega
   exact ⟨(step x a a' ha).1, (step y b b' hb).1, (step x a a' ha).2, (step y b b' hb).2⟩
 
 /-- The half-extents a node registers given a measurement: the declared
 minimum, or the label's own reach where it stands proud of it. -/
 @[expose] public def nodeExtent (m : LabelMetric) (content : Array Inline) (scale : Nat)
-    (align : LabelAlign) (declA declB : Sp) : Sp × Sp :=
+    (align : LabelAlign) (declA declB : Length) : Length × Length :=
   let ink := m content scale
   let (a, b) := labelHalfExtent align (max ink.w 0) (max (ink.height + ink.depth) 0)
   (max declA a, max declB b)
 
 public theorem nodeExtent_covers (m : LabelMetric) (content : Array Inline) (scale : Nat)
-    (align : LabelAlign) (declA declB x y : Sp) :
+    (align : LabelAlign) (declA declB x y : Length) :
     Gfx.Box.le (labelInkBox x y align (m content scale))
       (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
         (nodeExtent m content scale align declA declB).2) := by
-  have grow : ∀ p q : Int, p ≤ max q p := by intro p q; omega
+  have grow : ∀ p q : Length, p ≤ max q p := by intro p q; length_omega
   exact Gfx.Box.le_trans (labelHalfExtent_covers align x y _ _)
     (nodeExtentBox_monotone x y _ _ _ _ (grow _ declA) (grow _ declB))
 
 public theorem centre_independent_of_growth (m : LabelMetric) (content : Array Inline)
-    (scale : Nat) (align : LabelAlign) (declA declB declA' declB' x y : Sp)
+    (scale : Nat) (align : LabelAlign) (declA declB declA' declB' x y : Length)
     (hA : declA ≤ declA') (hB : declB ≤ declB') :
     Gfx.Box.le (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
              (nodeExtent m content scale align declA declB).2)
@@ -4116,12 +4109,12 @@ public theorem centre_independent_of_growth (m : LabelMetric) (content : Array I
       labelBaseline y align (m content scale) = labelBaseline y align (m content scale) ∧
       labelInkBox x y align (m content scale) = labelInkBox x y align (m content scale) := by
   refine ⟨?_, rfl, rfl⟩
-  have step : ∀ p q r : Int, p ≤ q → max p r ≤ max q r := by intro p q r h; omega
+  have step : ∀ p q r : Length, p ≤ q → max p r ≤ max q r := by intro p q r h; length_omega
   exact nodeExtentBox_monotone x y _ _ _ _ (step _ _ _ hA) (step _ _ _ hB)
 
 public theorem nodeExtent_separates (m : LabelMetric) (ca cb : Array Inline)
-    (sa sb : Nat) (alignA alignB : LabelAlign) (aA aB bA bB : Sp)
-    (x y sep : Sp) (hsep : 0 < sep) :
+    (sa sb : Nat) (alignA alignB : LabelAlign) (aA aB bA bB : Length)
+    (x y sep : Length) (hsep : 0 < sep) :
     (labelInkBox x y alignA (m ca sa)).2.1 <
       (labelInkBox
         (x + (sep + (nodeExtent m ca sa alignA aA aB).1
@@ -4131,9 +4124,9 @@ public theorem nodeExtent_separates (m : LabelMetric) (ca cb : Array Inline)
     (x + (sep + (nodeExtent m ca sa alignA aA aB).1
       + (nodeExtent m cb sb alignB bA bB).1)) y).1
   simp only [nodeExtentBox] at ha hb
-  have chain : ∀ p u q s b v a : Int,
+  have chain : ∀ p u q s b v a : Length,
       p ≤ u → v + (s + a + b) - b ≤ q → 0 < s → u = v + a → p < q := by
-    intro p u q s b v a h1 h2 h3 h4; omega
+    intro p u q s b v a h1 h2 h3 h4; length_omega
   exact chain _ _ _ sep _ x _ ha hb hsep rfl
 
 /-- The hull of a per-shape box over a picture. -/
@@ -4202,7 +4195,7 @@ public theorem Picture.recolor_box_id (p : Picture) (f : Color → Color) (m : L
 
 /-- How far above its box's bottom edge a picture's declared baseline runs,
 held inside the box; zero when undeclared. -/
-public def Picture.rise (p : Picture) (m : LabelMetric) : Sp :=
+public def Picture.rise (p : Picture) (m : LabelMetric) : Length :=
   (p.baseline.map fun yb =>
     max 0 (min ((p.box m).2.2 - (p.box m).1.2) (yb - (p.box m).1.2))).getD 0
 
@@ -4216,7 +4209,7 @@ public theorem Picture.rise_between (p : Picture) (m : LabelMetric)
   unfold Picture.rise
   cases p.baseline with
   | some yb => exact clampRise_between _ _ _ h
-  | none => exact ⟨Int.le_refl 0, Int.sub_nonneg.mpr h⟩
+  | none => exact ⟨Length.le_refl 0, Int.sub_nonneg.mpr h⟩
 
 public theorem Picture.box_covers (p : Picture) (m : LabelMetric) (h : p.declared = none) :
     (∀ s ∈ p.shapes, Gfx.Box.le (s.inkBox m) (p.box m)) ∧
@@ -4236,55 +4229,55 @@ public theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Gfx.Box.le s.
 picture coordinates (y up) to layout coordinates (y down). -/
 public structure Place where
   /-- Page x where the picture's `xmin` lands (its left edge). -/
-  x0 : Sp
+  x0 : Length
   /-- Page y where the picture's `ymax` lands (its top edge). -/
-  yTop : Sp
-  xmin : Sp
-  ymax : Sp
+  yTop : Length
+  xmin : Length
+  ymax : Length
   deriving Repr, BEq, Inhabited
 
-@[expose] public def Place.toPage (t : Place) (u : Sp × Sp) : Sp × Sp :=
+@[expose] public def Place.toPage (t : Place) (u : Length × Length) : Length × Length :=
   (t.x0 + (u.1 - t.xmin), t.yTop + (t.ymax - u.2))
 
 /-- The placement as the vector model's integer isometry. -/
 @[expose] public def Place.toIso (t : Place) : Gfx.Iso :=
   { flipY := true, dx := t.x0 - t.xmin, dy := t.yTop + t.ymax }
 
-public theorem Place.affine_exact (t : Place) (u : Sp × Sp) : t.toPage u = t.toIso.apply u := by
+public theorem Place.affine_exact (t : Place) (u : Length × Length) : t.toPage u = t.toIso.apply u := by
   obtain ⟨ux, uy⟩ := u
-  have hx : ∀ a b c : Int, a + (c - b) = c + (a - b) := by intro a b c; omega
-  have hy : ∀ a b c : Int, a + (b - c) = a + b - c := by intro a b c; omega
+  have hx : ∀ a b c : Length, a + (c - b) = c + (a - b) := by intro a b c; length_omega
+  have hy : ∀ a b c : Length, a + (b - c) = a + b - c := by intro a b c; length_omega
   simp only [toPage, toIso, Gfx.Iso.apply, ↓reduceIte]
   exact Prod.ext (hx _ _ _) (hy _ _ _)
 
-public def Place.ofPage (t : Place) (q : Sp × Sp) : Sp × Sp :=
+public def Place.ofPage (t : Place) (q : Length × Length) : Length × Length :=
   (t.xmin + (q.1 - t.x0), t.ymax - (q.2 - t.yTop))
 
-public theorem Place.ofPage_iso_exact (t : Place) (q : Sp × Sp) : t.ofPage q = t.toIso.inv.apply q := by
+public theorem Place.ofPage_iso_exact (t : Place) (q : Length × Length) : t.ofPage q = t.toIso.inv.apply q := by
   obtain ⟨qx, qy⟩ := q
-  have hx : ∀ a b c : Int, a + (c - b) = c + -(b - a) := by intro a b c; omega
-  have hy : ∀ m yT q : Int, m - (q - yT) = yT + m - q := by intro m yT q; omega
+  have hx : ∀ a b c : Length, a + (c - b) = c + -(b - a) := by intro a b c; length_omega
+  have hy : ∀ m yT q : Length, m - (q - yT) = yT + m - q := by intro m yT q; length_omega
   simp only [ofPage, toIso, Gfx.Iso.inv, Gfx.Iso.apply, ↓reduceIte]
   exact Prod.ext (hx _ _ _) (hy _ _ _)
 
-public theorem Place.ofPage_toPage (t : Place) (u : Sp × Sp) : t.ofPage (t.toPage u) = u := by
+public theorem Place.ofPage_toPage (t : Place) (u : Length × Length) : t.ofPage (t.toPage u) = u := by
   rw [affine_exact, ofPage_iso_exact, Gfx.Iso.inv_apply_id]
 
-public theorem Place.toPage_ofPage (t : Place) (q : Sp × Sp) : t.toPage (t.ofPage q) = q := by
+public theorem Place.toPage_ofPage (t : Place) (q : Length × Length) : t.toPage (t.ofPage q) = q := by
   obtain ⟨qx, qy⟩ := q
-  have hx : ∀ a b c : Int, b + (a + (c - b) - a) = c := by intro a b c; omega
-  have hy : ∀ yT m q : Int, yT + (m - (m - (q - yT))) = q := by intro yT m q; omega
+  have hx : ∀ a b c : Length, b + (a + (c - b) - a) = c := by intro a b c; length_omega
+  have hy : ∀ yT m q : Length, yT + (m - (m - (q - yT))) = q := by intro yT m q; length_omega
   simp only [toPage, ofPage, Prod.mk.injEq]
   exact ⟨hx _ _ _, hy _ _ _⟩
 
-public theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
+public theorem Place.toPage_box (t : Place) (b : Box) (u : Length × Length)
     (hx1 : b.1.1 ≤ u.1) (hx2 : u.1 ≤ b.2.1) (hy1 : b.1.2 ≤ u.2) (hy2 : u.2 ≤ b.2.2) :
     (t.toPage (b.1.1, b.2.2)).1 ≤ (t.toPage u).1
       ∧ (t.toPage u).1 ≤ (t.toPage (b.2.1, b.1.2)).1
       ∧ (t.toPage (b.1.1, b.2.2)).2 ≤ (t.toPage u).2
       ∧ (t.toPage u).2 ≤ (t.toPage (b.2.1, b.1.2)).2 := by
-  have hx : ∀ d a b : Int, a ≤ b → a + d ≤ b + d := by intro d a b h; omega
-  have hy : ∀ d a b : Int, a ≤ b → d - b ≤ d - a := by intro d a b h; omega
+  have hx : ∀ d a b : Length, a ≤ b → a + d ≤ b + d := by intro d a b h; length_omega
+  have hy : ∀ d a b : Length, a ≤ b → d - b ≤ d - a := by intro d a b h; length_omega
   simp only [affine_exact, toIso, Gfx.Iso.apply, ↓reduceIte]
   exact ⟨hx _ _ _ hx1, hx _ _ _ hx2, hy _ _ _ hy2, hy _ _ _ hy1⟩
 
@@ -4361,10 +4354,10 @@ public inductive TableTarget where
 @[match_pattern, expose] public def TableTarget.frac (permille : Nat) : TableTarget :=
   .sized (Affine.scaleQ permille 1000 (.ref .lineWidth))
 
-@[match_pattern, expose] public def TableTarget.abs (w : Sp) : TableTarget :=
-  .sized (.lit { width := .ofSp w })
+@[match_pattern, expose] public def TableTarget.abs (w : Length) : TableTarget :=
+  .sized (.lit { width := .ofLength w })
 
-public def TableTarget.resolve (target : TableTarget) (measure : Sp) : Sp :=
+public def TableTarget.resolve (target : TableTarget) (measure : Length) : Length :=
   match target with
   | .sized e => max 0 (e.resolveWidth (MeasureValues.horizontal measure 0))
 
@@ -4379,8 +4372,8 @@ public inductive ColWidth where
 @[match_pattern, expose] public def ColWidth.frac (permille : Nat) : ColWidth :=
   .sized (Affine.scaleQ permille 1000 (.ref .lineWidth))
 
-@[match_pattern, expose] public def ColWidth.abs (w : Sp) : ColWidth :=
-  .sized (.lit { width := .ofSp w })
+@[match_pattern, expose] public def ColWidth.abs (w : Length) : ColWidth :=
+  .sized (.lit { width := .ofLength w })
 
 /-- A box's declared width (`{minipage}`, `\parbox`, `{column}`): `share` an
 equal part of what declared boxes leave, `sized` an affine length. -/
@@ -4392,8 +4385,8 @@ public inductive BoxSize where
 @[match_pattern, expose] public def BoxSize.frac (permille : Nat) : BoxSize :=
   .sized (Affine.scaleQ permille 1000 (.ref .lineWidth))
 
-@[match_pattern, expose] public def BoxSize.abs (w : Sp) : BoxSize :=
-  .sized (.lit { width := .ofSp w })
+@[match_pattern, expose] public def BoxSize.abs (w : Length) : BoxSize :=
+  .sized (.lit { width := .ofLength w })
 
 /-- Which point of a box stands on the baseline of its row, the `[pos]` it
 declares; an undeclared box stands `top`. -/
@@ -4414,11 +4407,11 @@ public structure BoxWidth where
 @[match_pattern, expose] public def BoxWidth.sized (width : Affine Measure) : BoxWidth := ⟨.sized width, .top⟩
 @[match_pattern, expose] public def BoxWidth.frac (permille : Nat) : BoxWidth :=
   ⟨.frac permille, .top⟩
-@[match_pattern, expose] public def BoxWidth.abs (w : Sp) : BoxWidth :=
+@[match_pattern, expose] public def BoxWidth.abs (w : Length) : BoxWidth :=
   ⟨.abs w, .top⟩
 
 /-- The declared width against a known measure: the width the box is set at. -/
-public def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
+public def BoxWidth.resolve (w : BoxWidth) (measure : Length) : Option Length :=
   match w.size with
   | .share => none
   | .sized e =>
@@ -4429,7 +4422,7 @@ public def BoxWidth.resolve (w : BoxWidth) (measure : Sp) : Option Sp :=
 public inductive Track where
   | free
   | percent (permille : Nat)
-  | length (l : Sp)
+  | length (l : Length)
   | affine (e : Affine Measure)
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -4442,7 +4435,7 @@ public def BoxWidth.trackOf (w : BoxWidth) : Track :=
 
 /-- One normalized CSS term from an affine box track. -/
 private inductive TrackTerm where
-  | length (l : Dim.Length)
+  | length (l : Dim.SymLength)
   | measure (m : Measure) (num : Int) (den : Nat)
 
 private def affineTrackTerms (e : Affine Measure) : Array TrackTerm := Id.run do
@@ -4470,7 +4463,7 @@ private def milliDecimal (n : Int) : String :=
 
 private def TrackTerm.css (horizontalUnit : String) : TrackTerm → Array String
   | .length l =>
-    (if l.sp == 0 then #[] else #[l.sp.toPtString ++ "pt"]) ++
+    (if l.sp == 0 then #[] else #[l.sp.toBpString ++ "pt"]) ++
     (if l.em == 0 then #[] else #[milliDecimal l.em ++ "em"]) ++
     (if l.ex == 0 then #[] else #[milliDecimal l.ex ++ "ex"])
   | .measure m num den =>
@@ -4491,7 +4484,7 @@ private def affineTrackCss (e : Affine Measure) (horizontalUnit : String) : Stri
 public def Track.css : Track → String
   | .free => "1fr"
   | .percent p => percentCss p
-  | .length l => l.toPtString ++ "pt"
+  | .length l => l.toBpString ++ "pt"
   | .affine e => affineTrackCss e "%"
 
 /-- An affine local measure in a property whose percentages would use the
@@ -4514,7 +4507,7 @@ public def Track.isFree : Track → Bool
   | .free => true
   | .percent _ | .length _ | .affine _ => false
 
-public theorem boxWidth_tracks_agree (w : BoxWidth) (measure : Sp) :
+public theorem boxWidth_tracks_agree (w : BoxWidth) (measure : Length) :
     (w.resolve measure).isSome = w.declared ∧
       w.trackOf.isFree = !w.declared := by
   rcases w with ⟨s, _⟩
@@ -4967,12 +4960,12 @@ public structure ListingSpec where
   breakLines : Bool := false
   /-- What the listing's package takes off the space after each source line:
   fvextra's `fvextraLineOverlap` for minted, else zero. -/
-  lineOverlap : Sp := 0
+  lineOverlap : Length := 0
   /-- Whether every code line carries a `\strut`, as minted's lines under `breaklines` do. -/
   lineStrut : Bool := false
   /-- How far a wrapping listing's continuation stands in past its line's
   indentation (listings' `breakindent`). -/
-  breakIndent : Option Sp := none
+  breakIndent : Option Length := none
   /-- Where the layout's own wrap may end a line. -/
   wrapAt : ListingWrap := .units
   /-- How the environment spaces the code from its neighbours. -/
@@ -4981,10 +4974,10 @@ public structure ListingSpec where
 
 /-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt: the `\vspace` it takes
 back after every source line. -/
-public def fvextraLineOverlap : Sp := Dim.pt 1 / 4
+public def fvextraLineOverlap : Length := Dim.pt 1 / 4
 
 /-- listings.sty's continuation indent: `breakindent` defaults to 20 pt. -/
-public def listingBreakIndent : Sp := pt 20
+public def listingBreakIndent : Length := pt 20
 
 /-- What a listing sets with before its own keys: LaTeX's defaults on tex;
 `\footnotesize`, wrapped whitespace first, on markdown and code files. -/
@@ -5019,7 +5012,7 @@ public theorem listing_language_agree (spec : ListingSpec) :
 
 /-- The step a laid-out paragraph's scopes stand in by: the standard classes' one-column
 `\parindent`, 1.5em. -/
-@[expose] public def linesStep : Length := { em := 1500 }
+@[expose] public def linesStep : SymLength := { em := 1500 }
 
 /-- One line of a laid-out paragraph: how many scopes hold it, each a `linesStep` in, and its
 content. -/
@@ -5064,7 +5057,7 @@ public theorem QuoteKind.ofName?_name (k : QuoteKind) : ofName? k.name = some k 
 `\parsep .75em plus .25em minus .25em` (classes.dtx, beamerbaselocalstructure.sty). -/
 public def QuoteKind.own (l : ListLineage) : QuoteKind → ListSet
   | .quote => {}
-  | .quotation => { parsep := some { stretch := Dim.Length.ofSp (Dim.pt 1) } }
+  | .quotation => { parsep := some { stretch := Dim.SymLength.ofLength (Dim.pt 1) } }
   | .verse =>
     if l == .beamer then
       { itemsep := some {}
@@ -5072,7 +5065,7 @@ public def QuoteKind.own (l : ListLineage) : QuoteKind → ListSet
     else { itemsep := some {} }
 
 /-- How far verse's lines hang from its margin, its `\itemindent -1.5em` (classes.dtx). -/
-public def verseHang : Dim.Length := { em := 1500 }
+public def verseHang : Dim.SymLength := { em := 1500 }
 
 /-- A quote's environment and what it keeps of the lists around it over its level's, its
 environment's own keys standing over both (`quoteSpacing`). -/
@@ -5083,16 +5076,16 @@ public structure QuoteSpec where
 
 /-- The keys a quotation's environment declares at `\@listdepth` `level` where its lineage sets list
 skips (`QuoteKind.own`); none on the web, whose lists declare over zero. -/
-public def QuoteKind.ownAt (k : QuoteKind) (l : ListLineage) (size : Sp) (level : Nat) : ListSet :=
+public def QuoteKind.ownAt (k : QuoteKind) (l : ListLineage) (size : Length) (level : Nat) : ListSet :=
   if (listSkips l size level).isSome then k.own l else {}
 
 /-- A quotation's spacing and `\partopsep` at `\@listdepth` `level`: its level's under what it keeps
 and its environment's own keys over both (`QuoteKind.ownAt`). -/
-public def quoteSpacing (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) (q : QuoteSpec) :
+public def quoteSpacing (l : ListLineage) (size : Length) (level : Nat) (tokens : Tokens) (q : QuoteSpec) :
     Option (ListSkips × SymGlue) :=
   listSpacing l size level tokens (q.spacing.over (q.kind.ownAt l size level))
 
-public theorem quoteSpacing_own_exact (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
+public theorem quoteSpacing_own_exact (l : ListLineage) (size : Length) (level : Nat) (tokens : Tokens)
     (q : QuoteSpec) (sk : ListSkips) (p : SymGlue) (hl : l ≠ .web)
     (h : quoteSpacing l size level tokens q = some (sk, p)) :
     (∀ g, (q.kind.own l).parsep = some g → sk.parsep = g) ∧
@@ -6461,14 +6454,14 @@ public def CaptionSkip.find? (s : CaptionSkip) (tokens : Tokens) (kind : FloatKi
   (s.keys kind).findSome? tokens.find?
 
 /-- A skip's value where the document declares none. -/
-public def CaptionSkip.default (s : CaptionSkip) (size : Sp) : SymGlue :=
+public def CaptionSkip.default (s : CaptionSkip) (size : Length) : SymGlue :=
   match s with
   | .above => captionSepDefault size
   | .below => {}
 
 /-- A skip's value where the document declares none, in a class's lineage:
 beamer sets both to 7 pt. -/
-public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Sp) : SymGlue :=
+public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Length) : SymGlue :=
   match l with
   | .beamer => { width := { sp := Dim.pt 7 } }
   | .sizeFile | .web => s.default size
@@ -6557,11 +6550,11 @@ public inductive RulePosition where
 
 /-- How far above the baseline a heading rule's bottom edge stands, from its
 position and the heading face's x-height. -/
-public def RulePosition.raise : RulePosition → Sp → Sp
+public def RulePosition.raise : RulePosition → Length → Length
   | .xHeight, xh => xh / 2
   | .baseline, _ => 0
 
-public theorem heading_rule_position_exact (xh : Int) :
+public theorem heading_rule_position_exact (xh : Length) :
     RulePosition.raise .baseline xh = 0 ∧ RulePosition.raise .xHeight xh = xh / 2 :=
   ⟨rfl, rfl⟩
 
@@ -6671,11 +6664,11 @@ public structure TitlePlace where
   deriving Repr, BEq, Inhabited
 
 /-- pgf's own `inner sep`, `0.3333em`, at the em it is read in. -/
-public def pgfInnerSep (em : Sp) : Sp := em * 3333 / 10000
+public def pgfInnerSep (em : Length) : Length := em * 3333 / 10000
 
 /-- pgf's initial `outer sep`: half the initial 0.4 pt line width, an anchor
 clearance, not padding. -/
-public def pgfOuterSep : Sp := Dim.pt 1 / 5
+public def pgfOuterSep : Length := Dim.pt 1 / 5
 
 /-- One independently styled part of a title slot: `datum` selects document
 metadata, else `content` is literal. -/
@@ -7124,8 +7117,8 @@ public theorem squeezeFrames_id (body : Array Block) : squeezeFrames body #[] = 
 public inductive FrameFit where
   | natural
   | shrunk
-  | overfull (over : Sp)
-  | continued (over : Sp)
+  | overfull (over : Length)
+  | continued (over : Length)
   deriving Repr, DecidableEq, Inhabited
 
 /-- Whether the ladder moved a frame step: stood it overfull or continued it. -/
@@ -7140,19 +7133,19 @@ public inductive FrameFit where
 
 /-- The overflow ladder's decision for one step, from how far its content
 stood past its text area at its glue's natural size. -/
-public def frameFit (needed beyond clearance : Sp) : FrameFit :=
+public def frameFit (needed beyond clearance : Length) : FrameFit :=
   if 0 < beyond then
     if beyond ≤ clearance then .overfull beyond else .continued beyond
   else if 0 < needed then .shrunk
   else .natural
 
-public theorem frameFit_id (needed beyond clearance : Sp) (h : needed ≤ 0)
+public theorem frameFit_id (needed beyond clearance : Length) (h : needed ≤ 0)
     (hb : beyond ≤ 0) : frameFit needed beyond clearance = .natural := by
-  have h1 : ¬ (0 : Int) < beyond := Int.not_lt.mpr hb
-  have h2 : ¬ (0 : Int) < needed := Int.not_lt.mpr h
-  simp [frameFit, h1, h2]
+  have h1 : ¬ (0 : Length) < beyond := Length.not_lt.mpr hb
+  have h2 : ¬ (0 : Length) < needed := Length.not_lt.mpr h
+  simp only [frameFit, h1, h2, ite_false]
 
-public theorem frameFit_between (needed beyond clearance o : Int)
+public theorem frameFit_between (needed beyond clearance o : Length)
     (h : frameFit needed beyond clearance = .overfull o) : 0 < o ∧ o ≤ clearance := by
   unfold frameFit at h
   by_cases h0 : 0 < beyond
@@ -7694,10 +7687,10 @@ public theorem Chrome.footSlots_left_ignores_right (c c' : Chrome)
 it takes from the frame. -/
 public structure Footline where
   step : String
-  left : Sp
-  right : Sp
-  raise : Sp
-  sep : Sp
+  left : Length
+  right : Length
+  raise : Length
+  sep : Length
   deriving Repr
 
 public def footline : Footline :=
@@ -7709,12 +7702,12 @@ public def footline : Footline :=
 
 /-- The footline's size: its step of `base` on the document's ladder, which both backends and the
 contrast judge read. -/
-@[expose] public def footlineSize (scale : List (String × Nat)) (base : Sp) : Sp :=
+@[expose] public def footlineSize (scale : List (String × Nat)) (base : Length) : Length :=
   scaleStepIn scale base footline.step
 
 /-- A note mark's size: the default ladder's script step, near LaTeX's math script size, which a
 declared `\scriptsize` does not move. -/
-@[expose] public def noteMarkSize (base : Sp) : Sp := scaleStepIn sizeScale base "scriptsize"
+@[expose] public def noteMarkSize (base : Length) : Length := scaleStepIn sizeScale base "scriptsize"
 
 mutual
 
@@ -7773,7 +7766,7 @@ public def fillTemplate (template content : Array Inline) : Array Inline :=
 
 /-- The size a font template sets its content at: the outermost `.size`
 wrapper's step of the base on the document's ladder, else the base. -/
-public def templateSize (scale : List (String × Nat)) (base : Sp) (tpl : Array Inline) : Sp :=
+public def templateSize (scale : List (String × Nat)) (base : Length) (tpl : Array Inline) : Length :=
   if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline)
   then scaleStepIn scale base s else base
 
@@ -7808,23 +7801,23 @@ private def sizeFileLeadings : Nat → List (String × Nat)
 
 /-- The `\baselineskip` a named size of the engine's ladder sets: the size file's where the
 body is an option's size, else the engine's leading of the size. -/
-public def sizeFileLeading (body : Sp) (leading : Nat) (name : String) : Sp :=
+public def sizeFileLeading (body : Length) (leading : Nat) (name : String) : Length :=
   match displayOptions.find? fun o => Dim.pt o.1 == body || o.2 == body with
   | some (opt, _) =>
     match (sizeFileLeadings opt).lookup name with
-    | some milli => Dim.pt 1 * (milli : Int) / 1000 * (leading : Int) / 1000
+    | some milli => Dim.pt 1 * (milli : Int) / (1000 : Int) * (leading : Int) / (1000 : Int)
     | none => leadingFor (scaleStepIn sizeScale body name) leading
   | none => leadingFor (scaleStepIn sizeScale body name) leading
 
 /-- A block title's `\baselineskip`, from the size its font template sets outermost. -/
-public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading : Nat)
-    (env : MeasureValues) (font : Option (Array Inline)) : Length :=
+public def blockTitleLeading (scale : List (String × Nat)) (body : Length) (leading : Nat)
+    (env : MeasureValues) (font : Option (Array Inline)) : SymLength :=
   match (font.bind (·[0]?) : Option Inline) with
   | some (.styled (.size s) _) =>
-    .ofSp (if scale == sizeScale then sizeFileLeading body leading s
+    .ofLength (if scale == sizeScale then sizeFileLeading body leading s
       else leadingFor (scaleStepIn scale body s) leading)
   | some (.styled (.fontSize _ lead) _) => (lead.eval env.find).width.scale leading 1000
-  | _ => .ofSp (leadingFor body leading)
+  | _ => .ofLength (leadingFor body leading)
 
 public theorem frameTitlePadding_exact :
     frameTitlePadding.width.resolve (scaleStepIn sizeScale slidesFontSize "large") 0 =
@@ -7860,14 +7853,14 @@ public inductive AbstractForm where
 
 /-- beamer's abstract `\leftskip2em` and `\rightskip2em`, in the preamble's font
 (beamerinnerthemedefault.sty:325). -/
-public def abstractInset : Dim.Length := { em := 2000 }
+public def abstractInset : Dim.SymLength := { em := 2000 }
 
 /-- ISO 216's A4 in PDF points, 210 × 297 mm. -/
-public def a4Page : Sp × Sp := (Dim.pt 595, Dim.pt 842)
+public def a4Page : Length × Length := (Dim.pt 595, Dim.pt 842)
 
 /-- Named page sizes: ISO 216's A4 and A5 at TeX's big-point rounding, ISO B5, and US letter,
 legal and executive. -/
-public def pageSizes : List (String × (Sp × Sp)) :=
+public def pageSizes : List (String × (Length × Length)) :=
   [("letter", (Dim.pt 612, Dim.pt 792)),
    ("legal", (Dim.pt 612, Dim.pt 1008)),
    ("a4", a4Page),
@@ -7880,7 +7873,7 @@ defaults, furniture flags, implied assertions, build intent. -/
 public structure ClassRecord where
   model : PageModel
   /-- The class's body-size default, when it declares one (`slides`: beamer's documented 11 pt). -/
-  fontSize : Option Sp := none
+  fontSize : Option Length := none
   /-- The class's paragraph-separation default, when it declares one. -/
   parskip : Option Dim.SymGlue := none
   /-- Whether the class's `parskip` option sets the paragraph separation in lines of its
@@ -7891,7 +7884,7 @@ public structure ClassRecord where
   /-- How the class's list levels read the `\parskip` in force (`ListExtra.over`). -/
   listExtra : ListExtra := .none
   /-- A quotation's `\listparindent`, its paragraphs' first-line indent (classes.dtx's 1.5 em). -/
-  quotationIndent : Dim.Length := { em := 1500 }
+  quotationIndent : Dim.SymLength := { em := 1500 }
   /-- Whether the preamble sets text in the sans family, as beamer's
   `\familydefault` is `\sfdefault`. -/
   preambleSans : Bool := false
@@ -7924,12 +7917,12 @@ public structure ClassRecord where
   /-- `textInArea` implied, with its failure guidance. -/
   inkInArea : Option String := none
   /-- `minXHeight` implied: the floor and its failure guidance. -/
-  xHeightFloor : Option (Sp × String) := none
+  xHeightFloor : Option (Length × String) := none
   /-- The page (width × height) the class sets where no option names one: a face's trade trim, a
   KOMA-Script page's A4. -/
-  trimDefault : Option (Sp × Sp) := none
+  trimDefault : Option (Length × Length) := none
   /-- The face's print safe zone: the default margins, inside which a drifting trim cannot cut. -/
-  safeMargin : Option Sp := none
+  safeMargin : Option Length := none
   /-- Build intent when the document's `\output` names no formats. -/
   formats : Array String := #[]
   /-- The markdown twin's default file name, when the class has one. -/
@@ -8086,9 +8079,9 @@ public theorem poster_model_face : (DocClass.poster).record.model = .face := by 
 
 /-- The paragraph separation a class's `parskip` option sets from its `\baselineskip`, as
 scrkernel-paragraphs.dtx's `\setparsizes` reads each value; `none` for one it does not name. -/
-public def classParskip? (value : Option String) (skip : Sp) : Option SymGlue :=
+public def classParskip? (value : Option String) (skip : Length) : Option SymGlue :=
   let lines (w st : Int) : SymGlue :=
-    { width := Dim.Length.ofSp (skip * w / 10), stretch := Dim.Length.ofSp (skip * st / 10) }
+    { width := Dim.SymLength.ofLength (skip * w / 10), stretch := Dim.SymLength.ofLength (skip * st / 10) }
   match value.getD "true" with
   | "never" => some {}
   | "false" | "off" | "no" => some texParskipDefault
@@ -8108,12 +8101,12 @@ public def classParfill? (value : Option String) : Option String :=
 /-- The font a package measures its lengths in as it loads: Latin Modern at
 the class's `\normalsize`, its sans under beamer. -/
 public structure PreambleFace where
-  size : Sp
-  xHeight : Sp
+  size : Length
+  xHeight : Length
   deriving Repr, BEq, Inhabited
 
 /-- A class's preamble font at the `\normalsize` its size option sets. -/
-public def PreambleFace.ofClass (rec : ClassRecord) (size : Sp) : PreambleFace :=
+public def PreambleFace.ofClass (rec : ClassRecord) (size : Length) : PreambleFace :=
   let size := optionNormalSize size
   { size, xHeight := size * (if rec.preambleSans then 444 else 431) / 1000 }
 
@@ -8122,7 +8115,7 @@ public def PreambleFace.article : PreambleFace := PreambleFace.ofClass DocClass.
 
 /-- A length as the preamble font fixes it: its em at the class size, its ex
 at Latin Modern's x-height there. -/
-public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
+public def PreambleFace.resolve (face : PreambleFace) (l : Dim.SymLength) : Length :=
   l.resolve face.size face.xHeight
 
 /-- The lengths a class or package fixes as it loads: the table lengths and `\leftmargin⟨n⟩`. -/
@@ -8133,7 +8126,7 @@ public def loadLength (name : String) : Bool :=
 public def PreambleFace.fixLengths (face : PreambleFace) (fixes : String → Bool) (tk : Tokens) :
     Tokens :=
   { entries := tk.entries.map fun (n, g) =>
-      if fixes n then (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
+      if fixes n then (n, { g with width := Dim.SymLength.ofLength (face.resolve g.width) })
       else (n, g) }
 
 /-- The load-fixed lengths a preamble declares, fixed in the preamble's font. -/
@@ -8142,7 +8135,7 @@ public def PreambleFace.fixLoadLengths (face : PreambleFace) (tk : Tokens) : Tok
 
 /-- A list or quotation level's `\leftmargin⟨n⟩` as its class fixes it, in the preamble font. -/
 public def leftMarginAt (l : ListLineage) (tokens : Tokens) (face : PreambleFace) (level : Nat) :
-    Sp :=
+    Length :=
   face.resolve (leftMarginFor l tokens level).width
 
 /-- The poster's headline band: title, authors, institute, the `\title` family
@@ -8433,14 +8426,14 @@ public def Doc.lineModulo (doc : Doc) : Nat :=
 
 /-- A symbolic glue as it was declared, for goldens. -/
 public def dumpGlue (g : SymGlue) : String :=
-  let part (l : Length) : String :=
-    let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
+  let part (l : SymLength) : String :=
+    let bits := (if l.sp != 0 then [s!"{l.sp.toBpString}pt"] else []) ++
       (if l.em != 0 then [s!"{l.em}/1000em"] else []) ++
       (if l.ex != 0 then [s!"{l.ex}/1000ex"] else [])
     if bits.isEmpty then "0" else String.intercalate "+" bits
   let base := part g.width
-  let plus := if g.stretch == ({} : Length) then "" else s!" plus {part g.stretch}"
-  let minus := if g.shrink == ({} : Length) then "" else s!" minus {part g.shrink}"
+  let plus := if g.stretch == ({} : SymLength) then "" else s!" plus {part g.stretch}"
+  let minus := if g.shrink == ({} : SymLength) then "" else s!" minus {part g.shrink}"
   base ++ plus ++ minus
 
 /-- A sourced glue as the golden shows it: the declared value and its token name. -/
@@ -10592,7 +10585,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
   | .image src size alt =>
     let dim (label : String) (l : Image.Len) : String :=
       let v := match l.value with
-        | .lit g => g.width.sp.toPtString ++ "pt"
+        | .lit g => g.width.sp.toBpString ++ "pt"
         | .scale n d (.ref .textHeight) => s!"{n * 1000 / d}/1000th"
         | .scale n d (.ref _) => s!"{n * 1000 / d}/1000tw"
         | .ref .textHeight => "1000/1000th"
@@ -10637,7 +10630,7 @@ private def dumpColSpec (c : ColSpec) : String :=
     let width := match e with
       | .scale n d (.ref _) => s!"{n * 1000 / d}/1000"
       | .ref _ => "1000/1000"
-      | .lit g => g.width.sp.toPtString ++ "pt"
+      | .lit g => g.width.sp.toBpString ++ "pt"
       | other => Track.css (.affine other)
     s!"{al}:{width}"
   | .flex target => s!"{al}:flex:{target.css}"
@@ -10692,7 +10685,7 @@ private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) :
       | .sized (.scale n d (.ref _)) =>
         s!"{ind}column {n * 1000 / d}/1000{pos}\n"
       | .sized (.ref _) => s!"{ind}column 1000/1000{pos}\n"
-      | .sized (.lit g) => s!"{ind}column {g.width.sp.toPtString}pt{pos}\n"
+      | .sized (.lit g) => s!"{ind}column {g.width.sp.toBpString}pt{pos}\n"
       | .sized e => s!"{ind}column {Track.css (.affine e)}{pos}\n"
       | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
@@ -10820,13 +10813,13 @@ private def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}rule{nm} {dumpSourcedGlue thickness}\n"
   | .picture pic =>
     let boxS := fun (b : Pic.Box) =>
-      s!"{b.1.1.toPtString} {b.1.2.toPtString} {b.2.1.toPtString} {b.2.2.toPtString}"
+      s!"{b.1.1.toBpString} {b.1.2.toBpString} {b.2.1.toBpString} {b.2.2.toBpString}"
     s!"{ind}picture {pic.shapes.size} shapes{pic.alt.dumpSuffix}\n" ++
     (match pic.declared with
       | some b => s!"{ind}  declared {boxS b}\n"
       | none => "") ++
     (match pic.baseline with
-      | some y => s!"{ind}  baseline {y.toPtString}\n"
+      | some y => s!"{ind}  baseline {y.toBpString}\n"
       | none => "") ++
     String.join (pic.borders.toList.map fun b => s!"{ind}  border {boxS b}\n") ++
     String.join (pic.shapes.toList.map fun s =>
@@ -10839,7 +10832,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
           | .east => " east"
           | .south => " south"
           | .north => " north"
-        s!"{ind}  label {x.toPtString} {y.toPtString} \
+        s!"{ind}  label {x.toBpString} {y.toBpString} \
 {c.hex} {sc}{alS}\n" ++
         dumpInlines (ind ++ "    ") content)
   | .table cols padL padR rows rules spans =>
@@ -11099,36 +11092,34 @@ public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : Color
   exact ⟨rfl, rfl⟩
 
 /-- beamer's block colour boxes' `colsep*=.75ex`, shared by a painted title and body. -/
-@[expose] public def titledPadding : Length := { ex := 750 }
+@[expose] public def titledPadding : SymLength := { ex := 750 }
 
-public theorem titledPadding_contract (fontSize xHeight : Sp) :
+public theorem titledPadding_contract (fontSize xHeight : Length) :
     titledPadding.resolve fontSize xHeight = 3 * xHeight / 4 := by
-  simp only [titledPadding, Length.resolve, Int.zero_add, Int.zero_mul, Int.zero_ediv]
-  have h : (750 : Int) * xHeight = 250 * (3 * xHeight) := by omega
-  rw [h, show (1000 : Int) = 250 * 4 by decide]
-  exact Int.mul_ediv_mul_of_pos _ _ (by decide)
+  simp only [titledPadding, SymLength.resolve]
+  length_omega
 
 /-- A painted title meeting a painted body: `\nointerlineskip\vskip-0.5pt`,
 the body box overlapping the title box by half a point. -/
-public def blockSeam : Sp := Dim.pt 1 / 2
+public def blockSeam : Length := Dim.pt 1 / 2
 
 /-- `n` tenths of TeX's millimetre, as tcolorbox's lengths are TeX's. -/
-public def texMmTenths (n : Int) : Sp := n * 7227 * Dim.spPerPt / 25400
+public def texMmTenths (n : Int) : Length := Dim.pt (n * 7227) / 25400
 
 /-- tcolorbox's box under `size=normal` (tcolorbox.sty): `boxrule=0.5mm`,
 `boxsep=1mm`, `left=right=4mm`, `top=bottom=2mm`. -/
-public def tcbRule : Sp := texMmTenths 5
-public def tcbBoxsep : Sp := texMmTenths 10
-public def tcbSide : Sp := texMmTenths 40
-public def tcbTop : Sp := texMmTenths 20
-public def tcbBottom : Sp := texMmTenths 20
+public def tcbRule : Length := texMmTenths 5
+public def tcbBoxsep : Length := texMmTenths 10
+public def tcbSide : Length := texMmTenths 40
+public def tcbTop : Length := texMmTenths 20
+public def tcbBottom : Length := texMmTenths 20
 
 /-- How far a box's text stands inside its edges, on both sides: the rule,
 `boxsep` and `left` (`right`). -/
-public def tcbInset : Sp := tcbRule + tcbBoxsep + tcbSide
+public def tcbInset : Length := tcbRule + tcbBoxsep + tcbSide
 
 /-- An unpainted body box opens on `\vskip-.25ex\vbox{}`, a quarter ex above its own top. -/
-public def blockBodyRaise : Length := { ex := 250 }
+public def blockBodyRaise : SymLength := { ex := 250 }
 
 /-- Beamer's three block body colours, which start empty; the palette's
 bindings declare any fill. -/
@@ -11233,7 +11224,7 @@ public structure Design where
     titlepage := (res .titlePageGround).map fun ground =>
       { fg := (res .titlePageInk).getD bg, bg := ground }
     separator := (res .separator).getD fg
-    progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
+    progressheight := { width := Dim.SymLength.ofLength (Dim.pt 1) }
     styles := {} }
 
 /-- The print design, which the PDF paints and the contrast judge reads. -/
@@ -12332,7 +12323,7 @@ two declarations a palette does not carry. -/
   { Design.ofPalette doc.palette with
     -- Fallback: `progressbar linewidth=1pt`, the outer theme's own default.
     progressheight := (doc.tokens.find? "progressheight").getD
-      { width := Dim.Length.ofSp (Dim.pt 1) }
+      { width := Dim.SymLength.ofLength (Dim.pt 1) }
     styles := doc.styles }
 
 /-- The footer look of a frame: a restored standout footer stands on the
@@ -15437,7 +15428,7 @@ public def wrapStandalone (head preamble fonts : String) (colors : Array (String
 
 /-- The class line and the TikZ load a standalone opens with, at the
 document's body size where the class has an option for it. -/
-@[expose] public def standaloneHead (body : Sp) : String :=
+@[expose] public def standaloneHead (body : Length) : String :=
   if body == Dim.pt 11 then "\\documentclass[11pt]{standalone}\n\\usepackage{tikz}\n"
   else if body == Dim.pt 12 then "\\documentclass[12pt]{standalone}\n\\usepackage{tikz}\n"
   else "\\documentclass{standalone}\n\\usepackage{tikz}\n"
@@ -15449,7 +15440,7 @@ public def pictureSwitch (page : PageSpec) (size : Option String) : Option Strin
     size.map ("\\" ++ ·)
   else
     let sz := scaleStepIn page.scale page.fontSize (size.getD "normalsize")
-    some s!"\\fontsize\{{sz.toPtString}pt}\{{(leadingFor sz).toPtString}pt}\\selectfont"
+    some s!"\\fontsize\{{sz.toBpString}pt}\{{(leadingFor sz).toBpString}pt}\\selectfont"
 
 public theorem wrapStandalone_picture_exact (preamble fonts : String)
     (colors : Array (String × Color)) (macros : Array (String × String)) (body : String) :
@@ -19071,13 +19062,13 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
   let opts := if doc.classOptions == "" then "" else s!" [{doc.classOptions}]"
   let head := s!"class {doc.docClass.name}{opts}\n"
   let page :=
-    s!"page {doc.page.width.toPtString}x{doc.page.height.toPtString} " ++
-    s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}" ++
+    s!"page {doc.page.width.toBpString}x{doc.page.height.toBpString} " ++
+    s!"vmargin {doc.page.vmargin.toBpString} hmargin {doc.page.hmargin.toBpString}" ++
     (match doc.page.bmargin with
-      | some m => s!" bmargin {m.toPtString}"
+      | some m => s!" bmargin {m.toBpString}"
       | none => "") ++
     (if doc.page.fontSize != baseFontSize
-      then s!" fontsize {doc.page.fontSize.toPtString}" else "") ++
+      then s!" fontsize {doc.page.fontSize.toBpString}" else "") ++
     (match doc.page.sizes with
       | some sc => String.join ((sc.filter fun p =>
           sizeScale.lookup p.1 != some p.2).map fun p => s!" size {p.1} {p.2}")
@@ -19089,17 +19080,17 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     (match doc.page.parskip with
       | some g => s!" parskip {dumpGlue g}"
       | none => "") ++
-    (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toPtString}" else "") ++
+    (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toBpString}" else "") ++
     String.join (doc.page.drawn.toList.map fun r =>
-      s!" drawn {r.x.toPtString} {r.y.toPtString} {r.w.toPtString} {r.h.toPtString} {r.color}" ++
+      s!" drawn {r.x.toBpString} {r.y.toBpString} {r.w.toBpString} {r.h.toBpString} {r.color}" ++
         (if r.front then " front" else "")) ++
     String.join (doc.page.boxes.toList.map fun b =>
-      s!" box {b.kind.key} {b.x0.toPtString} {b.y0.toPtString} {b.x1.toPtString} {b.y1.toPtString}") ++
+      s!" box {b.kind.key} {b.x0.toBpString} {b.y0.toBpString} {b.x1.toBpString} {b.y1.toBpString}") ++
     (if doc.page.marks then " marks cut" else "") ++
     (if doc.page.markGap != cutMarkGap
-      then s!" mark-gap {doc.page.markGap.toPtString}" else "") ++
+      then s!" mark-gap {doc.page.markGap.toBpString}" else "") ++
     (if doc.page.markThickness != cutMarkThickness
-      then s!" mark-thickness {doc.page.markThickness.toPtString}" else "") ++
+      then s!" mark-thickness {doc.page.markThickness.toBpString}" else "") ++
     (match doc.page.hyphenate with
       | some b => s!" hyphenate {if b then "on" else "off"}"
       | none => "") ++

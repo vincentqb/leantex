@@ -83,8 +83,8 @@ private def surfaceOf (pal : Palette) : Color :=
 
 /-- The walk's text context; a size declaration sets a factor over `base`, never compounding. -/
 private structure UseCx where
-  base : Sp
-  size : Sp
+  base : Length
+  size : Length
   /-- The document's size ladder, on which a named size resolves (`Ir.PageSpec.scale`). -/
   scale : List (String × Nat)
   /-- Inside overlay content some handout page covers. -/
@@ -195,7 +195,7 @@ private def UseAcc.step (acc : UseAcc) (spec : Ir.OverlaySpec) : UseAcc :=
   else acc
 
 /-- The context a heading's title sets: bold, at its level's size on the document's ladder. -/
-private def headingCx (scale : List (String × Nat)) (slides : Bool) (base : Sp) :
+private def headingCx (scale : List (String × Nat)) (slides : Bool) (base : Length) :
     Ir.HeadingLevel → UseCx
   | 0 => { base, scale, size := Ir.titleSize scale base slides, bold := true }
   | l => { base, scale, size := Ir.headingSize scale base l, bold := true }

@@ -124,7 +124,7 @@ example (count info : Nat) (w : Xref.Widths) (idA idB : UInt64) (filtered : Bool
     (xrefStreamDict count info w idA idB filtered len).get? "Length" = some (.int len) :=
   (xrefStreamDict_fields_exact count info w idA idB filtered len).1
 
-example : Obj → Option LeanTex.Core.Dim.Sp := PdfRead.Obj.sp?
+example : Obj → Option LeanTex.Core.Dim.Length := PdfRead.Obj.sp?
 example : Obj → ByteArray → Except String ByteArray := PdfRead.decodeStream
 example : ByteArray → Except String PdfRead.Xref := PdfRead.readXref
 example : ByteArray → Nat → Except String (Array (Nat × Nat)) :=

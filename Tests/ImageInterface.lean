@@ -43,7 +43,7 @@ example (store : Image.Store) (req : Image.Request) :
     store.infoRequest? req =
       (store.entries.find? (·.toRequest == req)).bind (·.info) := rfl
 
-example (w h : Image.Len) (iW iH textW textH : Dim.Sp) :
+example (w h : Image.Len) (iW iH textW textH : Dim.Length) :
     Image.resolveSize { width := some w, height := some h } iW iH textW textH =
       (w.resolve textW textH, h.resolve textW textH) := rfl
 

@@ -22,7 +22,7 @@ private def items (n : Nat) : String :=
 private def framePages (out : Layout.Out) (source : Nat) : Nat :=
   (out.pages.filter fun p => p.frameOrigin.any (·.source == source)).size
 
-private def bodyBaselines (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
+private def bodyBaselines (out : Layout.Out) (page : Nat) : Array Dim.Length :=
   (((out.pages[page]?.map (·.lines)).getD #[]).filter (!·.furniture)).map (·.y)
 
 /-- The ladder's decision for the frame at body index `source`, step `step`. -/
@@ -146,7 +146,7 @@ def titlePageSqueezeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (plain, _) := elabStr (deck "")
   t "title page squeeze: the deck elaborates clean, the option read"
     (sds.all (·.severity != .error) && !sds.any fun d => d.code == "N0102")
-  let lines (doc : Ir.Doc) : Array (String × Dim.Sp × Dim.Sp) :=
+  let lines (doc : Ir.Doc) : Array (String × Dim.Length × Dim.Length) :=
     ((fittedOf fira doc (Layout.Geom.ofPage doc.page)).out.pages.flatMap (·.lines)).map
       fun l => (lineText l, l.x, l.y)
   t "title page squeeze: the title page sets as it sets undeclared"
@@ -166,7 +166,7 @@ def squeezeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ds.all (·.severity != .error) && !ds.any fun d => d.code == "N0102" && hasStr d.message "squeeze")
   let f := fittedOf fira doc (Layout.Geom.ofPage doc.page)
   let out := f.out
-  let gaps (page : Nat) : Array Dim.Sp :=
+  let gaps (page : Nat) : Array Dim.Length :=
     let ys := bodyBaselines out page
     (ys.zip (ys.extract 1 ys.size)).map fun (a, b) => b - a
   t "squeeze: a squeezed frame's items stand one baselineskip apart, as lualatex's"

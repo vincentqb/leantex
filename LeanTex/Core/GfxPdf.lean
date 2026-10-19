@@ -121,23 +121,23 @@ gradient's frame to the stream's default space (§8.7.2). -/
 public structure Pen where
   fill : Paint
   stroke : Paint
-  width : Sp
+  width : Length
   cap : Cap
   join : Join
   miter : Rat
-  dash : Array Sp
-  phase : Sp
+  dash : Array Length
+  phase : Length
   deriving Repr, BEq, Inhabited
 
 /-- PDF's initial state: black, a line one unit wide, butt caps, miter
 joins at limit 10, solid. -/
 @[expose] public def Pen.initial : Pen :=
   { fill := .solid { r := 0, g := 0, b := 0 }, stroke := .solid { r := 0, g := 0, b := 0 }
-    width := 65536, cap := .butt, join := .miter, miter := pdfMiter, dash := #[], phase := 0 }
+    width := bp 1, cap := .butt, join := .miter, miter := pdfMiter, dash := #[], phase := 0 }
 
 /-- How far a stamp instance's stroke reaches past the outline in the form's space, its unstated
 parameters the initial ones. -/
-@[expose] public def stampReach : Option PaintStroke → Sp
+@[expose] public def stampReach : Option PaintStroke → Length
   | some s =>
     let k : Stroke :=
       { paint := Pen.initial.stroke
@@ -154,7 +154,7 @@ parameters the initial ones. -/
 
 @[expose] public def miterOpt (r : Rat) : Option Rat := if r = pdfMiter then none else some r
 
-@[expose] public def dashOpt (d : Array Sp) (p : Sp) : Option (Array Sp × Sp) :=
+@[expose] public def dashOpt (d : Array Length) (p : Length) : Option (Array Length × Length) :=
   if d = #[] ∧ p = 0 then none else some (d, p)
 
 @[expose] public def paintFill (ix : Request → Nat) (fr : Frame) (f : Fill) : PaintFill :=
@@ -413,10 +413,13 @@ the placement's image, nothing clipped, opaque, PDF's initial state. -/
 @[expose] public def readMarks (place : Iso) (ops : Array ContentOp) : Array Mark :=
   readList (RState.root place) #[] ops.toList
 
+/-- A box in whole units of some scale: min corner, then max corner. -/
+public abbrev IntBox := (Int × Int) × (Int × Int)
+
 /-- Each glyph's `/W` width and outline hull, in millionths of the em, by font resource and glyph id. -/
 public structure GlyphInk where
   width : Nat → Nat → Int
-  hull : Nat → Nat → Option Box
+  hull : Nat → Nat → Option IntBox
 
 /-- The text state a stream's text is read in (§9.3, §9.4.2): font resource, size and origin in
 thousandths of a point, horizontal scale per mille, and the advance since the origin in millionths
@@ -434,14 +437,15 @@ public structure TextPen where
 @[expose] public def TextPen.initial : TextPen :=
   { font := none, sm := 0, tz := 1000, xm := 0, ym := 0, adv := 0 }
 
-/-- A glyph's ink box in text space at the size and scale in force, outward to whole `Sp`. -/
-@[expose] public def TextPen.glyphBox (p : TextPen) (h : Box) : Box :=
-  let xNum (μ : Int) : Int := (p.xm * 1000000000 + (p.adv + μ) * p.sm * p.tz) * 65536
-  let yNum (μ : Int) : Int := (p.ym * 1000000 + μ * p.sm) * 65536
-  let lo (a b : Int) (d : Int) : Int := Int.fdiv (min a b) d
-  let hi (a b : Int) (d : Int) : Int := -Int.fdiv (-(max a b)) d
-  ((lo (xNum h.1.1) (xNum h.2.1) 1000000000000, lo (yNum h.1.2) (yNum h.2.2) 1000000000),
-   (hi (xNum h.1.1) (xNum h.2.1) 1000000000000, hi (yNum h.1.2) (yNum h.2.2) 1000000000))
+/-- A glyph's ink box in text space at the size and scale in force, rounded outward; `h` is in
+millionths of the size. -/
+@[expose] public def TextPen.glyphBox (p : TextPen) (h : IntBox) : Box :=
+  let xNum (μ : Int) : Int := p.xm * 1000000000 + (p.adv + μ) * p.sm * p.tz
+  let yNum (μ : Int) : Int := p.ym * 1000000 + μ * p.sm
+  ((Length.bpFloor (min (xNum h.1.1) (xNum h.2.1)) 1000000000000,
+    Length.bpFloor (min (yNum h.1.2) (yNum h.2.2)) 1000000000),
+   (Length.bpCeil (max (xNum h.1.1) (xNum h.2.1)) 1000000000000,
+    Length.bpCeil (max (yNum h.1.2) (yNum h.2.2)) 1000000000))
 
 /-- One glyph of a `TJ` array: moved back by the number before it, its box joined, the pen
 advanced by its width. -/
@@ -471,8 +475,8 @@ mutual
 @[expose] public def TextPen.opOne (gi : GlyphInk) (st : TextPen × Option Box) :
     TextOp → TextPen × Option Box
   | .scale p => ({ st.1 with tz := p }, st.2)
-  | .move x y => ({ st.1 with xm := x.toPtMilli, ym := y.toPtMilli, adv := 0 }, st.2)
-  | .font res size => ({ st.1 with font := some res, sm := size.toPtMilli }, st.2)
+  | .move x y => ({ st.1 with xm := x.toBpMilli, ym := y.toBpMilli, adv := 0 }, st.2)
+  | .font res size => ({ st.1 with font := some res, sm := size.toBpMilli }, st.2)
   | .color _ => st
   | .show items => items.foldl (TextPen.showItem gi) st
   | .marked _ body => TextPen.opList gi st body.toList
@@ -664,23 +668,23 @@ private theorem drawn_mapIso_path (t : Iso) (subs : Array Subpath) (d : Bool) :
     cases d <;> rfl
   rw [h, Geom.mapIso_inv_id]
 
-private theorem rectPath_translate (t : Iso) (ht : t.flipY = false) (x y w h : Sp) :
+private theorem rectPath_translate (t : Iso) (ht : t.flipY = false) (x y w h : Length) :
     (Kit.rectPath x y w h).map t.apply = Kit.rectPath (x + t.dx) (y + t.dy) w h := by
   obtain ⟨fl, dx, dy⟩ := t
   simp only at ht
   subst ht
   simp only [Kit.rectPath, Subpath.map, Iso.apply, Bool.false_eq_true, ↓reduceIte,
     List.map_toArray, List.map_cons, List.map_nil, Seg.map, Subpath.mk.injEq, true_and, and_true]
-  rw [Int.add_right_comm x w dx, Int.add_right_comm y h dy]
+  rw [Length.add_right_comm x w dx, Length.add_right_comm y h dy]
 
-private theorem rect_translate_drawn (t : Iso) (ht : t.flipY = false) (x y w h : Sp) (d : Bool) :
+private theorem rect_translate_drawn (t : Iso) (ht : t.flipY = false) (x y w h : Length) (d : Bool) :
     ((geomOf (geomOps ((Geom.rect x y w h).mapIso t))).drawn d).mapIso t.inv =
       (Geom.rect x y w h).drawn d := by
   have hinv : t.inv.flipY = false := by simp [Iso.inv, ht]
   have hback : (Kit.rectPath (x + t.dx) (y + t.dy) w h).map t.inv.apply = Kit.rectPath x y w h := by
     rw [rectPath_translate t.inv hinv]
     simp only [Iso.inv, ht, Bool.false_eq_true, ↓reduceIte]
-    rw [Int.add_neg_cancel_right, Int.add_neg_cancel_right]
+    rw [Length.add_neg_cancel_right, Length.add_neg_cancel_right]
   have hr : (Geom.rect x y w h).mapIso t = .rect (x + t.dx) (y + t.dy) w h := by
     simp [Geom.mapIso, Iso.rect, ht]
   rw [hr]
@@ -832,7 +836,7 @@ private theorem readFill_paintFill (ix : Request → Nat) (place : Iso) (cx : Ct
     extOf_fill ix a sa rs.ca h.hca, Fill.under]
   cases r <;> rfl
 
-private theorem stroke_defaults (cap : Cap) (join : Join) (ml : Rat) (dash : Array Sp) (ph : Sp) :
+private theorem stroke_defaults (cap : Cap) (join : Join) (ml : Rat) (dash : Array Length) (ph : Length) :
     (capOpt cap).getD Pen.initial.cap = cap ∧ (joinOpt join).getD Pen.initial.join = join ∧
       (miterOpt ml).getD Pen.initial.miter = ml ∧
       ((dashOpt dash ph).map (·.1)).getD Pen.initial.dash = dash ∧

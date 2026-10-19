@@ -69,29 +69,29 @@ public theorem fontMatch_mem (fs : FontSet) (req : FaceReq) :
   · simp
 
 /-- A glyph's advance at `size`: its `hmtx` units scaled as body text scales them. -/
-@[expose] public def advanceAt (size : Sp) (font : Font) (g : Nat) : Sp :=
-  ((font.widths[g]?.getD 0) * size.toNat) / font.unitsPerEm
+@[expose] public def advanceAt (size : Length) (font : Font) (g : Nat) : Length :=
+  (font.widths[g]?.getD 0) * max 0 size / font.unitsPerEm
 
 /-- One run's shaping: its glyphs (face, glyph, pen x), its advance,
 the fallback substitutions and the scalars no face covers. -/
 public structure RunShape where
-  glyphs : Array (Nat × Nat × Char × Sp)
-  advance : Sp
+  glyphs : Array (Nat × Nat × Char × Length)
+  advance : Length
   substs : Array (Nat × Char × Nat)
   missing : Array Char
   deriving Inhabited
 
-public def shapeRun (fs : FontSet) (face : Nat) (size : Sp) (text : String) : RunShape := Id.run do
+public def shapeRun (fs : FontSet) (face : Nat) (size : Length) (text : String) : RunShape := Id.run do
   let font := fs.get face
-  let mut out : Array (Nat × Nat × Char × Sp) := #[]
-  let mut x : Sp := 0
+  let mut out : Array (Nat × Nat × Char × Length) := #[]
+  let mut x : Length := 0
   let mut prev : Option (Nat × Nat) := none
   let mut substs : Array (Nat × Char × Nat) := #[]
   let mut missing : Array Char := #[]
   for c in text.toList do
     match font.gid c with
     | some g =>
-      let k : Sp := match prev with
+      let k : Length := match prev with
         | some (pf, pg) => if pf == face then pairKern Ir.features size font pg g else 0
         | none => 0
       x := x + k
@@ -119,23 +119,23 @@ public structure ShapeNotes where
 
 /-- A shaped run at its resolved start, shifted by its chunk's
 anchor, with its role and face descriptors (`fontMatch`). -/
-@[expose] public def placeRun (fs : FontSet) (r : Run) (start : Sp) (sh : RunShape) : Shaped :=
+@[expose] public def placeRun (fs : FontSet) (r : Run) (start : Length) (sh : RunShape) : Shaped :=
   let face := fs.get (fontMatch fs r.face).1
-  { size := r.size, xf := { r.xf with e := ((start : Int) : Rat) }, glyphs := sh.glyphs, text := r.text
+  { size := r.size, xf := { r.xf with e := start.toRat }, glyphs := sh.glyphs, text := r.text
     fill := r.fill, stroke := r.stroke, lang := r.lang, role := roleFor fs r.face
     weight := face.weight, italic := face.isItalic }
 
 /-- The starts of a list's runs: each chunk's runs from its first
 run's x, the whole chunk shifted by its anchor once it ends. -/
-public def chunkStarts (shapes : Array (Option (Run × RunShape))) : Array Sp := Id.run do
-  let mut starts : Array Sp := Array.replicate shapes.size 0
+public def chunkStarts (shapes : Array (Option (Run × RunShape))) : Array Length := Id.run do
+  let mut starts : Array Length := Array.replicate shapes.size 0
   let mut chunk : Array Nat := #[]
-  let mut x0 : Sp := 0
-  let mut pen : Sp := 0
+  let mut x0 : Length := 0
+  let mut pen : Length := 0
   let mut anchor : Anchor := .start
-  let close (starts : Array Sp) (chunk : Array Nat) (x0 pen : Sp) (anchor : Anchor) : Array Sp :=
+  let close (starts : Array Length) (chunk : Array Nat) (x0 pen : Length) (anchor : Anchor) : Array Length :=
     let w := pen - x0
-    let shift : Sp := match anchor with
+    let shift : Length := match anchor with
       | .start => 0
       | .middle => -(w / 2)
       | .end => -w
@@ -143,7 +143,7 @@ public def chunkStarts (shapes : Array (Option (Run × RunShape))) : Array Sp :=
   for h : k in [0:shapes.size] do
     match shapes[k] with
     | some (r, sh) =>
-      let off : Sp := (r.xf.e + 1 / 2).floor
+      let off : Length := .ofRatFloor (r.xf.e + 1 / 2)
       if !r.follows || chunk.isEmpty then
         starts := close starts chunk x0 pen anchor
         chunk := #[]
@@ -169,7 +169,7 @@ mutual
 
 -- conserves: none — a shaping, run for run; `shapeFigure_text` states the census.
 /-- One node shaped onto `acc`, a run at the start `pos` gives it. -/
-public def shapeOne (fs : FontSet) (pos : Option (Sp × RunShape)) (acc : Array (Node Shaped)) :
+public def shapeOne (fs : FontSet) (pos : Option (Length × RunShape)) (acc : Array (Node Shaped)) :
     Node Run → Array (Node Shaped)
   | .draw g f s => acc.push (.draw g f s)
   | .group xf clips a kids =>
@@ -185,7 +185,7 @@ public def shapeOne (fs : FontSet) (pos : Option (Sp × RunShape)) (acc : Array 
   | .words w => acc.push (.words w)
 
 /-- Each node of a list from index `i`, its run at its chunk's resolved start. -/
-public def shapeFrom (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Sp)
+public def shapeFrom (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Length)
     (i : Nat) (acc : Array (Node Shaped)) : List (Node Run) → Array (Node Shaped)
   | [] => acc
   | n :: rest =>
@@ -284,11 +284,11 @@ private theorem runsList_acc (acc : Array Run) (xs : List (Node Run)) :
     rw [runsList_acc _ rest, runsList_acc (runsOne #[] n) rest, runsOne_acc acc n, Array.append_assoc]
 end
 
-private theorem shapeOne_acc (fs : FontSet) (pos : Option (Sp × RunShape)) (acc : Array (Node Shaped))
+private theorem shapeOne_acc (fs : FontSet) (pos : Option (Length × RunShape)) (acc : Array (Node Shaped))
     (n : Node Run) : shapeOne fs pos acc n = acc ++ shapeOne fs pos #[] n := by
   cases n <;> (try cases pos) <;> simp [shapeOne]
 
-private theorem shapeFrom_acc (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Sp)
+private theorem shapeFrom_acc (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Length)
     (i : Nat) (acc : Array (Node Shaped)) (xs : List (Node Run)) :
     shapeFrom fs shapes starts i acc xs = acc ++ shapeFrom fs shapes starts i #[] xs := by
   induction xs generalizing i acc with
@@ -306,7 +306,7 @@ private theorem shapedTexts_append (a b : List (Node Shaped)) :
     rw [shapedTextsList_acc, ih, shapedTextsList_acc (shapedTextsOne #[] n) rest, Array.append_assoc]
 
 mutual
-private theorem texts_shapeOne (fs : FontSet) (pos : Option (Sp × RunShape)) (n : Node Run) :
+private theorem texts_shapeOne (fs : FontSet) (pos : Option (Length × RunShape)) (n : Node Run) :
     shapedTextsList #[] (shapeOne fs pos #[] n).toList = (runsOne #[] n).map (·.text) := by
   cases n with
   | label r => cases pos <;> simp [shapeOne, shapedTextsList, shapedTextsOne, runsOne, placeRun]
@@ -319,7 +319,7 @@ private theorem texts_shapeOne (fs : FontSet) (pos : Option (Sp × RunShape)) (n
   | stamp _ _ _ _ => simp [shapeOne, shapedTextsList, shapedTextsOne, runsOne]
   | image _ _ => simp [shapeOne, shapedTextsList, shapedTextsOne, runsOne]
   | words _ => simp [shapeOne, shapedTextsList, shapedTextsOne, runsOne]
-private theorem texts_shapeFrom (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Sp)
+private theorem texts_shapeFrom (fs : FontSet) (shapes : Array (Option (Run × RunShape))) (starts : Array Length)
     (i : Nat) (xs : List (Node Run)) :
     shapedTextsList #[] (shapeFrom fs shapes starts i #[] xs).toList = (runsList #[] xs).map (·.text) := by
   match xs with

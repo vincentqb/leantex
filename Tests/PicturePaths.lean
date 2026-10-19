@@ -36,11 +36,11 @@ def pictureBendChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     body ++ "\n\\end{tikzpicture}\n\\end{document}"
   let edges (body : String) : Array Ir.Pic.PathSeg :=
     ((layoutOf oneFace (elabStr (src body)).1).pages[0]?.map edgeSegs).getD #[]
-  let cubics (body : String) : Array (Int × Int × Int × Int × Int × Int × Int × Int) :=
+  let cubics (body : String) : Array (Dim.Length × Dim.Length × Dim.Length × Dim.Length × Dim.Length × Dim.Length × Dim.Length × Dim.Length) :=
     (edges body).filterMap fun s => match s with
       | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => some (x1, y1, c1x, c1y, c2x, c2y, x2, y2)
       | .line .. => none
-  let near (p q : Int) : Bool := decide (p - q ≤ 2 ∧ q - p ≤ 2)
+  let near (p q : Dim.Length) : Bool := decide (p - q ≤ 2 * Dim.Length.quantum ∧ q - p ≤ 2 * Dim.Length.quantum)
   let left := cubics "\\draw (a) to[bend left=40] (b);"
   t "a bent edge ships one cubic and no chord"
     (left.size == 1 && (edges "\\draw (a) to[bend left=40] (b);").size == 1)

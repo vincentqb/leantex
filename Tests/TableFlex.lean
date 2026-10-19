@@ -6,7 +6,7 @@ public section
 
 open LeanTex.Core LeanTex.Core.Dim
 
-private def flexRuleWidths (out : Layout.Out) : Array Sp :=
+private def flexRuleWidths (out : Layout.Out) : Array Length :=
   out.pages.flatMap fun p => p.lines.flatMap fun l =>
     if l.furniture then #[] else l.segs.filterMap fun s => match s with
       | .rule w _ _ _ => some w
@@ -62,7 +62,7 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     let census := censusOf #[] out
     t s!"tabularx {c.name}: full rules reach 200pt within the X division remainder"
       (widths.size == 2 &&
-        widths.all fun w => pt 200 - ((c.count : Int) - 1) ≤ w && w ≤ pt 200)
+        widths.all fun w => pt 200 - ((c.count : Int) - 1) * Dim.Length.quantum ≤ w && w ≤ pt 200)
     t s!"tabularx {c.name}: span and following cell each ship once"
       ((censusText census |>.splitOn "Spanmark").length == 2 &&
         (censusText census |>.splitOn "Tail").length == 2)
@@ -73,7 +73,7 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     let trailing := if c.padR then Ir.tabColSep.sp else 0
     t s!"tabularx {c.name}: last cell reaches the target edge inside its pad"
       (match rule with
-       | some l => runs.size > 0 && l.x + pt 200 - ((c.count : Int) - 1) ≤ right + trailing &&
+       | some l => runs.size > 0 && l.x + pt 200 - ((c.count : Int) - 1) * Dim.Length.quantum ≤ right + trailing &&
            right + trailing ≤ l.x + pt 200 &&
            runs.all (fun r => l.x ≤ r.2.2.1 && r.2.2.1 + r.2.2.2 ≤ l.x + pt 200)
        | none => false)

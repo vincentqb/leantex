@@ -16,7 +16,7 @@ def mathAtoms : Math.MList → List (Math.MathClass × Math.MNucleus)
 /-- The shipped glyphs set in `face`: each glyph's id, its run's size, and its ink top and bottom
 from the outline bounds. -/
 def faceGlyphInk (fs : Font.FontSet) (face : Nat) (out : Layout.Out) :
-    Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+    Array (Char × Nat × Dim.Length × Dim.Length × Dim.Length) := Id.run do
   let mut acc := #[]
   for l in bodyLines out do
     for s in l.segs do
@@ -34,7 +34,7 @@ def faceGlyphInk (fs : Font.FontSet) (face : Nat) (out : Layout.Out) :
 
 /-- A shipped line's reach above and below its baseline: every run's ink and each glyph-free
 construction's bounds. -/
-def lineReach (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Sp × Dim.Sp :=
+def lineReach (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Length × Dim.Length :=
   l.segs.foldl (init := (0, 0)) fun (top, bot) s =>
     match s with
     | .run fi _ _ _ glyphs size metrics _ raise _ _ =>
@@ -87,7 +87,7 @@ def bigDelimChecks (ref : IO.Ref (List String)) : IO Unit := do
   | none => failures ref "big delimiters: the shipped serif faces did not load"
   | some fs =>
     let near (a b : Int) : Bool := (a - b).natAbs ≤ 1
-    let permille (x size : Dim.Sp) : Int := x * 1000 / size
+    let permille (x size : Dim.Length) : Int := x * 1000 / size
     let parens (body : String) :=
       (faceGlyphInk fs 4 (layoutOf fs (elabStr (doc body)).1)).toList.filter (·.1 == '(')
     let shipped := parens "$(\\bigl(\\Bigl(\\biggl(\\Biggl($"

@@ -7,6 +7,8 @@ public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+private instance : ToString Dim.Length := ⟨reprStr⟩
+
 /-- The shipped pages of a document as one comparable value. -/
 def pagesOf (fonts : Font.FontSet) (src : String) : String :=
   reprStr (layoutOf fonts (elabStr src).1).pages
@@ -922,7 +924,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     "\\fbox{e} & f\n\\end{tabular}")
   t s!"a table's cell is a group: what it sets ends at its '&' and its row's end ({pads cells})"
     (pads cells == #[toString 0, toString (Dim.pt 3), toString (Dim.pt 3)])
-  let tok (src key : String) : Option Dim.Sp :=
+  let tok (src key : String) : Option Dim.Length :=
     ((elabStr src).1.tokens.find? key).map (·.width.sp)
   let skips := dvDoc "\\newlength\\la\\newlength\\lb\\setlength{\\la}{\\baselineskip}\n"
     "{\\small\\setlength{\\lb}{\\ht\\strutbox}Alpha\\hspace{\\lb}beta.}"
@@ -930,7 +932,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     (tok skips "la" == some (Dim.pt 12))
   -- lualatex: `\small` at 10pt sets `\baselineskip` 11pt and the strut box 7.69997pt tall.
   t s!"a size command sets the strut box at its \\baselineskip ({spaces skips})"
-    (spaces skips == #[toString (Compat.strutDimen "ht" (Dim.pt 11))])
+    (spaces skips == #[toString (Dim.Length.ofSp (Compat.strutDimen "ht" (Dim.pt 11).toSp))])
   let geo (o : String) : Ir.PageSpec := (elabStr (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")).1.page
   -- lualatex: letter paper's default body is 430.00462pt by 556.47656pt, 95.39737pt from the top.
   t s!"geometry's default layout: 0.7 of the paper each way, split 2:3 vertically ({(geo "").hmargin})"
@@ -946,10 +948,10 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
   t s!"\\strut is a rule of no width the strut box tall ({rules})"
     (!(codes strut).contains "W0301" && rules == #[(0, Dim.pt 12)])
   -- The foot's skip as the page reads it: the declared key, else the engine length.
-  let footOfDoc (src : String) : Option Dim.Sp :=
+  let footOfDoc (src : String) : Option Dim.Length :=
     let d := (elabStr src).1
     d.page.footskip <|> (d.tokens.find? "footskip").map (·.width.sp)
-  let footOf (o : String) : Option Dim.Sp :=
+  let footOf (o : String) : Option Dim.Length :=
     footOfDoc (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")
   -- lualatex: geometry's top=2cm, bottom=4cm sets the folio's baseline 30pt below the text.
   t "a page geometry places sets its foot the standard class's \\footskip below the text"
@@ -972,7 +974,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
       (geo "margin=1in,hscale=0.5").hmargin == Dim.inch 1)
   let paperDoc (cls pre : String) : Ir.PageSpec :=
     (elabStr (cls ++ pre ++ "\\begin{document}\nAlpha.\n\\end{document}")).1.page
-  let paperFoot (cls pre : String) : Option Dim.Sp :=
+  let paperFoot (cls pre : String) : Option Dim.Length :=
     footOfDoc (cls ++ pre ++ "\\begin{document}\nAlpha.\n\\end{document}")
   t "geometry: a paper option is the paper in force's, a later call's and KOMA-Script's paper= alike"
     ((paperDoc "\\documentclass{article}\n" "\\usepackage[a4paper]{geometry}\n\\geometry{letterpaper}\n").width ==

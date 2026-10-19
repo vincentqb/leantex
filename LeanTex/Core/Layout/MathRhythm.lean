@@ -11,17 +11,17 @@ open Dim
 /-- The collision arm reserves the measured neighbouring intervals. This
 is a coordinate statement; outline decoding and page redistribution are
 separate boundaries. -/
-public theorem inlineMathGap_covers (normal depth height : Sp) :
+public theorem inlineMathGap_covers (normal depth height : Length) :
     depth + height ≤ inlineMathGap true normal depth height :=
   Int.le_max_right ..
 
 /-- Whenever the input intervals already clear, math retains exactly the
 font-relative baseline gap, for arbitrary sizes and measured extents. -/
-public theorem inlineMathGap_fixed_point (math : Bool) (normal depth height : Sp)
+public theorem inlineMathGap_fixed_point (math : Bool) (normal depth height : Length)
     (hclear : depth + height ≤ normal) :
     inlineMathGap math normal depth height = normal := by
   cases math <;> simp only [inlineMathGap, Bool.false_eq_true,
-    ite_false, ite_true, Int.max_eq_left hclear]
+    ite_false, ite_true, Length.max_eq_left hclear]
 
 /-- A formula fits the existing line's font-relative envelope when both
 its ambient text strut and its raised construction bounds fit. These are
@@ -29,7 +29,7 @@ input measurements, not an assumption about the resulting placement.
 Outline containment depends on the font decoder; this contract does not
 turn a font's fallback metrics into a proof about paint. -/
 public def InlineMathFits (box : LineBox) (m : MathLineMetrics)
-    (leading : Option Sp) (factor : Nat) (raise : Sp) : Prop :=
+    (leading : Option Length) (factor : Nat) (raise : Length) : Prop :=
   let strut := leadedBox m.ascent m.descent
     (leading.getD (Ir.leadingFor m.size factor))
   strut.1 ≤ box.above ∧ strut.2 ≤ box.below ∧
@@ -45,19 +45,19 @@ private theorem merge_absorbed (acc : Option LineBox) (box : LineBox)
       ((mergeLineBox acc box).getD ⟨0, 0, 0, 0⟩).below =
         (acc.getD ⟨0, 0, 0, 0⟩).below := by
   cases acc with
-  | none => exact ⟨Int.le_antisymm ha hna, Int.le_antisymm hb hnb⟩
-  | some a => exact ⟨Int.max_eq_left ha, Int.max_eq_left hb⟩
+  | none => exact ⟨Length.le_antisymm ha hna, Length.le_antisymm hb hnb⟩
+  | some a => exact ⟨Length.max_eq_left ha, Length.max_eq_left hb⟩
 
 /-- Appending any inline math run whose measured bounds fit leaves both
 interline terms unchanged. The line already contains text, and an explicit
 leading on the new run must already be in force on that line. No glyph,
 font index, size, raise, or leading is fixed to a sample value. -/
 public theorem inlineMath_extent_fixed_point
-    (fs : Font.FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
-    (factor : Nat) (size : Sp) (segs : Array Seg)
-    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-    (glyphs : Array (Nat × Char × Sp)) (sz : Sp) (m : MathLineMetrics)
-    (leading : Option Sp) (decorations : Decorations) (raise : Sp)
+    (fs : Font.FontSet) (fontSize bodyAscent bodyCap bodyDescent : Length)
+    (factor : Nat) (size : Length) (segs : Array Seg)
+    (idx : Nat) (color : Ir.Color) (link : Option String) (width : Length)
+    (glyphs : Array (Nat × Char × Length)) (sz : Length) (m : MathLineMetrics)
+    (leading : Option Length) (decorations : Decorations) (raise : Length)
     (ground : Option Ir.Color) (attr : Attribution)
     (htext : segs.any Seg.isRun = true)
     (hleading : leading.isSome = true →
@@ -105,9 +105,9 @@ namespace Spacing
 /-- The formula's input envelope at a production placement boundary.
 Reading the page and context here keeps their private representation out
 of the placement theorem's interface. -/
-public def InlineMathFitsAt (r : Context) (b : Page) (size : Sp)
-    (segs : Array Seg) (m : MathLineMetrics) (leading : Option Sp)
-    (raise : Sp) : Prop :=
+public def InlineMathFitsAt (r : Context) (b : Page) (size : Length)
+    (segs : Array Seg) (m : MathLineMetrics) (leading : Option Length)
+    (raise : Length) : Prop :=
   InlineMathFits
     (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
       b.geom.leading size segs) m leading b.geom.leading raise
@@ -115,13 +115,13 @@ public def InlineMathFitsAt (r : Context) (b : Page) (size : Sp)
 /-- The two adjacent measured ink intervals fit the font-relative gap.
 Unlike the font envelope, this premise sees the preceding line's actual
 descender and the new line's actual raised outlines. -/
-public def InlineMathClearAt (r : Context) (b : Page) (size : Sp)
+public def InlineMathClearAt (r : Context) (b : Page) (size : Length)
     (segs : Array Seg) : Prop :=
   b.boxDepth + (segsInk r.fs segs).1 ≤ b.prevBelow +
     (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
       b.geom.leading size segs).above
 
-private theorem input_origin (r : Context) (b : Page) (size : Sp)
+private theorem input_origin (r : Context) (b : Page) (size : Length)
     (segs : Array Seg) (h : InlineMathClearAt r b size segs) :
     (input r b size segs).origin = b.y + (b.prevBelow +
       (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
@@ -135,11 +135,11 @@ font-relative envelope, and both page-fit inequalities. The claim is
 before page-close stretch/shrink distribution and does not cover a page
 break or claim that arbitrary font metadata bounds visible ink. -/
 public theorem inlineMath_placement_fixed_point
-    (a : Pending) (r : Context) (b : Page) (x size : Sp) (segs : Array Seg)
-    (width : Sp) (idx : Nat) (color : Ir.Color) (link : Option String)
-    (runWidth : Sp) (glyphs : Array (Nat × Char × Sp)) (sz : Sp)
-    (m : MathLineMetrics) (leading : Option Sp) (decorations : Decorations)
-    (raise : Sp) (ground : Option Ir.Color) (attr : Attribution)
+    (a : Pending) (r : Context) (b : Page) (x size : Length) (segs : Array Seg)
+    (width : Length) (idx : Nat) (color : Ir.Color) (link : Option String)
+    (runWidth : Length) (glyphs : Array (Nat × Char × Length)) (sz : Length)
+    (m : MathLineMetrics) (leading : Option Length) (decorations : Decorations)
+    (raise : Length) (ground : Option Ir.Color) (attr : Attribution)
     (htext : segs.any Seg.isRun = true)
     (hleading : leading.isSome = true →
       segs.any Seg.hasLeading = true)

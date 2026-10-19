@@ -32,7 +32,7 @@ private def pdfGround (doc : Ir.Doc) (out : Layout.Out) (i : Nat) : Option Ir.Co
         fill.h == geom.pageH + 2 * geom.bleed then some fill.color else none
 
 /-- Every body line's text and position, which a colour-only edit must leave alone. -/
-private def linePlaces (out : Layout.Out) : Array (String × Dim.Sp × Dim.Sp) :=
+private def linePlaces (out : Layout.Out) : Array (String × Dim.Length × Dim.Length) :=
   out.pages.flatMap (·.lines) |>.filter (! ·.furniture) |>.map fun l => (lineText l, l.x, l.y)
 
 /-- The shipped stylesheet's top-level rules, selector and declarations, in order, at-rules

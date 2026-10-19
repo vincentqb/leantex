@@ -37,7 +37,8 @@ def chromePng (chrome : String) (work : System.FilePath) (stem : String) (box : 
   let file := work / s!"{stem}.svg"
   IO.FS.writeBinFile file svg
   let ((x0, y0), (x1, y1)) := box
-  let cssPx (d : Dim.Sp) : Nat := ((d.toNat * 96 + 72 * 65536 - 1) / (72 * 65536))
+  let cssPx (d : Dim.Length) : Nat :=
+    ((max 0 d * (96 : Int) + Dim.inch 1 - Dim.Length.quantum) / Dim.inch 1).toNat
   let out := (work / s!"{stem}-svg.png").toString
   let _ ← tool chrome #["--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
     s!"--force-device-scale-factor={(rasterDpi.toFloat / 96.0)}",
@@ -71,7 +72,7 @@ def mutants : Array (String × (Gfx.Figure Gfx.Run → Gfx.Figure Gfx.Run)) :=
   #[("glyphs dropped", fun fig => { fig with outlines := fig.outlines.map fun _ => #[] }),
     ("shifted a tenth of its width", fun fig =>
       let w := fig.box.2.1 - fig.box.1.1
-      { fig with nodes := #[.group ⟨1, 0, 0, 1, (w / 10 : Int), 0⟩ #[] Gfx.Alpha.opaque fig.nodes] }),
+      { fig with nodes := #[.group ⟨1, 0, 0, 1, (w / 10).toRat, 0⟩ #[] Gfx.Alpha.opaque fig.nodes] }),
     ("fills turned grey", fun fig => fig.recolor (fun _ => { r := 128, g := 128, b := 128 }) id)]
 
 def fmt (f : Float) : String := (toString f).take 7 |>.toString

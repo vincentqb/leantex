@@ -41,7 +41,7 @@ private def hasClass (node : Html.Node) (name : String) : Bool :=
 
 /-- The topmost painted body coordinate of a shipped page, filled surfaces included; header ink is
 told by its fixture text. -/
-private def paintedTop (fonts : Font.FontSet) (page : Layout.PageOut) : Option Dim.Sp :=
+private def paintedTop (fonts : Font.FontSet) (page : Layout.PageOut) : Option Dim.Length :=
   let ys := (page.fills.filter isSurface).map (·.y) ++
     (page.lines.filter fun line =>
       !line.furniture && lineText line != "FRAME" && !(lineText line).isEmpty).map
@@ -49,7 +49,7 @@ private def paintedTop (fonts : Font.FontSet) (page : Layout.PageOut) : Option D
   ys.foldl (fun acc y => some (acc.map (min y) |>.getD y)) none
 
 /-- The repeated header paint's bottom, read independently of its census metadata. -/
-private def headerBottom (page : Layout.PageOut) : Option Dim.Sp :=
+private def headerBottom (page : Layout.PageOut) : Option Dim.Length :=
   (page.fills.filter (·.color == headerColor)).foldl
     (fun edge fill => some (edge.map (max (fill.y + fill.h)) |>.getD (fill.y + fill.h))) none
 
@@ -135,7 +135,7 @@ private def openingMargin :=
 /-- The first participating box and its winning margin, resets, specificity and inline precedence
 included, the authored leading space a separate addend. -/
 private def htmlOpeningClearance (css : String) (stage : Html.Node)
-    (skip height : Dim.Sp) (before : String := "0pt") : Bool :=
+    (skip height : Dim.Length) (before : String := "0pt") : Bool :=
   match stage with
   | .elem "section" attrs kids =>
     let body := kids.filter participates
@@ -177,7 +177,8 @@ private def cascadeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block clearance judge: hidden owner cannot pay for visible body"
     (!htmlOpeningClearance css
       (Html.elem "section" #[header, hidden, Html.elem "div" #[]]
-        #[("class", "slide"), ("style", "--frame-body-skip: 1vh")]) 1 100)
+        #[("class", "slide"), ("style", "--frame-body-skip: 1vh")]) Dim.Length.quantum
+        (100 * Dim.Length.quantum))
 
 /-- Root and epoch token declarations, and a theme's resolved fallback, stay CSS lengths in the
 opening rule. -/
@@ -188,8 +189,8 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
   check ref "block clearance tokens: source has no loss" (ds.all (·.severity == .note))
   for points in #[0, 7] do
     for scope in #["root", "fallback", "epoch"] do
-      let gap : Dim.SymGlue := { width := Dim.Length.ofSp (Dim.pt points) }
-      let initial : Dim.SymGlue := { width := Dim.Length.ofSp (Dim.pt 9) }
+      let gap : Dim.SymGlue := { width := Dim.SymLength.ofLength (Dim.pt points) }
+      let initial : Dim.SymGlue := { width := Dim.SymLength.ofLength (Dim.pt 9) }
       let tokens := if scope == "fallback" then base.tokens else
         base.tokens.declare "clearancegap" (if scope == "epoch" then initial else gap)
       let doc := { base with tokens, body := base.body.map fun
@@ -253,7 +254,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       let skip := doc.page.fontSize / 4 + if alignment == "t" then Dim.mm 2 else 0
       -- An authored opening is a print length on the stage: its share of it.
       let before := if before == "7pt" then
-        HtmlDoc.stageLengthCss doc.page.height (Dim.Length.ofSp (Dim.pt 7)) else before
+        HtmlDoc.stageLengthCss doc.page.height (Dim.SymLength.ofLength (Dim.pt 7)) else before
       let pages := out.pages.filter (·.band.isSome)
       let stages := (elemNodesList (· == "section") #[] nodes.toList).filter
         (hasClass · "slide")
@@ -317,7 +318,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
         check ref (name ++ ": empty body still ships a positive filled surface")
           (out.pages.any fun page => page.fills.any fun fill =>
             isSurface fill && 0 < fill.w && 0 < fill.h)
-  let topY (body : String) : Option Dim.Sp :=
+  let topY (body : String) : Option Dim.Length :=
     let (doc, _) := Elab.run "frame-clearance.tex" (source "t" body)
     ((layoutOf fonts doc).pages[0]?).bind (paintedTop fonts)
   let unspaced := topY "\\begin{block}{}BODY\\end{block}"

@@ -131,7 +131,7 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         | some a, some b, some c => (b.1 - a.1) * (c.2 - a.2) != (c.1 - a.1) * (b.2 - a.2)
         | _, _, _ => false)
     t s!"cancel geometry: {cmd} needs no recovery" (!ds.any (·.code == "W0012"))
-  let nextX (opts cmd : String) : Option Dim.Sp :=
+  let nextX (opts cmd : String) : Option Dim.Length :=
     let (_, out, _) := build opts "" s!"$\\{cmd}\{x}y$"
     ((bodyLines out).flatMap metricRunsAt).findSome? fun (s, x) =>
       if s == "𝑦" then some x else none
@@ -158,10 +158,11 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
             if scalar == '7' then some c == blue
             else if scalar == '𝑥' || scalar == '𝑦' then c == (Ir.Design.ofDoc doc).fg else true
         | _ => true)
-  let box := Layout.lineExtent fonts 1000 0 0 0 1000 1000
-    #[.poly #[(0, -300), (100, 900), (200, 0)] (Ir.Design.ofDoc doc).fg]
+  let q (n : Int) : Dim.Length := n * Dim.Length.quantum
+  let box := Layout.lineExtent fonts (q 1000) 0 0 0 1000 (q 1000)
+    #[.poly #[(0, q (-300)), (q 100, q 900), (q 200, 0)] (Ir.Design.ofDoc doc).fg]
   t "cancel geometry: polygon bounds enter the shipped line's vertical extent"
-    (box.above == 900 && box.below == 300 && box.inkAbove == 900 && box.inkBelow == 300)
+    (box.above == q 900 && box.below == q 300 && box.inkAbove == q 900 && box.inkBelow == q 300)
 
 /-- Strikes stay inside the control band's corner-to-corner box and arrows inside
 `Math.cancelEnvelope`, over zero-area operands, all four math sizes, both room modes and both rule
@@ -171,20 +172,20 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let fonts ← mathSetOf oneFace
   let polygonsAt := ShippedInk.polygonPens
   let polygons (l : Layout.LineOut) := (polygonsAt l).map (·.2)
-  let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Sp :=
+  let glyphX (l : Layout.LineOut) (g : String) : Option Dim.Length :=
     (metricRunsAt l).findSome? fun (s, x) => if s == g then some x else none
   let glyphsAt (l : Layout.LineOut) :=
     shippedBodyGlyphs { pages := #[{ lines := #[l] }], diags := #[] }
   let targetGlyphs (l : Layout.LineOut) := (glyphsAt l).filter (·.scalar == '7')
   let inside (bounds : ShippedInk.InkBounds)
-      (polys : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
+      (polys : Array (Array (Dim.Length × Dim.Length))) : Bool :=
     !polys.isEmpty && polys.all fun pts =>
       (ShippedInk.polygonHull pts).any fun mark =>
         bounds.left ≤ mark.left && mark.right ≤ bounds.right &&
           bounds.bottom ≤ mark.bottom && mark.top ≤ bounds.top
   -- Outline hulls enclose ink conservatively, so clearance needs a positive gap.
   let clearsInk (ink : ShippedInk.InkBounds)
-      (placed : Array (Array (Dim.Sp × Dim.Sp))) : Bool :=
+      (placed : Array (Array (Dim.Length × Dim.Length))) : Bool :=
     !placed.isEmpty && placed.all fun pts =>
       (ShippedInk.polygonHull pts).any fun mark =>
         mark.right < ink.left || ink.right < mark.left ||
@@ -195,7 +196,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       | .ok ink => clearsInk ink (ShippedInk.polygonsAt l)
       | .error _ => false
   -- Compensated kerns preserve every other pen and the logical advance.
-  let moveTarget (l : Layout.LineOut) (dx dy : Dim.Sp) : Layout.LineOut :=
+  let moveTarget (l : Layout.LineOut) (dx dy : Dim.Length) : Layout.LineOut :=
     { l with segs := l.segs.flatMap fun seg => match seg with
       | .run face color link w glyphs size leading underline raise ground attr =>
         if String.ofList (glyphs.toList.map (·.2.1)) == "7" then
@@ -251,15 +252,16 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           let polys := placed.map (·.2)
           let points := polys.flatten
           let (left, bottom, right, top) := if cmd == "cancelto{7}" then
-              Math.cancelEnvelope x0 y0 x1 y1 rule
+              let (l, b, r, t) := Math.cancelEnvelope x0.units y0.units x1.units y1.units rule.units
+              (Dim.Length.ofUnits l, Dim.Length.ofUnits b, Dim.Length.ofUnits r, Dim.Length.ofUnits t)
             else (x0, y0, x1, y1)
           let bounds : ShippedInk.InkBounds := { left, bottom, right, top }
           t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
             (inside bounds polys)
           -- One sp is the coordinate grid, not a perceptual tolerance.
-          for (edge, escaped) in [("left", (left - 1, bottom)),
-              ("right", (right + 1, bottom)), ("bottom", (left, bottom - 1)),
-              ("top", (left, top + 1))] do
+          for (edge, escaped) in [("left", (left - Dim.Length.quantum, bottom)),
+              ("right", (right + Dim.Length.quantum, bottom)), ("bottom", (left, bottom - Dim.Length.quantum)),
+              ("top", (left, top + Dim.Length.quantum))] do
             let mutant := polys.mapIdx fun n pts =>
               if n == 0 then pts.mapIdx (fun i p => if i == 0 then escaped else p)
               else pts
@@ -287,10 +289,12 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
                 | none => false)
 
   -- Nonempty vertices alone do not witness the filled arrowhead's ink.
-  let area2 (pts : Array (Dim.Sp × Dim.Sp)) : Int :=
+  let areaInt (pts : Array (Int × Int)) : Int :=
     pts.zipIdx.foldl (fun acc (p, n) =>
       let q := pts[(n + 1) % pts.size]!
       acc + p.1 * q.2 - p.2 * q.1) 0
+  let area2 (pts : Array (Dim.Length × Dim.Length)) : Int :=
+    areaInt (pts.map fun (x, y) => (x.units, y.units))
   for (size, before, after) in sizes do
     for opts in ["makeroom", "makeroom,thicklines", "overlap", "overlap,thicklines"] do
       let label := s!"negative advance/{size}/{opts}"
@@ -331,7 +335,7 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
         continue
       let outline := cmds.flatMap ShippedInk.outlinePoints
       t s!"cancel box: {label} witnesses a single painted polygon"
-        (font.unitsPerEm > 0 && cmds.size ≥ 3 && area2 outline != 0 &&
+        (font.unitsPerEm > 0 && cmds.size ≥ 3 && areaInt outline != 0 &&
           (cmds.extract 1 cmds.size).all (fun cmd => match cmd with
             | .line _ _ => true
             | _ => false))

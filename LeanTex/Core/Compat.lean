@@ -229,7 +229,8 @@ private def resumeClasses : List String :=
 /-- A class option's `\baselineskip` at a named size, its size file's decimal points as TeX scans
 them. -/
 private def classSizeSkip (pt : Nat) (size : String) : Int :=
-  let milli := (Ir.sizeFileLeading (Dim.pt pt) 1000 size * 1000 + 32768) / 65536
+  let sp := (Ir.sizeFileLeading (Dim.pt pt) 1000 size).toSp
+  let milli := (sp * 1000 + 32768) / 65536
   (milli * 65536 + 500) / 1000
 
 private def classNormalSkip (pt : Nat) : Int := classSizeSkip pt "normalsize"
@@ -6107,7 +6108,7 @@ public def kernelSkip : String → Option String
 /-- Class-independent length defaults readable before an assignment: the skip
 amounts and the column gap. -/
 private def kernelLength (n : String) : Option String :=
-  if n == "columnsep" then some s!"{Ir.columnSep.sp.toPtString}pt" else kernelSkip n
+  if n == "columnsep" then some s!"{Ir.columnSep.sp.toBpString}pt" else kernelSkip n
 
 /-- The operand `\ht\strutbox` or `\dp\strutbox` reads as, under a name no document spells. -/
 private def strutOperand (dimen : String) : String := dimen ++ " strutbox"
@@ -8065,7 +8066,7 @@ private def skipSrc (src : String) : SkipSpelling :=
     | some ((m, sc), order) =>
       let width := w.trimAscii.toString ++ shrink
       if order == 2 && m == (sc : Int) then
-        if (Decl.parseLength w).any (· == ({} : Dim.Length)) && shrink.isEmpty then { width := "fill" }
+        if (Decl.parseLength w).any (· == ({} : Dim.SymLength)) && shrink.isEmpty then { width := "fill" }
         else { width, fill := true }
       else { width, unranked := true }
     | none => { width := src }

@@ -12,10 +12,10 @@ open Core Core.Dim Core.Ir Core.Layout Core.Font
 private def geometry : Geom := {
   pageW := pt 220, pageH := pt 200
   hmargin := pt 12, vmargin := pt 12, fontSize := pt 10
-  parskip := { width := Length.ofSp (pt 6) }
+  parskip := { width := SymLength.ofLength (pt 6) }
   hyphenate := false, justify := false }
 
-private def gap (n : Int) : SymGlue := { width := Length.ofSp (pt n) }
+private def gap (n : Int) : SymGlue := { width := SymLength.ofLength (pt n) }
 
 /-- Two role paragraphs whose declared gaps reach `Acc.addvspace`, with `between` set between them. -/
 private def spacingPage (fs : FontSet) (before after : Option SymGlue)
@@ -34,14 +34,14 @@ private def pair (out : Out) : Option (LineOut × LineOut) :=
     then some (first, second) else none
   | _ => none
 
-private def displacement (before after : Out) (delta : Sp) : Bool :=
+private def displacement (before after : Out) (delta : Length) : Bool :=
   before.pages.size == 1 && after.pages.size == 1 &&
   noDroppedGlyph before && noDroppedGlyph after &&
   match pair before, pair after with
   | some (a, b), some (a', b') => a.y == a'.y && b'.y - b.y == delta
   | _, _ => false
 
-private def paragraphDisplacement (before after : Out) (delta : Sp) : Bool :=
+private def paragraphDisplacement (before after : Out) (delta : Length) : Bool :=
   let a := (bodyLines before).filter Spacing.inkLine
   let b := (bodyLines after).filter Spacing.inkLine
   before.pages.size == 1 && after.pages.size == 1 &&
@@ -98,7 +98,7 @@ def elementSpacingChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let xHeight := fs.body.xHeight * geometry.fontSize / fs.body.unitsPerEm
   let relativeEx : SymGlue := { width := { ex := 2000 } }
   let resolved := relativeEx.resolve geometry.fontSize xHeight
-  let absolute : SymGlue := { width := Length.ofSp resolved.width }
+  let absolute : SymGlue := { width := SymLength.ofLength resolved.width }
   out := out.push ("element ex lengths agree with their resolved absolute length",
     displacement ordinary (spacingPage fs (some relativeEx) none) (resolved.width - pt 6) &&
     displacement (spacingPage fs (some absolute) none) (spacingPage fs (some relativeEx) none) 0)
