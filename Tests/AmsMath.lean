@@ -516,6 +516,9 @@ def textInMathChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr (page src) s!"<mi mathvariant=\"normal\" style=\"white-space: pre\">{word}</mi>")
   t "word in math: a longer word stays an identifier MathML sets upright"
     (hasStr (page "$\\sin x$") "<mi style=\"white-space: pre\">sin</mi>")
+  let said := Ir.blocksText (elabStr (dvDoc "" "$\\text{if\\ so}$ and $\\text{an~it}$")).1.body
+  t s!"word in math: an interword space parts the plain reading's words ({repr said})"
+    (hasStr said "if so" && hasStr said "an it")
 
 def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let serif ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with

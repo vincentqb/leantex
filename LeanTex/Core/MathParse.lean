@@ -822,10 +822,13 @@ private theorem parserNotes_append (a b : Array Note)
 the spaces. -/
 private def spacedWord (parts : Array MItem) (s : String) : MNucleus :=
   if parts.isEmpty then .word s
-  else .list (MList.ofList (if s.isEmpty then parts else parts.push (.atom .ord (.word s) .nil .nil false)).toList)
+  else
+    let runs := if s.isEmpty then parts else parts.push (.atom .ord (.word s) .nil .nil false)
+    .list (MList.ofList runs.toList)
 
 /-- Read an upright-text alias's group: symbols contribute their scalar, a text symbol its TU
-scalar as in text, an explicit space its width, styling a loss note. -/
+scalar as in text, an interword space the word's own, another explicit space its width, styling a
+loss note; `\operatorname` reads its group in math mode, where spaces are ignored. -/
 private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
     (notes0 : Array Note) : Except String (MNucleus × Nat × Array Note) := do
   let mut j := i + 1
@@ -842,7 +845,7 @@ private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
       s := s.push c
       j := j + 1
     | some .ws =>
-      s := s.push ' '
+      unless tok == .ctrl "operatorname" do s := s.push ' '
       j := j + 1
     | some .openGrp =>
       depth := depth + 1
@@ -863,6 +866,9 @@ private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
         j := afterCmd (j + 1)
       else if textNeutralCtrl.contains n then
         j := afterCmd (j + 1)
+      else if n == " " || n == "~" then
+        s := s.push ' '
+        j := j + 1
       else if let some mu := ctrlSpace.lookup n then
         if !s.isEmpty then parts := parts.push (.atom .ord (.word s) .nil .nil false)
         parts := parts.push (.space mu)

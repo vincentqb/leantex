@@ -2019,6 +2019,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an explicit space inside operatorname sets its width between the word's runs"
     (widthOf "$\\operatorname{ab\\,c} x$" ==
       adv mbase 'a' + adv mbase 'b' + mu mbase 3 + adv mbase 'c' + mu mbase 3 + adv mbase '𝑥')
+  t "operatorname reads its group in math mode, a space in it ignored"
+    (widthOf "$\\operatorname{ab\\, c} x$" == widthOf "$\\operatorname{ab\\,c} x$" &&
+      widthOf "$\\operatorname{a b}$" == widthOf "$\\operatorname{ab}$")
   t "setmathfont fills the math slot"
     ((Elab.run "t" ("\\documentclass{article}\\setmathfont{Fira Math}" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
