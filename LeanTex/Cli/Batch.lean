@@ -150,31 +150,37 @@ public def map [DecidableEq κ] (limit : Nat) (key : α → κ)
     if let some error := failure then throw error
   return result
 
-/-- The attempt in flight for `k`, joined, or `run k` started as it, which leaves the table before
-it completes; whether it is this caller's. -/
+/-- The attempt for `k`, joined in flight or finished, or `run k` started as it, which leaves the
+table before it completes unless `keep` holds of its result; whether it is this caller's. -/
 private def joinOrRun [BEq κ] [Hashable κ]
-    (flying : Std.Mutex (Std.HashMap κ (Task (Except IO.Error β)))) (run : κ → IO β) (k : κ) :
-    IO (Except IO.Error β × Bool) := do
-  let (task, mine) ← flying.atomically do
+    (attempts : Std.Mutex (Std.HashMap κ (Task (Except IO.Error β)))) (keep : Except IO.Error β → Bool)
+    (run : κ → IO β) (k : κ) : IO (Except IO.Error β × Bool) := do
+  let (task, mine) ← attempts.atomically do
     match (← get).get? k with
     | some t => pure (t, false)
     | none =>
-      let t ← IO.asTask (try run k finally flying.atomically (modify (·.erase k)))
+      let t ← IO.asTask (do
+          let r ← (run k).toBaseIO
+          unless keep r do attempts.atomically (modify (·.erase k))
+          IO.ofExcept r)
         Task.Priority.dedicated
       modify (·.insert k t)
       pure (t, true)
   return (← IO.wait task, mine)
 
-/-- `run` asked once at a time per key: a caller meeting its key in flight takes that attempt's
+/-- `run` asked once per key: a caller meeting its key's attempt, in flight or finished, takes its
 answer, and past one that failed or of which `again` holds, joins or starts the next attempt. -/
 public def shared [BEq κ] [Hashable κ] (again : β → Bool) (run : κ → IO β) :
     BaseIO (κ → IO β) := do
-  let flying ← Std.Mutex.new (∅ : Std.HashMap κ (Task (Except IO.Error β)))
+  let attempts ← Std.Mutex.new (∅ : Std.HashMap κ (Task (Except IO.Error β)))
+  let keep : Except IO.Error β → Bool := fun got => match got with
+    | .ok answer => !again answer
+    | .error _ => false
   return fun k => do
-    let (got, mine) ← joinOrRun flying run k
+    let (got, mine) ← joinOrRun attempts keep run k
     match got with
     | .ok answer => if mine || !again answer then return answer
     | .error e => if mine then throw e
-    IO.ofExcept (← joinOrRun flying run k).1
+    IO.ofExcept (← joinOrRun attempts keep run k).1
 
 end LeanTex.Cli.Batch

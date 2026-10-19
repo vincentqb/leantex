@@ -1777,15 +1777,6 @@ end
 
 public def indexIds (t : Xml.Item) : Std.HashMap String Entry := idsOne {} [] [] t
 
-/-- Every `style` element's sheet, in document order, with what each said
-outside the subset. -/
-public def sheetsOf (t : Xml.Item) : Array Css.Rule × Array Css.Unread :=
-  let styles := (elemsOne #[] t).filter (·.1 == "style")
-  styles.foldl (fun (rules, dropped) (_, text) =>
-    match Css.parseSheet text with
-    | .ok (rs, ds) => (rules ++ rs, dropped ++ ds)
-    | .error why => (rules, dropped.push why)) (#[], #[])
-
 mutual
 
 -- conserves: none — a census of a tree's symbol uses.
@@ -1964,10 +1955,11 @@ whether it was past. -/
   if expandedSize symbols (bud.expanded + 1) body > bud.expanded then (#[], unuseList #[] body.toList, true)
   else (symbols, body, false)
 
-/-- An accepted SVG tree as a figure whose box is its root viewport. -/
-public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Budget.standard) : Import :=
+/-- An accepted SVG tree as a figure whose box is its root viewport, read through its sheets. -/
+public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Budget.standard)
+    (sheets : Array Css.Rule × Array Css.Unread := sheetsOf t) : Import :=
   let ids := indexIds t
-  let (sheet, dropped) := sheetsOf t
+  let (sheet, dropped) := sheets
   let rules := Css.RuleIndex.ofRules sheet
   let env : Env := { ids, rules, lang }
   let (attrs, rootKids) := rootParts t
@@ -2061,10 +2053,10 @@ public inductive Verdict where
 
 /-- SVG bytes as a figure: judged, then imported. -/
 public def importBytes (bytes : ByteArray) (lang : String := "en") : Verdict :=
-  match judge bytes with
+  match judged bytes with
   | .error r => .refused r
-  | .ok t =>
-    let i := importTree t lang
+  | .ok (t, sheets) =>
+    let i := importTree t lang (sheets := sheets)
     if i.fig.losses.isEmpty then .exact i else .lossy i
 
 end LeanTex.Core.Svg

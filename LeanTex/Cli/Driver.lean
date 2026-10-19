@@ -365,15 +365,15 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let terminal ← match ImageAssets.svgPosterAtEnd page with
     | .error e => return { res := .error e }
     | .ok t => pure t
-  let tree ← match Svg.judge bytes with
+  let (tree, sheets) ← match Svg.judged bytes with
     | .error r => return { res := .error r.message }
-    | .ok t => pure t
+    | .ok j => pure j
   let pose ← match SvgPoster.poseOf tree terminal with
     | .error why => return { res := .error why }
     | .ok t => pure t
   -- Whether the figure moves is the authored tree's answer; a final pose holds no animation.
   let moving := Svg.moves tree
-  let i := Svg.importTree pose lang
+  let i := Svg.importTree pose lang (sheets := if terminal then Svg.sheetsOf pose else sheets)
   let (fig, plans) := FigureStore.rasterPlans params i.fig
   let losses := fig.losses
   -- An inkless import note, such as a dropped link, is named once on any route.
@@ -404,14 +404,14 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
     return { res := .ok plan, moving, title := fig.title, diags, judged := some bytes }
   | _, _ => return { native with diags }
 
-/-- The converter a lossy SVG may ask when the document allows it: `run`, once at a time per
+/-- The converter a lossy SVG may ask when the document allows it: `run`, once a build per
 canonical spelling, while `probe`, asked once on first need, says the host has it. -/
 public def svgConverterWith (probe : IO Bool)
     (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan))
     (allowed : Bool) : IO (Option Converter) := do
   if !allowed then return none
   let present ← ToolProbe.once probe
-  -- A waiter takes the attempt it met, unless that attempt reached no verdict.
+  -- A later asker takes the attempt it met, unless that attempt reached no verdict.
   let ask ← Batch.shared (· matches .error (.inconclusive _))
     fun ((canonical, independent) : ByteArray × Bool) => run canonical independent
   return some fun canonical independent => do
@@ -512,7 +512,8 @@ def planLocated (params : Image.PlanParams) (lang : String) (convert : Option Co
 read and the SVG bytes the native judge accepted. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
-    (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
+    (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none)
+    (convert : Option Converter) :
     IO (Image.Store × Array Diag × Nat × Array (String × String) × Array String ×
       Array ByteArray) := do
   let dir := (System.FilePath.mk file).parent.getD "."
@@ -521,7 +522,6 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let mut svgs : Array SvgFetch := #[]
   let mut hits := 0
   let mut reads : Array String := #[]
-  let convert ← svgConverter params doc.figureConvert
   let reqs := Ir.imageRequests doc
   let located ← reqs.mapM fun req => locateImage dir pics refused req doc.graphicsPath
   -- Four at a time bounds peak memory; answers stand in request order.
@@ -906,10 +906,11 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     -- Images load before the faces settle (SVG scalars join the fallback) and before diagnostics.
     let failingNow := (Diag.resolveAll doc.allow allowAll (Diag.forOutputs outputs diags)).errors > 0
     let cache ← Engine.cache (← FontDiscovery.cacheDir)
+    let convert ← svgConverter Image.PlanParams.default doc.figureConvert
     let tImg ← IO.monoMsNow
     let (imgs0, imgDiags0, imgHits, titles, imgReads0, judged0) ←
       if failingNow then pure ({}, #[], 0, #[], #[], #[])
-      else loadImages file doc pics refused reqSpans.images cache
+      else loadImages file doc pics refused reqSpans.images cache convert
     let imgMs ← since tImg
     let doc := FigureAlt.titled titles doc
     -- premise: svgTitleAltChecks — a figure's title answers N0376
@@ -958,7 +959,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let (imgs, imgDiags, imgHits, _, imgReads, judged) ←
         if Ir.imageRequests doc == Ir.imageRequests front.doc then
           pure (imgs0, imgDiags0, imgHits, titles, imgReads0, judged0)
-        else loadImages file doc pics refused reqSpans.images cache
+        else loadImages file doc pics refused reqSpans.images cache convert
       let (imgs, shapeNotes) := FigureStore.settle fs imgs
       let imgDiags := imgDiags ++ shapeNotes.map fun (src, d) =>
         DriverDiag.atImageRequest reqSpans.images src d

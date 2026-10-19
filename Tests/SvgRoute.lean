@@ -269,6 +269,25 @@ def svgConverterSharedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let _ ← both unfinished
   check ref s!"converter sharing: an attempt with no verdict is asked anew by its waiter ({← runs.get})"
     ((← runs.get) == 2)
+  runs.set 0
+  let quick (answer : Except PicCache.Outcome Image.Plan) : ByteArray → Bool →
+      IO (Except PicCache.Outcome Image.Plan) := fun _ _ => do
+    runs.modify (· + 1)
+    return answer
+  let some later ← Driver.svgConverterWith (pure true) (quick pdfPlan) true
+    | check ref "converter sharing: an allowed converter is offered" false
+  for _ in [0:3] do
+    discard <| later svgFilterFixture false
+  check ref s!"converter sharing: a font-dependent figure asked again in a build converts once ({← runs.get})"
+    ((← runs.get) == 1)
+  runs.set 0
+  let some retried ← Driver.svgConverterWith (pure true)
+      (quick (.error (.inconclusive "an invented timeout"))) true
+    | check ref "converter sharing: an allowed converter is offered" false
+  for _ in [0:2] do
+    discard <| retried svgFilterFixture false
+  check ref s!"converter sharing: a finished attempt with no verdict is asked anew ({← runs.get})"
+    ((← runs.get) == 2)
 
 /-- A tool's version is asked once per witness however many ask at once; an absence is asked
 again. -/

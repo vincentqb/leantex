@@ -174,6 +174,92 @@ public def judgeTree (t : Xml.Item) : Option Refused :=
     | some r => some r
     | none => (sitesOne #[] t).findSome? attrRefusal
 
+/-- A style sheet's parse folded onto the sheets so far, what it said outside the subset kept. -/
+def sheetFold (acc : Array Css.Rule × Array Css.Unread) (text : String) :
+    Array Css.Rule × Array Css.Unread :=
+  match Css.parseSheet text with
+  | .ok (rs, ds) => (acc.1 ++ rs, acc.2 ++ ds)
+  | .error why => (acc.1, acc.2.push why)
+
+/-- Every `style` element's sheet, in document order, with what each said outside the subset. -/
+public def sheetsOf (t : Xml.Item) : Array Css.Rule × Array Css.Unread :=
+  ((elemsOne #[] t).filter (·.1 == "style")).foldl (fun acc e => sheetFold acc e.2) (#[], #[])
+
+/-- One element's judgement with the sheets so far, a style element's sheet parsed once for both. -/
+def sheetStep (acc : Array Css.Rule × Array Css.Unread) (e : String × String) :
+    Except Refused (Array Css.Rule × Array Css.Unread) :=
+  if e.1 == "style" then
+    match Css.parseSheet e.2 with
+    | .error why => .error (.style why.prose)
+    | .ok (rs, ds) => .ok (acc.1 ++ rs, acc.2 ++ ds)
+  else match elemRefusal e with
+    | some r => .error r
+    | none => .ok acc
+
+/-- The boundary's verdict on a parsed tree with its sheets (`sheetsOf`), each parsed once. -/
+public def judgeSheets (t : Xml.Item) : Except Refused (Array Css.Rule × Array Css.Unread) :=
+  if !svgRoot t then .error .root
+  else match (elemsOne #[] t).foldlM sheetStep (#[], #[]) with
+    | .error r => .error r
+    | .ok s => match (sitesOne #[] t).findSome? attrRefusal with
+      | some r => .error r
+      | none => .ok s
+
+theorem sheetStep_exact (acc : Array Css.Rule × Array Css.Unread) (e : String × String) :
+    sheetStep acc e = match elemRefusal e with
+      | some r => .error r
+      | none => .ok (if e.1 == "style" then sheetFold acc e.2 else acc) := by
+  unfold sheetStep
+  by_cases hs : (e.1 == "style") = true
+  · have hn : (e.1 == "script" || e.1 == "foreignObject") = false := by
+      simp only [beq_iff_eq] at hs
+      simp [hs]
+    simp only [hs, ↓reduceIte, elemRefusal, hn, Bool.false_eq_true, sheetFold]
+    cases Css.parseSheet e.2 <;> rfl
+  · simp only [hs, Bool.false_eq_true, ↓reduceIte]
+
+theorem foldlM_sheetStep_exact (l : List (String × String)) (acc : Array Css.Rule × Array Css.Unread) :
+    l.foldlM sheetStep acc = match l.findSome? elemRefusal with
+      | some r => .error r
+      | none => .ok ((l.filter (·.1 == "style")).foldl (fun acc e => sheetFold acc e.2) acc) := by
+  induction l generalizing acc with
+  | nil => rfl
+  | cons e rest ih =>
+    simp only [List.foldlM_cons, List.findSome?_cons, sheetStep_exact]
+    cases he : elemRefusal e with
+    | some r => rfl
+    | none =>
+      simp only [bind, Except.bind, ih, List.filter_cons]
+      by_cases hs : (e.1 == "style") = true <;> simp [hs]
+
+/-- One parse per sheet gives the boundary's verdict and the sheets the import reads. -/
+public theorem judgeSheets_exact (t : Xml.Item) :
+    judgeSheets t = match judgeTree t with
+      | some r => .error r
+      | none => .ok (sheetsOf t) := by
+  unfold judgeSheets judgeTree sheetsOf
+  by_cases hr : svgRoot t = true
+  · simp only [hr, Bool.not_true, Bool.false_eq_true, ↓reduceIte, ← Array.foldlM_toList,
+      foldlM_sheetStep_exact, ← Array.findSome?_toList]
+    rw [← Array.toList_filter, Array.foldl_toList]
+    cases (elemsOne #[] t).toList.findSome? elemRefusal with
+    | some r => rfl
+    | none =>
+      simp only
+      cases (sitesOne #[] t).toList.findSome? attrRefusal <;> rfl
+  · simp [hr]
+
+/-- The boundary's verdict on bytes with the tree's sheets: the tree, or what refused it. -/
+public def judged (bytes : ByteArray) :
+    Except Refused (Xml.Item × Array Css.Rule × Array Css.Unread) := do
+  let node ← match Xml.parse bytes with
+    | .ok n => pure n
+    | .error r => throw (.xml r)
+  let t ← match Xml.resolve node with
+    | .ok t => pure t
+    | .error why => throw (.names why)
+  return (t, ← judgeSheets t)
+
 /-- The boundary's verdict on bytes: the tree, or what refused it. -/
 public def judge (bytes : ByteArray) : Except Refused Xml.Item := do
   let node ← match Xml.parse bytes with
@@ -185,6 +271,19 @@ public def judge (bytes : ByteArray) : Except Refused Xml.Item := do
   match judgeTree t with
   | some r => throw r
   | none => return t
+
+/-- The judge with its sheets answers as the judge does, the tree's sheets beside it. -/
+public theorem judged_exact (bytes : ByteArray) :
+    judged bytes = (judge bytes).map fun t => (t, sheetsOf t) := by
+  unfold judged judge
+  cases hp : Xml.parse bytes with
+  | error r => rfl
+  | ok n =>
+    cases hr : Xml.resolve n with
+    | error w => simp [hr, Except.map, bind, Except.bind, pure, Except.pure]; rfl
+    | ok t =>
+      simp only [hr, judgeSheets_exact, bind, Except.bind, pure, Except.pure]
+      cases judgeTree t <;> rfl
 
 private theorem judge_tree (bytes : ByteArray) (t : Xml.Item) (h : judge bytes = .ok t) :
     judgeTree t = none := by
