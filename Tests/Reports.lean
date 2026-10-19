@@ -2248,11 +2248,11 @@ def reports : List Report := [
       "the corpus and the private decks built by main's binary at 70096387 and by this tree's: every artifact byte-identical"]
     state := .guarded "70096387" .before .author },
   { id := "R999", date := "2026-10-19"
-    what := "a list in a paragraph column's cell stopped the build (E0312) with no artifact, and the cell's paragraphs ran into one line; a list opening a minipage spent its topsep above its first line"
+    what := "a list, quote, center or flush environment in a paragraph column's cell, its spanning cell's or a group's in it, stopped the build (E0312) with no artifact, and the cell's paragraphs ran into one line; a list opening a minipage or a float spent its topsep above its first line"
     pins := [check% Tests.ItemLabels.cellChecks]
-    accept := ["lualatex 1.24 on invented probes: an itemize after text in a p{5cm} cell sets its items a leftmargin in, wrapped lines hanging at the item's text, a topsep of 8pt above and below; a paragraph break in the cell opens a line one baselineskip down; a list opening a minipage stands a baselineskip below the line before it, its topsep spent nowhere; this tree sets the same, but a list opening a cell, where LaTeX spends its topsep below the row's baseline, stands on that baseline as a minipage's list does",
+    accept := ["lualatex 1.24 on invented probes: an itemize after text in a p{5cm} cell sets its items a leftmargin in, wrapped lines hanging at the item's text, a topsep of 8pt above and below; a paragraph break in the cell opens a line one baselineskip down, a declaration before it reaching the paragraph after; the cell's last line stands its row's strut above the next row; a list opening a minipage stands a baselineskip below the line before it, a label before it changing nothing, and one opening a beamer column spends beamer's 3pt; this tree sets the same, but a list opening a cell, where LaTeX spends its topsep below the row's baseline, stands on that baseline as a minipage's list does",
       "main's binary at 730c0b54 on the same probes: the cell stops the build with E0312 and no artifact, the paragraphs share a line, and the minipage's list stands its topsep lower; the guards fail there",
-      "the corpus and the private references built by main's binary at 730c0b54 and by this tree's: every PDF and web page byte-identical"]
+      "the corpus and the private references built by main's binary at 700963877 and by this tree's: every PDF byte-identical, every web page differing only in the stylesheet's rule zeroing a cell's paragraph gap, with no visible difference"]
     state := .guarded "730c0b54" .before .author }
 ]
 

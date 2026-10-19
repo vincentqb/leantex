@@ -253,7 +253,43 @@ def cellChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let box (body : String) : Option Dim.Length :=
     yOf oneFace (article ("Lead words.\n\n\\noindent\\begin{minipage}{4cm}\n" ++ body ++
       "\n\\end{minipage}")) "Kilo"
-  t "lists: a list opening a minipage spends no topsep"
-    (box "\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo" && (box "Kilo").isSome)
+  t "lists: a list opening a minipage spends no topsep, a label before it none either"
+    (box "\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo" && (box "Kilo").isSome &&
+      box "\\label{x}\n\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo")
+  let deck := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n" ++
+    "\\begin{columns}[T]\n\\begin{column}{0.4\\textwidth}\n\\begin{itemize}\\item Kilo\n" ++
+    "\\end{itemize}\n\\end{column}\n\\begin{column}{0.4\\textwidth}\nMike words.\n" ++
+    "\\end{column}\n\\end{columns}\n\\end{frame}\n\\end{document}\n"
+  t "lists: a list opening a beamer column spends beamer's topsep, the column no minipage's top"
+    (match yOf oneFace deck "Mike", yOf oneFace deck "Kilo" with
+      | some m, some k => m + Dim.pt 2 ≤ k
+      | _, _ => false)
+  let scopedSrc := article ("\\begin{tabular}{p{5cm}l}\n\\bfseries Kilo one.\n\nKilo two. & x\\\\\n" ++
+    "\\multicolumn{2}{p{8cm}}{Mike lead \\begin{itemize}\\item Mike item\\end{itemize}}\\\\\n" ++
+    "\\end{tabular}\n\nPlain words.")
+  let (sd, sds) := elabStr scopedSrc
+  let sl := bodyLines (layoutOf oneFace sd)
+  let sh := (HtmlDoc.emit {} sd).1
+  t "cells: a declaration reaches the end of its cell, across a paragraph break"
+    (hasStr sh "<p><strong>Kilo one.</strong></p><p><strong>Kilo two.</strong></p>" &&
+      !hasStr sh "<strong>Plain")
+  t "cells: a list in a spanning paragraph cell ships, its item marked"
+    (sds.all (·.severity != .error) &&
+      (lineOf sl "Mike item").any fun l => (lineText l).startsWith "•")
+  let strutted (cell : String) : Option Dim.Length :=
+    let src := article ("\\begin{tabular}{p{5cm}}\n\\hline " ++ cell ++ " \\\\ \\hline nox \\\\ \\hline\n" ++
+      "\\end{tabular}")
+    let ls := bodyLines (layoutOf oneFace (elabStr src).1)
+    match (ls.filter fun l => hasStr (lineText l) "ace").back?, lineOf ls "nox" with
+    | some a, some n => some (n.y - a.y)
+    | _, _ => none
+  t "cells: a cell of paragraphs stands on the row's strut, as one paragraph does"
+    (strutted "ace\n\nace" == strutted "ace" && (strutted "ace").isSome)
+  let tw := MarkdownDoc.emit doc
+  t s!"cells: the twin sets a cell's paragraphs and items over hard breaks: {tw}"
+    (hasStr tw "Lead words.<br>• Alpha words" && hasStr tw "<br>• Beta" &&
+      (elabMd tw).2.all (·.severity != .error))
+  t "cells: the web page zeroes a cell's paragraph gap"
+    (hasStr html ":where(:is(td, th) > *) { --parskip: 0rem; }")
 
 end Tests.ItemLabels

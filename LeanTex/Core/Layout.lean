@@ -82,6 +82,8 @@ public structure Geom where
   raggedFil : Bool := false
   /-- beamer's `\textheight` on a frame whose pages carry the footline; `none` elsewhere. -/
   frameTextHeight : Option Length := none
+  /-- The row strut every line of a table cell's paragraphs stands on (`tableStrut`). -/
+  cellStrut : Option (Length × Length) := none
   deriving Repr
 
 /-- Ink bounds from four lengths. -/
@@ -9868,8 +9870,9 @@ public structure Spacing.Pending where
   /-- A frame's body just opened (`Op.bodyOpen`), so beamer's `\vskip-\parskip`
   cancels the first paragraph's peer gap; cleared by the next line's gap. -/
   private frameTop : Bool := false
-  /-- A box opened and nothing has set a line since, so a trivlist here spends no `\topsep`
-  (latex.ltx `\@minipagetrue`); cleared by the next line's gap. -/
+  /-- A minipage, a float or a paragraph column's cell opened and nothing has set a line since, so a
+  trivlist here spends no `\topsep`, as latex.ltx's `\@minipagetrue` has it but for a cell, where
+  LaTeX spends it below the row's baseline; cleared by the next line's gap. -/
   private boxTop : Bool := false
   /-- Where `\vspace*`'s rule stands in the owed glue, before `owed[k]` (`Ir.pageAnchorRole`). -/
   private anchorAt : Option Nat := none
@@ -10052,8 +10055,8 @@ private def Spacing.Pending.trivOpen (a : Acc) (r : Rd) : Rd × Acc × Option Gl
   if r.inLabel then (ri, { a with labelOpen := true }, none)
   else
     let g := r.trivAdd a
-    (ri, { (if a.afterHeading || a.boxTop then a else a.trivSkip r g true) with labelOpen := true },
-      some g)
+    (ri, { (if a.afterHeading then a else if a.boxTop then { a with wantDefault := false }
+      else a.trivSkip r g true) with labelOpen := true }, some g)
 
 /-- The reader of a block standing where a trivlist opened its item: in its label, the label taken. -/
 private def Spacing.Context.takeLabel (r : Rd) (a : Acc) : Rd × Acc :=
@@ -10123,6 +10126,10 @@ private def Spacing.Pending.flushGap (a : Acc) (r : Rd) : Acc :=
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
            afterHeading := false, labelOpen := false, frameTop := false, boxTop := false
            anchorAt := none, dispAlt := none }
+
+/-- The gap at a box's top before its first list: what is owed there, no peer gap. -/
+private def Spacing.Pending.boxGap (a : Acc) (r : Rd) : Acc :=
+  { a with wantDefault := false }.flushGap r
 
 private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
     (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none)
@@ -10487,7 +10494,7 @@ private def collectPara (r : Rd) (a : Acc)
       afterHead := afterHead
       literal := literalLines
       display := dispJob
-      rowStrut := rowStrut
+      rowStrut := rowStrut.orElse fun _ => r.geom.cellStrut
       background := background
       -- premise: markdownWarningChecks — a markdown hard break declares no line (no W0386).
       declaresLines := r.surface == .tex && !restart }) }
@@ -11143,7 +11150,8 @@ private def collectTable (r : Rd) (a0 : Acc)
         let strut := some (cellStrut r.geom.skips r.geom.scale size r.geom.leading cell)
         if let some setBody := (bodies[i]?.bind (·[j]?)).join then
           -- `\@arrayparboxrestore` (latex.ltx): a cell's paragraphs open unindented, no skip apart.
-          let rb := { rc with geom := { rc.geom with parskip := {}, texParskip := {} } }
+          let rb := { rc with geom := { rc.geom with parskip := {}, texParskip := {},
+                                                      cellStrut := strut } }
           a := a.absorb (setBody rb { a.nested (x + measureW) with boxTop := true } x)
         else unless cell.isEmpty do
           let (sub, leaf) := (a.nested (x + measureW)).leafRange (Struct.leafCountInlines cell)
@@ -12765,7 +12773,8 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
       let g := (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
-      let top := if a.afterHeading || a.boxTop then a.flushGap r else (a.listSpace g).flushGap r
+      let top := if a.afterHeading then a.flushGap r else if a.boxTop then a.boxGap r
+        else (a.listSpace g).flushGap r
       (collectVerbatim r top covered s spec indent).listSpace g
     | none => collectVerbatim r a covered s spec indent
   | .none => collectVerbatim r a covered s spec indent
@@ -13828,7 +13837,7 @@ private def collectColumns (r : Rd) (a : Acc)
   | [] => a
   | (w, body) :: rest =>
     let wi := (w.resolve total).getD shareW + innerPaint r a (w, body) total
-    let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt, boxTop := true }
+    let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt, boxTop := w.minipage }
     let a := a.absorb (collectBlocks r sub body x0)
     let a := if rest.isEmpty then a else a.pushOp .colNext
     collectColumns { r with labels := #[] } a rest (x0 + wi + gutter) shareW gutter total
@@ -13899,7 +13908,8 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)
       | none, some t =>
-        if a.afterHeading || a.boxTop || r.inLabel then a.flushGap r
+        if a.afterHeading || r.inLabel then a.flushGap r
+        else if a.boxTop then a.boxGap r
         else (a.listOpen r t).flushGap r
       | none, none => a
     let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
@@ -13993,7 +14003,8 @@ private def collectBlock (r : Rd) (a : Acc)
     | some (sk, pts) =>
       let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
       -- In an item's label `\@noparlist` sets no skip above or below it.
-      let top := if a.afterHeading || a.boxTop || r.inLabel then a.flushGap r
+      let top := if a.afterHeading || r.inLabel then a.flushGap r
+        else if a.boxTop then a.boxGap r
         else (a.openSpace r g).flushGap r
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
@@ -14226,7 +14237,7 @@ private def collectBlock (r : Rd) (a : Acc)
           if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g
           else if !capAbove && i == 2 && !caption.isEmpty then a.vskip g else a.addvspace g
         | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
-        | .object => collectCentered rf a body.toList indent false) a
+        | .object => collectCentered rf { a with boxTop := true } body.toList indent false) a
     { a.pushOp .floatClose with noBreakNext := held }
   | .frame title standout valign breakable body =>
     let marks := Ir.frameMarks body

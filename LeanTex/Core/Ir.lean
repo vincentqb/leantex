@@ -4456,15 +4456,18 @@ public structure BoxWidth where
   size : BoxSize
   pos : BoxPos := .top
   box : Option InlineBox := none
+  /-- Whether the box opens as a minipage does, its first list spending no `\topsep` (latex.ltx
+  `\@setminipage`). -/
+  minipage : Bool := false
   deriving Repr, BEq, Inhabited
 
-@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none⟩
+@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none, false⟩
 @[match_pattern, expose] public def BoxWidth.sized (width : Affine Measure) : BoxWidth :=
-  ⟨.sized width, .top, none⟩
+  ⟨.sized width, .top, none, false⟩
 @[match_pattern, expose] public def BoxWidth.frac (permille : Nat) : BoxWidth :=
-  ⟨.frac permille, .top, none⟩
+  ⟨.frac permille, .top, none, false⟩
 @[match_pattern, expose] public def BoxWidth.abs (w : Length) : BoxWidth :=
-  ⟨.abs w, .top, none⟩
+  ⟨.abs w, .top, none, false⟩
 
 /-- The declared width against a known measure: the width the box is set at. -/
 public def BoxWidth.resolve (w : BoxWidth) (measure : Length) : Option Length :=

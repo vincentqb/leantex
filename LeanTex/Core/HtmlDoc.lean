@@ -1735,7 +1735,9 @@ private def blockRules (size ex : Length) (tokens : Ir.Tokens) (shaped : Bool) :
    .parskip "section.block > *" "0rem"] ++ shapedRules ++
   [.boundary "* + section.tcolorbox" balanced] ++
   ownsBelow ["section.tcolorbox"] balanced s!"calc({balanced} - {peerGap})" ++
-  [.parskip "section.tcolorbox > *" "0rem"]
+  [.parskip "section.tcolorbox > *" "0rem",
+   -- `\@arrayparboxrestore` zeroes `\parskip` in a paragraph column's cell (latex.ltx).
+   .parskip ":is(td, th) > *" "0rem"]
 
 /-- The boundaries beamer sets by adding where `\addvspace` would take the larger. -/
 private def beamerPairRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.Tokens) :

@@ -8722,6 +8722,56 @@ private theorem env_measures {raws b : Array Raw} {j : Nat} {n : String} {p : Po
   simp only [rawWeight, nestedPars] at hw hp
   exact ⟨by omega, hp⟩
 
+/-- The measures the block knot reads at an environment a table's body holds. -/
+private theorem cellEnv_measures {raws b : Array Raw} {j : Nat} {n : String} {p : Pos}
+    (he : raws[j]? = some (.env n b p)) :
+    rawWeightList b.toList + 1 ≤ rawWeightList raws.toList ∧
+      rawParsList b.toList ≤ nestedParsList raws.toList := by
+  have h := env_measures he
+  have hw := sliceWeight_le raws (Nat.zero_le j)
+  have hp := slicePars_le raws (Nat.zero_le j)
+  rw [sliceWeight_zero] at hw
+  rw [slicePars_zero] at hp
+  omega
+
+/-- The measures the block knot reads at an environment a group of a table's body holds. -/
+private theorem groupEnv_measures {raws g b : Array Raw} {j i : Nat} {n : String} {p q : Pos}
+    (hg : raws[j]? = some (.group g q)) (he : g[i]? = some (.env n b p)) :
+    rawWeightList b.toList + 1 ≤ rawWeightList raws.toList ∧
+      rawParsList b.toList ≤ nestedParsList raws.toList := by
+  have ⟨hgw, hgp, hgw0, hgp0, _, _⟩ := group_measures hg (Nat.zero_le j)
+  have ⟨hbw, hbp⟩ := cellEnv_measures he
+  have hn := nestedParsList_le g.toList
+  rw [sliceWeight_zero] at hgw0
+  rw [slicePars_zero] at hgp0
+  omega
+
+/-- The environments a paragraph column's cell sets as blocks of its own. -/
+private def cellBlockEnv (n : String) : Bool :=
+  n == "itemize" || n == "enumerate" || n == "description" || n == "trivlist" ||
+    n == "center" || (Ir.raggedSideOf? n).isSome || n == "quote" || n == "quotation" ||
+    n == "verse"
+
+/-- An environment a table's body holds, alone or in a group, that a paragraph column's cell sets as
+blocks: its index and its group's, its name, body and place, within the body's measures. -/
+private abbrev CellEnvSite (raws : Array Raw) :=
+  { x : (Nat × Option Nat) × String × Array Raw × Pos //
+    rawWeightList x.2.2.1.toList + 1 ≤ rawWeightList raws.toList ∧
+      rawParsList x.2.2.1.toList ≤ nestedParsList raws.toList }
+
+/-- The environments a table's body holds, alone or in a group, that a cell sets as blocks. -/
+private def cellEnvSites (raws : Array Raw) : Array (CellEnvSite raws) :=
+  (Array.range raws.size).flatMap fun (k : Nat) =>
+    match hb : raws[k]? with
+    | some (Raw.env m b p) =>
+      if cellBlockEnv m then #[⟨((k, none), m, b, p), cellEnv_measures hb⟩] else #[]
+    | some (Raw.group g _) => (Array.range g.size).filterMap fun (i : Nat) =>
+      match he : g[i]? with
+      | some (Raw.env m b p) =>
+        if cellBlockEnv m then some ⟨((k, some i), m, b, p), groupEnv_measures hb he⟩ else none
+      | _ => none
+    | _ => #[]
+
 /-- The measures the block knot reads when it advances from `raws[i]` to `j`. -/
 private theorem advance_measures (raws : Array Raw) {i j : Nat} (hi : i < raws.size) (hij : i < j) :
     sliceWeight raws j < sliceWeight raws i ∧ slicePars raws j ≤ slicePars raws i :=
@@ -10025,40 +10075,62 @@ private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Block))
 private def tableCell (ctx : Ctx) (cellRaws : Array Raw) : EM (Array Inline) :=
   inlineGroup ctx.palette (elabInlines ctx (trimRawEdges cellRaws))
 
-/-- The environments a paragraph column's cell sets as blocks of its own. -/
-private def cellBlockEnv (n : String) : Bool :=
-  n == "itemize" || n == "enumerate" || n == "description" || n == "trivlist" ||
-    n == "center" || (Ir.raggedSideOf? n).isSome || n == "quote" || n == "quotation" ||
-    n == "verse"
+/-- A cell's raws with each group holding an environment the cell sets as blocks opened in place,
+and those environments' elaborations at their indices in the result. -/
+private def cellBlockRaws (cellRaws : Array Raw) (envs : Array (Nat × Option Nat × EM (Array Block))) :
+    Array Raw × Array (Nat × EM (Array Block)) := Id.run do
+  let mut raws : Array Raw := #[]
+  let mut acts : Array (Nat × EM (Array Block)) := #[]
+  for (r, k) in cellRaws.zipIdx do
+    let inner := envs.filterMap fun (c, i, a) => if c == k then i.map (·, a) else none
+    match r with
+    | .group g _ =>
+      if inner.isEmpty then raws := raws.push r
+      else
+        acts := acts ++ inner.map fun (i, a) => (raws.size + i, a)
+        raws := raws ++ g
+    | _ =>
+      if let some (_, _, a) := envs.find? fun (c, i, _) => c == k && i.isNone then
+        acts := acts.push (raws.size, a)
+      raws := raws.push r
+  return (raws, acts)
 
-/-- A cell's content: in a paragraph column, its paragraphs and the environments it sets as
-blocks (`envs`, each at its index in `cellRaws`) one after another, else one inline group. -/
+/-- A cell's content: in a paragraph column, one group of its paragraphs and the environments it
+sets as blocks (`envs`, each at its index in `cellRaws` and, in a group, the group's), its
+declarations reaching the end of the cell; else one inline group. -/
 private def tableCellBlocks (ctx : Ctx) (spec : Option Ir.ColSpec) (cellRaws : Array Raw)
-    (envs : Array (Nat × EM (Array Block))) : EM (Array Block) := do
-  let decls := (← get).scope.blockDecls
+    (envs : Array (Nat × Option Nat × EM (Array Block))) : EM (Array Block) := do
+  let saved := (← get).scope.blockDecls
   let paraCol := spec.any fun c => !(c.width matches .natural)
-  unless paraCol && (!envs.isEmpty || cellRaws.any (· matches .par _)) do
-    return Ir.cellOf (Ir.paraAt decls (← tableCell ctx cellRaws))
+  let isPar (r : Raw) : Bool := r matches .par _ || r matches .ctrl "par" _
+  unless paraCol && (!envs.isEmpty || cellRaws.any isPar) do
+    return Ir.cellOf (Ir.paraAt saved (← tableCell ctx cellRaws))
+  let (raws, acts) := cellBlockRaws cellRaws envs
   let mut out : Array Block := #[]
   let mut seg : Array Raw := #[]
-  for (r, k) in cellRaws.zipIdx do
-    let act := envs.find? (·.1 == k)
-    if act.isSome || r matches .par _ then
+  for (r, k) in raws.zipIdx do
+    let act := acts.find? (·.1 == k)
+    if act.isSome || isPar r then
       let xs ← tableCell ctx seg
-      unless xs.isEmpty do out := out.push (.para (Ir.paraAt decls xs))
+      unless xs.isEmpty do out := out.push (.para (Ir.paraAt (← get).scope.blockDecls xs))
       seg := #[]
       -- An environment after text in its paragraph opens inside it, taking no `\partopsep`.
       if let some (_, a) := act then
         let bs ← a
         out := out ++ (if xs.isEmpty then bs else bs.map Ir.inParagraph)
-    else seg := seg.push r
+    else match r with
+      | .ctrl n p =>
+        if isDeclBlock ctx n raws k seg then discard (enterBlockDecl ctx n raws k seg p)
+        else seg := seg.push r
+      | _ => seg := seg.push r
   let xs ← tableCell ctx seg
-  unless xs.isEmpty do out := out.push (.para (Ir.paraAt decls xs))
+  unless xs.isEmpty do out := out.push (.para (Ir.paraAt (← get).scope.blockDecls xs))
+  leaveBlockDecl saved
   return out
 
 private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
-    (pos : Pos) (blocks : Array Block) (envActs : Array (Nat × EM (Array Block))) :
-    EM (Array Block) := do
+    (pos : Pos) (blocks : Array Block)
+    (envActs : Array ((Nat × Option Nat) × EM (Array Block))) : EM (Array Block) := do
   let mut blocks := blocks
   let mut k := skipSpaces body 0
   let mut flexTarget : Option Ir.TableTarget := none
@@ -10109,7 +10181,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   let mut spans : Array Ir.ColSpan := #[]
   let mut cells : Array (Array Block) := #[]
   let mut cellRaws : Array Raw := #[]
-  let mut cellEnvs : Array (Nat × EM (Array Block)) := #[]
+  let mut cellEnvs : Array (Nat × Option Nat × EM (Array Block)) := #[]
   let mut spanHere : Option (Nat × Ir.ColSpec) := none
   let mut j := k
   let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
@@ -10154,6 +10226,8 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
           else
             warnOnce ctx "ctrl:multicolumn:misplaced" .W0337 Compat.multicolumnMisplaced rpos
               (help := Compat.multicolumnMisplacedHelp)
+          for ((c, i), act) in envActs do
+            if c + 1 == next then cellEnvs := cellEnvs.push (cellRaws.size, i, act)
           cellRaws := cellRaws.push (.group text rpos)
           j := next
         | none =>
@@ -10214,8 +10288,8 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             cellRaws := cellRaws.push body[j]
             j := j + 1
       | r' =>
-        if let some (_, act) := envActs.find? (·.1 == j) then
-          cellEnvs := cellEnvs.push (cellRaws.size, act)
+        for ((c, i), act) in envActs do
+          if c == j then cellEnvs := cellEnvs.push (cellRaws.size, i, act)
         cellRaws := cellRaws.push r'
         j := j + 1
     else break
@@ -13502,18 +13576,10 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
   else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
-    -- A paragraph column's cell sets these environments as blocks, in source order.
-    let acts := (Array.range body.size).filterMap fun (k : Nat) =>
-      match he : body[k]? with
-      | some (Raw.env m b p) =>
-        have _ := env_measures he
-        have _ := sliceWeight_le body (Nat.zero_le k)
-        have _ := slicePars_le body (Nat.zero_le k)
-        have _ := sliceWeight_zero body
-        have _ := slicePars_zero body
-        have _ := nestedParsList_le body.toList
-        if cellBlockEnv m then some (k, elabEnvArm ctx m b p #[]) else none
-      | _ => none
+    have _ := nestedParsList_le body.toList
+    let acts := (cellEnvSites body).map fun site =>
+      have _ := site.2
+      (site.1.1, elabEnvArm ctx site.1.2.1 site.1.2.2.1 site.1.2.2.2 #[])
     blocks ← tabularArm ctx n body pos blocks acts
   else if n == "thebibliography" then
     blocks := blocks ++ (← pendingListedHead ctx pos (← ownBibList ctx body))
@@ -13621,7 +13687,8 @@ the text width; the box takes the whole measure" pos
     have _ := tail_measures body m2
     let ⟨boxCtx, _⟩ : MCtx ctx ← pure (parboxCtx ctx)
     blocks := blocks.push
-      (.columns #[({ width with pos := boxPos }, ← elabBlockScope boxCtx (body.extract m2 body.size))])
+      (.columns #[({ width with pos := boxPos, minipage := true },
+        ← elabBlockScope boxCtx (body.extract m2 body.size))])
   else if let some kind := titledKind? n then
     let (head, k) := selectorHead body 0
     let spec ← selectorSpec ctx head pos

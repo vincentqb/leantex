@@ -180,7 +180,10 @@ private def runIn (acc : Array Ir.Inline) (b : Ir.Block) : Array Ir.Inline :=
   | .section _ _ _ t => put acc t
   | .equation _ c => put acc c
   | .table _ _ _ rows _ _ =>
-    rows.foldl (fun acc row => row.foldl (fun acc c => put acc (Ir.cellLine c)) acc) acc
+    let cell (c : Array Ir.Block) : Array Ir.Inline := match Ir.cellLine? c with
+      | some xs => xs
+      | none => #[.text (" ".intercalate (c.toList.map fun b => Ir.blocksText #[b]))]
+    rows.foldl (fun acc row => row.foldl (fun acc c => put acc (cell c)) acc) acc
   | .titled _ t _ => put acc t
   | .disclosure s _ _ => put acc s
   | .float _ _ _ _ c => put acc c

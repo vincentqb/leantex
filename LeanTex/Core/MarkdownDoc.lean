@@ -1050,23 +1050,41 @@ public def headingText (xs : Array Inline) (cites : Bool := false) : String :=
 public def cellText (xs : Array Inline) (cites : Bool := false) : String :=
   oneLine (inlinesInto .cell cites "" none true 0 xs.toList)
 
-/-- A pipe table cell's lines when it holds blocks: a paragraph's text, an item's after its mark,
-any other block's characters. -/
-private def cellBlockLines (cites : Bool) (b : Ir.Block) : List String :=
-  let plain (b : Ir.Block) : String := match b with
-    | .para xs => cellText xs cites
-    | b => oneLine (Ir.blocksText #[b])
-  match b with
-  | .list ordered _ items =>
-    items.toList.zipIdx.map fun (it, i) =>
-      (if ordered then s!"{i + 1}." else "\u2022") ++ " " ++ " ".intercalate (it.toList.map plain)
-  | b => [plain b]
+mutual
+
+/-- A cell's lines in a pipe table when it holds blocks: each paragraph's, a list's items each after
+its mark, any other block's characters. -/
+private def cellLinesList (acc : Array (Array Inline)) : List Ir.Block → Array (Array Inline)
+  | [] => acc
+  | b :: rest => cellLinesList (cellLinesOne acc b) rest
+
+private def cellLinesOne (acc : Array (Array Inline)) : Ir.Block → Array (Array Inline)
+  | .para xs => acc.push xs
+  | .list ordered _ items => cellItemLines ordered (Ir.listIsDesc ordered items) 1 acc items.toList
+  | .role _ body | .center body | .ragged _ body | .quote _ body | .spaced _ body
+  | .onSteps _ body | .only _ body | .link _ body => cellLinesList acc body.toList
+  | b => let t := Ir.blocksText #[b]; if t.isEmpty then acc else acc.push #[.text t]
+
+private def cellItemLines (ordered desc : Bool) (n : Nat) (acc : Array (Array Inline)) :
+    List (Array Ir.Block) → Array (Array Inline)
+  | [] => acc
+  | item :: rest =>
+    let lines := cellLinesList #[] item.toList
+    let labelled := desc || (Ir.itemLabelOf? item).isSome
+    let mark : Array Inline :=
+      if labelled then #[] else #[.text ((if ordered then s!"{n}." else "\u2022") ++ " ")]
+    let acc := match lines.toList with
+      | first :: more => (acc.push (mark ++ first)) ++ more.toArray
+      | [] => acc.push mark
+    cellItemLines ordered desc (if labelled then n else n + 1) acc rest
+
+end
 
 /-- A pipe table cell's text: an inline cell's line, a cell of blocks its lines over hard breaks. -/
 private def cellBlocksText (cites : Bool) (cell : Array Ir.Block) : String :=
   match Ir.cellLine? cell with
   | some xs => cellText xs cites
-  | none => "<br>".intercalate (cell.toList.flatMap (cellBlockLines cites))
+  | none => "<br>".intercalate ((cellLinesList #[] cell.toList).toList.map (cellText · cites))
 
 /-- A laid-out paragraph's indent in the twin for a line `depth` steps in: `Ir.linesStep` in em and
 en spaces for each step. -/
