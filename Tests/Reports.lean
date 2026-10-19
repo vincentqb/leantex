@@ -2215,7 +2215,7 @@ def reports : List Report := [
     pins := [check% Tests.EnvCode.wrapEnvChecks, check% Tests.EnvCode.blockArgChecks]
     accept := ["lualatex 1.24 on invented probes: a wrapper of itemize, of a trivlist opening its item, of center by its commands with a size declared, and of center reading an argument each set what the environment written in place sets, 20pt below the line before it as a list opening in a paragraph does; the command form of trivlist sets as its environment; a wrapper of a wrapper sets as the environment inside; a footnote's list sets each item after its mark; this tree sets the same, but a footnote's items stand at the note's margin, where LaTeX hangs them a leftmargin in, and with the list's options unread, both named as the footnote's loss; a bold list's item sets bold, where LaTeX's bold command leaves vertical mode first and sets an empty line above the list, about 10pt, which this tree does not",
       "main's binary at 700963877 on the same probes: every one stops the build with no artifact; the guards fail there",
-      "the corpus and the private references built by main's binary at 700963877 and by this tree's: every PDF and web page byte-identical"]
+      "the corpus and the private references built by main's binary at 6714141d0 and by this tree's: every PDF and web page byte-identical"]
     state := .guarded "700963877" .before .author }
 ]
 

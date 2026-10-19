@@ -407,12 +407,17 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   -- a line holds no block: a block environment there sets its words, named once
   let inLine := ["\\begin{tabular}{l}\\begin{minipage}{3cm}Kqzv text.\\end{minipage}\\end{tabular}",
     "\\begin{tabular}{p{6cm}}\\fbox{\\begin{tabular}{ll}Kqzv & b\\\\\\end{tabular}}\\end{tabular}",
-    "A\\footnote{\\begin{center}Kqzv\\end{center}} b.", "A \\textbf{\\begin{quote}Kqzv\\end{quote}} b."]
+    "A\\footnote{\\begin{center}Kqzv\\end{center}} b."]
   let lineSaid := inLine.map fun body => (elabStr (doc "" body)).2.filter (·.severity != .note)
-  t s!"box blocks: a block environment in a cell, a note or a font command's argument sets its words, named once ({lineSaid.map (·.toList.map (·.code))})"
+  t s!"box blocks: a block environment in a cell or a note sets its words, named once ({lineSaid.map (·.toList.map (·.code))})"
     (lineSaid.all (·.toList.map (·.code) == ["W0451"]) &&
       inLine.all fun body => hasStr (String.join ((bodyLines (layout (doc "" body))).toList.map lineText ++
         (layout (doc "" body)).pages.toList.flatMap (·.lines.toList.map lineText))) "Kqzv")
+  -- a font command's block argument is its declaration over the block (`Compat.textStyleDecl?`)
+  let fontArg := doc "" "A \\textbf{\\begin{quote}Kqzv\\end{quote}} b."
+  t "box blocks: a block environment in a font command's argument sets as a block, named by nothing"
+    ((elabStr fontArg).2.all (·.severity == .note) &&
+      (elabStr fontArg).1.body.any (· matches .quote ..))
   -- text beside the box, a row of boxes, and a page turn
   let beside := doc "" "Alpha \\fbox{\\begin{minipage}{100pt}Bravo\\end{minipage}} Charlie."
   t s!"box blocks: text beside a box holding a minipage is set apart, named once ({said beside})"

@@ -509,7 +509,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0352 => dvBib (w := w) "@misc{broken, year = ?}\n@misc{kept, year = 2024}" "kept" none
   | .W0450 => dvBib (w := w) "@misc{k, title = {First}, year = 2024}\n@misc{k, title = {Second}, year = 2024}"
       "k" none
-  | .W0451 => dvE (w := w) (dvDoc "" "A \\textbf{\\begin{center}Kqzv\\end{center}} b.")
+  | .W0451 => dvE (w := w) (dvDoc "" "A\\footnote{\\begin{center}Kqzv\\end{center}} b.")
   | .W0452 => dvE (w := w) (dvDoc "" "A \\fbox{\\begin{minipage}{2cm}Kqzv\\end{minipage}} b.")
   | .W0353 => dvBib (w := w) "@misc{k, year = 2024}" "k" (some "mystery")
   | .N0029 => dvBib (w := w) "@misc{k, title = {T}, url = {https://example.org/k}, year = 2024}" "k"
