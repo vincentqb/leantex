@@ -1091,6 +1091,11 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ddiags.size == 1 &&
      ddiags.all (fun d => (d.message.splitOn "#nowhere").length > 1 &&
        ((d.help.getD "").splitOn "#somewhere").length > 1))
+  let (many, _) := elabStr ("\\documentclass{article}\\begin{document}\\href{#nowhere}{x}" ++
+    String.join ((List.range 30).map fun i => s!"\\section*\{Part {i}}y") ++ "\\end{document}")
+  let help := (((HtmlDoc.emit {} many).2.find? (·.code == "W0326")).bind (·.help)).getD ""
+  t s!"a dangling link's help names a page's first anchors and counts the rest ({help})"
+    (hasStr help " more" && (help.splitOn ", #").length ≤ 12)
   t "the spec's top fragments resolve without anchors"
     (!ddiags.any fun d =>
       (d.message.splitOn "#TOP").length > 1 || (d.message.splitOn "'#'").length > 1)

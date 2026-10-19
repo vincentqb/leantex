@@ -265,9 +265,16 @@ def mdParagraph (every k : Nat) : String :=
   " ".intercalate ((inventedWords 0 k).splitOn " " |>.zipIdx.map fun (w, i) =>
     if every != 0 && i % every == 0 then w ++ s!"^[Note {i}.]" else w) ++ "\n"
 
-/-- A markdown paragraph's text phases, whose cost may grow only linearly: the font phase reading
-its characters, and the web page resolving its notes' links. -/
+/-- One markdown paragraph of `k` open brackets, each before an in-text citation. -/
+def mdOpenCites (k : Nat) : String :=
+  " ".intercalate ((List.range k).map fun i => s!"w{i} [x @k{i}") ++ "\n"
+
+/-- A markdown paragraph's phases, whose cost may grow only linearly: the reader matching open
+brackets, the font phase reading its characters, and the web page resolving its notes' links. -/
 def mdGrowth (n : Nat) (leantex : String) : IO Unit := do
+  growthBound "md, 8000 / 2000 open brackets before citations"
+    (← phaseRunMs "md" n leantex "2000 open brackets before citations" "open.md" (mdOpenCites 2000))
+    (← phaseRunMs "md" n leantex "8000 open brackets before citations" "open.md" (mdOpenCites 8000))
   growthBound "font, 256000 / 64000 words in a markdown paragraph"
     (← phaseRunMs "font" n leantex "64000 words in a markdown paragraph" "para.md"
       (mdParagraph 0 64000))

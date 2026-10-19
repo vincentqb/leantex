@@ -9266,18 +9266,18 @@ end
 
 mutual
 
-private theorem plainTextOntoList_eq (acc : String) :
+private theorem plainTextOntoList_exact (acc : String) :
     ∀ xs, acc ++ plainTextList xs = plainTextOntoList acc xs
   | [] => by simp [plainTextOntoList, plainTextList]
   | x :: rest => by
-    rw [plainTextOntoList, ← plainTextOntoList_eq _ rest, ← plainTextOntoOne_eq acc x, plainTextList,
-      String.append_assoc]
+    rw [plainTextOntoList, ← plainTextOntoList_exact _ rest, ← plainTextOntoOne_exact acc x,
+      plainTextList, String.append_assoc]
 
-private theorem plainTextOntoOne_eq (acc : String) (x : Inline) :
+private theorem plainTextOntoOne_exact (acc : String) (x : Inline) :
     acc ++ plainTextOne x = plainTextOntoOne acc x := by
   cases x <;> first
     | rfl
-    | simp only [plainTextOntoOne, plainTextOne, ← plainTextOntoList_eq, String.append_assoc,
+    | simp only [plainTextOntoOne, plainTextOne, ← plainTextOntoList_exact, String.append_assoc,
         String.append_empty]
 
 end
@@ -9291,17 +9291,17 @@ public def plainTextOneOnto (x : Inline) : String := plainTextOntoOne "" x
 /-- `plainText` as the compiled program runs it. -/
 public def plainTextOnto (xs : Array Inline) : String := plainTextOntoList "" xs.toList
 
-@[csimp] public theorem plainTextList_onto : @plainTextList = @plainTextListOnto := by
+@[csimp] public theorem plainTextList_onto_exact : @plainTextList = @plainTextListOnto := by
   funext xs
-  simp [plainTextListOnto, ← plainTextOntoList_eq]
+  simp [plainTextListOnto, ← plainTextOntoList_exact]
 
-@[csimp] public theorem plainTextOne_onto : @plainTextOne = @plainTextOneOnto := by
+@[csimp] public theorem plainTextOne_onto_exact : @plainTextOne = @plainTextOneOnto := by
   funext x
-  simp [plainTextOneOnto, ← plainTextOntoOne_eq]
+  simp [plainTextOneOnto, ← plainTextOntoOne_exact]
 
-@[csimp] public theorem plainText_onto : @plainText = @plainTextOnto := by
+@[csimp] public theorem plainText_onto_exact : @plainText = @plainTextOnto := by
   funext xs
-  simp [plainText, plainTextOnto, ← plainTextOntoList_eq]
+  simp [plainText, plainTextOnto, ← plainTextOntoList_exact]
 
 mutual
 

@@ -10199,6 +10199,13 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
     head := head.push (Node.style revealCss)
   -- every in-page link resolves or is named; `#` and `top` in any ASCII case always resolve
   let anchors : Std.HashSet String := facts.ids.foldl (fun s kv => s.insert kv.1) {}
+  -- The help names a page's first anchors, so each dangling link costs its own words alone.
+  let shown := 12
+  let anchorHelp := if facts.ids.isEmpty then
+      "this page has no anchors: a level-1 \\section title becomes one in the article class"
+    else s!"anchors on this page: \
+{String.intercalate ", " ((facts.ids.extract 0 shown).toList.map (fun kv => "#" ++ kv.1))}\
+{if facts.ids.size > shown then s!" and {facts.ids.size - shown} more" else ""}"
   let mut checked : Std.HashSet String := {}
   for fref in facts.fragmentRefs do
     let frag := (fref.drop 1).toString
@@ -10207,11 +10214,7 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
       checked := checked.insert fref
       diags := diags.push (Diag.of .W0326
         s!"in-page link '{fref}' has no target anchor on this page"
-        (help := some (if facts.ids.isEmpty then
-            "this page has no anchors: a level-1 \\section title becomes \
-one in the article class"
-          else s!"anchors on this page: \
-{String.intercalate ", " (facts.ids.toList.map (fun kv => "#" ++ kv.1))}")))
+        (help := some anchorHelp))
   for k in undecodableIndices cfg.imgs
       ((imageAttrs (some "data-image-index")).list () #[] body.toList) do
     if let some en := cfg.imgs.get? k then

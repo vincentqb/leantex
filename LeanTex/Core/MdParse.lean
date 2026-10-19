@@ -1504,7 +1504,8 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
   | '#' :: rest =>
     let hex := rest.headD ' ' == 'x' || rest.headD ' ' == 'X'
     let ds := if hex then rest.drop 1 else rest
-    if ds.isEmpty || ds.length > 7 then return none
+    -- CommonMark §2.5: one to seven decimal digits, one to six hexadecimal.
+    if ds.isEmpty || ds.length > (if hex then 6 else 7) then return none
     let mut n := 0
     for ch in ds do
       let d :=
@@ -2185,7 +2186,7 @@ def attributesEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
 
 /-- The index of the bracket closing Pandoc's balanced one at `i`, an escape, a code span or a
 backtick run stepped over whole. -/
-def bracketClose? (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Option Nat := Id.run do
+def bracketScan? (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Option Nat := Id.run do
   unless c.at? i == some '[' do return none
   let mut depth := 1
   let mut j := i + 1
@@ -2206,9 +2207,45 @@ def bracketClose? (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : 
     | some _ => j := j + 1
   return none
 
+/-- `bracketScan?` for every bracket one pass from the stretch's start reads as an opener, in one
+pass: the index of its `]`, or `none` where it stays open. -/
+def bracketIndex (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) : Std.HashMap Nat (Option Nat) :=
+  Id.run do
+    let mut out : Std.HashMap Nat (Option Nat) := {}
+    let mut stack : Array Nat := #[]
+    let mut j := 0
+    for _ in [0:c.size + 1] do
+      match c.at? j with
+      | none => break
+      | some '\\' => j := j + 2
+      | some '`' =>
+        let n := tickRun c j
+        match codeSpanAt c ticks j n with
+        | some (_, next) => j := next
+        | none => j := j + n
+      | some '[' =>
+        stack := stack.push j
+        j := j + 1
+      | some ']' =>
+        if let some k := stack.back? then
+          out := out.insert k (some j)
+          stack := stack.pop
+        j := j + 1
+      | some _ => j := j + 1
+    for k in stack do out := out.insert k none
+    return out
+
+/-- The `]` closing the bracket at `i`, read from the stretch's index where its pass reached `i`. -/
+def bracketClose? (c : Chars) (ticks : Std.HashMap Nat (Array Nat))
+    (closes : Std.HashMap Nat (Option Nat)) (i : Nat) : Option Nat :=
+  match closes[i]? with
+  | some r => r
+  | none => bracketScan? c ticks i
+
 /-- Whether a bracket at `i` is Pandoc's `reference`: balanced brackets not opening `[^`. -/
-def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool :=
-  c.at? (i + 1) != some '^' && (bracketClose? c ticks i).isSome
+def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat))
+    (closes : Std.HashMap Nat (Option Nat)) (i : Nat) : Bool :=
+  c.at? (i + 1) != some '^' && (bracketClose? c ticks closes i).isSome
 
 /-- Whether the bracket from `i` to `e` opens a link, its tail inline or a label the text defines,
 which Pandoc reads before an inline note there. -/
@@ -2221,10 +2258,12 @@ def linkFollows (c : Chars) (dialect : Dialect) (defs : Defs) (i e : Nat) : Bool
 
 /-- Whether a citation's spelling Pandoc's smart punctuation joins nothing before opens at `i`: an
 author's key, or a bracket holding one that no link's tail, reference or attribute list follows. -/
-def citeSpellingAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool :=
-  MdSmart.citesAt c.cs i && match (if c.at? i == some '[' then bracketClose? c ticks i else none) with
+def citeSpellingAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat))
+    (closes : Std.HashMap Nat (Option Nat)) (i : Nat) : Bool :=
+  MdSmart.citesAt c.cs i &&
+  match (if c.at? i == some '[' then bracketClose? c ticks closes i else none) with
     | some e => (linkTailAt c (e + 1)).isNone &&
-        !(c.at? (e + 1) == some '[' && referenceAt c ticks (e + 1)) &&
+        !(c.at? (e + 1) == some '[' && referenceAt c ticks closes (e + 1)) &&
         !(c.at? (e + 1) == some '{' && (attributesEnd? c (e + 1)).isSome)
     | none => true
 
@@ -2308,6 +2347,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
   -- Link openers below this stack depth are inactive (§6.3).
   let mut inactiveBelow : Nat := 0
   let ticks := tickIndex c
+  let closes := bracketIndex c ticks
   -- Each bracket the scan matched, by its opening character's index.
   let mut closeOf : Std.HashMap Nat Nat := {}
   -- The openers of labels an undefined reference left, a citation group whatever follows them.
@@ -2351,7 +2391,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         let start := spacesBefore c i
         let kept : Unit → String := fun _ =>
           String.ofList (pending.toList.take (pending.length - (i - start)))
-        if citeSpellingAt c ticks i then
+        if citeSpellingAt c ticks closes i then
           toks := flush toks (kept ()) pendingPos
           toks := toks.push (.txt (c.str start i) (c.posAt start))
           pending := ""
@@ -2465,9 +2505,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           for _ in [0:n] do pending := pending.push '$'
         i := i + n
       else if ch == '^' && defs.own && c.at? (i + 1) == some '[' &&
-          (bracketClose? c ticks (i + 1)).any (!linkFollows c dialect defs (i + 1) ·) then
+          (bracketClose? c ticks closes (i + 1)).any (!linkFollows c dialect defs (i + 1) ·) then
         -- Pandoc's inline note: its balanced bracket's content, read as the text's own.
-        let e := (bracketClose? c ticks (i + 1)).getD (i + 1)
+        let e := (bracketClose? c ticks closes (i + 1)).getD (i + 1)
         toks := flush toks pending pendingPos
         pending := ""
         toks := toks.push (.inote (i + 2) e p)
@@ -2525,7 +2565,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             let after := c.at? (i + 1)
             -- A footnote's reference after the bracket is no label of it.
             let noteNext := (noteLabelAt c (i + 1)).any (defs.notes.contains ·.1)
-            let free := alone || noteNext || (!(after == some '[' && referenceAt c ticks (i + 1)) &&
+            let free := alone || noteNext || (!(after == some '[' && referenceAt c ticks closes (i + 1)) &&
               !(after == some '{' && (attributesEnd? c (i + 1)).isSome))
             let tailFree := alone || noteNext ||
               (after != some '[' && after != some '{' && after != some '(')
@@ -2548,7 +2588,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
               let (l, n) ← reference
               let d ← defs.links.get? (dialect.labelKey l)
               pure (d, n)
-            if after == some '[' && !noteNext && defined.isNone && referenceAt c ticks (i + 1) then
+            if after == some '[' && !noteNext && defined.isNone && referenceAt c ticks closes (i + 1) then
               standalone := standalone.insert (i + 1)
             -- doc-gen4's rule: a label matching a key it cites links to the key's entry.
             let docGen : Option (String × Nat) := do

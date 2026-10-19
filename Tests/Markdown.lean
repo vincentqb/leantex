@@ -77,6 +77,9 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a named reference decodes, one without its semicolon or unknown stays text"
     (hasStr (Ir.blocksText (elabMd "Caf&eacute; &NotEqualTilde; &eacute &bogus;\n").1.body)
       "Café ≂̸ &eacute &bogus;")
+  t "a numeric reference reads seven decimal digits and six hexadecimal ones"
+    (hasStr (Ir.blocksText (elabMd "&#0000065; &#x0000041; &#x00041;\n").1.body)
+      "A &#x0000041; A")
   t "a second ordered item is a sibling, not a lazy continuation"
     ((dvMd "1. one\n2. two\n").all (·.kind != .E0390))
   t "both ordered items ship"
