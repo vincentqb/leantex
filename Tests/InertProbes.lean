@@ -9,13 +9,15 @@ open LeanTex.Core
 namespace Tests
 
 /-- A lualatex probe of an inert row standing on `.asWithout`: the document with the setting and
-without it, which LaTeX must set alike, and with a contrasting setting, which it must not. -/
+without it, which LaTeX must set alike, and with a contrasting setting, which it must not; `minted`
+probes run Pygments through TeX Live's restricted shell escape. -/
 structure InertProbe where
   reader : String
   setting : String
   withIt : String
   without : String
   contrast : Option String
+  minted : Bool
 
 /-- A body exercising what the probed classes and packages set: a title, headings, a justified
 paragraph, a numbered display, a list, a footnote and a quotation. -/
@@ -85,13 +87,89 @@ def inertContrast : String → String → Option String
   | "siunitx", _ => some "output-decimal-marker={,}"
   | "parskip", "indent=0pt" => some "indent=2em"
   | "csquotes", "english=american" => some "english=british"
+  | "xcolor", "usenames" => some "gray"
+  | "color", "usenames" => some "monochrome"
   | _, _ => none
 
-/-- Packages whose options a probe cannot exercise here, each with why. -/
-def inertUnprobed : List (String × String) :=
-  [("minted", "minted runs Pygments only under -shell-escape, which the probes refuse")]
+/-- A beamer deck with `pre` before its title, a title page and a frame of an itemize, an
+enumerate and a block, which the predefined templates draw. -/
+def inertSiteDeck (pre : String) : String :=
+  s!"\\documentclass\{beamer}\n{pre}\\title\{Probe Title}\\author\{Probe Writer}\n" ++
+    "\\begin{document}\n\\begin{frame}\\titlepage\\end{frame}\n" ++
+    "\\begin{frame}{Frame title}\\begin{itemize}\\item One item.\\end{itemize}" ++
+    "\\begin{enumerate}\\item First item.\\end{enumerate}" ++
+    "\\begin{block}{Probe block}Block words.\\end{block}\\end{frame}\n\\end{document}\n"
 
-/-- Every `.asWithout` row of the class and package tables, probed. -/
+/-- A predefined template LaTeX sets apart from `default`, which shows the probe can see it. -/
+def inertTemplateContrast : String → Option String
+  | "itemize items" => some "circle"
+  | "enumerate items" => some "square"
+  | "blocks" => some "rounded"
+  | "footline" => some "frame number"
+  | _ => none
+
+/-- Each display key `\setmintedinline` reads to nothing, with a value it takes. -/
+def inertMintedValue : String → String
+  | "numbers" => "numbers=left"
+  | "firstnumber" => "firstnumber=3"
+  | "stepnumber" => "stepnumber=2"
+  | "numbersep" => "numbersep=9pt"
+  | "numberblanklines" => "numberblanklines=false"
+  | "frame" => "frame=single"
+  | "framerule" => "framerule=2pt"
+  | "framesep" => "framesep=6pt"
+  | "rulecolor" => "rulecolor=red"
+  | "label" => "label=Probe"
+  | "labelposition" => "labelposition=bottomline"
+  | "xleftmargin" => "xleftmargin=1cm"
+  | "xrightmargin" => "xrightmargin=1cm"
+  | "vspace" => "vspace=1cm"
+  | "listparameters" => "listparameters=\\small"
+  | "firstline" => "firstline=2"
+  | "lastline" => "lastline=1"
+  | "highlightlines" => "highlightlines=1"
+  | "highlightcolor" => "highlightcolor=red"
+  | k => k
+
+/-- The probes of an inline inert site, one per setting its reader takes there. -/
+def inertSiteProbes : Compat.InertSite → List InertProbe
+  | .geometryRatio =>
+    let geo (opts : String) := inertDoc "article" "" s!"\\usepackage[{opts}]\{geometry}\n" ""
+    [{ reader := "usepackage geometry", setting := "vmarginratio=1:2 beside top and bottom",
+       withIt := geo "top=1in,bottom=1in,vmarginratio=1:2", without := geo "top=1in,bottom=1in",
+       contrast := some (geo "top=1in,bottom=2in"), minted := false },
+     { reader := "usepackage geometry", setting := "vmarginratio=1:2 beside a height and top",
+       withIt := geo "textheight=8in,top=1in,vmarginratio=1:2", without := geo "textheight=8in,top=1in",
+       contrast := some (geo "textheight=8in,top=2in"), minted := false }]
+  | .defaultTemplate => Compat.defaultTemplates.map fun e =>
+    { reader := "setbeamertemplate", setting := s!"{e} [default]",
+      withIt := inertSiteDeck s!"\\setbeamertemplate\{{e}}[default]\n", without := inertSiteDeck "",
+      contrast := (inertTemplateContrast e).map fun c =>
+        inertSiteDeck s!"\\setbeamertemplate\{{e}}[{c}]\n", minted := false }
+  | .emptyTemplate => (Compat.emptyTemplates.filter (· != "navigation symbols")).map fun e =>
+    { reader := "setbeamertemplate", setting := s!"{e} emptied",
+      withIt := inertSiteDeck s!"\\setbeamertemplate\{{e}}\{}\n", without := inertSiteDeck "",
+      contrast := some (inertSiteDeck s!"\\setbeamertemplate\{{e}}\{Probe {e}}\n"), minted := false }
+  | .memoirTitle => ["titlepage", "notitlepage"].map fun o =>
+    let abstract := "\\begin{abstract}An invented summary.\\end{abstract}\n"
+    { reader := "documentclass memoir", setting := o, withIt := inertDoc "memoir" o "" abstract,
+      without := inertDoc "memoir" "" "" abstract, contrast := none, minted := false }
+  | .komaSepRule => (["headsepline", "footsepline"].flatMap fun k =>
+      ["false", "off", "no"].map (k, ·)).map fun (k, v) =>
+    let koma (opts : String) :=
+      inertDoc "scrartcl" "" s!"\\usepackage\{scrlayer-scrpage}\\pagestyle\{scrheadings}\\ihead\{Probe head}\\ifoot\{Probe foot}{opts}\n"
+        "\\clearpage\nA second page, under the running head and foot.\n"
+    { reader := "KOMAoptions", setting := s!"{k}={v}", withIt := koma s!"\\KOMAoptions\{{k}={v}}",
+      without := koma "", contrast := some (koma s!"\\KOMAoptions\{{k}=true}"), minted := false }
+  | .mintedInline => Compat.mintedDisplayKeys.map fun k =>
+    let code := "Inline \\mintinline{python}{x = 1} code.\n"
+    { reader := "setmintedinline", setting := inertMintedValue k,
+      withIt := inertDoc "article" "" s!"\\usepackage\{minted}\n\\setmintedinline\{{inertMintedValue k}}\n" code,
+      without := inertDoc "article" "" "\\usepackage{minted}\n" code,
+      contrast := some (inertDoc "article" "" "\\usepackage{minted}\n\\setmintedinline{fontsize=\\Large}\n" code),
+      minted := true }
+
+/-- Every `.asWithout` row of the class and package tables and every inline inert site, probed. -/
 def inertProbes : List InertProbe :=
   let flow := ((Elab.classOptionsInert.lookup .flow).getD []).filter (·.2.premise == .asWithout)
   let frame := ((Elab.classOptionsInert.lookup .frame).getD []).filter (·.2.premise == .asWithout)
@@ -99,13 +177,13 @@ def inertProbes : List InertProbe :=
     let c := inertClassOf o
     let ams := "\\usepackage{amsmath}\n"
     { reader := s!"documentclass {c}", setting := o, withIt := inertDoc c o ams "",
-      without := inertDoc c "" ams "", contrast := (inertContrast c o).map (inertDoc c · ams "")
-      : InertProbe }
+      without := inertDoc c "" ams "", contrast := (inertContrast c o).map (inertDoc c · ams ""),
+      minted := false : InertProbe }
   let decks := frame.map fun (o, _) =>
     { reader := "documentclass beamer", setting := o, withIt := inertDeck o,
-      without := inertDeck "", contrast := (inertContrast "beamer" o).map inertDeck : InertProbe }
-  let packages := (Compat.packageOptionsInert.filter (fun (p, _) =>
-      !(inertUnprobed.lookup p).isSome)).flatMap fun (p, rows) =>
+      without := inertDeck "", contrast := (inertContrast "beamer" o).map inertDeck, minted := false
+      : InertProbe }
+  let packages := Compat.packageOptionsInert.flatMap fun (p, rows) =>
     (rows.filter (·.2.premise == .asWithout)).map fun (o, _) =>
       let pre (opt : String) : String :=
         inertPackageCompanions p ++ s!"\\usepackage{opt}\{{p}}\n"
@@ -118,22 +196,29 @@ def inertProbes : List InertProbe :=
         withIt := inertDoc "article" "" (pre s!"[{spelled}]") (inertPackageBody p),
         without := inertDoc "article" "" (pre "") (inertPackageBody p),
         contrast := (inertContrast p o).map fun c =>
-          inertDoc "article" "" (pre s!"[{c}]") (inertPackageBody p) : InertProbe }
+          inertDoc "article" "" (pre s!"[{c}]") (inertPackageBody p), minted := p == "minted"
+        : InertProbe }
   let hyper := (Compat.hyperrefInert.filter (·.2.premise == .asWithout)).map fun (o, _) =>
     { reader := "usepackage hyperref", setting := o,
       withIt := inertDoc "article" "" s!"\\usepackage[{o}]\{hyperref}\n" (inertPackageBody "hyperref"),
       without := inertDoc "article" "" "\\usepackage{hyperref}\n" (inertPackageBody "hyperref"),
-      contrast := none : InertProbe }
-  classes ++ decks ++ packages ++ hyper
+      contrast := none, minted := false : InertProbe }
+  let sites := Compat.InertSite.all.flatMap inertSiteProbes
+  classes ++ decks ++ packages ++ hyper ++ sites
 
-/-- Every package an `.asWithout` row is probed in has a body its options act on, so its probe
-can see them; the oracle judges the rest. -/
+/-- Every package an `.asWithout` row is probed in has a body its options act on, every inline inert
+site has a probe, and a probe loading minted runs Pygments; the oracle judges the rest. -/
 def inertProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (p, rows) in Compat.packageOptionsInert do
-    if rows.any (·.2.premise == .asWithout) && (inertUnprobed.lookup p).isNone then
+    if rows.any (·.2.premise == .asWithout) then
       t s!"inert premise: {p}'s probe holds a body its options act on" !(inertPackageBody p).isEmpty
   t "inert premise: hyperref's probe holds a body its options act on"
     !(inertPackageBody "hyperref").isEmpty
+  for site in Compat.InertSite.all do
+    t s!"inert premise: the inline site {repr site} is probed" !(inertSiteProbes site).isEmpty
+  t "inert premise: a minted probe runs Pygments through the restricted shell escape"
+    (inertProbes.all fun p => p.minted == (hasStr p.withIt "{minted}" || hasStr p.without "{minted}" ||
+      p.contrast.any (hasStr · "{minted}")))
 
 end Tests

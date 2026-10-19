@@ -85,6 +85,27 @@ public def Inert.engineSets (why : String) : Inert := ⟨why, .engineSets⟩
 
 public def Inert.texRun (why : String) : Inert := ⟨why, .texRun⟩
 
+/-- The settings inert where their reader stands rather than in a table, each one LaTeX sets alike
+with or without. -/
+public inductive InertSite where
+  | geometryRatio | defaultTemplate | emptyTemplate | memoirTitle | komaSepRule | mintedInline
+  deriving DecidableEq, Repr
+
+public def InertSite.all : List InertSite :=
+  [.geometryRatio, .defaultTemplate, .emptyTemplate, .memoirTitle, .komaSepRule, .mintedInline]
+
+public theorem InertSite.mem_all (s : InertSite) : s ∈ InertSite.all := by
+  cases s <;> decide
+
+/-- A site's note, worded for the template `element` an emptied one names. -/
+public def InertSite.inert (element : String := "") : InertSite → Inert
+  | .geometryRatio => .asWithout "the margins place the text block, so a ratio splits nothing"
+  | .defaultTemplate => .asWithout "beamer's default, which an unthemed deck draws already"
+  | .emptyTemplate => .asWithout s!"beamer's default {element} is empty, and the engine draws none"
+  | .memoirTitle => .asWithout "memoir sets its title and abstract as without the option"
+  | .komaSepRule => .asWithout "no head or foot separation rule is drawn, as without the option"
+  | .mintedInline => .asWithout "it configures a display, and inline code reads none"
+
 /-- The note of a driver option, which the engine's own output replaces. -/
 public def Inert.driver : Inert := .texRun "the engine writes its own output"
 
@@ -138,8 +159,7 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
      ("spacing=false", .asWithout "interword spaces stay as the face sets them, as without the option"),
      ("verbose", .texRun "the engine writes no TeX log")]),
    ("listings", [("final", .asWithout "listings are set, as without the option")]),
-   ("minted", [("newfloat", .asWithout "a listing float is set as without the option"),
-     ("cache=false", .texRun "the engine keeps no minted cache"),
+   ("minted", [("cache=false", .texRun "the engine keeps no minted cache"),
      ("finalizecache", .texRun "the engine keeps no minted cache"),
      ("frozencache", .texRun "the engine keeps no minted cache"),
      ("outputdir=*", .texRun "the engine writes no minted temporaries")]),
@@ -6635,7 +6655,7 @@ private def geometry (opts : Array Raw) (pos : Pos)
     if let some (k, r) := vb.ratio then
       if alone then ratio := some r
       else if let some k := mine (some (k, r)) then
-        let why := Inert.asWithout "the margins place the text block, so a ratio splits nothing"
+        let why := InertSite.geometryRatio.inert
         if placed then inertParam "geometry" k spelling why pos
         else dropped := dropped.push k
     let spelled (x : Option (String × String)) : Option String := if placed then x.map (·.2) else none
@@ -9112,7 +9132,7 @@ defines; those blocks keep beamer's default template" pos
         -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
         if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
-            (.asWithout "beamer's default, which an unthemed deck draws already") pos
+            InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws k)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -9147,7 +9167,7 @@ defines; those blocks keep beamer's default template" pos
         if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
             defaultTemplates.contains element then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
-            (.asWithout "beamer's default, which an unthemed deck draws already") pos
+            InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -9220,7 +9240,7 @@ the built-in title page stands" pos
         if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
             defaultTemplates.contains element then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
-            (.asWithout "beamer's default, which an unthemed deck draws already") pos
+            InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -9236,7 +9256,7 @@ the built-in title page stands" pos
           (.engineSets "the engine draws no navigation symbols") pos
       else if emptyBody && emptyTemplates.contains element then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
-          (.asWithout s!"beamer's default {element} is empty, and the engine draws none") pos
+          (InertSite.emptyTemplate.inert element) pos
       else if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
         sayOnce ("param:\\setbeamertemplate:" ++ element) .W0104
           s!"'\\setbeamertemplate\{{element}}' is beamer configuration the engine does not have; \
@@ -9849,7 +9869,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else []) ++
         (if chapterClasses.contains cls then ["chapters"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
-      -- premise: none — memoir.cls declares neither option, which LaTeX reports unused
+      -- premise: none — lualatex sets memoir alike under either option, as scripts/inert-diff.lean probes
       let memoirTitle (kv : String) : Bool := cls == "memoir" && ["titlepage", "notitlepage"].contains kv
       -- premise: classRow — the engine sets every page one-sided
       for kv in keptItems.filter (oneSidedOf cls) do
@@ -9857,7 +9877,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
           (.engineSets "the page is set one-sided, as the engine sets every page") pos
       for kv in keptItems.filter memoirTitle do
         inertParam "documentclass" kv s!"\\documentclass[{kv}]\{memoir}"
-          (.asWithout "memoir sets its title and abstract as without the option") pos
+          InertSite.memoirTitle.inert pos
       -- KOMA's `parskip` is read here; a two-sided chapter class's `openright` is named where a
       -- chapter opens.
       let rightNamed := (← get).chaptersRight
@@ -10932,7 +10952,7 @@ and 'transparent=<n>' are understood")
       -- premise: komaOptionsRow — KOMA-Script draws neither separation rule unless asked
       if satisfied e then
         inertParam "KOMAoptions" (KeyVal.entry e).1 s!"\\KOMAoptions\{{e}}"
-          (.asWithout "no head or foot separation rule is drawn, as without the option") c.pos
+          InertSite.komaSepRule.inert c.pos
       else unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" c.pos
     return #[]
   | .graphColor => do
@@ -15661,7 +15681,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
           -- premise: inlineDisplayChecks — lualatex sets inline code alike under each display key
           if mintedDisplayKeys.contains key then
             inertParam "\\setmintedinline" key s!"\\setmintedinline\{{e}}"
-              (.asWithout "it configures a display, and inline code reads none") pos
+              InertSite.mintedInline.inert pos
       let lang := lang.map (·.trimAscii.toString)
       let decl := (← declareDefault st n lang pos, entries)
       let layered (layer : Array (String × DefaultLayer)) (lang : String) :=
