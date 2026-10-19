@@ -2161,7 +2161,7 @@ def reports : List Report := [
     pins := [check% texStateChecks]
     accept := ["lualatex 1.24 on invented probes: the baselineskip 12pt in the preamble, 11pt and a strut box 7.69997pt under the small size, 9.5pt in a footnote, 11pt in an article's abstract; a group's length 7pt inside and 3pt after it in one paragraph; the box separation 0pt in its cell and 3pt in the next and the next row's; geometry's default body 430.00462pt by 556.47656pt 95.39737pt from the top on letter paper, its scale keys and the a4 paper alike, a scale beside margins or a width sizing nothing; the folio 30pt below the text under a 2cm top and 4cm bottom margin, book's .35in, a footskip set before geometry standing; this tree sets each the same",
       "main's binary at a059e875 prints the assignments' values, splits the paragraph, warns W0346 with a leaked restore name, carries the cell's padding on, names the preamble lengths W0107, sets geometry's class page and the folio mid-margin; the checks fail there",
-      "the corpus built by main's binary at a059e875 and by this tree's: every PDF byte-identical, one web page differing in a box's CSS with no visible difference; two documents' diagnostics differ, a paper option naming the class's paper now noted as changing nothing and a TeX parameter's assignment in a definition named"]
+      "the corpus built by main's binary at 1e1685cb and by this tree's: every PDF byte-identical, one web page differing in a box's CSS with no visible difference; two documents' diagnostics differ, a paper option naming the class's paper now noted as changing nothing and a TeX parameter's assignment in a definition named"]
     state := .guarded "a059e875" .before .author }
 ]
 
