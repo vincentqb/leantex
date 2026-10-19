@@ -104,6 +104,13 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (prosePieces .rust "/*\n/// x\nfn f() {}\n*/\nfn g() {}\n" == #[] &&
       prosePieces .rust "/*\n/** y */\n*/\nfn g() {}\n" == #[] &&
       prosePieces .c "#if 0\n/// x\n/** y */\n#endif\nint z;\n" == #[])
+  t "code files: a doc right after a line comment, or after another doc, opens its own comment"
+    (prosePieces .c "// x\n/// y\nint f();\n" == #["/// y"] &&
+      prosePieces .c "int a; // t\n/// b\nint b;\n" == #["/// b"] &&
+      prosePieces .cpp "// leantex: formats = html\n//! A shelf.\nclass S {};\n" == #["//! A shelf."] &&
+      prosePieces .rust "//! m\n/// i\nfn f() {}\n" == #["//! m", "/// i"] &&
+      prosePieces .rust "/// a\n/** b */\nfn f() {}\n" == #["/// a", "/** b */"] &&
+      prosePieces .c "/** a /* b */\n/** c */\nint x;\n" == #["/** a /* b */", "/** c */"])
   t "code files: a block doc ends at its closer, nested ones balanced where the lexer nests them"
     (prosePieces .c "/** a */ int x;\n/** b /* c */\nint y;\n" == #["/** a */", "/** b /* c */"] &&
       prosePieces .rust "/** a /* b */ c */\nfn f() {}\n" == #["/** a /* b */ c */"])
@@ -113,7 +120,8 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       proseOf .java "/**\r\n * Adds.\r\n */" == "Adds.")
   let (strayC, strayCDs) := elabCode "t.c" "/* An invented licence. */\n// leantex: formats = html\nint x;\n"
   t "code files: a directive after a leading block comment is named, not read"
-    (strayC.output.formats.isEmpty && strayCDs.any (·.kind == .W0387))
+    (strayC.output.formats.isEmpty && strayCDs.any (·.kind == .W0387) &&
+      (elabCode "t.c" "/* An invented licence. */\n// leantex: formats = html\n").2.any (·.kind == .W0387))
   let cSrc ← fixtureText "testdata/codedoc/langs/c-docs.c"
   t "code files: a C doc comment after a macro on its line stays in the macro"
     ((prosePieces .c cSrc).size == 3 &&

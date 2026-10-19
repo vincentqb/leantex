@@ -84,8 +84,8 @@ private def next? (s : String) : Option (Array Op) :=
 public def lexer? (rules : String) (retype : Array String) : Option Lexer := do
   let lines := rules.splitOn "\n"
   let head ← lines.head?
-  let (count, root) ← match head.splitOn " " with
-    | ["lexer", n, r, _] => some (← n.toNat?, ← r.toNat?)
+  let (count, root, patternCount) ← match head.splitOn " " with
+    | ["lexer", n, r, p] => some (← n.toNat?, ← r.toNat?, ← p.toNat?)
     | _ => none
   let mut patterns : Array Pattern := #[]
   let mut states : Array (Array Rule) := #[]
@@ -98,7 +98,7 @@ public def lexer? (rules : String) (retype : Array String) : Option Lexer := do
       if states.isEmpty then failure
       states := states.modify (states.size - 1) (·.push rule)
     | _ => failure
-  if states.size != count || root ≥ count then failure
+  if states.size != count || root ≥ count || patterns.size != patternCount then failure
   let inRange (n : Nat) : Bool := n < count
   let opOk : Op → Bool
     | .push st => inRange st

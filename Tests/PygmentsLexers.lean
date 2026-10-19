@@ -268,6 +268,16 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
       PygmentsLexData.tableRetypes.size == PygmentsLexData.tableClasses.size &&
       PygmentsLexData.tableRules.size == PygmentsLexData.tableClasses.size &&
       (List.range PygmentsLexData.tableClasses.size).all fun i => (Table.lexer? i).isSome)
+  let cycle := Table.Decode.lexer? "lexer 2 0 1\np 0 e\nstate a\nr 0 - s1\nstate b\nr 0 - p1" #[]
+  t "pygments lexers: a table's transitions reading nothing that return to a stack take the fallback"
+    ((cycle.map fun lx => Table.lex lx (Src.ofString "xy")) ==
+      some #[⟨0, 1, Ty.error⟩, ⟨1, 2, Ty.error⟩])
+  let malformed : List String := ["lexer 1 0 1\np 0 e\nstate a\nr 5 - -",
+    "lexer 1 0 1\np 0 e\nstate a\nr 0 - s7", "lexer 1 0 1\np 0 e\nstate a\nr 0 u9 -",
+    "lexer 1 0 2\np 0 e\nstate a\nr 0 - -", "lexer 1 3 1\np 0 e\nstate a\nr 0 - -"]
+  t "pygments lexers: a table naming a pattern, state or count it does not hold does not decode"
+    (malformed.all (fun tbl => (Table.Decode.lexer? tbl #[]).isNone) &&
+      (Table.Decode.lexer? "lexer 1 0 1\np 0 e\nstate a\nr 0 - -" #[]).isSome)
   t "pygments lexers: every code language's listing has a native lexer"
     (Ir.CodeLang.all.all fun l => (Lexer.ofName? l.listing).isSome)
 

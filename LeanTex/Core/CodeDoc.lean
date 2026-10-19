@@ -1074,6 +1074,21 @@ private def blockEnd (src : Array Char) (i runEnd : Nat) (closer : String) : Opt
   return if runEnd ≥ i + closer.length && opensAt src (runEnd - closer.length) closer then some runEnd
     else none
 
+/-- Past the comment a token opens: a line comment's token holds its line, a block the lexer reads as
+one token ends with it, and a block it reads in pieces ends at its balanced closer. -/
+private def commentStop (src : Array Char) (raws : Array Highlight.Raw) (t : Nat)
+    (lineComment closer : String) : Nat := Id.run do
+  let r := raws.getD t default
+  if opensAt src r.start lineComment then return r.stop
+  if r.stop ≥ r.start + 2 * closer.length && opensAt src (r.stop - closer.length) closer then
+    return r.stop
+  let mut run := r.stop
+  for u in [t + 1:raws.size] do
+    let q := raws.getD u default
+    if q.start == run && q.kind == r.kind then run := q.stop else break
+  let runEnd := min run src.size
+  return (blockEnd src r.start runEnd closer).getD runEnd
+
 /-- The comments the lexer reads that open with a form, first on their line: a run of line docs one
 comment, a block to the end of its kind's tokens and closed, the first documenting what holds it
 before any code describing the file. -/
@@ -1085,18 +1100,21 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
   let starts : Std.HashSet Nat := raws.foldl (init := {}) fun acc r =>
     if commentKind r.kind then acc.insert r.start else acc
   let opens := opensLine src
+  let closer := (forms.findSome? fun f => match f with
+    | .block _ c _ _ => some c
+    | .lines .. => none).getD "*/"
   let mut head := true
   let mut skip := 0
+  let mut commentEnd := 0
   for h : t in [0:raws.size] do
     let r := raws[t]
     if r.start < skip then continue
     let isComment := commentKind r.kind
-    -- A comment opens where the token before it is not one of its kind ending there.
-    let continues := t > 0 && (raws[t - 1]?.map fun q => q.stop == r.start && q.kind == r.kind).getD false
-    let opensHere := isComment && !continues
+    let opensHere := isComment && r.start ≥ commentEnd
+    if opensHere then commentEnd := commentStop src raws t lang.row.lineComment closer
     match (if opensHere && opens.getD r.start false then formAt? forms src r.start else none) with
     | some f =>
-      let (stop, consumed) := match f with
+      let stop := match f with
         | .lines m _ _ => Id.run do
           let mut stop := lineEnd src r.start
           for _ in [0:src.size] do
@@ -1105,14 +1123,10 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
                 opensAt src k m then
               stop := lineEnd src k
             else break
-          return (some stop, stop)
-        | .block _ c _ _ => Id.run do
-          let mut run := r.stop
-          for u in [t + 1:raws.size] do
-            let q := raws.getD u default
-            if q.start == run && q.kind == r.kind then run := q.stop else break
-          let runEnd := min run src.size
-          return (blockEnd src r.start runEnd c, runEnd)
+          return some stop
+        | .block _ c _ _ =>
+          if commentEnd ≥ r.start + c.length && opensAt src (commentEnd - c.length) c then some commentEnd
+          else none
       match stop with
       | some e =>
         let holder := match f with
@@ -1124,7 +1138,7 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
         skip := e
       | none =>
         head := false
-        skip := consumed
+        skip := commentEnd
     | none =>
       let inDirective := (dir.map fun d => d.start ≤ r.start && r.start < d.stop).getD false
       if !(blankKind r.kind || isComment || inDirective || (r.start == 0 && shebang src)) then
@@ -1138,10 +1152,21 @@ public def strayDirective? (lang : Ir.CodeLang) (src : Array Char) : Option Nat 
   let marker := directiveMarker lang
   let read := (directive? lang src).map (·.1.start)
   let comment := lang.row.lineComment
+  -- Only a file spelling the marker at a line's start past the read directive is lexed for its code.
+  let spelt := Id.run do
+    let mut i := 0
+    for _ in [0:src.size + 1] do
+      if i ≥ src.size then break
+      let k := lineText src i
+      if opensAt src k marker && read != some k then return true
+      i := lineEnd src i + 1
+    return false
   let codeStart : Option Nat := match lang.row.docs, Highlight.Lexer.ofName? lang.listing with
     | .comments _, some lexer =>
-      ((Highlight.lex lexer ⟨src.push '\n'⟩).find? fun r =>
+      if !spelt then some 0 else
+      some (((Highlight.lex lexer ⟨src.push '\n'⟩).find? fun r =>
         !(blankKind r.kind || commentKind r.kind || (r.start == 0 && shebang src))).map (·.start)
+        |>.getD src.size)
     | _, _ => none
   let mut i := 0
   for _ in [0:src.size + 1] do
