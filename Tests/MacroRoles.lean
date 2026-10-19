@@ -346,6 +346,9 @@ def macroRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   t "macro roles nonterminal later binding: lost execution remains W0104"
     (effectDs.any fun d =>
       d.code == "W0104" && d.subject == some "cond:unexpanded:innerrole")
+  t "macro roles nonterminal later binding: the help names the command to move"
+    (effectDs.any fun d => d.subject == some "cond:unexpanded:innerrole" &&
+      d.help == some "define '\\innerrole' before the macros that use it")
   t "macro roles nonterminal later binding: the control ships the set flag"
     (shownTextList "" effectControlTree.toList == "OXET")
   t "macro roles nonterminal later binding: the warning names a real artifact difference"

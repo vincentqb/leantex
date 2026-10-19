@@ -114,6 +114,11 @@ def main (args : List String) : IO UInt32 := do
     let doc := colouredRuns s "washed" { r := 0x88, g := 0x88, b := 0x88 }
     timeRuns n "failing" s fun _ =>
       ((Contrast.docDiags doc).filter (·.severity == .warning)).size == 1
+  for s in [8000, 32000] do
+    let ds : Array Diag := (List.range s).toArray.map fun i =>
+      Diag.of .W0301 s!"unknown command '\\probe{i / 2}'; its arguments were kept as text"
+    timeRuns n "repeats" s fun _ =>
+      ((Diag.foldRepeats ds).filter (·.severity == .warning)).size == s / 2
   for s in [100000, 400000] do
     let arr := ("[" ++ String.join (List.replicate s "1 ") ++ "]").toUTF8
     let dict := ("<<" ++ String.join ((List.range s).map fun i => s!"/K{i} 1 ") ++ ">>").toUTF8

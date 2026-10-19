@@ -171,6 +171,7 @@ import Tests.InlineBoxes
 import Tests.EnvCode
 import Tests.Chapters
 import Tests.Schemes
+import Tests.MacroRoles
 import Tests.SvgHtml
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
@@ -2200,7 +2201,15 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on an invented article: a length set to 10pt prints as 10.0pt; this tree prints 10.0pt",
       "main's binary at 9dd642df on the same probe prints 10.0375pt; the guard fails there",
       "the corpus built by main's binary at 9dd642df and by this tree's: 84 changed artifacts invisible, 160 visible as the intended shrink toward TeX, a 10pt font set at 9.963 bp where lualatex sets 9.96264"]
-    state := .guarded "9dd642df" .before .author }
+    state := .guarded "9dd642df" .before .author },
+  { id := "R248", date := "2026-10-19"
+    what := "a declared font family no installed face answers stopped the build with no artifact (E0403); a palette colour failing on several grounds was named on the first alone; the log's repeat fold scanned every earlier record for each record; and the help of a live macro reached through an earlier one printed its name as a literal placeholder"
+    pins := [check% fontDefaultsChecks, check% Tests.UnusedSettings.faceChecks,
+      check% Tests.Schemes.dropChecks, check% Tests.macroRoleChecks, check% diagVoiceChecks]
+    accept := ["main's binary at 730c0b54 on invented probes: a main font declaration naming a family no host has stops the build with E0403 and no PDF, and a white palette alert on a black and a blue box is named in the dark schemes on the black ground alone; this tree ships the document byte-identical to the one without the declaration beside one W0403, and names both grounds",
+      "the passes bench: folding 8000 and 32000 diagnostics in 4000 and 16000 wordings took 970 and 15294 ms on main's code, 15.8 times for four times the records, and takes 3.6 and 15.1 ms here, 4.2 times",
+      "the corpus built by main's binary at 730c0b54 and by this tree's: every artifact and every diagnostic byte-identical"]
+    state := .guarded "730c0b54" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

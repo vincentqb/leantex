@@ -908,7 +908,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   macroBindingChecks ref oneFace
   macroArgumentChecks ref oneFace
   macroDefaultChecks ref oneFace
-  macroRoleChecks ref oneFace
+  Tests.macroRoleChecks ref oneFace
   macroAccentChecks ref oneFace
   macroForwardingChecks ref oneFace
   roleShapingChecks ref oneFace

@@ -1461,7 +1461,8 @@ def benchPasses (n : Nat) : IO Unit := do
     [("anchors", 600, "same-titled"), ("frames", 600, "same-titled frames"),
      ("families", 30000, "faces"), ("merge", 400000, "keys"), ("references", 2000, "definitions"),
      ("legible", 20000, "runs"),
-     ("failing", 6000, "uses"), ("arrays", 100000, "elements"),
+     ("failing", 6000, "uses"), ("repeats", 8000, "diagnostics"),
+     ("arrays", 100000, "elements"),
      ("dictionaries", 100000, "entries"), ("adler32", 1048576, "bytes"),
      ("deflate", 1048576, "bytes"), ("inflate", 1048576, "bytes")]
   for (label, size, what) in growth do

@@ -5474,7 +5474,7 @@ the argument boundary is unread here, so its optional selection and state change
 used; here it is reached through a macro defined before it, which this engine expands \
 without that selection or those changes")
         (site.getD pos)
-        (help := "define '\\{n}' before the macros that use it")
+        (help := s!"define '\\{n}' before the macros that use it")
       return none
     else return none
   | some none => return none

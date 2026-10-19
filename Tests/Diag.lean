@@ -695,6 +695,17 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       | _ => #[]
     ask "Demo Sans Light" none ++ ask "Demo Sans" (some "Demo Sans Medium")
 
+/-- Whether a text holds `\{name}`, an interpolation its string literal never ran. -/
+def dvPlaceholder (s : String) : Bool :=
+  let rec go : List Char → Bool
+    | '\\' :: '{' :: c :: rest =>
+      (c.isAlpha && match rest.dropWhile (fun x => x.isAlphanum || x == '.') with
+        | '}' :: _ => true
+        | _ => false) || go (c :: rest)
+    | _ :: rest => go rest
+    | [] => false
+  go s.toList
+
 /-- A reference only someone inside this repository can follow: a repo file, a source path, or a
 milestone token. -/
 def dvInternalRef (s : String) : Bool :=
@@ -838,6 +849,8 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
       fail s!"{d.code} {part}: terminal punctuation: {s}"
     unless dvCaseOk s do
       fail s!"{d.code} {part}: starts uppercase without a proper noun: {s}"
+    if dvPlaceholder s then
+      fail s!"{d.code} {part}: an uninterpolated placeholder: {s}"
     if (s.splitOn "\"\\").length > 1 then
       fail s!"{d.code} {part}: a construct is double-quoted; the convention is '...': {s}"
     unless d.code == "W0013" || d.code == "E0329" || d.code == "N0105" do

@@ -700,7 +700,7 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
             some ({ name := u.name, on := if w.onLiteral && !marked then .color surface.hex
                       else .role on, ratio, gate } : SchemeLoss)
           else none
-        if let some l := fails[0]? then out := push out l
+        for l in fails do out := push out l
     for u in used do
       if u.name.isSome then continue
       let (surface, role) := if u.surfaceRole == some .alertMark && (Design.at v s .alertMark).isNone

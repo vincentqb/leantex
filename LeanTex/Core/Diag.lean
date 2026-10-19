@@ -1,5 +1,7 @@
 module
 
+import Std.Data.HashMap
+
 namespace LeanTex.Core
 
 /-- One macro invocation in the provenance of an expanded token. -/
@@ -574,7 +576,7 @@ public inductive Diag.Output where
   | pdf
   | html
   | md
-  deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq
+  deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq, Hashable
 
 public def Diag.Output.label : Diag.Output → String
   | .pdf => "pdf"
@@ -586,7 +588,7 @@ public inductive Diag.Recovery where
   | ignored
   | skipped
   | replacedBy (replacement : String)
-  deriving Repr, BEq, DecidableEq
+  deriving Repr, BEq, DecidableEq, Hashable
 
 /-- Is `s` one written construct token: a control word or symbol, a math shift, or a TeX
 special character? -/
@@ -1194,6 +1196,149 @@ private theorem Diag.repeatCarrier_lt (l : List Diag) (i : Nat) (h : i < l.lengt
       · exact hf
     · exact h
 
+/-- What `sameLine` compares, as one value a table keys. -/
+private structure Diag.LineKey where
+  kind : Nat
+  output : Option Diag.Output
+  message : String
+  help : Option String
+  recovery : Option Diag.Recovery
+  refused : Option String
+  deriving DecidableEq, Hashable
+
+private def Diag.lineKey (d : Diag) : Diag.LineKey :=
+  ⟨d.kind.ctorIdx, d.output, d.message, d.help, d.recovery, d.refused⟩
+
+/-- What `sameLoss` compares of records naming a subject. -/
+private def Diag.lossKey (d : Diag) : Nat × Option Diag.Output × Option String :=
+  (d.kind.ctorIdx, d.output, d.subject)
+
+private theorem Diag.kind_eq_of_ctorIdx {a b : DiagCode} (h : a.ctorIdx = b.ctorIdx) : a = b := by
+  rw [← DiagCode.ofNat_ctorIdx a, h, DiagCode.ofNat_ctorIdx]
+
+private theorem Diag.lineKey_beq (d e : Diag) :
+    (Diag.lineKey e == Diag.lineKey d) = Diag.sameLine d e := by
+  apply Bool.eq_iff_iff.mpr
+  rw [beq_iff_eq, Diag.sameLine_iff, Diag.sameWords_iff]
+  constructor
+  · intro h
+    simp only [Diag.lineKey, Diag.LineKey.mk.injEq] at h
+    obtain ⟨hk, ho, hm, hh, hr, hf⟩ := h
+    exact ⟨⟨(Diag.kind_eq_of_ctorIdx hk).symm, ho.symm⟩, ⟨hm.symm, hh.symm⟩, hr.symm, hf.symm⟩
+  · rintro ⟨⟨hk, ho⟩, ⟨hm, hh⟩, hr, hf⟩
+    simp [Diag.lineKey, hk, ho, hm, hh, hr, hf]
+
+private theorem Diag.lossKey_beq (d e : Diag) :
+    (e.subject.isSome && Diag.lossKey e == Diag.lossKey d) = Diag.sameLoss d e := by
+  apply Bool.eq_iff_iff.mpr
+  rw [Bool.and_eq_true, beq_iff_eq, Diag.sameLoss_iff]
+  constructor
+  · rintro ⟨hs, h⟩
+    simp only [Diag.lossKey, Prod.mk.injEq] at h
+    obtain ⟨hk, ho, hsub⟩ := h
+    exact ⟨⟨(Diag.kind_eq_of_ctorIdx hk).symm, ho.symm⟩, hsub.symm, hsub ▸ hs⟩
+  · rintro ⟨⟨hk, ho⟩, hsub, hs⟩
+    exact ⟨hsub ▸ hs, by simp [Diag.lossKey, hk, ho, hsub]⟩
+
+/-- For each key, the first index from `j` at which `p` admits an element `key` names, over `m`'s
+entries, in one pass. -/
+private def Diag.firstByKey [BEq κ] [Hashable κ] (p : α → Bool) (key : α → κ) :
+    List α → Nat → Std.HashMap κ Nat → Std.HashMap κ Nat
+  | [], _, m => m
+  | x :: xs, j, m => Diag.firstByKey p key xs (j + 1) (if p x then m.insertIfNew (key x) j else m)
+
+private theorem Diag.firstByKey_getElem? [BEq κ] [Hashable κ] [LawfulBEq κ] (p : α → Bool)
+    (key : α → κ) (l : List α) (j : Nat) (m : Std.HashMap κ Nat) (k : κ) :
+    (Diag.firstByKey p key l j m)[k]? =
+      (m[k]?).or (if l.findIdx (fun x => p x && key x == k) < l.length
+        then some (j + l.findIdx (fun x => p x && key x == k)) else none) := by
+  induction l generalizing j m with
+  | nil => simp [Diag.firstByKey]
+  | cons x xs ih =>
+    rw [Diag.firstByKey, ih]
+    by_cases hx : (p x && key x == k) = true
+    · have hp : p x = true := ((Bool.and_eq_true _ _).mp hx).1
+      have hk : key x = k := beq_iff_eq.mp ((Bool.and_eq_true _ _).mp hx).2
+      subst hk
+      have hfx : List.findIdx (fun y => p y && key y == key x) (x :: xs) = 0 := by
+        simp [List.findIdx_cons, hp]
+      simp only [hp, ↓reduceIte]
+      rw [Std.HashMap.getElem?_insertIfNew, hfx]
+      cases hm : m[key x]? with
+      | none =>
+        have hn : ¬ key x ∈ m := by
+          rw [Std.HashMap.mem_iff_isSome_getElem?, hm]; simp
+        simp [hn]
+      | some v =>
+        have hn : key x ∈ m := by
+          rw [Std.HashMap.mem_iff_isSome_getElem?, hm]; simp
+        simp [hn]
+    · have hm' : (if p x then m.insertIfNew (key x) j else m)[k]? = m[k]? := by
+        split
+        · rename_i hp
+          have hk : (key x == k) = false := by simpa [hp] using hx
+          simp [Std.HashMap.getElem?_insertIfNew, hk]
+        · rfl
+      have hf : List.findIdx (fun y => p y && key y == k) (x :: xs) =
+          List.findIdx (fun y => p y && key y == k) xs + 1 := by
+        rw [List.findIdx_cons]
+        simp only [Bool.not_eq_true] at hx
+        simp [hx]
+      rw [hm', hf, List.length_cons]
+      congr 1
+      by_cases hlt : List.findIdx (fun y => p y && key y == k) xs < xs.length
+      · have hlt' : List.findIdx (fun y => p y && key y == k) xs + 1 < xs.length + 1 := by omega
+        simp only [hlt, hlt', ↓reduceIte, Option.some.injEq]
+        omega
+      · have hlt' : ¬ List.findIdx (fun y => p y && key y == k) xs + 1 < xs.length + 1 := by omega
+        simp only [hlt, hlt', ↓reduceIte]
+
+/-- `findIdx` of a key's elements, read from the table. -/
+private theorem Diag.firstByKey_findIdx [BEq κ] [Hashable κ] [LawfulBEq κ] (p : α → Bool)
+    (key : α → κ) (l : List α) (k : κ) :
+    ((Diag.firstByKey p key l 0 {})[k]?).getD l.length =
+      l.findIdx (fun x => p x && key x == k) := by
+  rw [Diag.firstByKey_getElem?]
+  simp only [Std.HashMap.getElem?_empty, Option.none_or, Nat.zero_add]
+  split
+  · rfl
+  · rename_i h
+    exact (Nat.le_antisymm (List.findIdx_le_length) (Nat.not_lt.mp h)).symm
+
+/-- `repeatCarrier`'s index for every record, from two key tables built in one pass each. -/
+private def Diag.carriersOf (ds : Array Diag) : Array Nat :=
+  let lines := Diag.firstByKey (·.severity.isWarning) Diag.lineKey ds.toList 0 {}
+  let losses := Diag.firstByKey (·.subject.isSome) Diag.lossKey ds.toList 0 {}
+  let lineAt (d : Diag) : Nat := (lines[Diag.lineKey d]?).getD ds.size
+  ds.mapIdx fun i d =>
+    if d.severity.isWarning then lineAt d
+    else if d.subject.isSome then
+      let f := (losses[Diag.lossKey d]?).getD ds.size
+      if (ds[f]?.getD d).severity.isWarning then lineAt (ds[f]?.getD d) else f
+    else i
+
+private theorem Diag.carriersOf_toList (ds : Array Diag) :
+    (Diag.carriersOf ds).toList = ds.toList.mapIdx (Diag.repeatCarrier ds.toList) := by
+  have hline (d : Diag) :
+      ((Diag.firstByKey (·.severity.isWarning) Diag.lineKey ds.toList 0 {})[Diag.lineKey d]?).getD
+        ds.size = Diag.lineOf ds.toList d := by
+    rw [← Array.length_toList, Diag.firstByKey_findIdx, Diag.lineOf]
+    congr 1
+    funext e
+    rw [Diag.lineKey_beq, Bool.and_comm]
+  have hloss (d : Diag) :
+      ((Diag.firstByKey (·.subject.isSome) Diag.lossKey ds.toList 0 {})[Diag.lossKey d]?).getD
+        ds.size = ds.toList.findIdx (Diag.sameLoss d) := by
+    rw [← Array.length_toList, Diag.firstByKey_findIdx]
+    congr 1
+    funext e
+    exact Diag.lossKey_beq d e
+  rw [Diag.carriersOf, Array.toList_mapIdx]
+  congr 1
+  funext i d
+  simp only [hline, hloss, Diag.repeatCarrier, Diag.opener, List.getD_eq_getElem?_getD,
+    Array.getElem?_toList]
+
 /-- The records a shown line counts: a warning in its words, and a note or an
 error whose census loss opens on a warning in its words — the sites a
 once-per-construct emitter delivers as notes beside its first warning. -/
@@ -1270,10 +1415,8 @@ private theorem Diag.foldOne_shown (n : Nat) (s : Bool) (d : Diag)
 /-- Fold repeated wordings: the first warning in a wording carries the count, later ones
 deliver as notes. -/
 public def Diag.foldRepeats (ds : Array Diag) : Array Diag :=
-  let l := ds.toList
-  let carriers := l.mapIdx (Diag.repeatCarrier l)
-  let counts := Diag.countsOf ds.size carriers
-  let line := carriers.toArray
+  let line := Diag.carriersOf ds
+  let counts := Diag.countsOf ds.size line.toList
   ds.mapIdx fun i d =>
     Diag.foldOne (counts[i]?.getD 0) (!d.severity.isWarning || line[i]?.getD i == i) d
 
@@ -1282,7 +1425,8 @@ private theorem Diag.foldRepeats_getElem? (ds : Array Diag) (i : Nat) (h : i < d
       some (Diag.foldOne ((ds.toList.mapIdx (Diag.repeatCarrier ds.toList)).count i)
         (!ds[i].severity.isWarning || Diag.repeatCarrier ds.toList i ds[i] == i) ds[i]) := by
   simp only [Diag.foldRepeats, Array.getElem?_mapIdx, Array.getElem?_eq_getElem h, Option.map_some]
-  rw [Diag.countsOf_count ds.size _ i h]
+  rw [Diag.carriersOf_toList, Diag.countsOf_count ds.size _ i h, ← Array.getElem?_toList,
+    Diag.carriersOf_toList]
   simp [List.getElem?_mapIdx, Array.getElem?_eq_getElem h]
 
 public theorem Diag.foldRepeats_size_exact (ds : Array Diag) : (Diag.foldRepeats ds).size = ds.size :=

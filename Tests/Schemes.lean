@@ -58,6 +58,11 @@ def dropChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"a palette colour only a box's literal ground carries is judged on that ground ({boxedKeys})"
     (boxedKeys.any (·.endsWith "alert@#000000") &&
       !boxedKeys.any fun k => hasStr k "alert@bg" || hasStr k "alert@fg")
+  let (twoGrounds, _) := elabStr (dvDoc "\\palette{ alert = #FFFFFF }\n"
+    "x \\colorbox{black}{\\textcolor{alert}{y}} \\colorbox{blue}{\\textcolor{alert}{z}}")
+  let twoKeys := (Contrast.schemeJudge twoGrounds).diags.filterMap (·.subject)
+  t s!"a palette colour failing on two grounds is named on each ({twoKeys})"
+    (twoKeys.any (·.endsWith "dark:alert@#000000") && twoKeys.any (·.endsWith "dark:alert@#0000FF"))
   let (unpaintedGround, _) := elabStr (dvDoc "\\palette{ bg = #767676, fg = #000000, alert = #FFFFFF }\n"
     "x \\colorbox{black}{\\textcolor{alert}{y}}")
   t s!"a palette colour is never judged on a ground no text it colours stands on ({(Contrast.schemeJudge unpaintedGround).diags.filterMap (·.subject)})"
