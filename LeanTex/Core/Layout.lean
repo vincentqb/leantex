@@ -9716,7 +9716,8 @@ private def Spacing.Pending.nested (a : Acc) (edge : Sp) : Acc :=
 /-- `a` after a nested walk ended at `sub`: its ops after `a`'s, and every ledger the walk threads. -/
 private def Spacing.Pending.absorb (a sub : Acc) : Acc :=
   { a with ops := a.ops ++ sub.ops, hyphCache := sub.hyphCache, diags := sub.diags
-           navEntries := sub.navEntries, leafNext := sub.leafNext, pictures := sub.pictures }
+           navEntries := sub.navEntries, leafNext := sub.leafNext, pictures := sub.pictures
+           noBreakNext := sub.noBreakNext }
 
 /-- Claim the next `n` leaves for one block of set text: its first
 leaf, `none` when it owns none, and the counter past them. -/
@@ -13693,6 +13694,8 @@ private def collectBlock (r : Rd) (a : Acc)
     collectTable r a cols padL padR rows rules spans indent false
   | .float kind num capAbove body caption =>
     -- A float is one unbreakable box (`runFloat`); its caption's leaves come first.
+    -- Its box leaves TeX's `\@nobreak` as it stood (latex.ltx `\@floatboxreset`).
+    let held := a.noBreakNext
     let capSpan := Struct.leafCountInlines caption
     let (a, capLeaf) := a.leafRange capSpan
     -- The declared caption is marked as content, so the number prefix is the caption's `.block`.
@@ -13715,7 +13718,7 @@ private def collectBlock (r : Rd) (a : Acc)
           if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g else a.addvspace g
         | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
         | .object => collectCentered rf a body.toList indent false) a
-    a.pushOp .floatClose
+    { a.pushOp .floatClose with noBreakNext := held }
   | .frame title standout valign breakable body =>
     let marks := Ir.frameMarks body
     let squeeze := Ir.frameSqueeze body
@@ -15020,10 +15023,6 @@ private theorem turnAt_cases (turns : Array Nat) (st : B × Nat × Bool) (brk : 
   · exact Or.inr rfl
   · exact Or.inl rfl
 
-private theorem turnAt_pair (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
-    turnAt turns st brk = ((turnAt turns st brk).1, st.2.1, st.2.2) := by
-  rw [← turnAt_snd turns st brk]
-
 private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
   let p := paragraphRecord b j breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
@@ -15043,18 +15042,32 @@ private structure TurnRoom where
   fils : Nat
   shipped : Nat
 
+/-- How many paragraph boundaries the open page holds: changes of block between its counted lines. -/
+private def Spacing.Page.boundaries (b : B) : Nat := Id.run do
+  let mut n := 0
+  let mut last : Option Nat := none
+  for l in b.cur.lines do
+    if l.counted && l.leaf.isSome then
+      if last.isSome && l.leaf != last then n := n + 1
+      last := l.leaf
+  return n
+
+/-- The page's room and glue where it could end here, LaTeX's `\parskip` stretch at each paragraph
+boundary on it counted where the engine's peer gap carries less. -/
 private def Spacing.Page.turnRoom (b : B) : TurnRoom :=
+  let par := (b.geom.texParskip.resolve b.geom.fontSize b.xHeight).stretch -
+    (b.geom.parskip.resolve b.geom.fontSize b.xHeight).stretch
   { room := noteFloor b.bottom b.noteGap b.notesH b.noteHang - (b.y + b.prevDepth)
-    stretch := b.pageStretch, shrink := b.pageShrink, fils := b.pageFils
-    shipped := b.pages.size }
+    stretch := b.pageStretch + (b.boundaries : Int) * max 0 par, shrink := b.pageShrink
+    fils := b.pageFils, shipped := b.pages.size }
 
 /-- TeX's cost of a page ending with this room at penalty `pen` (tex.web §1005): its badness and the
 penalty, the deplorable cost past infinite badness, and `none` where no break stands. -/
 private def TurnRoom.cost (r : TurnRoom) (pen : Int) : Option Int :=
   if 10000 ≤ pen then none else
-  let bad : Option Nat := if 0 < r.fils || r.room == 0 then some 0
-    else if 0 < r.room then some (badness r.room r.stretch)
-    else if -r.room ≤ r.shrink then some (badness (-r.room) r.shrink) else none
+  let bad : Option Nat := if r.room < 0 then
+      (if -r.room ≤ r.shrink then some (badness (-r.room) r.shrink) else none)
+    else if 0 < r.fils || r.room == 0 then some 0 else some (badness r.room r.stretch)
   bad.map fun v => if v < 10000 then (v : Int) + pen else 100000
 
 /-- The penalty of a page turn before line `k` of a paragraph broken at `breaks`: the club's after
@@ -15086,35 +15099,36 @@ private def bestTurn (rooms : Array TurnRoom) (pen : Nat → Int) (lo k : Nat) :
     | none => pure ()
   return best
 
-/-- The rooms before each line of a paragraph placed with `turns`, and after its last. -/
-private def turnRooms (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : Array Nat) :
-    Array TurnRoom :=
-  let (st, rooms) := breaks.foldl (fun (st, rooms) brk =>
-      (placeParaTurning fs (placedJob fs b j breaks) turns st brk, rooms.push st.1.turnRoom))
-    (paragraphStart b j breaks, #[])
-  rooms.push st.1.turnRoom
-
 /-- The breaks before which widow and club control turns the page: at each page turn the paragraph's
-lines make, the latest line at TeX's least cost (tex.web §1005), its first only off a heading. -/
+lines make, the latest line at TeX's least cost (tex.web §1005), its first only off a heading; a
+turn moved back re-places the lines from it, so each line is placed again at most once a page. -/
 private def keptTurns (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Array Nat :=
   Id.run do
-  let mut turns : Array Nat := #[]
-  let mut done := 0
+  let jp := placedJob fs b j breaks
+  let pen := turnPenalty b.geom.penalties j breaks
   let startOk := !b.fresh && !j.afterHead
-  for _ in [0:breaks.size] do
-    let rooms := turnRooms fs b j breaks turns
-    let next := (List.range breaks.size).find? fun i =>
-      done < i && match rooms[i]?, rooms[i + 1]? with
-        | some r, some s => r.shipped < s.shipped
-        | _, _ => false
-    match next with
-    | none => return turns
-    | some k =>
+  let mut turns : Array Nat := #[]
+  let mut states : Array (B × Nat × Bool) := #[]
+  let mut st := paragraphStart b j breaks
+  let mut done := 0
+  let mut i := 0
+  for _ in [0:breaks.size * breaks.size + breaks.size + 1] do
+    let some brk := breaks[i]? | break
+    states := if h : i < states.size then states.set i st h else states.push st
+    let next := placeParaTurning fs jp turns st brk
+    if done < i && st.1.pages.size < next.1.pages.size then
       let lo := if done == 0 && turns.isEmpty && startOk then 0 else done + 1
-      let t := bestTurn rooms (turnPenalty b.geom.penalties j breaks) lo k
-      if t < k then
-        if let some brk := breaks[t]? then turns := turns.push brk
-      done := t
+      let t := bestTurn ((states.extract 0 (i + 1)).map (·.1.turnRoom)) pen lo i
+      done := i
+      if t < i then
+        if let (some tb, some back) := (breaks[t]?, states[t]?) then
+          turns := turns.push tb
+          done := t
+          st := back
+          i := t
+          continue
+    st := next
+    i := i + 1
   return turns
 
 /-- Whether widow and club control reads a paragraph: lines of a flow, not a heading's, a display's,

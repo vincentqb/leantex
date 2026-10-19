@@ -16,6 +16,14 @@ private def turned (pre : String) (stretch high : Nat) (head : Bool := false) : 
     (if head then "\\section{Lima}\n" else "") ++
     String.join (List.replicate 60 "Kilo ") ++ "Kilo.\n\nMike words.\n\\end{document}\n"
 
+/-- An article whose page holds `n` one-line paragraphs, a rule of `high` points and a paragraph of
+nine lines or so after `between`. -/
+private def prose (n high : Nat) (between : String := "") : String :=
+  "\\documentclass{article}\n\\begin{document}\n" ++
+    String.join ((List.range n).map fun i => s!"Zulu {i}.\n\n") ++
+    s!"\\noindent\\rule\{1pt}\{{high}pt}\\par\n" ++ between ++
+    String.join (List.replicate 60 "Kilo ") ++ "Kilo.\n\nMike words.\n\\end{document}\n"
+
 /-- How many of the paragraph's lines each page holds. -/
 private def split (fonts : Font.FontSet) (src : String) : List Nat :=
   ((fittedOf fonts (elabStr src).1).out.pages.map fun p =>
@@ -50,6 +58,18 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     (headed.all fun s => match s.dropWhile (· == 0) with
       | 0 :: _ | 1 :: _ => false
       | _ => true)
+  -- LaTeX's `\parskip` stretch at each paragraph boundary is the page's to spend.
+  let many := (List.range 100).map fun i => split oneFace (prose 30 (4 * i))
+  t "page turns: a page of thirty paragraphs keeps no club or widow line, as LaTeX's stretch lets it"
+    (many.any (fun s => 1 < (s.filter (0 < ·)).length) && !many.any lone)
+  -- A table between a heading and its paragraph frees the paragraph, as its cell's paragraph does.
+  let headed (between : String) : List (Option Nat × Option Nat) := (List.range 100).map fun i =>
+    let out := (fittedOf oneFace (elabStr (prose 20 (4 * i) ("\\section{Lima}\n" ++ between))).1).out
+    let pageOf (w : String) := out.pages.findIdx? fun p => p.lines.any fun l => hasStr (lineText l) w
+    (pageOf "Lima", pageOf "Kilo")
+  t "page turns: a table after a heading frees the paragraph after it to move whole"
+    ((headed "\\begin{center}\n\\begin{tabular}{l}Oscar\\end{tabular}\n\\end{center}\n").any
+      fun (h, k) => h.isSome && k.isSome && h != k)
   let src := turned "\\widowpenalty=10000\n" 0 400
   let (doc, ds) := elabStr src
   t "page turns: a preamble's \\widowpenalty assignment ships, read as the page's penalty"
