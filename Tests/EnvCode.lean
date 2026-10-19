@@ -126,6 +126,11 @@ def templateCodeUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       "Alpha \\begin{probe}{teal}Bravo words\\end{probe} Delta.")
     (dvDoc (colour ++ "\\newenvironment{probe}{\\color{teal}}{}\n")
       "Alpha \\begin{probe}Bravo words\\end{probe} Delta.")
+  sameShip ref fonts "environment code: an environment a macro defines reads its use's argument"
+    (dvDoc "\\newcommand\\mk[1]{\\newenvironment{#1}[1]{\\setlength{\\fboxsep}{##1}}{}}\n\\mk{probe}\n"
+      "Alpha \\begin{probe}{8pt}Bravo \\fbox{words}\\end{probe} Delta.")
+    (dvDoc "\\newenvironment{probe}[1]{\\setlength{\\fboxsep}{#1}}{}\n"
+      "Alpha \\begin{probe}{8pt}Bravo \\fbox{words}\\end{probe} Delta.")
   sameShip ref fonts "environment code: an optional argument given or defaulted"
     (dvDoc (colour ++ "\\newenvironment{probe}[2][teal]{\\color{#1}\\textbf{#2:} }{}\n")
       "Alpha \\begin{probe}{Note}Bravo\\end{probe} and \\begin{probe}[blue]{Tip}Charlie\\end{probe}.")

@@ -15164,7 +15164,8 @@ private def envCodesList (codes : EnvCodes) (raws : Array Raw) (out : Array Raw)
       match envDefAt raws (i + 1) with
       | some (name, dflt, n, b, code) =>
         let codes := codes.filter (·.1 != name)
-        if readsArgSetting code then
+        -- A definition a macro body makes, spelled with its parameters, stands for the elaborator.
+        if readsArgSetting code && !name.contains '#' && ((rawSrc code).splitOn "##").length == 1 then
           let out := (out.push (.ctrl c p) ++ raws.extract (i + 1) b).push (.group #[] p)
           envCodesList (codes.push (name, dflt, n, code)) raws out rest (i + 1) (b - i)
         else envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
