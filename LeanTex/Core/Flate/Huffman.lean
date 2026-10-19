@@ -33,18 +33,20 @@ theorem bitAt_toUInt64 (b : UInt8) (pos : Nat) :
   have : (b.toNat >>> (pos % 8)) &&& 1 ≤ 1 := Nat.and_le_right
   omega
 
-/-- The bits from `k` on of an `n`-bit field read LSB-first from bit `pos`, OR-ed into `acc`. -/
-def bitsGo (data : ByteArray) (n k : Nat) (acc : UInt64) (pos : Nat) : Option (Nat × Nat) :=
+/-- The bits from `k` on of an `n`-bit field read LSB-first from bit `pos`, OR-ed into `acc`: the
+field times two plus one, or zero past the input. -/
+def bitsGo (data : ByteArray) (n k : Nat) (acc : UInt64) (pos : Nat) : Nat :=
   if k < n then
     if h : pos / 8 < data.size then
       bitsGo data n (k + 1) (acc ||| ((bitAt data[pos / 8] pos).toUInt64 <<< k.toUInt64)) (pos + 1)
-    else none
-  else some (acc.toNat, pos)
+    else 0
+  else acc.toNat * 2 + 1
 termination_by n - k
 
 /-- Reads `n ≤ 16` bits, LSB-first. -/
 @[inline] public def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) :=
-  (bitsGo r.data n 0 0 r.bitPos).map fun p => (p.1, { r with bitPos := p.2 })
+  let v := bitsGo r.data n 0 0 r.bitPos
+  if v == 0 then none else some (v / 2, { r with bitPos := r.bitPos + n })
 
 /-- A little-endian bit field in the actual input bytes. -/
 def BitField (data : ByteArray) (start width value : Nat) : Prop :=
@@ -55,20 +57,19 @@ def BitField (data : ByteArray) (start width value : Nat) : Prop :=
 
 public theorem Br.bits_zero_exact (r : Br) : r.bits 0 = some (0, r) := by
   unfold Br.bits bitsGo
+  simp only [Nat.lt_irrefl, ↓reduceIte, Nat.add_zero]
   rfl
 
 theorem bitsGo_exact (data : ByteArray) (start n v : Nat) (hn : n < 64)
     (hf : BitField data start n v) :
     ∀ m k, k + m = n →
-      bitsGo data n k (v % 2 ^ k).toUInt64 (start + k) = some (v % 2 ^ n, start + n)
+      bitsGo data n k (v % 2 ^ k).toUInt64 (start + k) = v % 2 ^ n * 2 + 1
   | 0, k, hk => by
     subst hk
     unfold bitsGo
-    simp only [Nat.add_zero, Nat.lt_irrefl, ↓reduceIte, Option.some.injEq, Prod.mk.injEq,
-      and_true]
-    simp only [Nat.toUInt64, UInt64.toNat_ofNat']
-    exact Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le (Nat.mod_lt v (Nat.two_pow_pos k))
-      (Nat.pow_le_pow_right (by decide) (by omega)))
+    simp only [Nat.add_zero, Nat.lt_irrefl, ↓reduceIte, Nat.toUInt64, UInt64.toNat_ofNat']
+    rw [Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le (Nat.mod_lt v (Nat.two_pow_pos k))
+      (Nat.pow_le_pow_right (by decide) (by omega)))]
   | m + 1, k, hk => by
     have hindex : (start + k) / 8 < data.size := by have := hf.1; omega
     have heq := hf.2 k (by omega)
@@ -92,7 +93,10 @@ theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
   have h := bitsGo_exact r.data r.bitPos n v hn hf n 0 (by omega)
   simp only [Nat.pow_zero, Nat.mod_one, Nat.add_zero, Nat.mod_eq_of_lt hv] at h
   simp only [Br.bits]
-  rw [show (0 : UInt64) = (0 : Nat).toUInt64 from rfl, h, Option.map_some]
+  rw [show (0 : UInt64) = (0 : Nat).toUInt64 from rfl, h]
+  have hne : (v * 2 + 1 == 0) = false := by simp only [beq_eq_false_iff_ne]; omega
+  rw [hne, show (v * 2 + 1) / 2 = v by omega]
+  rfl
 
 /-- A canonical Huffman table: code counts per length and symbols in canonical order; a code the
 lengths leave unassigned fails at decode. -/
@@ -179,24 +183,26 @@ public def mkHuff? (lengths : Array Nat) (sparse : Bool) : Option Huff :=
   let h := mkHuff lengths
   if h.admits sparse then some h else none
 
-/-- The canonical decode from code length `len` on: the code so far, the first code and the symbol
-index of that length, and the next bit's position. -/
+/-- The canonical decode from code length `len` on, given the code so far, the first code and the
+symbol index of that length, and the next bit's position: the symbol's index times sixteen plus its
+code length, or zero for no code. -/
 def decodeGo (h : Huff) (data : ByteArray) (len : Nat) (code : UInt64) (first index pos : Nat) :
-    Option (Nat × Nat) :=
+    Nat :=
   if len < 16 then
     if hp : pos / 8 < data.size then
       let code := (code <<< 1) ||| (bitAt data[pos / 8] pos).toUInt64
       let count := h.counts[len]?.getD 0
-      if code.toNat < first + count then
-        some (h.symbols[index + (code.toNat - first)]?.getD 0, pos + 1)
+      if code.toNat < first + count then (index + (code.toNat - first)) * 16 + len
       else decodeGo h data (len + 1) code ((first + count) * 2) (index + count) (pos + 1)
-    else none
-  else none
+    else 0
+  else 0
 termination_by 16 - len
 
 /-- Decode one symbol, MSB-first, bounded by the 15-bit maximum length. -/
 @[inline] public def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) :=
-  (decodeGo h r.data 1 0 0 0 r.bitPos).map fun p => (p.1, { r with bitPos := p.2 })
+  let v := decodeGo h r.data 1 0 0 0 r.bitPos
+  if v == 0 then none
+  else some (h.symbols[v / 16]?.getD 0, { r with bitPos := r.bitPos + v % 16 })
 
 /-- A codeword's most-significant-first bits in the actual byte stream. -/
 def CodeField (data : ByteArray) (start width code : Nat) : Prop :=
@@ -239,9 +245,8 @@ theorem decodeGo_exact (h : Huff) (data : ByteArray) (start width code : Nat)
       decodeGo h data k (code / 2 ^ (width + 1 - k)).toUInt64
           (Canonical.first (fun k => h.counts[k]?.getD 0) (k - 1))
           (Canonical.index (fun k => h.counts[k]?.getD 0) (k - 1)) (start + (k - 1)) =
-        some (h.symbols[Canonical.index (fun k => h.counts[k]?.getD 0) (width - 1) +
-          (code - Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1))]?.getD 0,
-          start + width)
+        (Canonical.index (fun k => h.counts[k]?.getD 0) (width - 1) +
+          (code - Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1))) * 16 + width
   | m, k, hk, hk1 => by
     have hindex : (start + (k - 1)) / 8 < data.size := by
       have := hf.1
@@ -262,8 +267,7 @@ theorem decodeGo_exact (h : Huff) (data : ByteArray) (start width code : Nat)
     · subst k
       simp only [Nat.sub_self, Nat.pow_zero, Nat.div_one]
       split
-      · simp only [Option.some.injEq, Prod.mk.injEq, true_and]
-        omega
+      · rfl
       · next hne => exact absurd hhi hne
     · have hskip := Canonical.first_prefix_between (fun k => h.counts[k]?.getD 0) width k code hk1
         (by omega) hlo
@@ -309,7 +313,13 @@ theorem huff_decode_exact (h : Huff) (r : Br) (width code : Nat)
   rw [show ((0 : Nat).toUInt64) = 0 from rfl] at hgo
   rw [show Canonical.first (fun k => h.counts[k]?.getD 0) 0 = 0 from rfl,
     show Canonical.index (fun k => h.counts[k]?.getD 0) 0 = 0 from rfl] at hgo
-  rw [hgo, Option.map_some]
+  generalize Canonical.index (fun k => h.counts[k]?.getD 0) (width - 1) +
+    (code - Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1)) = j at hgo ⊢
+  have hdiv : (j * 16 + width) / 16 = j := by omega
+  have hmod : (j * 16 + width) % 16 = width := by omega
+  have hne : (j * 16 + width == 0) = false := by simp only [beq_eq_false_iff_ne]; omega
+  rw [hgo, hne, hdiv, hmod]
+  rfl
 
 def codeStarts (blCount : Array Nat) : Array Nat := Id.run do
   let mut nextCode := Array.replicate 16 0
