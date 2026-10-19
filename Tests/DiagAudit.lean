@@ -25,6 +25,7 @@ import Tests.PrintX4
 import Tests.SvgRoute
 import scripts.Rung
 import Tests.MonoDefault
+import Tests.InlineBoxes
 import Tests.LeanStatements
 import Tests.LeanViews
 import Tests.LeanProse
@@ -174,6 +175,8 @@ def registry : List AuditRow :=
    ⟨.W0424, .keep, .degraded, check% bibSourcesChecks⟩,
    ⟨.W0503, .keep, .degraded, check% Tests.BibEdges.missingChecks⟩,
    ⟨.W0450, .keep, .degraded, check% Tests.BibEdges.duplicateChecks⟩,
+   ⟨.W0451, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
+   ⟨.W0452, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,
    ⟨.W0426, .keep, .degraded, check% bibStringStoreChecks⟩,
    ⟨.W0427, .keep, .degraded, check% biblatexLocaleSortChecks⟩,

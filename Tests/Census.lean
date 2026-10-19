@@ -1559,7 +1559,13 @@ def censusRows8 :
        ((lineWith "grounded").map fun l => hasStr l.text "framed ground").getD false &&
          (lineWith "outlined").isSome),
      ("the address's tilde stands raised in its own run",
-       ((lineWith "example.org").map fun l => l.runRaises.any (0 < ·)).getD false)])]
+       ((lineWith "example.org").map fun l => l.runRaises.any (0 < ·)).getD false),
+     ("the framed block's frame ships as four fills, two fboxrule tall and two fboxrule wide",
+       let rects := ((c[0]?).map (·.fillRects)).getD #[]
+       rects.size == 4 && (rects.filter (·.2.2.2 == Dim.pt 2 / 5)).size == 2 &&
+         (rects.filter (·.2.2.1 == Dim.pt 2 / 5)).size == 2),
+     ("the framed and the raised blocks' words ship on their own lines",
+       (lineWith "framed block").isSome && (lineWith "on its own depth").isSome)])]
 
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/

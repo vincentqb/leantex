@@ -12105,15 +12105,35 @@ private def soleMinipage (g : Array Raw) : Option (Array Raw) :=
     if skipSpaces g (a + 1) == g.size then some mb else none
   | _ => none
 
-/-- A box at `i` that a row can hold: a bare
-`\begin{minipage}`, or one inside a link wrapper. -/
+/-- The groups a framing box command reads before its content, past its colour model: none for
+`\fbox`, the ground for `\colorbox`, the frame and the ground for `\fcolorbox`. -/
+private def frameArgs? : String → Option Nat
+  | "fbox" => some 0
+  | "colorbox" => some 1
+  | "fcolorbox" => some 2
+  | _ => none
+
+/-- A box at `i` that a row can hold: a bare `\begin{minipage}`, one inside a link wrapper, or one
+a framing box command sets, the command kept whole as the column's content. -/
 private def boxAt (rs : Array Raw) (i : Nat) :
     Option (Raw × Array Raw × Array Raw × Bool × Pos × Nat) :=
   match rs[i]? with
   | some (.env "minipage" b p) =>
     (boxParts b).map fun (w, c, pos, o) => (w, c, pos, o, p, i + 1)
   | some (.ctrl wrapper wp) =>
-    if wrapper == "hyperlink" || wrapper == "href" then
+    if let some n := frameArgs? wrapper then
+      let (_, j0) := takeOpts rs (i + 1) 1
+      let (args, j) := takeGroups rs j0 n
+      let k := skipSpaces rs j
+      if args.size != n then none else
+      match rs[k]? with
+      | some (.group g gp) =>
+        (soleMinipage g).bind fun mb => (boxParts mb).map fun (w, c, pos, o) =>
+          -- The column takes the minipage's width; the minipage inside it the column's whole.
+          let mp := Raw.env "minipage" (pos ++ #[.group #[.ctrl "linewidth" wp] gp] ++ c) wp
+          (w, rs.extract i k ++ #[.group #[mp] gp], pos, o, wp, k + 1)
+      | _ => none
+    else if wrapper == "hyperlink" || wrapper == "href" then
       let j := skipSpaces rs (i + 1)
       let j2 := skipSpaces rs (j + 1)
       match rs[j]?, rs[j2]? with

@@ -7043,11 +7043,44 @@ private structure EdgeReach where
   depth : Length
   continued : Bool := false
 
+/-- A box command's box around block content (`Ir.BoxWidth.box`): its paint `pad` and `rule` beyond
+the content, `w` wide where declared, standing on the baseline `pos` names, raised by `lift`, its
+measures read at `size` and `xHeight` against a `textW` by `textH` text block. -/
+private structure BoxSpec where
+  ground : Option Ir.Color
+  frame : Option Ir.Color
+  pad : Length
+  rule : Length
+  x : Length
+  w : Option Length
+  pos : Ir.BoxPos
+  lift : Affine Ir.BoxMeasure
+  depth : Option (Affine Ir.BoxMeasure)
+  size : Length
+  xHeight : Length
+  textW : Length
+  textH : Length
+
+/-- The box's inset: what its paint takes on each side of the content. -/
+private def BoxSpec.inset (b : BoxSpec) : Length := b.pad + b.rule
+
+/-- A box measure against a content `h` high, `d` deep and `w` wide (`Ir.BoxMeasure`). -/
+private def BoxSpec.eval (b : BoxSpec) (h d w : Length) (e : Affine Ir.BoxMeasure) : Length :=
+  let values := MeasureValues.horizontal b.textW b.textH
+  let find : Ir.BoxMeasure → Dim.SymGlue
+    | .page m => values.find m
+    | .height => { width := .ofLength h }
+    | .depth => { width := .ofLength d }
+    | .width => { width := .ofLength w }
+    | .totalHeight => { width := .ofLength (h + d) }
+  (e.eval find).width.resolve b.size b.xHeight
+
 /-- A block link, or a painted colour box whose paint reaches
 `pad` beyond its lines (beamer's `beamercolorbox`). -/
 private inductive RegionKind where
   | link (target : String)
   | surface (color : Ir.Color) (pad x w : Length) (anchored : Bool)
+  | box (spec : BoxSpec)
   /-- A rule a block template sets beside a box (`Ir.BlockEdge`), painted
   `x`..`x + w` from the box's top to its last line's bottom; it spaces nothing. -/
   | edge (color : Ir.Color) (x w inset : Length) (reach : Option EdgeReach)
@@ -7166,8 +7199,12 @@ private def RegionSpan.box (s : RegionSpan) (lines : Array LineOut)
   let mut box : Option RegionBox := none
   for l in lines.extract s.lineStart s.lineEnd do
     box := match s.kind, l.regionExtent with
-      | .surface .., some (above, below) | .edge .., some (above, below) =>
+      | .surface .., some (above, below) | .edge .., some (above, below)
+      | .box _, some (above, below) =>
         addRegionBox box l.x (l.y - above) (l.x + l.setWidth) (l.y + below)
+      | .box _, none => match lineRegionBox none l with
+        | some ink => addRegionBox box l.x ink.y0 (l.x + l.setWidth) ink.y1
+        | none => box
       | _, _ => lineRegionBox box l
   for f in fills.extract s.fillStart s.fillEnd do
     box := addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
@@ -7181,7 +7218,7 @@ private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
   | .link target => (s.box lines fills inks).map fun b =>
       { x := b.x0, y := b.y0, w := max 0 (b.x1 - b.x0), h := max 0 (b.y1 - b.y0),
         target := target }
-  | .surface _ _ _ _ _ | .edge .. | .hidden => none
+  | .surface _ _ _ _ _ | .box _ | .edge .. | .hidden => none
 
 /-- Where a rule reaching by its box's lines stands, its
 top and bottom; nothing where that leaves no room. -/
@@ -7240,6 +7277,42 @@ private def RegionSpan.lastBaseline (s : RegionSpan) (lines : Array LineOut)
   | none => (lines.extract s.lineStart s.lineEnd).foldl
       (fun m (l : LineOut) => some (max (m.getD l.y) l.y)) none
 
+/-- A box command's outer extent after placement: its content and its children's paint, `inset`
+beyond them, across its declared width where it has one, else as far beyond the content on the
+right as on the left. -/
+private def RegionSpan.boxExtent (s : RegionSpan) (lines : Array LineOut) (fills : Array Fill)
+    (inks : Array InkOut) (children : Array (RegionSpan × Fill)) (spec : BoxSpec) :
+    Option (Length × Length × Length × Length) :=
+  let box := children.foldl (fun box (child, f) =>
+    if s.depth < child.depth &&
+        s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
+        s.fillStart ≤ child.fillStart && child.fillEnd ≤ s.fillEnd &&
+        s.inkStart ≤ child.inkStart && child.inkEnd ≤ s.inkEnd then
+      addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
+    else box) (s.box lines fills inks)
+  box.map fun b =>
+    let (x0, x1) := match spec.w with
+      | some w => (spec.x, spec.x + w)
+      | none => (spec.x, b.x1 + b.x0 - spec.x)
+    (x0, b.y0 - (if s.first then spec.inset else 0), x1, b.y1 + s.tail + spec.inset)
+
+/-- What a region's fill paints: a box command's ground inside its rule and its four sides, any
+other region its fill. -/
+private def RegionSpan.paints (s : RegionSpan) (f : Fill) : Array Fill :=
+  match s.kind with
+  | .box spec =>
+    let t := spec.rule
+    let ground := spec.ground.map fun c =>
+      { x := f.x + t, y := f.y + t, w := f.w - 2 * t, h := f.h - 2 * t, color := c : Fill }
+    let sides := match spec.frame with
+      | some c => #[{ x := f.x, y := f.y, w := f.w, h := t, color := c : Fill },
+          { x := f.x, y := f.y + f.h - t, w := f.w, h := t, color := c },
+          { x := f.x, y := f.y + t, w := t, h := f.h - 2 * t, color := c },
+          { x := f.x + f.w - t, y := f.y + t, w := t, h := f.h - 2 * t, color := c }]
+      | none => #[]
+    ground.toArray ++ sides
+  | _ => #[f]
+
 /-- The region's fill, read after placement: the box's lines,
 its children's paint and its closing glue, `pad` beyond them. -/
 private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
@@ -7247,6 +7320,11 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     (children : Array (RegionSpan × Fill) := #[]) : Option Fill :=
   match s.kind with
   | .link _ | .hidden => none
+  | .box spec =>
+    if spec.ground.isNone && spec.frame.isNone then none else
+    (s.boxExtent lines fills inks children spec).map fun (x0, y0, x1, y1) =>
+      { x := x0, y := y0, w := x1 - x0, h := y1 - y0
+        color := (spec.frame.or spec.ground).getD Ir.Color.black }
   | .surface color pad x w anchored =>
     -- The body's part of a rule inside the box stands in a box of no size and grows it nowhere.
     let box := children.foldl (fun box (child, f) =>
@@ -7598,11 +7676,13 @@ line's font; a fresh fragment owes its top inset once. -/
 private def Spacing.Page.surfaceTop (b : B) : Length :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + if s.begun then 0 else pad
+    | .box spec => total + if s.begun then 0 else spec.inset
     | .link _ | .edge .. | .hidden => total) 0
 
 private def Spacing.Page.surfaceBottom (b : B) : Length :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + pad
+    | .box spec => total + spec.inset
     | .link _ | .edge .. | .hidden => total) 0
 
 /-- The floor of the text area on the page being built: beamer's `\footheight` floor in its
@@ -7867,7 +7947,8 @@ fills of every region inside one, `fillBase` fills standing before the surfaces.
 private def pageHidden (spans : Array RegionSpan) (lines : Array LineOut) (bodyFills : Array Fill)
     (inks : Array InkOut) (fillBase : Nat) : PageHidden := Id.run do
   if !spans.any (·.hidden) then return {}
-  let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse
+  let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse.flatMap
+    fun (s, f) => (s.paints f).map (s, ·)
   let mut out : PageHidden := {}
   for ((s, _), i) in surfaces.zipIdx do
     if s.hidden then out := { out with fills := out.fills.push (fillBase + i) }
@@ -7953,7 +8034,8 @@ private def Spacing.Page.finishPage (b : B) (owed : Length := 0) (flush : Bool :
   let spans := b.closedRegions ++ openSpans
   let links := spans.filterMap fun span => span.linkRect lines bodyFills inks
   -- Outer grounds precede inner ones; all precede the content they enclose.
-  let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse.map (·.2)
+  let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse.flatMap
+    fun (s, f) => s.paints f
   let hidden := pageHidden spans lines bodyFills inks
     (if (effectivePageGround b.pageBg b.docBg).isSome then 1 else 0)
   let fills := surfaces ++ bodyFills ++ footerFills
@@ -10749,19 +10831,27 @@ public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep av
   let last := some tableLastStep
   return { step := last, overhang := max 0 (need last - avail) }
 
-/-- Lay out a `.table`, booktabs' formal table: columns at their declared fraction
-or widest cell, `2·tabcolsep` apart, rules padded by their declared seps. -/
-private def collectTable (r : Rd) (a0 : Acc)
-    (cols : Array Ir.ColSpec) (padL padR : Bool)
-    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
-    (spans : Array Ir.ColSpan) (indent : Length) (center : Bool) : Acc := Id.run do
-  if cols.isEmpty then
-    return a0
-  let mut a := a0.flushGap r
+/-- A table measured before it is set: its column gap, its cells' natural widths and breaks, its
+columns' widths, its whole width and the size it sets at, the hyphenation cache after the pass. -/
+private structure TableMeasure where
+  colsep : Length
+  web : Bool
+  cellPats : Option Hyphen.Patterns
+  overhang : Length
+  size : Length
+  nats : Array (Array Length)
+  breaks : Array (Array Bool)
+  widths : Array Length
+  tableW : Length
+  cache : Std.HashMap String (Array Nat)
+
+/-- The measuring pass of a table `total` wide at most; its diagnostics are the setting pass's. -/
+private def measureTable (r : Rd) (a : Acc) (cols : Array Ir.ColSpec) (padL padR : Bool)
+    (rows : Array (Array (Array Inline))) (spans : Array Ir.ColSpan) (total : Length) :
+    TableMeasure := Id.run do
   let tok (name : String) : Length :=
     tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
   let colsep := tok "tabcolsep"
-  let total := (a.measure.getD r.geom.textWidth) - indent
   -- A markdown table too wide for its measure steps down (`tableFit`), cells unhyphenated.
   let web := cols.any (·.narrows)
   let cellPats := if web then none else r.pats
@@ -10769,7 +10859,6 @@ private def collectTable (r : Rd) (a0 : Acc)
   let size := match fit.step with
     | some s => Ir.scaleStepIn r.geom.scale r.geom.fontSize s
     | none => r.geom.fontSize
-  -- The measuring pass drops its diagnostics; the setting pass emits them once.
   let mut nats : Array (Array Length) := #[]
   let mut breaks : Array (Array Bool) := #[]
   let mut mins : Array Length := cols.map fun _ => 0
@@ -10790,7 +10879,6 @@ private def collectTable (r : Rd) (a0 : Acc)
         mins := mins.modify j (max · (itemsMinWidth items))
     nats := nats.push rowNats
     breaks := breaks.push rowBreaks
-  a := { a with hyphCache := cache }
   let natural := tableColWidths colsep total size cols nats spans padL padR
   let widths := if web then
       fitColumns cols (total - tablePadding colsep cols.size padL padR) natural mins
@@ -10798,12 +10886,39 @@ private def collectTable (r : Rd) (a0 : Acc)
   let lead : Length := if padL then colsep else 0
   let trail : Length := if padR then colsep else 0
   let innerGaps : Length := 2 * colsep * ((cols.size : Int) - 1)
-  let tableW : Length := lead + widths.foldl (· + ·) 0 + innerGaps + trail
+  return { colsep, web, cellPats, overhang := fit.overhang, size, nats, breaks, widths
+           tableW := lead + widths.foldl (· + ·) 0 + innerGaps + trail, cache }
+
+/-- Lay out a `.table`, booktabs' formal table: columns at their declared fraction
+or widest cell, `2·tabcolsep` apart, rules padded by their declared seps. -/
+private def collectTable (r : Rd) (a0 : Acc)
+    (cols : Array Ir.ColSpec) (padL padR : Bool)
+    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
+    (spans : Array Ir.ColSpan) (indent : Length) (center : Bool) : Acc := Id.run do
+  if cols.isEmpty then
+    return a0
+  let mut a := a0.flushGap r
+  let tok (name : String) : Length :=
+    tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
+  let total := (a.measure.getD r.geom.textWidth) - indent
+  -- The measuring pass drops its diagnostics; the setting pass emits them once.
+  let m := measureTable r a cols padL padR rows spans total
+  let colsep := m.colsep
+  let web := m.web
+  let cellPats := m.cellPats
+  let size := m.size
+  let nats := m.nats
+  let breaks := m.breaks
+  let widths := m.widths
+  let tableW := m.tableW
+  a := { a with hyphCache := m.cache }
+  let lead : Length := if padL then colsep else 0
+  let trail : Length := if padR then colsep else 0
   -- A tex table wider than the measure keeps its width and is named, as TeX sets it overfull.
   let offPaper := tableW > r.geom.pageW
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
-      (if web && fit.overhang > 0 then
+      (if web && m.overhang > 0 then
           "the table's words alone are wider than the measure at its smallest size; it " ++
             (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
         else "the table is wider than the measure")
@@ -13174,6 +13289,67 @@ private def Spacing.Context.within (r : Rd) (blk : Block) : Rd :=
   | .box => { r with boxed := true }
   | .onList | .aside => r
 
+/-- The box a box command sets a lone box in, its paint resolved at the size in force: the frame in
+the text's colour where it declares no colour of its own. -/
+private def boxSpecOf (r : Rd) (a : Acc) (b : Ir.InlineBox) (x : Length) (width : Option Length)
+    (pos : Ir.BoxPos) (textW : Length) : BoxSpec :=
+  let painted := b.ground.isSome || b.frame.isSome
+  let pad := if painted then (r.resolve b.pad).width else 0
+  let rule := if b.frame.isSome then (r.resolve b.rule).width else 0
+  { ground := b.ground.map fun (c, _) => r.shown c
+    frame := b.frame.map fun
+      | .ink => a.fg
+      | .color c _ => r.shown c
+    pad := pad, rule := rule, x := x, w := width.map (· + 2 * (pad + rule)), pos := pos
+    lift := b.raise, depth := b.depth, size := r.geom.fontSize, xHeight := r.xHeight
+    textW := textW, textH := r.geom.textHeight }
+
+/-- What a box command's paint adds to a row's box of declared width holding one framed box. -/
+private def innerPaint (r : Rd) (a : Acc) (col : BoxWidth × Array Block) (total : Length) :
+    Length :=
+  if !col.1.declared then 0 else
+  if let [.columns inner] := col.2.toList.filter (!·.epoch) then
+    if let [(w, _)] := inner.toList then
+      (w.box.map fun b => 2 * (boxSpecOf r a b 0 none w.pos total).inset).getD 0
+    else 0
+  else 0
+
+/-- The width a block sets at in a measure `total` wide where it declares one: a table's, or a row
+of boxes of declared widths with their box commands' paint, side by side as LR mode sets them. -/
+private def declaredWidth? (r : Rd) (a : Acc) (b : Block) (total : Length) : Option Length :=
+  if let .table cols padL padR rows _ spans := b then
+    if cols.isEmpty then none else some (measureTable r a cols padL padR rows spans total).tableW
+  else if let .columns cols := b then
+    if cols.all (·.1.declared) then
+      some (cols.foldl (fun s c => s + (c.1.resolve total).getD 0 + innerPaint r a c total +
+        (c.1.box.map fun bx => 2 * (boxSpecOf r a bx 0 none c.1.pos total).inset).getD 0) 0)
+    else none
+  else none
+
+/-- The width content beside its epochs sets at in a measure `total` wide: the widest of its
+blocks, a link's through it, where every one declares its width. -/
+private def naturalOne (r : Rd) (a : Acc) (body : Array Block) (total : Length) : Option Length :=
+  let widths := (body.toList.filter (!·.epoch)).map fun b =>
+    if let .link _ inner := b then
+      if let [one] := inner.toList.filter (fun x : Block => !x.epoch) then declaredWidth? r a one total
+      else none
+    else declaredWidth? r a b total
+  if widths.isEmpty || widths.any (·.isNone) then none
+  else some (widths.foldl (fun m w => max m (w.getD 0)) 0)
+
+/-- The width a box command's box of no declared width takes from its content: `naturalOne`'s,
+or a lone box of no declared width around such content with its paint. -/
+private def naturalWidth? (r : Rd) (a : Acc) (body : Array Block) (total : Length) :
+    Option Length :=
+  (naturalOne r a body total).orElse fun _ =>
+    if let [.columns cols] := body.toList.filter (!·.epoch) then
+      if let [(w, inner)] := cols.toList then
+        if w.declared then none else w.box.bind fun b =>
+          let paint := 2 * (boxSpecOf r a b 0 none w.pos total).inset
+          (naturalOne r a inner (total - paint)).map (· + paint)
+      else none
+    else none
+
 mutual
 
 -- The block walk recurses through `List` companions, so every call is structural.
@@ -13494,7 +13670,7 @@ private def collectColumns (r : Rd) (a : Acc)
   match cols with
   | [] => a
   | (w, body) :: rest =>
-    let wi := (w.resolve total).getD shareW
+    let wi := (w.resolve total).getD shareW + innerPaint r a (w, body) total
     let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt }
     let a := a.absorb (collectBlocks r sub body x0)
     let a := if rest.isEmpty then a else a.pushOp .colNext
@@ -13777,7 +13953,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := a.flushGap r
     let total := (a.measure.getD r.geom.textWidth) - indent
     let declared := cols.foldl (fun s (c : BoxWidth × Array Block) =>
-      s + ((c.1.resolve total).getD 0)) 0
+      s + ((c.1.resolve total).getD 0) + innerPaint r a c total) 0
     let unspecified := cols.foldl (fun c (col : BoxWidth × Array Block) =>
       if col.1.declared then c else c + 1) 0
     let rem := max 0 (total - declared)
@@ -13789,14 +13965,32 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A lone declared box leaves its slack to its scope's side; several spend it on gutters.
     let side : Ir.HAlign := if r.centreBoxes then .center
       else if r.geom.flushRight then .right else .left
-    let off := if cols.size == 1 && unspecified == 0 then slackShare side rem else 0
+    let boxed := if cols.size == 1 then cols[0]?.bind fun (w, body) => w.box.map (w, ·, body)
+      else none
+    -- A box command's paint widens the box its slack places; round a lone table it is the table's.
+    let inset := (boxed.map fun (w, b, _) => (boxSpecOf r a b 0 none w.pos total).inset).getD 0
+    let natural := boxed.bind fun (w, _, body) =>
+      if w.declared then none else naturalWidth? r a body (total - 2 * inset)
+    let off := if cols.size == 1 && (unspecified == 0 || natural.isSome) then
+        slackShare side (max 0 (rem - 2 * inset - natural.getD 0))
+      else 0
+    let spec := boxed.map fun (w, b, _) => boxSpecOf r a b (r.geom.hmargin + indent + off)
+      ((w.resolve total).or natural) w.pos total
+    let saved := a.ground
+    -- A box command's box is one unbreakable box, placed whole or moved to the next page.
+    let a := match spec with
+      | some k => { (a.pushOp .floatOpen).pushOp (.regionOpen (.box k)) with
+          ground := k.ground.or a.ground }
+      | none => a
     let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
     -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage, and the page's own
     -- `\parskip` stands there over a list's `\parsep`.
     let inner := { (r.within blk) with
       centreBoxes := false, geom := { r.geom with flushRight := false, texParskip := r.pageParskip } }
-    let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
-    { a with ops := a.ops.push .colClose }
+    let a := collectColumns inner a cols.toList (indent + off + inset)
+      (natural.getD (shareW - 2 * inset)) gutter total
+    let a := { a with ops := a.ops.push .colClose }
+    if spec.isSome then { (a.pushOp .regionClose).pushOp .floatClose with ground := saved } else a
   | .bibliography _ _ items => collectBibliography r a items indent
   | .contents spec entries => collectContents r a spec entries indent
   | .spaced before body =>
@@ -16181,6 +16375,8 @@ private structure ColSave where
   pos : Array Ir.BoxPos := #[]
   page : Nat := 0
   marks : Array ColMark := #[]
+  /-- Whether each region open at the row had set a line, which each column starts from. -/
+  begun : Array Bool := #[]
 
 private def ColSave.opening (save : ColSave) : ColEnd :=
   { tail := { y := save.y, depth := save.prevDepth, below := save.prevBelow,
@@ -16443,8 +16639,38 @@ private def Spacing.Page.placeAnchor (fs : FontSet) (b : B) (rule : AnchorRule)
       0 (b.strutBelow fs) false 0 b.bottom).keepInk 0
   else b.anchorAt fs (b.y + rise b + shift)
 
+/-- Close a box command's box: the flow stands on the baseline its `pos` names, raised by its lift,
+its depth the declared one or what the box has below that baseline. -/
+private def Spacing.Page.closeBoxRegion (b : B) (start : RegionStart) (spec : BoxSpec) : B :=
+  let span := start.close b.cur b.skip.width b.y
+  let empty := span.lineStart == span.lineEnd && span.fillStart == span.fillEnd &&
+    span.inkStart == span.inkEnd
+  let regions := if empty then b.closedRegions else b.closedRegions.push span
+  let closed := { b with openRegions := b.openRegions.pop, closedRegions := regions }
+  let children := regionFills b.closedRegions b.cur.lines b.cur.fills b.cur.inks
+  match span.boxExtent b.cur.lines b.cur.fills b.cur.inks children spec with
+  | none => closed
+  | some (x0, top, x1, bottom) =>
+    let first := (b.cur.lines.extract span.lineStart span.lineEnd)[0]?.map (·.y)
+    let base := match spec.pos with
+      | .last => b.y
+      | .first => first.getD b.y
+      | .center | .top => (top + bottom) / 2
+    let h := base - top
+    let d := bottom - base
+    let r := spec.eval h d (x1 - x0) spec.lift
+    let depth := (spec.depth.map (spec.eval h d (x1 - x0))).getD (d - r)
+    -- The next line takes TeX's interline glue from the box's depth.
+    { closed with y := base + r, prevDepth := depth, prevBelow := max b.prevBelow depth
+                  lastInk := some (base + r, depth, depth), texAfter := true
+                  needed := max b.needed (bottom - b.geom.bodyBottom) }
+
 /-- Close a region; a painted box is TeX's box of depth zero, keeping the glue its list ends on. -/
 private def Spacing.Page.closeRegion (fs : FontSet) (b : B) : B :=
+  if let some (start, spec) := b.openRegions.back?.bind fun s =>
+      match s.kind with
+      | .box spec => some (s, spec)
+      | _ => none then b.closeBoxRegion start spec else
   let closing := b.openRegions.back?.map fun start =>
     let span := start.close b.cur b.skip.width b.y
     let empty := span.lineStart == span.lineEnd && span.fillStart == span.fillEnd &&
@@ -16578,7 +16804,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       prevBand := b.prevBand, skip := b.skip
       fresh := fresh
       source := b.lastSource
-      pos := pos, page := b.pages.size, marks := #[b.colMark] }
+      pos := pos, page := b.pages.size, marks := #[b.colMark]
+      begun := b.openRegions.map (·.begun) }
   | .colNext =>
     if let some save := colSaves.back? then
       let save := save.finish b
@@ -16589,7 +16816,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     lastSource := save.source
                     lastInk := some (save.y, save.prevDepth, save.boxDepth)
                     skip := save.skip
-                    freshStart := save.fresh }
+                    freshStart := save.fresh
+                    openRegions := b.openRegions.mapIdx fun i s =>
+                      { s with begun := (save.begun[i]?).getD s.begun } }
   | .colClose =>
     if let some save := colSaves.back? then
       colSaves := colSaves.pop
@@ -16704,7 +16933,10 @@ private theorem closeRegion_shipped_id (fs : FontSet) (b : B) :
       (b.closeRegion fs).paragraphBreaks = b.paragraphBreaks ∧
       (b.closeRegion fs).diags = b.diags := by
   simp only [Spacing.Page.closeRegion]
-  split <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  split
+  · simp only [Spacing.Page.closeBoxRegion]
+    split <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · split <;> exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 private theorem stepStaged_tableRule_b (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (th x w : Length) (segs : Array Seg) :
@@ -16793,6 +17025,12 @@ private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
     · simp [Spacing.Page.finishPage]
       split <;> simp
 
+/-- What an unbreakable group too tall for its page is named, and what its help shrinks. -/
+private def oversizeWords (group : Array Op) : String × String :=
+  if (group[0]? : Option Op) matches some (.regionOpen (.box _)) then
+    ("a box holding a minipage or a table", "the box's content")
+  else ("a figure or table", "the float's content")
+
 /-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
 holding nothing else; a group taller than the text block ships alone, named (W0358), and a note
 block it alone pushes past the floor is named as the note (W0372). -/
@@ -16810,11 +17048,12 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let b2 := st2.b
     let own := b2.y + b2.prevDepth - b2.bottom - b2.pageShrink
     let over := b2.y + b2.prevDepth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
+    let (what, shrink) := oversizeWords group
     let named : Option Diag :=
       if 0 < own then some (Diag.of .W0358
-        "a figure or table is taller than the text block; it overruns its page"
+        s!"{what} is taller than the text block; it overruns its page"
         (output := if b2.curStage then none else some .pdf)
-        (help := "shrink the float's content, or raise the text height (\\page{ vmargin = ... })")
+        (help := s!"shrink {shrink}, or raise the text height (\\page\{ vmargin = ... })")
         (detail := some s!"{own.toBpString}pt taller"))
       else if 0 < b2.notesH && 0 < over then
         some (noteOverrunDiag over (if b2.curStage then none else some .pdf))

@@ -4441,18 +4441,21 @@ public inductive BoxPos where
   | last
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- What a box in a row declares: its width and the point it stands on the row's baseline by. -/
+/-- What a box in a row declares: its width, the point it stands on the row's baseline by, and the
+box command (`\fbox`, `\colorbox`, `\fcolorbox`, `\raisebox`) it is set in, if any. -/
 public structure BoxWidth where
   size : BoxSize
   pos : BoxPos := .top
+  box : Option InlineBox := none
   deriving Repr, BEq, Inhabited
 
-@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top⟩
-@[match_pattern, expose] public def BoxWidth.sized (width : Affine Measure) : BoxWidth := ⟨.sized width, .top⟩
+@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none⟩
+@[match_pattern, expose] public def BoxWidth.sized (width : Affine Measure) : BoxWidth :=
+  ⟨.sized width, .top, none⟩
 @[match_pattern, expose] public def BoxWidth.frac (permille : Nat) : BoxWidth :=
-  ⟨.frac permille, .top⟩
+  ⟨.frac permille, .top, none⟩
 @[match_pattern, expose] public def BoxWidth.abs (w : Length) : BoxWidth :=
-  ⟨.abs w, .top⟩
+  ⟨.abs w, .top, none⟩
 
 /-- The declared width against a known measure: the width the box is set at. -/
 public def BoxWidth.resolve (w : BoxWidth) (measure : Length) : Option Length :=
@@ -5376,6 +5379,32 @@ public inductive Block where
 public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block) : Block :=
   let (firstPage, otherPage) := spec.pageOrder active otherwise
   .altSteps spec firstPage otherPage
+
+/-- Whether a block only sets the palette or the tokens from here on. -/
+public def Block.epoch (b : Block) : Bool := b matches .setPalette _ || b matches .setTokens _
+
+/-- How many epochs close a block list: a scope's restores, which stand after a box it sets. -/
+public def closingEpochs (body : Array Block) : Nat :=
+  (body.toList.reverse.takeWhile Block.epoch).length
+
+/-- The position of the one box a block list sets beside its epochs, else the centre. -/
+public def lonePos (body : Array Block) : BoxPos :=
+  if let [.columns cols] := body.toList.filter (!·.epoch) then
+    if let [(w, _)] := cols.toList then w.pos else .center
+  else .center
+
+/-- What a box command (`Ir.boxCommands`) sets around block content: a lone box it is set in, the
+scope's closing epochs after it, else a box of its own holding the content. -/
+public def boxedBlocks (b : InlineBox) (body : Array Block) : Array Block :=
+  let core := body.extract 0 (body.size - closingEpochs body)
+  let own : Array Block := #[.columns #[({ size := .share, pos := lonePos body, box := some b }, body)]]
+  if let [.columns cols] := core.toList then
+    if let [(w, inner)] := cols.toList then
+      if w.box.isNone then
+        #[.columns #[({ w with box := some b }, inner)]] ++ body.extract core.size body.size
+      else own
+    else own
+  else own
 
 /-- The role a picture standing alone in a display rides in. -/
 public def displayPictureRole : String := "display-picture"
@@ -10830,6 +10859,9 @@ private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) :
       | .first => " [t]"
       | .center => " [c]"
       | .last => " [b]"
+    let pos := pos ++ match w.box with
+      | some b => s!" in {b.dump}"
+      | none => ""
     let self := (match w.size with
       | .sized (.scale n d (.ref _)) =>
         s!"{ind}column {n * 1000 / d}/1000{pos}\n"
@@ -12994,7 +13026,7 @@ private def dimColumns (k : Nat) (pend : Option DimHere) (here : DimHere)
   | [] => (out, here)
   | (w, body) :: rest =>
     let r := dimBlockList k pend here #[] body.toList
-    dimColumns k pend r.2 (out.push (w, r.1)) rest
+    dimColumns k pend r.2 (out.push ({ w with box := w.box.map (·.dimmed pend) }, r.1)) rest
 
 end
 
@@ -13221,6 +13253,33 @@ public theorem inParagraph_text (acc : String) (b : Block) :
     blockTextOne acc (inParagraph b) = blockTextOne acc b := by
   unfold inParagraph
   cases b.partopsepEnv <;> simp [blockTextOne, blockTextList]
+
+public theorem boxedBlocks_text (b : InlineBox) : Conserves blocksText (boxedBlocks b) := by
+  intro body
+  unfold boxedBlocks
+  dsimp only
+  generalize hk : body.size - closingEpochs body = k
+  have hsplit : body.extract 0 k ++ body.extract (body.extract 0 k).size body.size = body := by
+    have hk' : k ≤ body.size := by omega
+    apply Array.toList_inj.mp
+    simp [Nat.min_eq_left hk', Nat.max_eq_right hk']
+  split
+  · next cols h =>
+    split
+    · next w inner h2 =>
+      split
+      · have hcore : body.extract 0 k = #[.columns #[(w, inner)]] := by
+          apply Array.toList_inj.mp
+          rw [h]
+          obtain ⟨cl⟩ := cols
+          simp_all
+        conv => rhs; rw [← hsplit]
+        simp only [blocksText, Array.toList_append, blockTextList_append]
+        rw [hcore]
+        simp [blockTextList, blockTextOne, blockTextColumns]
+      · simp [blocksText, blockTextList, blockTextOne, blockTextColumns]
+    · simp [blocksText, blockTextList, blockTextOne, blockTextColumns]
+  · simp [blocksText, blockTextList, blockTextOne, blockTextColumns]
 
 public theorem markInParagraph_text (inPar : Bool) (k : Nat) :
     Conserves blocksText (markInParagraph inPar k) := fun xs => by

@@ -1612,7 +1612,6 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       "\\printbibliography")]
   let cases : List (String × String) :=
     [("\\begin{itemize}\\item one\\end{itemize}", "one"),
-     ("\\begin{tabular}{ll}a&b\\\\c&d\\end{tabular}", "a b c d"),
      ("\\def\\foo{bar}\\foo", "bar"),
      ("\\newcommand{\\baz}{qux}\\baz", "qux"),
      ("\\section{Sec}", "Sec")]
@@ -1631,6 +1630,15 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"{what}: one warning names the note of 'k' ({named.map (·.message)})"
         (named.size == 1 && named.all fun d => d.subject == some "bibfield:unread:k:note" &&
           hasStr d.message "'note' field of 'k'" && d.trigger.isNone)
+  -- A tabular in a field is a block in a line: its cells set there, named once (W0451).
+  let tab := "\\begin{tabular}{ll}a&b\\\\c&d\\end{tabular}"
+  for (name, pre, list) in lists do
+    let (doc, ds) := bibBuild (bibProbeDoc pre list "k") #[("r", bibOf tab), ("r.bib", bibOf tab)]
+    let (entries, html) := bibShipped fonts doc
+    t s!"backstop {name} tabular: its cells ship in the entry, named once ({ds.map (·.code)})"
+      (!ds.any (·.severity == .error) && (ds.filter (·.code == "W0451")).size == 1 &&
+        entries.any (fun e => hasStr e "a b" && hasStr e "c d") && hasStr html "a b" &&
+        hasStr html "c d")
   let skip := "\\hspace{1em}x\\vspace{2pt}"
   for (name, pre, list) in lists do
     let (doc, ds) := bibBuild (bibProbeDoc pre list "k") #[("r", bibOf skip), ("r.bib", bibOf skip)]

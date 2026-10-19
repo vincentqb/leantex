@@ -30,7 +30,21 @@ para
             rel:∼
       text "probe"
   text " keeps its tilde low."
+columns
+  column 120pt in raise 0 frame ink pad 3pt rule 0.4pt
+    para
+      text "An invented framed block of words."
+columns
+  column 1000/1000 [b] in raise \depth
+    ragged left
+      para
+        text "An invented block standing"
+        linebreak
+        text "on its own depth."
 -- diagnostics
-note[N0100] 5:1 '\usepackage{xcolor}' → nothing: the engine does this itself
-note[N0100] 6:1 '\usepackage{url}' → nothing: the engine does this itself
-note[N0100] 6:1 '\usepackage[lowtilde]{url}' → \style{url}{ tilde = low }
+note[N0100] 7:1 '\usepackage{xcolor}' → nothing: the engine does this itself
+note[N0100] 8:1 '\usepackage{url}' → nothing: the engine does this itself
+note[N0100] 8:1 '\usepackage[lowtilde]{url}' → \style{url}{ tilde = low }
+note[N0100] 17:1 '\noindent' → nothing: no paragraph carries a first-line indent here
+note[N0100] 19:1 '\noindent' → nothing: no paragraph carries a first-line indent here
+warning[W0110] 19:10 a raised box holding a minipage or a table stands in the web page's gaps, where its lift and declared depth move nothing | help: space the box with \vspace or the gaps around it

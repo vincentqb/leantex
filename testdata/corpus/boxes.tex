@@ -1,6 +1,8 @@
 % Invented fixture: LaTeX's boxes set their content in one unbreakable box, as latex.ltx and
 % xcolor build it. \raisebox lifts a word, \colorbox grounds one, \fcolorbox and \fbox frame
-% them, and url.sty's lowtilde sets an address's tilde in a raised box. Every word is invented.
+% them, and url.sty's lowtilde sets an address's tilde in a raised box. A box around a minipage
+% frames it whole, and a minipage raised by its own depth stands on its last line's bottom. Every
+% word is invented.
 \documentclass{article}
 \usepackage{xcolor}
 \usepackage[lowtilde]{url}
@@ -11,4 +13,9 @@ An invented \colorbox{yellow}{grounded} word, a \fcolorbox{red}{yellow}{framed g
 \fbox{outlined} pair.
 
 An invented address \url{https://example.org/~probe} keeps its tilde low.
+
+\noindent\fbox{\begin{minipage}{120pt}An invented framed block of words.\end{minipage}}
+
+\noindent\raisebox{\depth}{\begin{minipage}[b]{\textwidth}\raggedright
+An invented block standing\\ on its own depth.\end{minipage}}
 \end{document}

@@ -2393,6 +2393,118 @@ private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
   simp only [rawWeight, rawWeightList_eq] at hs
   omega
 
+private theorem sliceWeight_splice_le {raws : Array Raw} {i : Nat}
+    (h : i < raws.size) {name : String} {body : Array Raw} {pos : Pos}
+    (hr : raws[i] = .env name body pos) (mid : Array Raw)
+    (hm : rawWeightList mid.toList ≤ rawWeightList body.toList) :
+    sliceWeight (raws.extract 0 i ++ mid ++ raws.extract (i + 1) raws.size) i
+      < sliceWeight raws i := by
+  simp only [sliceWeight_eq]
+  have hs := sliceMeas_splice (μ := rawWeight) h mid
+  rw [hr] at hs
+  simp only [rawWeight, rawWeightList_eq] at hs hm
+  omega
+
+/-- The groups a table control a line drops reads, past its brackets and parentheses: its rules
+and the spaces between rows. -/
+private def lineDropGroups? : String → Option Nat
+  | "hline" | "toprule" | "midrule" | "bottomrule" | "addlinespace" | "morecmidrules" => some 0
+  | "cline" | "cmidrule" => some 1
+  | "specialrule" => some 3
+  | _ => none
+
+/-- The raws past the first `c`. -/
+private def dropThrough (c : Char) : (l : List Raw) →
+    { o : List Raw // o.length ≤ l.length ∧ rawWeightList o ≤ rawWeightList l }
+  | [] => ⟨[], by simp⟩
+  | .sym d p :: rest =>
+    if d == c then ⟨rest, by simp [rawWeightList]⟩
+    else
+      let ⟨o, ho⟩ := dropThrough c rest
+      ⟨o, by simp only [List.length_cons, rawWeightList]; omega⟩
+  | r :: rest =>
+    let ⟨o, ho⟩ := dropThrough c rest
+    ⟨o, by simp only [List.length_cons, rawWeightList]; omega⟩
+
+/-- The raws past a dropped control's arguments: its brackets and parentheses, and `k` groups. -/
+private def dropArgs (k : Nat) : (l : List Raw) →
+    { o : List Raw // o.length ≤ l.length ∧ rawWeightList o ≤ rawWeightList l }
+  | .space :: rest =>
+    let ⟨o, ho⟩ := dropArgs k rest
+    ⟨o, by simp only [List.length_cons, rawWeightList]; omega⟩
+  | .sym '[' _ :: rest =>
+    let ⟨t, ht⟩ := dropThrough ']' rest
+    let ⟨o, ho⟩ := dropArgs k t
+    ⟨o, by simp only [List.length_cons, rawWeightList]; omega⟩
+  | .sym '(' _ :: rest =>
+    let ⟨t, ht⟩ := dropThrough ')' rest
+    let ⟨o, ho⟩ := dropArgs k t
+    ⟨o, by simp only [List.length_cons, rawWeightList]; omega⟩
+  | .group b p :: rest =>
+    if k == 0 then ⟨.group b p :: rest, by simp⟩ else
+    let ⟨o, ho⟩ := dropArgs (k - 1) rest
+    ⟨o, by simp only [List.length_cons, rawWeightList]; omega⟩
+  | l => ⟨l, by simp⟩
+termination_by l => l.length
+decreasing_by
+  all_goals simp_wf
+  all_goals omega
+
+/-- A block environment's raws as its body sets in a line: a cell's `&` a space, a rule dropped
+with its arguments, a spanning cell its content. -/
+private def lineRaws : (l : List Raw) → { o : List Raw // rawWeightList o ≤ rawWeightList l }
+  | [] => ⟨[], by simp⟩
+  | .sym '&' p :: rest =>
+    let ⟨o, ho⟩ := lineRaws rest
+    ⟨.space :: o, by simp only [rawWeightList, rawWeight]; omega⟩
+  | .ctrl "multicolumn" _ :: .group _ _ :: .group _ _ :: .group x _ :: tail =>
+    let ⟨o, ho⟩ := lineRaws tail
+    ⟨x.toList ++ o, by simp only [rawWeightList, rawWeight, rawWeightList_append]; omega⟩
+  | .ctrl n p :: rest =>
+    match lineDropGroups? n with
+    | some k =>
+      match dropArgs k rest with
+      | ⟨t, ht⟩ =>
+        let ⟨o, ho⟩ := lineRaws t
+        ⟨o, by simp only [rawWeightList]; omega⟩
+    | none =>
+      let ⟨o, ho⟩ := lineRaws rest
+      ⟨.ctrl n p :: o, by simp only [rawWeightList] at ho ⊢; omega⟩
+  | r :: rest =>
+    let ⟨o, ho⟩ := lineRaws rest
+    ⟨r :: o, by simp only [rawWeightList]; omega⟩
+termination_by l => l.length
+decreasing_by
+  all_goals simp_wf
+  all_goals omega
+
+/-- The arguments a block environment met in a line reads, each a bracket (`true`) or a group: the
+boxes and alignments whose body a line carries. -/
+private def lineEnvArgs : String → Option (List Bool)
+  | "minipage" => some [true, true, true, false]
+  | "tabular" | "array" => some [true, false]
+  | "tabular*" => some [false, true, false]
+  | "tabularx" => some [false, false]
+  | "center" | "flushleft" | "flushright" | "quote" | "quotation" | "verse" => some []
+  | _ => none
+
+/-- A block environment's body as a line of text, a table cell or a note sets it: past the
+arguments it reads, its cells a space apart. -/
+private def lineEnvBody (body : Array Raw) (pos : Pos) (args : List Bool) :
+    { a : Array Raw // rawWeightList a.toList ≤ rawWeightList body.toList } :=
+  let k := args.foldl (fun i opt =>
+    if opt then match scanBracketArg body i pos with
+      | .took k => k
+      | _ => i
+    else
+      let j := skipSpaces body i
+      if body[j]? matches some (.group _ _) then j + 1 else i) 0
+  let ⟨o, ho⟩ := lineRaws (body.extract k body.size).toList
+  ⟨o.toArray, by
+    have := measList_extract_le rawWeight body k body.size
+    simp only [← rawWeightList_eq] at this
+    simpa using Nat.le_trans ho this⟩
+
 /-- The body measure `f` summed over the user commands below an index: the
 bodies the walk can still expand. -/
 private def visGo (f : UserCmd → Nat) (user : Array UserCmd) : Nat → Nat
@@ -4350,7 +4462,8 @@ keeps its value" pos
 /-- The box `\raisebox`, `\colorbox`, `\fcolorbox` or `\fbox` declares and its content's index, a
 group or the one token TeX takes (a word's first character); none where a group it reads is not
 there. -/
-private def boxHead (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (pos : Pos) :
+private def boxHead (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (pos : Pos)
+    (block : Bool := false) :
     EM (Option (Ir.InlineBox × { k : Nat // i < k })) := do
   let zero : Affine Ir.BoxMeasure := .lit ({} : Dim.SymGlue)
   let scope := (← get).scope
@@ -4380,9 +4493,21 @@ private def boxHead (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (po
       readBoxDim ctx name "depth" "the box keeps its content's depth" r pos
     let (height, depth) := (height.join, depth.join)
     let raise := raise.getD zero
+    -- premise: boxBlockChecks — a box on a line of its own stands in the web page's gaps
+    if block && height.isSome then
+      warnOnce ctx "raisebox:block-height" .W0110
+        "a raised box's declared height over a minipage or a table is not read, its top standing \
+where its content's does; on a web page its lift and depth move nothing either" pos
+        (trigger := "\\raisebox") (recovery := some .ignored)
+    else if block && (raise != zero || depth.isSome) then
+      warnOnce ctx "raisebox:block" .W0110
+        "a raised box holding a minipage or a table stands in the web page's gaps, where its lift \
+and declared depth move nothing" pos
+        (help := "space the box with \\vspace or the gaps around it")
+        (trigger := "\\raisebox") (recovery := some .ignored) (output := some .html)
     -- premise: inlineBoxChecks — the web page reads a content measure as zero, and says so once
-    if readsContent raise || height.any readsContent || depth.any readsContent ||
-        height.isSome != depth.isSome then
+    if !block && (readsContent raise || height.any readsContent || depth.any readsContent ||
+        height.isSome != depth.isSome) then
       warnOnce ctx "raisebox:content" .W0110
         "a raised box reads its content's height, depth or width, which a web page cannot \
 measure; there it reads it as zero" pos
@@ -5504,6 +5629,16 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           warnOnce ctx ("env:" ++ name) .W0307
             s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
           elabInlinesFrom ctx raws (i + 1) acc sb
+        else if let some args := lineEnvArgs name then
+          -- premise: boxBlockChecks — a line holds no block, so a block environment sets its words there
+          warnOnce ctx ("env-line:" ++ name) .W0451
+            s!"'\{{name}}' inside a line of text, a table cell or a note sets its words in the \
+line; its own layout is lost" pos
+            (help := "write it as text there, or '\\begin{...}' between paragraphs, where it \
+sets as a block")
+          let ⟨line, hl⟩ := lineEnvBody body pos args
+          have _ := sliceWeight_splice_le h hr line hl
+          elabInlinesFrom ctx (raws.extract 0 i ++ line ++ raws.extract (i + 1) raws.size) i acc sb
         else
           warnOnce ctx ("env:" ++ name) .W0302 s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "\\defineenv{name}(...) {begin} {end} declares one")
@@ -10617,10 +10752,82 @@ private def groupPictureInSentence (ctx : Ctx) (body cur raws : Array Raw) (i : 
   | some (n, pos) => pictureInSentence ctx n cur raws i pos
   | none => pure ()
 
-/-- Names a user command whose body is a `tikzpicture` inside a sentence, as a
-picture written there is named. -/
+mutual
+
+/-- Whether a raw holds an environment setting block content, one `user` declares included, which
+a box's argument, in LR mode, sets as one box on its line. -/
+private def lrBoxOne (user : String → Bool) : Raw → Bool
+  | .env n body p => bodyIsBlockOne (.env n body p) || user n
+  | .group body _ => lrBoxList user body.toList
+  | _ => false
+
+private def lrBoxList (user : String → Bool) : List Raw → Bool
+  | [] => false
+  | r :: rest => lrBoxOne user r || lrBoxList user rest
+
+end
+
+/-- Whether a document's environment sets block content where it opens or closes. -/
+private def userBlockEnv (ctx : Ctx) (n : String) : Bool :=
+  match lookupUserEnv ctx n with
+  | some (_, env) => bodyIsBlock env.beginBody || bodyIsBlock env.endBody
+  | none => false
+
+/-- Where the box command `n` at `raws[i]` has its content group, past the groups and brackets
+`boxHead` reads. -/
+private def boxContentAt (n : String) (raws : Array Raw) (i : Nat) : Option Nat :=
+  let group (j : Nat) : Option Nat :=
+    let k := skipSpaces raws j
+    if raws[k]? matches some (.group _ _) then some (k + 1) else none
+  let model := skipBracketRun raws (skipSpaces raws (i + 1))
+  let past : Option Nat :=
+    if n == "raisebox" then (group (i + 1)).map fun j =>
+      let j1 := skipSpaces raws j
+      let j2 := skipBracketRun raws j1
+      if bracketRunSrc raws j1 |>.isSome then skipBracketRun raws j2 else j2
+    else if n == "colorbox" then group model
+    else if n == "fcolorbox" then (group model).bind group
+    else if n == "fbox" then some (i + 1)
+    else none
+  past.map (skipSpaces raws ·) |>.filter fun k => raws[k]? matches some (.group _ _)
+
+/-- Whether the box command `n` at `raws[i]` sets block content: its content group holds an
+environment setting block content. -/
+private def boxTakesBlocks (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) : Bool :=
+  match (boxContentAt n raws i).bind (raws[·]?) with
+  | some (.group body _) => lrBoxList (userBlockEnv ctx) body.toList
+  | _ => false
+
+/-- Names text in the paragraph of a box command holding block content, which the engine sets
+apart from the box where LaTeX runs it on beside it. -/
+private def boxInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM Unit := do
+  if !(Ir.boxCommands.contains n && (lookupUser ctx n).isNone && boxTakesBlocks ctx n raws i) then
+    return
+  let some k := boxContentAt n raws i | return
+  -- A line break or a vertical skip ends the box's line, a tie is a space.
+  let ends (r : Raw) : Bool := match r with
+    | .par _ | .env .. => true
+    | .ctrl c _ =>
+      ["\\", "newline", "vspace", "par", "block", "newpage", Compat.vspaceAnchorMark].contains c
+    | _ => false
+  let text (r : Raw) : Bool := sentenceText r && !(r matches .sym '~' _)
+  let before := (cur.toList.reverse.takeWhile (!ends ·))
+  let after := (raws.extract (k + 1) raws.size).toList.takeWhile (!ends ·)
+  let inside := match raws[k]? with
+    | some (.group g _) => g.any text
+    | _ => false
+  if before.any text || after.any text || inside then
+    warnOnce ctx "box:beside" .W0452
+      s!"'\\{n}' holding a minipage or a table stands on a line of its own here, where LaTeX \
+sets the text beside it on the same line" pos
+      (help := "write the box in a paragraph of its own, or move the text into its '{...}'")
+
+/-- Names a box command holding block content, or a user command whose body is a `tikzpicture`,
+inside a sentence, as a picture written there is named. -/
 private def macroPictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : EM Unit := do
+  boxInSentence ctx n cur raws i pos
   if let some (_, cmd) := lookupUser ctx n then
     if cmd.body.any (· matches .env "tikzpicture" _ _) then
       pictureInSentence ctx "tikzpicture" cur raws i pos
@@ -12399,6 +12606,25 @@ their in-paragraph and display marks. -/
 seal nativeLinkedRow linkedRowChoice noteLinkedRow
 seal texGroup groupBlocks restoringGroup envGroup
 
+/-- A box command over block content: its box, and the content group at `k`. -/
+private structure BoxBlockHead (raws : Array Raw) (i : Nat) where
+  box : Ir.InlineBox
+  k : Nat
+  body : Array Raw
+  pos : Pos
+  after : i < k
+  group : raws[k]? = some (.group body pos)
+
+private def boxBlockHead (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM (Option (BoxBlockHead raws i)) := do
+  if !(Ir.boxCommands.contains n && boxTakesBlocks ctx n raws i) then return none
+  match ← boxHead ctx n raws i pos (block := true) with
+  | some (b, ⟨k, hk⟩) =>
+    match hg : raws[k]? with
+    | some (.group body gp) => return some ⟨b, k, body, gp, hk, hg⟩
+    | _ => return none
+  | none => return none
+
 /-- Whether control `n` at `raws[i]` opens a block rather than continuing the
 paragraph `cur`. -/
 private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
@@ -12422,6 +12648,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     -- Mid-paragraph these markers stay inline: splitting there would move text.
     || (cur.isEmpty && (Marker.readingOf? n).any (·.opensBlock))
     || n == BeamerColor.marker || n == BeamerColor.starMarker
+    || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
+      Ir.boxCommands.contains n && boxTakesBlocks ctx' n raws i)
     || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
       (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget") &&
         contentWrapperTakesBlocks n raws i)
@@ -13434,7 +13662,11 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   let n := Compat.overlayName n
   have hadv := advance_measures raws h (show i < i + 1 by omega)
   let mut blocks := blocks
-  if declCtrl.contains n then
+  if let some hd ← boxBlockHead ctx n raws i pos then
+    have _ := group_measures hd.group (show i ≤ hd.k by have := hd.after; omega)
+    return (blocks ++ Ir.boxedBlocks hd.box (← elabBlockScope ctx hd.body),
+      ⟨hd.k + 1, by have := hd.after; omega⟩)
+  else if declCtrl.contains n then
     warnOnce ctx ("ctrl:" ++ n) .W0340
       (Diag.bodyDeclaration n) pos
       (help := Diag.declareInPreamble)

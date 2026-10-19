@@ -6650,6 +6650,17 @@ private def boxCss (cfg : Config) (b : Ir.InlineBox) : String :=
     (if b.ground.isSome || b.frame.isSome then [s!"padding: {cssLength b.pad.width}"] else [])
   "; ".intercalate decls
 
+/-- A box command's paint around block content: its ground, its frame and its padding; the box
+stands in the flow's gaps, so its lift moves nothing. -/
+private def blockBoxCss (cfg : Config) (b : Ir.InlineBox) : String :=
+  let paint (p : Ir.BoxPaint) : String := match p with
+    | .ink => "currentColor"
+    | .color c name => cfg.paint name c
+  "; ".intercalate (["box-sizing: border-box"] ++
+    (b.ground.map fun (c, name) => s!"background-color: {cfg.groundPaint name c}").toList ++
+    (b.frame.map fun f => s!"border: {cssLength b.rule.width} solid {paint f}").toList ++
+    (if b.ground.isSome || b.frame.isSome then [s!"padding: {cssLength b.pad.width}"] else []))
+
 /-- A box with a declared extent, as `\raisebox{lift}[height][depth]` sets it: its content raised by
 its lift in place, and a zero-width strut claiming the declared height above the baseline and the
 depth below it. -/
@@ -7235,10 +7246,30 @@ private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) 
     (#[("class", rowClass)] ++
       (if sized then #[("style", "container-type: inline-size")] else #[]))
 
+/-- What a box command's paint takes on each side of its box: its padding and its rule. -/
+private def boxInset (b : Ir.InlineBox) : Affine Measure :=
+  .add (.lit { width := if b.ground.isSome || b.frame.isSome then b.pad.width else {} })
+    (.lit { width := if b.frame.isSome then b.rule.width else {} })
+
+/-- A box's grid track: its declared width and a box command's paint on both sides of it, a box
+command's box of no declared width its content's. -/
+private def boxTrack (w : BoxWidth) : String :=
+  match w.trackOf, w.box with
+  | .affine e, some b => Ir.Track.css (.affine (.add e (.scale 2 1 (boxInset b))))
+  | .free, some _ => "fit-content(100%)"
+  | t, _ => Ir.Track.css t
+
 /-- Grid tracks from the declared widths: a percentage, a length, or an `fr` share of the
 leftover. -/
 private def gridTracks (cols : Array (BoxWidth × Array Block)) : String :=
-  String.intercalate " " (cols.toList.map fun (w, _) => Ir.Track.css w.trackOf)
+  String.intercalate " " (cols.toList.map fun (w, body) =>
+    -- a row's box holding one framed box takes its paint too
+    let framed := if let [.columns inner] := body.toList.filter (!·.epoch) then
+        if let [(iw, _)] := inner.toList then iw.box else none
+      else none
+    if let (.affine e, none, some b) := (w.trackOf, w.box, framed) then
+      Ir.Track.css (.affine (.add e (.scale 2 1 (boxInset b))))
+    else boxTrack w)
 
 /-- Children start their own sibling walk; the parent's epoch style already inherits into them. -/
 public def Config.into (cfg : Config) : Config :=
@@ -9417,8 +9448,17 @@ private def columnNodesInto (cfg : Config) (total share : Length) (acc : Array N
     -- every box is the query container its content's `cqi` reads
     let style := if align.isEmpty then "container-type: inline-size"
       else "container-type: inline-size; " ++ align
+    -- a box command's box paints as the PDF's does, one of no declared width sized by its content
+    let style := match w.box with
+      | some b => style ++ "; " ++ blockBoxCss cfg b ++
+          (if w.declared then "" else "; container-type: normal")
+      | none => style
     -- a minipage sets `\@listdepth` back to zero, as the page counts its lists
     let child := { cfg.atMeasure ((w.resolve total).getD share) with listDepth := 0 }
+    let child := match w.box.bind (·.ground) with
+      | some (g, none) => { child with ground := some g }
+      | some (_, some _) => { child with ground := none }
+      | none => child
     columnNodesInto cfg total share
       (acc.push (Html.elem "div" (blockNodesInto child #[] body.toList)
         #[("class", "column"), ("style", style)])) rest

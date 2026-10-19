@@ -265,6 +265,8 @@ public inductive DiagCode where
   | W0449
   | W0503
   | W0450
+  | W0451
+  | W0452
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -503,6 +505,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0449 => ("0449", .config, "a setting the document declares that nothing it sets uses; every artifact is the same without it")
   | .W0503 => ("0503", .degraded, "a bibliography file is not there; its entries are absent and what cites them is unresolved")
   | .W0450 => ("0450", .degraded, "a .bib key names a second entry setting other fields; the first entry stands")
+  | .W0451 => ("0451", .degraded, "a block environment inside a line of text, a table cell or a note; its words are set in the line")
+  | .W0452 => ("0452", .degraded, "a box holding a block stands on a line of its own; the text beside it is set apart from it")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

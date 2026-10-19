@@ -53,6 +53,8 @@ private structure UseAcc where
   uses : Array Use := #[]
   /-- Every `.setPalette` snapshot met, in flow order. -/
   epochs : Array Palette := #[]
+  /-- The epochs declared on a local ground, whose text stands on that ground, not the page. -/
+  groundedEpochs : Array Nat := #[]
   titledPals : Array Palette := #[]
   /-- Epochs of numbered frames whose chrome footer actually ships. -/
   footPals : Array Palette := #[]
@@ -138,6 +140,23 @@ private def UseCx.inkOnGround (cx : UseCx) (acc : UseAcc) : UseCx :=
   match cx.cur with
   | some _ => cx
   | none => { cx with cur := some (some (.role .ink), Design.printInk acc.pal, acc.runs) }
+
+/-- The context inside a box command's box: on its ground where it declares one, the default ink
+of block content following its palette declarations. -/
+private def UseCx.onBox (cx : UseCx) (acc : UseAcc) (b : InlineBox) (blocks : Bool := false) :
+    UseCx :=
+  match b.ground with
+  | none => cx
+  | some (c, nm) =>
+    let role := match nm with
+      | some (.role r) => some r
+      | _ => none
+    let cx := cx.inkOnGround acc
+    let cx := if blocks && cx.inkEpoch.isNone then { cx with inkEpoch := some acc.epochs.size }
+      else cx
+    { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the box",
+              groundRole := role, markUnder := some (cx.ground, cx.groundRole)
+              literalGround := if nm.isNone then some c else none }
 
 /-- Whether a use is large-scale text at the size its medium shows it; slide text always is. -/
 private def UseCx.large (cx : UseCx) : Bool :=
@@ -252,18 +271,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
                             groundRole := role, markUnder := some (cx.ground, cx.groundRole) }
         acc body.toList
   -- a box's content stands on the box's ground where it declares one
-  | .boxed b body =>
-    match b.ground with
-    | none => usesInlines cx acc body.toList
-    | some (c, nm) =>
-      let role := match nm with
-        | some (.role r) => some r
-        | _ => none
-      let cx := cx.inkOnGround acc
-      usesInlines { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the box",
-                            groundRole := role, markUnder := some (cx.ground, cx.groundRole)
-                            literalGround := if nm.isNone then some c else none }
-        acc body.toList
+  | .boxed b body => usesInlines (cx.onBox acc b) acc body.toList
   | .onSteps spec body =>
     usesInlines { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
   -- An alternative is inked at full colour or not at all, so it makes no palette pending.
@@ -412,7 +420,10 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       groundName := (Design.ofPalette acc.pal).footline.bar.map (fun _ => "the footline")
       groundRole := (Design.ofPalette acc.pal).footline.bar.map fun _ => .footBand }
       acc content.toList
-  | .setPalette p => { acc with pal := p, epochs := acc.epochs.push p }
+  | .setPalette p =>
+    let grounded := if cx.ground.isSome then acc.groundedEpochs.push acc.epochs.size
+      else acc.groundedEpochs
+    { acc with pal := p, epochs := acc.epochs.push p, groundedEpochs := grounded }
   | .setTokens _ => acc
   | .table _ _ _ rows _ _ =>
     rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
@@ -470,7 +481,8 @@ private def usesItems (cx : UseCx) (acc : UseAcc) :
 private def usesColumns (cx : UseCx) (acc : UseAcc) :
     List (BoxWidth × Array Block) → UseAcc
   | [] => acc
-  | (_, body) :: rest => usesColumns cx (usesBlocks cx acc body.toList) rest
+  | (w, body) :: rest =>
+    usesColumns cx (usesBlocks (w.box.elim cx (cx.onBox acc · (blocks := true))) acc body.toList) rest
 
 end
 
@@ -583,9 +595,13 @@ private def judgeSites (site : ColorSite) (stage : Bool) (xs : Array (Role × Pa
 public def eventSites (ev : Judged) (pal : Palette) : Array (Role × Palette) :=
   ((Design.sites pal .print).filter (·.role.row.judged == ev)).toArray.map (·.role, pal)
 
-/-- The page in every epoch, the document's palette first. -/
+/-- The epochs the page shows, those declared on a local ground standing on it instead. -/
+private def pageEpochs (walk : UseAcc) : Array Palette :=
+  walk.epochs.zipIdx.filterMap fun (p, i) => if walk.groundedEpochs.contains i then none else some p
+
+/-- The page in every epoch it shows, the document's palette first. -/
 private def pageEvents (doc : Doc) (walk : UseAcc) : Array (Judged × Palette) :=
-  (#[doc.palette] ++ walk.epochs).map (.page, ·)
+  (#[doc.palette] ++ pageEpochs walk).map (.page, ·)
 
 /-- The themed elements each epoch ships: block titles, frame titles, standout frames, title
 pages and focus rings. -/
@@ -1033,7 +1049,7 @@ public theorem defaulted_ink_cannot_escape (doc : Doc)
     rw [eventSites_page, h0]
     simp [hr]
   have hps : ∃ rest, (pageSites doc (docWalk doc)).toList = (Role.ink, doc.palette) :: rest := by
-    refine ⟨((docWalk doc).epochs.toList.map (Judged.page, ·)).flatMap
+    refine ⟨((pageEpochs (docWalk doc)).toList.map (Judged.page, ·)).flatMap
       (fun p => (eventSites p.1 p.2).toList), ?_⟩
     simp only [pageSites, pageEvents, Array.toList_flatMap, Array.toList_map, Array.toList_append,
       List.map_append, List.flatMap_append]

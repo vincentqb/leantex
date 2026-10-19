@@ -1077,6 +1077,14 @@
   'k' is already the key of an earlier entry; the first entry stands
   the first at refs.bib:1
   suggestion: one entry per key: delete this one or give it a key of its own
+── W0451 (degraded) a block environment inside a line of text, a table cell or a note; its words are set in the line
+⚠ [W0451] - \begin
+  '{center}' inside a line of text, a table cell or a note sets its words in the line; its own layout is lost
+  suggestion: write it as text there, or '\begin{...}' between paragraphs, where it sets as a block
+── W0452 (degraded) a box holding a block stands on a line of its own; the text beside it is set apart from it
+⚠ [W0452] - \fbox
+  '\fbox' holding a minipage or a table stands on a line of its own here, where LaTeX sets the text beside it on the same line
+  suggestion: write the box in a paragraph of its own, or move the text into its '{...}'
 ── W0503 (degraded) a bibliography file is not there; its entries are absent and what cites them is unresolved
 ⚠ [W0503]
   '\bibliography' file 'references' is not there; the reference list is empty and every citation shows '?'

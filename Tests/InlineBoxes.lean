@@ -314,4 +314,128 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (j.shipped.length > 1 && shipped.length == j.shipped.length &&
       j.frames.all fun f => shipped.lookup f.scheme == some (some (HtmlDoc.cssColor (f.ground yellow))))
 
+/-- A box command's argument is LR mode, where a minipage or a tabular is one box on the line: the
+box frames, grounds and raises it as a whole, its width and alignment its own. -/
+def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let said (src : String) := ((elabStr src).2.filter (·.severity != .note)).toList.map (·.code)
+  let layout (src : String) := layoutOf fonts (elabStr src).1
+  let lineOf (out : Layout.Out) (word : String) : Option Layout.LineOut :=
+    (bodyLines out).find? fun l => hasStr (lineText l) word
+  -- a block anchored to the page's foot by its own depth
+  let anchored (lift : String) := dvDoc
+    ("\\usepackage[dvips=false,pdftex=false,vtex=false]{geometry}\n" ++
+      "\\geometry{paperheight=2in, paperwidth=3.5in, hmargin=0.2in, vmargin=0.2in, noheadfoot}\n" ++
+      "\\pagestyle{empty}\n")
+    ("\\vspace*{\\fill}\n\\noindent\n" ++ lift ++ "{%\n  \\begin{minipage}[b]{\\textwidth}\n" ++
+      "    \\raggedright\n    Alpha Bravo\\\\ Charlie gypsy\n  \\end{minipage}%\n}")
+  let raised := anchored "\\raisebox{\\depth}"
+  let grouped := anchored ""
+  let paperSaid (src : String) := ((elabStr src).2.filter fun d =>
+    d.severity != .note && d.output != some .html).toList.map (·.code)
+  t s!"box blocks: a raised minipage builds unwarned, its geometry's driver options no loss ({paperSaid raised})"
+    (paperSaid raised == [] && said grouped == [])
+  t "box blocks: on the web page, where the box stands in the gaps, its lift is named"
+    ((elabStr raised).2.any fun d => d.subject == some "raisebox:block" && d.output == some .html)
+  let up := layout raised
+  let down := layout grouped
+  let depth := ((lineOf down "Charlie").map fun l => (Layout.segsInk fonts l.segs).2).getD 0
+  t s!"box blocks: a lift by the content's depth stands its last line that much higher ({depth.toBpString})"
+    (0 < depth && match lineOf up "Charlie", lineOf down "Charlie" with
+      | some a, some b => b.y - a.y == depth
+      | _, _ => false)
+  let wrapped (decl : String) := doc ""
+    ("\\noindent\\fbox{\\begin{minipage}[t]{100pt}" ++ decl ++
+      "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India\\end{minipage}}")
+  let lineEnds (out : Layout.Out) := (bodyLines out).map fun l => l.x + l.setWidth
+  let ragged := lineEnds (layout (wrapped "\\raggedright "))
+  let justifiedOut := layout (wrapped "")
+  let justified := lineEnds justifiedOut
+  let left := ((bodyLines justifiedOut)[0]?.map (·.x)).getD 0
+  t s!"box blocks: the minipage keeps its width and its own raggedright ({ragged.map (·.toBpString)}, {justified.map (·.toBpString)})"
+    (ragged.size > 1 && ragged.size == justified.size &&
+      (ragged.pop.zip justified.pop).all (fun (a, b) => a < b) &&
+      justified.pop.all fun e => left + pt 99 < e && e < left + pt 101)
+  -- a frame and a ground around the box
+  let fillsOf (out : Layout.Out) := out.pages.flatMap (·.fills)
+  let framed := layout (doc "" "\\noindent\\fbox{\\begin{minipage}{100pt}Alpha\\end{minipage}}\n\nAfter")
+  let hm := ((lineOf framed "After").map (·.x)).getD 0
+  let sides := fillsOf framed
+  let x0 := sides.foldl (fun m f => min m f.x) (pt 1000)
+  let x1 := sides.foldl (fun m f => max m (f.x + f.w)) 0
+  let bottom := sides.foldl (fun m f => max m (f.y + f.h)) 0
+  t s!"box blocks: an fbox frames a minipage fboxsep and fboxrule beyond its width ({x0.toBpString}, {x1.toBpString})"
+    (sides.size == 4 && x0 == hm && x1 == hm + pt 100 + 2 * (pt 3 + pt 2 / 5) &&
+      (sides.filter (·.h == pt 2 / 5)).size == 2 && (sides.filter (·.w == pt 2 / 5)).size == 2 &&
+      runX framed "Alpha" == some (hm + pt 3 + pt 2 / 5))
+  t "box blocks: the line after a framed box stands clear of its frame"
+    (match lineOf framed "After" with
+      | some l => bottom < l.y - (Layout.segsInk fonts l.segs).1
+      | none => false)
+  let grounded := fillsOf (layout (doc ""
+    "\\noindent\\colorbox{yellow}{\\begin{minipage}{100pt}Alpha\\end{minipage}}\n\nAfter"))
+  t s!"box blocks: a colorbox grounds the minipage fboxsep beyond it ({grounded.map (·.color.hex)})"
+    (grounded.size == 1 && grounded.all fun f => f.color.hex == "#FFFF00" && f.x == hm &&
+      f.w == pt 106)
+  let tabled := layout (doc ""
+    "\\noindent\\fbox{\\begin{tabular}{ll}Alpha & Bravo\\\\ Charlie & Delta\\end{tabular}}")
+  let ts := fillsOf tabled
+  let tx0 := ts.foldl (fun m f => min m f.x) (pt 1000)
+  let tx1 := ts.foldl (fun m f => max m (f.x + f.w)) 0
+  let inkRight := (bodyLines tabled).foldl (fun m l => max m (l.x + l.setWidth)) 0
+  t s!"box blocks: an fbox around a tabular hugs it, its column padding inside the frame ({tx0.toBpString}, {tx1.toBpString})"
+    (ts.size == 4 && tx0 == hm && runX tabled "Alpha" == some (hm + pt 3 + pt 2 / 5 + pt 6) &&
+      tx1 == inkRight + pt 6 + pt 3 + pt 2 / 5)
+  let centred (box : String) :=
+    fillsOf (layout (doc "" ("\\begin{center}" ++ box ++ "\\end{center}")))
+  let mid (fs : Array Layout.Fill) :=
+    fs.foldl (fun m f => min m f.x) (pt 1000) + fs.foldl (fun m f => max m (f.x + f.w)) 0
+  let tabAxis := mid (centred "\\fbox{\\begin{tabular}{ll}Alpha & Bravo\\end{tabular}}")
+  let boxAxis := mid (centred "\\fbox{\\begin{minipage}{100pt}Alpha\\end{minipage}}")
+  t s!"box blocks: in a center a framed tabular and a framed minipage stand on one axis ({tabAxis.toBpString})"
+    (tabAxis ≤ boxAxis + pt 1 / 100 && boxAxis ≤ tabAxis + pt 1 / 100)
+  -- the lift moves the box's baseline, the line after it following
+  let lifted (lift : String) := layout (doc ""
+    ("\\noindent\\raisebox{" ++ lift ++ "}{\\begin{minipage}[b]{100pt}Alpha\\end{minipage}}\n\nAfter"))
+  let afterY (out : Layout.Out) := (lineOf out "After").map (·.y)
+  t "box blocks: a lift stands the box that much higher on its baseline, the next line that much lower"
+    (match afterY (lifted "0pt"), afterY (lifted "1pt"), afterY (lifted "-1pt") with
+      | some z, some u, some d => u == z + pt 1 && d == z - pt 1
+      | _, _, _ => false)
+  -- a line holds no block: a block environment there sets its words, named once
+  let inLine := ["\\begin{tabular}{l}\\begin{minipage}{3cm}Kqzv text.\\end{minipage}\\end{tabular}",
+    "\\begin{tabular}{p{6cm}}\\fbox{\\begin{tabular}{ll}Kqzv & b\\\\\\end{tabular}}\\end{tabular}",
+    "A\\footnote{\\begin{center}Kqzv\\end{center}} b.", "A \\textbf{\\begin{quote}Kqzv\\end{quote}} b."]
+  let lineSaid := inLine.map fun body => (elabStr (doc "" body)).2.filter (·.severity != .note)
+  t s!"box blocks: a block environment in a cell, a note or a font command's argument sets its words, named once ({lineSaid.map (·.toList.map (·.code))})"
+    (lineSaid.all (·.toList.map (·.code) == ["W0451"]) &&
+      inLine.all fun body => hasStr (String.join ((bodyLines (layout (doc "" body))).toList.map lineText ++
+        (layout (doc "" body)).pages.toList.flatMap (·.lines.toList.map lineText))) "Kqzv")
+  -- text beside the box, a row of boxes, and a page turn
+  let beside := doc "" "Alpha \\fbox{\\begin{minipage}{100pt}Bravo\\end{minipage}} Charlie."
+  t s!"box blocks: text beside a box holding a minipage is set apart, named once ({said beside})"
+    (said beside == ["W0452"])
+  let row := fillsOf (layout (doc ""
+    ("\\noindent\\fbox{\\begin{minipage}{100pt}Alpha\\end{minipage}}\\hfill" ++
+      "\\fbox{\\begin{minipage}{100pt}Bravo\\end{minipage}}")))
+  let lefts := (row.filter (·.h == pt 2 / 5)).map (·.x) |>.qsort (· < ·)
+  let tops := (row.filter (·.h == pt 2 / 5)).map (·.y) |>.qsort (· < ·)
+  t s!"box blocks: two framed minipages with a fill between them stand side by side ({lefts.map (·.toBpString)})"
+    (row.size == 8 && lefts.size == 4 && lefts[0]! == hm && lefts[0]! + pt 200 < lefts[3]! &&
+      tops[1]! < tops[2]!)
+  let turned := layout (doc ""
+    ("\\noindent Alpha\\vspace{560pt}\n\n\\noindent\\fbox{\\begin{minipage}{100pt}" ++
+      String.intercalate "\\\\ " ((List.range 12).map fun k => s!"Line {k}") ++ "\\end{minipage}}"))
+  let pagesWith (out : Layout.Out) (w : String) :=
+    (out.pages.zipIdx.filter fun (p, _) => p.lines.any fun l => hasStr (lineText l) w).map (·.2)
+  t s!"box blocks: a framed box is one box, set whole on the next page ({pagesWith turned "Line 0"}, {pagesWith turned "Line 11"})"
+    (pagesWith turned "Line 0" == #[1] && pagesWith turned "Line 11" == #[1] &&
+      (turned.pages[1]?.map (·.fills.size)) == some 4)
+  -- the web page's box
+  let (_, _, html, _) := sourceArtifacts fonts
+    (doc "" "\\noindent\\fcolorbox{red}{yellow}{\\begin{minipage}{100pt}Alpha\\end{minipage}}")
+  t "box blocks: the web page's box paints its ground, frame and padding round the minipage"
+    (hasStr html "class=\"column\" style=\"container-type: inline-size; box-sizing: border-box; background-color:" &&
+      hasStr html "border: 0.4pt solid" && hasStr html "padding: 3pt\">")
+
 end Tests.InlineBoxes
