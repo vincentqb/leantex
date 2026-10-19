@@ -15,16 +15,16 @@ def opaqueFill (p : Gfx.Paint) : Gfx.Fill := { paint := p, rule := .nonzero, alp
 
 /-- A gradient running up the page from the figure's origin, and one off its box's centre: both read
 differently in a frame the placement flips. -/
-def vertical : Gfx.Gradient := .linear (0, 0) (0, Dim.pt 10) stops Gfx.Affine.unit
+def vertical : Gfx.Gradient := .linear (0, 0) (0, Dim.bp 10) stops Gfx.Affine.unit
 
 def offCentre : Gfx.Gradient :=
-  .radial (Dim.pt 2, Dim.pt 3) 0 (Dim.pt 2, Dim.pt 3) (Dim.pt 6) stops Gfx.Affine.unit
+  .radial (Dim.bp 2, Dim.bp 3) 0 (Dim.bp 2, Dim.bp 3) (Dim.bp 6) stops Gfx.Affine.unit
 
 def atRoot (g : Gfx.Gradient) : Gfx.Figure Empty :=
   figure #[.draw square (some (opaqueFill (.gradient g))) none]
 
 def inGroup (g : Gfx.Gradient) : Gfx.Figure Empty :=
-  figure #[.group (Gfx.Affine.translate (Dim.pt 20) (Dim.pt 30)) #[] Gfx.Alpha.opaque
+  figure #[.group (Gfx.Affine.translate (Dim.bp 20) (Dim.bp 30)) #[] Gfx.Alpha.opaque
     #[.draw square (some (opaqueFill (.gradient g))) none]]
 
 /-- The SVG an emitter that left a gradient in its own frame would write. -/
@@ -102,7 +102,7 @@ def gfxGradientFrameChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "gradient frame: a root pattern's matrix carries the PDF placement"
     (match pdfOps (atRoot vertical) with
      | #[.paint (some { paint := .pattern _ g, .. }) none none _] =>
-       g.xf == Gfx.Affine.translate (Dim.pt 3) (Dim.pt 4)
+       g.xf == Gfx.Affine.translate (Dim.bp 3) (Dim.bp 4)
      | _ => false)
   for (name, fig) in #[("vertical root", atRoot vertical), ("off-centre radial root", atRoot offCentre),
       ("vertical in a group", inGroup vertical), ("radial in a group", inGroup offCentre)] do
@@ -118,7 +118,7 @@ def gfxGradientFrameChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "gradient frame: a mark's gradient stands in the figure frame"
     (match (inGroup vertical).marks with
      | #[.paint _ _ (some { paint := .gradient g, .. }) none _ _] =>
-       g.xf == Gfx.Affine.translate (Dim.pt 20) (Dim.pt 30)
+       g.xf == Gfx.Affine.translate (Dim.bp 20) (Dim.bp 30)
      | _ => false)
 
 open Tests.GfxPaint Tests.GfxMatrix in
@@ -259,7 +259,7 @@ def gfxInkRasterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let some (_, raster) := cases[7]? | t "ink rasters: cases" false
   let some (_, plain) := cases[0]? | t "ink rasters: cases" false
   let page (fig : Gfx.Figure Empty) : Layout.PageOut :=
-    { inks := #[{ fig := fig.lift, place := { flipY := true, dx := 0, dy := Dim.pt 100 } }] }
+    { inks := #[{ fig := fig.lift, place := { flipY := true, dx := 0, dy := Dim.bp 100 } }] }
   t "ink rasters: an ink that paints a raster is refused"
     (match Pdf.writeChecked {} oneFace #[page plain, page raster] with
      | .error (.inkRaster 1) => true

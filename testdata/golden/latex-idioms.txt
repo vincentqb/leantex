@@ -1,5 +1,5 @@
 class scrartcl [paper=a5,fontsize=11pt]
-page 420x595 vmargin 39.685 hmargin 48.189 fontsize 11 parskip 0 plus 1pt
+page 420x595 vmargin 39.685 hmargin 48.189 fontsize 10.959 parskip 0 plus 1pt
 font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"

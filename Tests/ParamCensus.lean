@@ -804,12 +804,12 @@ def textHeightChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       last kernel + 2 * lead > Dim.inch 1 + Dim.pt 500 && last kernel < last margin)
   let ofTop (src : String) : Dim.Length := top src - top margin + Dim.inch 1
   t "text height: geometry's text height alone splits the leftover 2:3"
-    (ofTop (geo "textheight=500pt") == (Dim.pt 792 - Dim.pt 500) * 2 / 5)
+    (ofTop (geo "textheight=500pt") == (Dim.bp 792 - Dim.pt 500) * 2 / 5)
   t "text height: geometry's text height beside a bottom margin stands on it"
-    (ofTop (geo "textheight=500pt,bottom=1in") == Dim.pt 792 - Dim.pt 500 - Dim.inch 1)
+    (ofTop (geo "textheight=500pt,bottom=1in") == Dim.bp 792 - Dim.pt 500 - Dim.inch 1)
   t "text height: geometry's top and bottom place the block apart, tmargin and vmargin alike"
-    (last (geo "top=1in,bottom=2in") ≤ Dim.pt 792 - 2 * Dim.inch 1 &&
-      last (geo "top=1in,bottom=2in") + 2 * lead > Dim.pt 792 - 2 * Dim.inch 1 &&
+    (last (geo "top=1in,bottom=2in") ≤ Dim.bp 792 - 2 * Dim.inch 1 &&
+      last (geo "top=1in,bottom=2in") + 2 * lead > Dim.bp 792 - 2 * Dim.inch 1 &&
       firstPage (geo "tmargin=1in,bmargin=2in") == firstPage (geo "top=1in,bottom=2in") &&
       firstPage (geo "vmargin={1in,2in}") == firstPage (geo "top=1in,bottom=2in") &&
       top (geo "top=1in,bottom=2in") == top margin)
@@ -864,7 +864,7 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     (held (calls "margin=1in" "\\setlength{\\textheight}{500pt}\n\\geometry{hmargin=2in}")
         (Dim.inch 1) (Dim.inch 1) &&
       tall (art "\\setlength{\\textheight}{500pt}\n\\usepackage[hmargin=1in]{geometry}") ==
-        Dim.pt 792 * 7 / 10)
+        Dim.bp 792 * 7 / 10)
   t "text block: a key an earlier call spelled is not named again, nor geometry's own default"
     (quiet (calls "textheight=500pt,vmarginratio=1:1" "\\geometry{top=1in}") &&
       quiet (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}") &&
@@ -926,7 +926,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr d.message "a ratio such as 2:3")
   t "text block: a height past the page is named and the margins stand"
     (named (native "tmargin = 1in, textheight = 900pt") "textheight" &&
-      held (native "tmargin = 1in, textheight = 900pt") (Dim.inch 1) (Dim.inch 1))
+      held (native "tmargin = 1in, textheight = 900pt") (page (native "")).vmargin
+        (page (native "")).bottomMargin)
   let img := "\\includegraphics[height=0.5\\textheight, alt={An invented box}]{a.png}"
   let store : Image.Store := { entries := #[{ src := "a.png"
                                               info := some { pxW := 144
@@ -934,10 +935,10 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
   let html (pre : String) : String :=
     (HtmlDoc.emit { imgs := store } (elabStr (deck169 pre
       s!"\\begin\{frame}\{Pics}\n{img}\n\\end\{frame}")).1).1
-  -- Half of a 255.1pt stage less 80pt of margins is 34.32% of it.
+  -- Half of a 90 mm stage less 80pt of margins is 34.379% of it.
   t "text block: the deck page reads a textheight fraction of the placed block"
-    (hasStr (html "\\page{ tmargin = 20pt, bmargin = 60pt }") "height: 34.32dvh" &&
-      !hasStr (html "\\page{ vmargin = 20pt }") "height: 34.32dvh")
+    (hasStr (html "\\page{ tmargin = 20pt, bmargin = 60pt }") "height: 34.379dvh" &&
+      !hasStr (html "\\page{ vmargin = 20pt }") "height: 34.379dvh")
 
 /-- Every token name an engine site reads by literal stands in the engine's vocabulary, and the
 lengths natbib, caption and the kernel set that the engine reads are not named unread. -/

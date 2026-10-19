@@ -97,9 +97,9 @@ public theorem requiredIn_monotone (s : Ir.Scheme) (n : Ir.Need) : required n �
 public theorem aaLargeText_le_aaText : aaLargeText ≤ aaText := by
   decide
 
-/-- WCAG 2.2's large-scale text boundary (≥ 18pt, or ≥ 14pt bold), in layout's units. -/
+/-- WCAG 2.2's large-scale text boundary (≥ 18pt, or ≥ 14pt bold), in CSS's points. -/
 public def largeText (size : Dim.Length) (bold : Bool) : Bool :=
-  size ≥ Dim.pt 18 || (bold && size ≥ Dim.pt 14)
+  size ≥ Dim.bp 18 || (bold && size ≥ Dim.bp 14)
 
 public def textRequired (size : Dim.Length) (bold : Bool) : Nat :=
   if largeText size bold then aaLargeText else aaText

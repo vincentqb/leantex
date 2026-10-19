@@ -363,7 +363,7 @@ const affineGeometry = () => {
   const bound = 0.5;
   const top = document.querySelector('.u-affinetop');
   if (!top) return { ok: true, n: 0, why: '' };
-  const pt = n => n * 4 / 3;
+  const pt = n => n * 96 / 72.27; // the fixture's TeX points, in CSS px
   const num = (style, property) => parseFloat(style.getPropertyValue(property));
   const contentWidth = el => {
     const r = el.getBoundingClientRect(), s = getComputedStyle(el);

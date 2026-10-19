@@ -143,10 +143,10 @@ lengths the document allocates with `\newlength` are read, followed through
 `\setlength` and `\addtolength`; one that another assignment changes, or code
 the engine does not run may change, is not read (but for a bare assignment
 opening a brace group, `{\len-1in …}`, which reads as an argument), and
-anything else the expansion meets is named and the definition skipped. Lengths are exact, their units
-read as leantex reads them everywhere (a `pt` is a big point here), and
-`\the` prints them in TeX points rounded once, so a box computed in big
-points comes out exact: `\the` of `3.5truein` prints `252.945pt`, where TeX,
+anything else the expansion meets is named and the definition skipped. Lengths are exact, each unit
+read as its standard defines it (a `pt` is TeX's 1/72.27 in, a `bp`
+1/72 in), and `\the` prints them in TeX points rounded once:
+`\the` of `3.5truein` prints `252.945pt`, where TeX,
 rounding each step, prints `252.94499pt`. A `\pdfvariable pageattr{…}` (or
 `\pdfpageattr`) assignment, in a `shipout/before` hook or not, writes its
 `/TrimBox`, `/BleedBox`, `/ArtBox` and `/CropBox` on every page, each inside

@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 meta title "Squares and Triangles"
@@ -15,50 +15,50 @@ para
   text "Before the square."
 role display-picture
   picture 13 shapes
-    baseline -9
+    baseline -8.966
     border 0 0 0 0
-    border 36 0 36 0
-    border 0 -18 0 -18
-    border 36 -18 36 -18
-    border 18 0 18 0
-    border 0 -9 0 -9
-    border 36 -9 36 -9
-    border 18 -18 18 -18
+    border 35.866 0 35.866 0
+    border 0 -17.933 0 -17.933
+    border 35.866 -17.933 35.866 -17.933
+    border 17.933 0 17.933 0
+    border 0 -8.966 0 -8.966
+    border 35.866 -8.966 35.866 -8.966
+    border 17.933 -17.933 17.933 -17.933
     label 0 0 #000000 1000 west
       formula inline "P"
         ord:𝑃
-    label 36 0 #000000 1000 west
+    label 35.866 0 #000000 1000 west
       formula inline "Q"
         ord:𝑄
-    label 0 -18 #000000 1000 west
+    label 0 -17.933 #000000 1000 west
       formula inline "R"
         ord:𝑅
-    label 36 -18 #000000 1000 west
+    label 35.866 -17.933 #000000 1000 west
       formula inline "S"
         ord:𝑆
     group
-      draw path (0,0)--(35.6,0) stroke #000000 0.4
-      draw path (33.72,2.4)~(35.8,0)~(33.72,-2.4) stroke #000000 0.4 cap round join round
-    label 18 0 #000000 700 west
+      draw path (0,0)--(35.467,0) stroke #000000 0.399
+      draw path (33.594,2.391)~(35.666,0)~(33.594,-2.391) stroke #000000 0.399 cap round join round
+    label 17.933 0 #000000 700 west
       formula inline "u"
         ord:𝑢
     group
-      draw path (0,0)--(0,-17.6) stroke #000000 0.4
-      draw path (2.4,-15.72)~(0,-17.8)~(-2.4,-15.72) stroke #000000 0.4 cap round join round
-    label 0 -9 #000000 700 west
+      draw path (0,0)--(0,-17.534) stroke #000000 0.399
+      draw path (2.391,-15.661)~(0,-17.733)~(-2.391,-15.661) stroke #000000 0.399 cap round join round
+    label 0 -8.966 #000000 700 west
       formula inline "v"
         ord:𝑣
     group
-      draw path (36,0)--(36,-17.6) stroke #000000 0.4
-      draw path (38.4,-15.72)~(36,-17.8)~(33.6,-15.72) stroke #000000 0.4 cap round join round
-    label 36 -9 #000000 700 west
+      draw path (35.866,0)--(35.866,-17.534) stroke #000000 0.399
+      draw path (38.257,-15.661)~(35.866,-17.733)~(33.474,-15.661) stroke #000000 0.399 cap round join round
+    label 35.866 -8.966 #000000 700 west
       formula inline "w"
         ord:𝑤
     group
-      draw path (0,-18)--(35.6,-18) stroke #000000 0.4
-      draw path (33.72,-15.6)~(35.8,-18)~(33.72,-20.4) stroke #000000 0.4 cap round join round
-    draw rect 18 -18 0 0 fill #FFFFFF
-    label 18 -18 #000000 700 west
+      draw path (0,-17.933)--(35.467,-17.933) stroke #000000 0.399
+      draw path (33.594,-15.542)~(35.666,-17.933)~(33.594,-20.324) stroke #000000 0.399 cap round join round
+    draw rect 17.933 -17.933 0 0 fill #FFFFFF
+    label 17.933 -17.933 #000000 700 west
       formula inline "x"
         ord:𝑥
 para
@@ -68,31 +68,31 @@ section 1 number "2"
 role display-vefo
   role display-picture
     picture 7 shapes
-      baseline -9
+      baseline -8.966
       border 0 0 0 0
-      border 24 0 24 0
-      border 24 -18 24 -18
-      border 12 3.523 12 3.523
+      border 23.91 0 23.91 0
+      border 23.91 -17.933 23.91 -17.933
+      border 11.955 3.51 11.955 3.51
       label 0 0 #000000 1000 west
         formula inline "K"
           ord:𝐾
-      label 24 0 #000000 1000 west
+      label 23.91 0 #000000 1000 west
         formula inline "L"
           ord:𝐿
-      label 24 -18 #000000 1000 west
+      label 23.91 -17.933 #000000 1000 west
         formula inline "M"
           ord:𝑀
       group
-        draw path (0,0)~(23.654,0.2) stroke #000000 0.4
-        draw path (23.228,3.221)~(23.827,0.1)~(20.823,-0.936) stroke #000000 0.4 cap round join round
-      label 12 3.523 #000000 700 west
+        draw path (0,0)~(23.565,0.2) stroke #000000 0.399
+        draw path (23.141,3.209)~(23.738,0.1)~(20.745,-0.933) stroke #000000 0.399 cap round join round
+      label 11.955 3.51 #000000 700 west
         formula inline "m"
           ord:𝑚
       group
-        draw path (0,0)--(23.68,-17.76) stroke #FF0000 0.4
-        draw path (23.616,-14.712)~(23.84,-17.88)~(20.736,-18.552) stroke #FF0000 0.4 cap round join round
+        draw path (0,0)--(23.592,-17.694) stroke #FF0000 0.399
+        draw path (23.528,-14.657)~(23.751,-17.813)~(20.659,-18.483) stroke #FF0000 0.399 cap round join round
       group
-        draw path (24,0)--(24,-17.6) stroke #000000 0.4
-        draw path (26.4,-15.72)~(24,-17.8)~(21.6,-15.72) stroke #000000 0.4 cap round join round
+        draw path (23.91,0)--(23.91,-17.534) stroke #000000 0.399
+        draw path (26.301,-15.661)~(23.91,-17.733)~(21.519,-15.661) stroke #000000 0.399 cap round join round
 -- diagnostics
 note[N0100] 11:1 '\usepackage{tikz-cd}' → nothing: the engine does this itself

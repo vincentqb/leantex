@@ -69,13 +69,13 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let some fira ← shippedFira | t "frame area: the shipped Fira Sans parses" false
   let (doc, _) := elabStr deck
   let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-  let near := withinSp (ptMilli 500)
+  let near := withinSp (Dim.Length.ofBpMilli 500)
   let line (out : Layout.Out) (page : Nat) (word : String) (furniture : Bool := false) :
       Option Layout.LineOut :=
     out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.furniture == furniture && hasStr (lineText l) word
   let at? (page : Nat) (word : String) (milli : Int) (furniture : Bool := false) : Bool :=
-    ((line out page word furniture).map fun l => near l.y (ptMilli milli)).getD false
+    ((line out page word furniture).map fun l => near l.y (Dim.Length.ofBpMilli milli)).getD false
   t "frame area: a standout frame centres in beamer's text area, as lualatex does"
     (at? 0 "Kilo" 142951)
   t "frame area: a restored standout note lifts its frame by half its footheight, as lualatex does"
@@ -94,7 +94,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       (p.lines.find? fun l => hasStr (lineText l) "Hotel").map (·.y)
   t "frame area: a section page on a title page's heels opens as every section page does"
     (match sectionY 1, sectionY 3 with
-     | some a, some b => a == b && near a (ptMilli 127894)
+     | some a, some b => a == b && near a (Dim.Length.ofBpMilli 127894)
      | _, _ => false)
   let geom := Layout.Geom.ofPage doc.page
   let band := ((out.pages[6]?.map (·.lines)).getD #[]).filter (·.furniture)
@@ -127,11 +127,11 @@ def classAlignChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "class t: the deck sets every bare frame as an explicit [t] sets it"
     (ys tdoc == ys edoc && (HtmlDoc.emit {} tdoc).1 == (HtmlDoc.emit {} edoc).1 &&
       tds.size == eds.size)
-  let near := withinSp (ptMilli 500)
+  let near := withinSp (Dim.Length.ofBpMilli 500)
   let out := layoutOf fira tdoc (Layout.Geom.ofPage tdoc.page)
   let at? (page : Nat) (word : String) (milli : Int) : Bool :=
     ((out.pages[page]?.bind fun p => p.lines.find? fun l =>
-      !l.furniture && hasStr (lineText l) word).map fun l => near l.y (ptMilli milli)).getD false
+      !l.furniture && hasStr (lineText l) word).map fun l => near l.y (Dim.Length.ofBpMilli milli)).getD false
   t "class t: an untitled frame opens at the text area's top and a standout frame centres, as lualatex does"
     (at? 1 "Kilo" 17620 && at? 3 "Kilo" 142950)
   let centred (doc : Ir.Doc) : Option Ir.VAlign := doc.body.findSome? fun b => match b with
@@ -163,25 +163,25 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let first (page : Nat) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) "Kilo").map (·.y)
-  let near := withinSp (ptMilli 500)
+  let near := withinSp (Dim.Length.ofBpMilli 500)
   let size := doc.page.fontSize
   let lead := Ir.leadingFor size doc.page.leading
   let skip := (Ir.frameBodySkip false .top).resolve size 0
   t "frame opening: a paragraph's first baseline stands one baselineskip below the opening, as lualatex's"
-    ((first 0).any fun y => y == skip + lead && near y (ptMilli 17620))
+    ((first 0).any fun y => y == skip + lead && near y (Dim.Length.ofBpMilli 17620))
   let listOpen : Option Dim.Length := (Ir.listSkips doc.docClass.record.lists size 1).map fun sk =>
     sk.topsep.width.sp + (Ir.partopsepFor doc.docClass.record.lists size 1 doc.tokens).width.sp
   t "frame opening: a list's first item stands its topsepadd lower, as lualatex's"
     (match first 1, first 2, listOpen with
-     | some a, some b, some o => a == skip + o + lead && b == a && near a (ptMilli 20610)
+     | some a, some b, some o => a == skip + o + lead && b == a && near a (Dim.Length.ofBpMilli 20610)
      | _, _, _ => false)
   -- An image's box takes TeX's interline glue at its paragraph's `\baselineskip`.
   let imageY (page : Nat) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
   t "frame opening: an image stands TeX's interline glue below the opening, as lualatex's"
-    ((imageY 3).any (fun y => y == skip + Ir.inkClearance + Dim.pt 40 && near y (ptMilli 46517)) &&
-     (imageY 4).any (fun y => y == skip + lead && near y (ptMilli 17624)))
+    ((imageY 3).any (fun y => y == skip + Ir.inkClearance + Dim.pt 40 && near y (Dim.Length.ofBpMilli 46517)) &&
+     (imageY 4).any (fun y => y == skip + lead && near y (Dim.Length.ofBpMilli 17624)))
   let (head, _, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
   let blocks := artCssBlocks css
@@ -237,7 +237,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fira ← shippedFira | t "trivlist opening: the shipped Fira Sans parses" false
   let (doc, _) := elabStr trivDeck
   let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-  let near := withinSp (ptMilli 500)
+  let near := withinSp (Dim.Length.ofBpMilli 500)
   let size := doc.page.fontSize
   let lists := doc.docClass.record.lists
   let lead := Ir.leadingFor size doc.page.leading
@@ -253,25 +253,25 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size 0).1.width.sp == topsep)
   t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip below the opening, as lualatex's"
     ([0, 1, 2].all fun pg => (lineY pg "Kilo").any fun y =>
-      y == skip + topsep + lead && near y (ptMilli 25594))
+      y == skip + topsep + lead && near y (Dim.Length.ofBpMilli 25594))
   t "trivlist opening: a figure's and a center's image stand their topsep and lineskip below the opening, as lualatex's"
     ([3, 4].all fun pg => (imageY pg).any fun y =>
-      y == skip + topsep + Ir.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (ptMilli 14635))
+      y == skip + topsep + Ir.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (Dim.Length.ofBpMilli 14635))
   t "trivlist opening: a description's item stands its topsep below the opening, as lualatex's"
-    ((lineY 5 "Kilo").any fun y => near y (ptMilli 20613))
+    ((lineY 5 "Kilo").any fun y => near y (Dim.Length.ofBpMilli 20613))
   t "trivlist opening: a center between paragraphs stands its topsep above and below, as lualatex's"
-    ((lineY 6 "Kilo").any (near · (ptMilli 17624)) && (lineY 6 "Lima").any (near · (ptMilli 37550)) &&
-     (lineY 6 "Mike").any (near · (ptMilli 57475)))
+    ((lineY 6 "Kilo").any (near · (Dim.Length.ofBpMilli 17624)) && (lineY 6 "Lima").any (near · (Dim.Length.ofBpMilli 37550)) &&
+     (lineY 6 "Mike").any (near · (Dim.Length.ofBpMilli 57475)))
   -- Inside a list beamer's `\@listi` has set `\topsep` again, to 3 pt.
   t "trivlist opening: a center inside a list item spends its level's topsep, as lualatex's"
     ((Ir.trivlistSkipFor lists doc.tokens size 1).width.sp == Dim.pt 3 &&
-     (lineY 7 "Lima").any (near · (ptMilli 35557)) && (lineY 7 "Mike").any (near · (ptMilli 50501)) &&
-     (lineY 7 "November").any (near · (ptMilli 65445)))
+     (lineY 7 "Lima").any (near · (Dim.Length.ofBpMilli 35557)) && (lineY 7 "Mike").any (near · (Dim.Length.ofBpMilli 50501)) &&
+     (lineY 7 "November").any (near · (Dim.Length.ofBpMilli 65445)))
   -- A caption sets 7 pt below its line (`\belowcaptionskip`), then the figure's topsep.
   t "trivlist opening: a captioned figure spends beamer's caption skips, as lualatex's"
-    ((imageY 8).any (fun y => near (y - Dim.pt 40) (ptMilli 14635)) &&
+    ((imageY 8).any (fun y => near (y - Dim.pt 40) (Dim.Length.ofBpMilli 14635)) &&
      (match lineY 8 "Figure", lineY 8 "Mike" with
-      | some c, some m => near (m - c) (ptMilli 26899)
+      | some c, some m => near (m - c) (Dim.Length.ofBpMilli 26899)
       | _, _ => false))
   -- The top-level topsep is the size file's: extsizes' 6 pt under `9pt`, beamer's 11pt's 9 pt.
   t "trivlist opening: the top-level topsep is the class option's size file's"
@@ -596,20 +596,20 @@ def frameNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fira ← shippedFira | t "frame notes: the shipped Fira Sans parses" false
   let (doc, _) := elabStr noteFrames
   let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-  let near := withinSp (ptMilli 500)
+  let near := withinSp (Dim.Length.ofBpMilli 500)
   let ys (page : Nat) (note : Bool) : List Dim.Length :=
     ((out.pages[page]?.map fun p => (p.lines.filter fun l =>
       l.note == note && !l.furniture &&
         (if note then !(lineText l).isEmpty else hasStr (lineText l) "Kilo")).map (·.y)).getD #[]).toList
   let at? (got : List Dim.Length) (milli : List Int) : Bool :=
-    got.length == milli.length && (got.zip milli).all fun (a, m) => near a (ptMilli m)
+    got.length == milli.length && (got.zip milli).all fun (a, m) => near a (Dim.Length.ofBpMilli m)
   t "frame notes: a frame's notes stand their last baseline on the text area's floor, as lualatex does"
     (at? (ys 0 true) [260820] && at? (ys 1 true) [260770] && at? (ys 2 true) [251000, 260710])
   t "frame notes: an untitled frame centres above its note, as lualatex does"
     (at? (ys 1 false) [132870])
   t "frame notes: a note lifts its titled frame's body by half its box, as lualatex does"
     (match ys 0 false, ys 3 false with
-     | [a], [b] => near (a - b) (ptMilli (-3390))
+     | [a], [b] => near (a - b) (Dim.Length.ofBpMilli (-3390))
      | _, _ => false)
 
 end Tests.FrameArea

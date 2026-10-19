@@ -18,9 +18,9 @@ def rhythmDir : String := "testdata/rhythm"
 one pixel at 110 dpi and above the engines' 0.375 % unit difference on a typical gap. -/
 def toleranceMilliBp : Int := 500
 
-/-- The second band, in thousandths of a bp: half the 6 bp rhythm quantum at the article
+/-- The second band, in thousandths of a bp: half the 6 pt rhythm quantum at the article
 base, a constant so an engine change cannot move it. -/
-def nearMilliBp : Int := 3000
+def nearMilliBp : Int := 2989
 
 /-- A length in thousandths of a bp, rounded half away from zero. -/
 def milliBpOf (v : Dim.Length) : Int := v.toBpMilli

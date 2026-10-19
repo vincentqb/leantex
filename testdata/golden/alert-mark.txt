@@ -1,5 +1,5 @@
 class slides
-page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
+page 362.835x272.126 vmargin 26.301 hmargin 28.346 fontsize 10.959 parskip 0 justify off
 palette bg #FFFFFF
 palette fg #1C1917
 palette accent #FACC15
@@ -53,7 +53,7 @@ frame
         text "marked words"
     text " close the line."
   columns
-    column 113.386pt
+    column 113.811pt
       para
         decoration highlight alertmark #FACC15
           color alert #1C1917

@@ -43,10 +43,10 @@ def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
     [("t", "\\vspace*{2pt}\n" ++ paras 21), ("t", paras 25), ("t", paras 26), ("t", paras 21),
      ("t", "\\vspace*{2pt}\n" ++ paras 20 ++ "\n\n\\pause\nKilo words."),
      ("t", "\\vspace*{5pt}\nKilo words.\\footnote{Lima words.}\n\n" ++ paras 19),
-     ("t", "\\vspace*{14pt}\n" ++ paras 17 ++ "\n\n" ++ pic),
+     ("t", "\\vspace*{16pt}\n" ++ paras 17 ++ "\n\n" ++ pic),
      ("t", "\\vspace*{2pt}\n" ++ paras 20 ++
        "\n\n\\alt<2>{Kilo words.\n\nLima words.\n\nMike words.\n\nNovember words.}{Kilo words.}"),
-     ("t", "\\vspace*{1pt}\n" ++ paras 20 ++
+     ("t", "\\vspace*{2pt}\n" ++ paras 20 ++
        "\n\n\\alt<2>{\\vspace*{2pt}Kilo words.}{Kilo words.}")])
   t "overhang: the deck elaborates clean" (ds.all (·.severity != .error))
   let f := fittedOf fira doc (Layout.Geom.ofPage doc.page)

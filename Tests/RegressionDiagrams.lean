@@ -44,7 +44,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
             HtmlDoc.attrOf? outer "style" == some "font-size: 0; font-family: inherit" &&
             HtmlDoc.attrOf? padded "height" == some "0px" &&
             HtmlDoc.attrOf? padded "depth" == some "0px" &&
-            HtmlDoc.attrOf? inner "style" == some "font-size: 10px"
+            HtmlDoc.attrOf? inner "style" == some s!"font-size: {(Dim.pt 10).toBpString}px"
           | _ => false)
       for line in selected do
         let one : Layout.Out := { pages := #[{ lines := #[line] }], diags := #[] }

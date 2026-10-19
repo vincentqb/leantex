@@ -340,16 +340,16 @@
   160.215pt too wide
 ⚠ [W0005]
   a frame's columns run past its measure
-  frame 2: 122.457pt too wide
+  frame 2: 122.916pt too wide
 ⚠ [W0005]
   a frame's footnote runs past its measure; no feasible break
-  frame 1: 313.423pt too wide
+  frame 1: 312.275pt too wide
 ⚠ [W0005]
   a frame's line runs past its measure; no feasible break
-  frame 1: 468.314pt too wide
+  frame 1: 467.167pt too wide
 ⚠ [W0005]
   a section page's line runs past its measure; no feasible break
-  the section page: 835.263pt too wide
+  the section page: 834.237pt too wide
 ── W0006 (degraded) declared face variant missing; another face substitutes
 ⚠ [W0006]
   'Demo Serif' has no bold face; 'Demo Serif Regular' substitutes
@@ -610,7 +610,7 @@
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 ⚠ [W0335]
   the picture is larger than the text area; it may overrun the page
-  1133.858pt × 28.346pt against 312pt × 648pt
+  1138.11pt × 28.453pt against 312pt × 650.97pt
   suggestion: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
 ⚠ [W0336]
@@ -711,7 +711,7 @@
 ── W0358 (degraded) a float or box taller than the text block overruns its page
 ⚠ [W0358]
   a figure or table is taller than the text block; it overruns its page
-  289.409pt taller
+  287.178pt taller
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 ⚠ [W0361] - \newcommand
@@ -828,11 +828,11 @@
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
 ⚠ [W0384]
   a frame is taller than its page; it continues on the next page
-  frame 1: 175.037pt taller
+  frame 1: 174.016pt taller
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ⚠ [W0384]
   a frame is taller than its page; it continues on the next page
-  frame standout: 330.515pt taller
+  frame standout: 329.494pt taller
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 ⚠ [W0385] - $
@@ -852,7 +852,7 @@
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
 ⚠ [W0388]
   the \framefoot note reaches off the page: what stands past its edge cannot be shown, whatever reads the file
-  on page 2, 270.12pt past its edge
+  on page 2, 268.759pt past its edge
   suggestion: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
 ⚠ [W0389] - $
@@ -890,7 +890,7 @@
 ── W0400 (degraded) a frame a little taller than its page stands past its text area, in the gap below it
 ⚠ [W0400]
   a frame stands past its text area, in the gap below it
-  frame 1: 2.237pt past
+  frame 1: 1.216pt past
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept a break
 ── W0411 (standard) a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent
 ⚠ [W0411] - \begin

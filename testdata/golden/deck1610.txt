@@ -1,5 +1,5 @@
 class slides [aspectratio=1610]
-page 453.543x283.465 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
+page 453.543x283.465 vmargin 26.301 hmargin 28.346 fontsize 10.959 parskip 0 justify off
 palette bg #FDFCF9
 palette fg #292524
 palette accent #0B66C2

@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 palette wash #2A6F4E
@@ -13,21 +13,21 @@ center
 section 1 number "1"
   text "Moved and turned"
 picture 7 shapes
-  border 39.187 17.927 45.853 24.593
-  border 120.428 38.722 127.094 45.388
+  border 39.199 17.939 45.84 24.58
+  border 120.441 38.722 127.082 45.363
   group
-    draw path (42.52,0)--(82.039,0)~(85.039,3)--(85.039,39.52)~(82.039,42.52)--(3,42.52)~(0,39.52)--(0,3)~(3,0)--(42.52,0) stroke #000000 0.4
+    draw path (42.52,0)--(82.051,0)~(85.039,2.989)--(85.039,39.531)~(82.051,42.52)--(2.989,42.52)~(0,39.531)--(0,2.989)~(2.989,0)--(42.52,0) stroke #000000 0.399
   label 42.52 21.26 #000000 1000
     text "box"
   group
-    draw path (113.386,0)--(137.935,14.173)--(123.761,38.722) stroke #2A6F4E 0.8
-  label 123.761 42.055 #2A6F4E 1000
+    draw path (113.386,0)--(137.935,14.173)--(123.761,38.722) stroke #2A6F4E 0.797
+  label 123.761 42.043 #2A6F4E 1000
     text "turned"
   group
-    draw path (198.425,0)~(212.598,14.173)~(226.772,0)--(226.772,-14.173) stroke #000000 0.4
+    draw path (198.425,0)~(212.598,14.173)~(226.772,0)--(226.772,-14.173) stroke #000000 0.399
   group
-    draw path (0,-28.346)--(82.579,-28.346) stroke #000000 0.4
-    draw path (81.379,-26.746)~(82.879,-28.346)~(81.379,-29.946) stroke #000000 0.32 cap round join round
+    draw path (0,-28.346)--(82.589,-28.346) stroke #000000 0.399
+    draw path (81.393,-26.752)~(82.887,-28.346)~(81.393,-29.94) stroke #000000 0.319 cap round join round
   draw rect 113.386 -42.52 56.693 28.346 fill #2A6F4E alpha 300
 -- diagnostics
 (none)

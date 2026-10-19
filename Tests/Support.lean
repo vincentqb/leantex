@@ -472,7 +472,7 @@ end
 /-- The exact attributes of an unconfigured fence's `<pre>`. -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
   #[("style", "font-size: 0.8em; line-height: 1.187; tab-size: 8; white-space: pre-wrap; \
-overflow-wrap: break-word; text-indent: 20pt hanging each-line;"),
+overflow-wrap: break-word; text-indent: " ++ (Dim.pt 20).toBpString ++ "pt hanging each-line;"),
     ("tabindex", "0")]
 
 /-- A plain code block's text read through its held atoms, `none` where it carries any other

@@ -118,7 +118,7 @@ def viewBoxHeight (page : String) : Option Dim.Length := do
   let v ← (rest.splitOn "\"")[0]?
   let h ← (v.splitOn " ")[1]?
   let (m, sc) ← Decl.parseDecimal h
-  pure (m * Dim.pt 1 / sc)
+  pure (m * Dim.bp 1 / sc)
 
 /-- A node's box is its text box plus inner sep, as TikZ's: a declared text box exactly, an
 undeclared one the glyphs' own. -/

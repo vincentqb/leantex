@@ -219,7 +219,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (dvE (dvDoc "\\captionsetup[lstlisting]{skip=3pt}\n" body)).any (·.code == "W0354"))
   let html := (HtmlDoc.emit {} (elabStr (dvDoc "\\captionsetup[table]{skip=3pt}\n" body)).1).1
   t "the HTML table caption prefers the table's gap to the document's"
-    (hasStr html "--tablecaptionsep: 3pt" &&
+    (hasStr html "--tablecaptionsep: 2.989pt" &&
       hasStr html "figure.table-float { --ltx-capsep: var(--tablecaptionsep, var(--captionsep,")
   let subBody := "\\begin{figure}\\begin{subfigure}{0.4\\textwidth}Sub body words." ++
     "\\caption{Sub words.}\\end{subfigure}\\caption{Figure words.}\\end{figure}"

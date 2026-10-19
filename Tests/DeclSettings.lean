@@ -26,7 +26,7 @@ def styleFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   for koma in [false, true] do
     for (cmd, shown) in [("\\color{red}", "ff0000"),
         ("\\fontseries{l}\\selectfont", "font-weight: 300"), ("\\selectlanguage{french}", "lang=\"fr\""),
-        ("\\fontsize{14pt}{16pt}\\selectfont", "font-size:14pt")] do
+        ("\\fontsize{14pt}{16pt}\\selectfont", s!"font-size:{(Dim.pt 14).toBpString}pt")] do
       let src := styled koma cmd
       t s!"a font value's '{cmd}' styles its heading ({koma}: {heading src})"
         (hasStr (heading src) shown && !hasStr (heading (styled koma "")) shown)
@@ -44,7 +44,8 @@ def markerScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((html.splitOn "Two words.").getD 0 "").splitOn "<p").getLast?.getD ""
   for (decl, shown) in [("\\fontseries{b}\\selectfont", "font-weight: 700"),
       ("\\color{red}", "color: var(--ltx--ff0000"), ("\\selectlanguage{french}", "lang=\"fr\""),
-      ("\\fontsize{14pt}{16pt}\\selectfont", "font-size:14pt"), ("\\bfseries", "<strong>")] do
+      ("\\fontsize{14pt}{16pt}\\selectfont", s!"font-size:{(Dim.pt 14).toBpString}pt"),
+      ("\\bfseries", "<strong>")] do
     t s!"'{decl}' holds past a paragraph break in its group ({second decl})"
       (hasStr (second decl) shown)
   let w0302 (src : String) := ((dvE src).filter (·.code == "W0302")).map (·.help)

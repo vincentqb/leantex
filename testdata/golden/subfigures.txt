@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 section 1 number "1"
   text "Paired diagrams"
 para
@@ -13,7 +13,7 @@ float figure 1
         caption
           text "The first invented panel."
         picture 2 shapes alt "The first invented panel."
-          border 25.013 10.84 31.679 17.506
+          border 25.026 10.853 31.667 17.494
           draw rect 0 0 56.693 28.346 fill #CCCCCC
           label 28.346 14.173 #000000 1000
             text "left box"
@@ -22,7 +22,7 @@ float figure 1
         caption
           text "The second invented panel."
         picture 2 shapes alt "The second invented panel."
-          border 25.013 10.84 31.679 17.506
+          border 25.026 10.853 31.667 17.494
           draw rect 0 0 56.693 28.346 fill #999999
           label 28.346 14.173 #000000 1000
             text "right box"

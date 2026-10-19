@@ -127,7 +127,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "minted rhythm: inherited absolute size and leading resolve once"
     (hasSize explicit 8 && baselinePitches (rendered explicit) == #[Dim.pt 13, Dim.pt 13] &&
       (MintedSettings.html explicit).1.any fun n =>
-        hasStr (MintedSettings.preStyle n) "line-height:13pt;")
+        hasStr (MintedSettings.preStyle n) s!"line-height:{(Dim.pt 13).toBpString}pt;")
   -- A deck magnifies every physical font length by the same stage share.
   for ratio in ["169", "43"] do
     let src := "\\documentclass[aspectratio=" ++ ratio ++ "]{slides}\n" ++

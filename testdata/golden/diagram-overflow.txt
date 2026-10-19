@@ -1,10 +1,10 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 palette band #3A5A8C
 picture 2 shapes
-  border 421.864 39.187 428.53 45.853
+  border 421.876 39.199 428.517 45.84
   draw rect 0 0 850.394 85.039 fill #B0BDD1
   label 425.197 42.52 #000000 1000
     text "wide band"

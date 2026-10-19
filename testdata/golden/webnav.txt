@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 palette cobalt #1D4ED8
 meta title "Field Notes"
 meta subject "An invented page with a navigation landmark."
@@ -24,7 +24,7 @@ section* 1
   text "Gathered Notes"
 para
   text "A second invented paragraph, also on every surface."
-nav label "Return to top" pin bottom right offset 1500/1000em reveal 225pt
+nav label "Return to top" pin bottom right offset 1500/1000em reveal 225.844pt
   para
     link "#top"
       icon "" label "Return to top"

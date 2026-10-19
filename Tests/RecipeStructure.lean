@@ -565,7 +565,8 @@ def recipeUlemChecks (ref : IO.Ref (List String))
       nestedTrees.foldl (fun n tree => n + countTag "em" tree) 0 == 1 &&
       nestedTrees.foldl (fun n tree => n + countTag "span" tree) 0 >= 2 &&
       hasStr nestedHtml
-        "s { text-decoration-line: line-through; text-decoration-thickness: 0.4pt;" &&
+        s!"s \{ text-decoration-line: line-through; text-decoration-thickness: \
+{(Dim.pt 2 / 5).toBpString}pt;" &&
       facts.hiddenTabStops == 0 && treeShownOccurs nestedTrees "A B C" == 1)
 
   let tree := Struct.ofDoc (Layout.pdfView doc)

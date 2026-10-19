@@ -227,11 +227,11 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | _ => false)
   -- A square-capped dot: PDF paints nothing (ISO 32000-2 §8.5.3.2), SVG a square.
   let dotted : Gfx.Figure Empty :=
-    { box := ((0, 0), (Dim.pt 10, Dim.pt 10)), clipToBox := false, outlines := #[], symbols := #[]
+    { box := ((0, 0), (Dim.bp 10, Dim.bp 10)), clipToBox := false, outlines := #[], symbols := #[]
       rasters := #[], title := none, losses := #[]
-      nodes := #[.draw (.path #[{ start := (Dim.pt 2, Dim.pt 2), segs := #[.line (Dim.pt 2, Dim.pt 2)], closed := false },
-          { start := (Dim.pt 4, Dim.pt 4), segs := #[.line (Dim.pt 8, Dim.pt 4)], closed := false }]) none
-        (some { paint := .solid red, width := Dim.pt 1, cap := .square, join := .miter, miterLimit := 10
+      nodes := #[.draw (.path #[{ start := (Dim.bp 2, Dim.bp 2), segs := #[.line (Dim.bp 2, Dim.bp 2)], closed := false },
+          { start := (Dim.bp 4, Dim.bp 4), segs := #[.line (Dim.bp 8, Dim.bp 4)], closed := false }]) none
+        (some { paint := .solid red, width := Dim.bp 1, cap := .square, join := .miter, miterLimit := 10
                 dash := #[], phase := 0, alpha := Gfx.Alpha.opaque })] }
   let dotSvg := GfxSvg.document (fun _ (e : Empty) => nomatch e) #[] dotted
   t s!"dots: a square-capped dot is left out of the SVG path, which keeps the segment beside it"

@@ -114,7 +114,7 @@ private def ContentOp.recolorM {m : Type → Type} [Monad m] (f : Ir.Color → m
   | .image x y w h res => return .image x y w h res
   | .imageMissing x y w h => do
     let ink ← f placeholderInk
-    return .paint none (some { paint := .solid ink, width := Dim.pt 3 / 4, cap := none
+    return .paint none (some { paint := .solid ink, width := Dim.bp 3 / 4, cap := none
                                join := none, miter := none, dash := none }) none #[.rect x y w h]
   | .marked tag body => return .marked tag (← ContentOp.recolorListM f #[] body.toList)
   | .group mx gs clips body => return .group mx gs clips (← ContentOp.recolorListM f #[] body.toList)

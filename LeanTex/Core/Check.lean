@@ -85,7 +85,7 @@ public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     pages := out.pages.size
     fontsEmbedded := fontsEmbedded
     inArea := worstAt.1 ≤ 0
-    areaActual := s!"ink {worstAt.1.toBpString}pt past the {worstAt.2} margin"
+    areaActual := s!"ink {worstAt.1.toPtString}pt past the {worstAt.2} margin"
     minXHeight := minX }
 
 private def failure (a : Assertion) (actual : String) : Diag :=
@@ -149,7 +149,7 @@ public def one (shipped : Shipped) (a : Assertion) : Option Diag :=
     | none => none
     | some v =>
       if v ≥ m then none
-      else some (failure a s!"{v.toBpString}pt x-height")
+      else some (failure a s!"{v.toPtString}pt x-height")
   | .accessibilityAA =>
     if shipped.a11y.isEmpty then none
     else some (failure a (String.intercalate "; " shipped.a11y.toList))

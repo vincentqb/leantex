@@ -85,7 +85,7 @@ private def selectedBox (cropped : Bool) (oneBased : Nat) : Array Length :=
     | 1 => #[0, 0, 120, 80]
     | 2 => #[0, 0, 400, 300]
     | _ => #[10, 20, 210, 120]
-  coords.map Dim.pt
+  coords.map Dim.bp
 
 private def selectedGeometry (f : PdfRead.Form) (cropped : Bool) (n : Nat) : Bool :=
   #[f.x0, f.y0, f.x1, f.y1] == selectedBox cropped n &&
@@ -102,7 +102,7 @@ private def selectedWrapper (font : Font) (f : { f : PdfRead.Form // f.wf }) :
   let plan : Image.Plan := { pxW := 0, pxH := 0, form := some f }
   let imgs : Image.Store := { entries := #[{ src := "poster.pdf", info := some plan }] }
   let line : Layout.LineOut :=
-    { x := Dim.pt 10, y := Dim.pt 100, size := Dim.pt 12, setWidth := f.val.w,
+    { x := Dim.bp 10, y := Dim.bp 100, size := Dim.bp 12, setWidth := f.val.w,
       segs := #[.image (some 0) f.val.w f.val.h true 0] }
   Pdf.write {} { fonts := #[font] } #[{ lines := #[line] }] (imgs := imgs)
 
@@ -266,8 +266,8 @@ def pdfPageSelectionChecks (ref : IO.Ref (List String)) : IO Unit := do
       (match Image.decodeRequest .default bytes
           { src := "sequence.pdf", page := .last, animated := true } with
       | .ok (plan, canvasSize) =>
-        canvasSize == some (if cropped then (Dim.pt 100, Dim.pt 60)
-          else (Dim.pt 120, Dim.pt 80)) &&
+        canvasSize == some (if cropped then (Dim.bp 100, Dim.bp 60)
+          else (Dim.bp 120, Dim.bp 80)) &&
         (match plan.form with
         | some f => selectedGeometry f.val cropped 3 &&
           f.val.content == selectedInk 3 && selectedResources f.val 3

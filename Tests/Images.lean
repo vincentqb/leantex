@@ -133,7 +133,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   | .ok inf =>
     t "png dimensions" (inf.pxW == 64 && inf.pxH == 40)
     t "png default density is one pixel per point"
-      (inf.dpiX == 72 && inf.width == Dim.pt 64 && inf.height == Dim.pt 40)
+      (inf.dpiX == 72 && inf.width == Dim.bp 64 && inf.height == Dim.bp 40)
     t "png space and depth" (inf.color == .rgb && inf.bitDepth == 8)
     t "png idat survives" (inf.data == bytes [1, 2, 3])
   -- pHYs at 5906 pixels per metre is 150 dpi to the spec's own rounding.
@@ -141,7 +141,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     chunk "pHYs" (be32 5906 ++ be32 5906 ++ [1]) ++ chunk "IDAT" [0] ++ chunk "IEND" [])
   t "png pHYs density read"
     (match Image.decode physed with
-     | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
+     | .ok inf => inf.dpiX == 150 && inf.width == Dim.bp 64 * 72 / 150
      | .error _ => false)
   t "png 16-bit alpha refused"
     (match Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
@@ -245,7 +245,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   | .error e => failures ref s!"jpeg decode: {e}"
   | .ok inf =>
     t "jpeg dimensions" (inf.pxW == 10 && inf.pxH == 20)
-    t "jpeg jfif density read" (inf.dpiX == 144 && inf.width == Dim.pt 10 * 72 / 144)
+    t "jpeg jfif density read" (inf.dpiX == 144 && inf.width == Dim.bp 10 * 72 / 144)
     t "jpeg embeds whole" (inf.data.size == jpg.size)
   t "jpeg cmyk refused"
     (match Image.decode (bytes ([0xFF, 0xD8] ++ sof0 4 4 4 ++ [0xFF, 0xDA])) with
@@ -268,12 +268,12 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "shipped png decodes 64x40 rgb"
     (match pngInfo with
      | .ok inf => inf.filter == .flatePredictor && inf.pxW == 64 && inf.pxH == 40 &&
-        inf.color == .rgb && inf.width == Dim.pt 64
+        inf.color == .rgb && inf.width == Dim.bp 64
      | .error _ => false)
   t "shipped jpeg decodes 64x40"
     (match jpgInfo with
      | .ok inf => inf.filter == .dct && inf.pxW == 64 && inf.pxH == 40 &&
-        inf.width == Dim.pt 64
+        inf.width == Dim.bp 64
      | .error _ => false)
   -- The RGBA fixture is zlib level 9; its alpha fades 255 to 15 across the rectangle.
   t "shipped alpha png decodes with its mask"
@@ -312,16 +312,16 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
 
   let outIntrinsic := layoutSrc "\\includegraphics{rects.png}"
   t "layout intrinsic size"
-    (imageSegs outIntrinsic == #[(some 0, Dim.pt 64, Dim.pt 40)])
+    (imageSegs outIntrinsic == #[(some 0, Dim.bp 64, Dim.bp 40)])
   let outTw := layoutSrc "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let expectW := geom.textWidth * 800 / 1000
   t "layout width fraction of the measure"
-    (imageSegs outTw == #[(some 0, expectW, expectW.mulDiv (Dim.pt 40) (Dim.pt 64))])
+    (imageSegs outTw == #[(some 0, expectW, expectW.mulDiv (Dim.bp 40) (Dim.bp 64))])
   let affineSrc := "\\includegraphics[width=0.315\\dimexpr \\textwidth +36mm\\relax]{rects.png}"
   let outAffine := layoutSrc affineSrc
   let affineW := ((geom.textWidth + Dim.mm 36) * 315).tdiv 1000
   t "layout resolves an affine image width against the local measure"
-    (imageSegs outAffine == #[(some 0, affineW, affineW.mulDiv (Dim.pt 40) (Dim.pt 64))])
+    (imageSegs outAffine == #[(some 0, affineW, affineW.mulDiv (Dim.bp 40) (Dim.bp 64))])
   t "an affine image width emits no length error"
     (!(errCodes affineSrc).contains "E0331")
   let localSrc := "\\begin{minipage}{0.5\\textwidth}" ++
@@ -330,7 +330,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let localW := ((geom.textWidth / 2 + Dim.pt 10) * 1).tdiv 2
   t "linewidth resolves inside its minipage rather than against the page"
     (imageSegs (layoutSrc localSrc) ==
-      #[(some 0, localW, localW.mulDiv (Dim.pt 40) (Dim.pt 64))])
+      #[(some 0, localW, localW.mulDiv (Dim.bp 40) (Dim.bp 64))])
   let outBoth := layoutSrc "\\includegraphics[width=32pt, height=40pt]{rects.png}"
   t "layout declared size wins"
     (imageSegs outBoth == #[(some 0, Dim.pt 32, Dim.pt 40)])
@@ -379,7 +379,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "logo declaration elaborates clean" (logoDiags.isEmpty)
   let logoGeom := Layout.Geom.ofPage logoDoc.page
   let logoOut := layoutOf oneFace logoDoc logoGeom none store
-  let logoW := (Dim.pt 8).mulDiv (Dim.pt 64) (Dim.pt 40)
+  let logoW := (Dim.pt 8).mulDiv (Dim.bp 64) (Dim.bp 40)
   t "logo placed on every page at the right margin"
     (logoOut.pages.size == 2 && logoOut.pages.all fun p =>
       p.lines.any fun l =>

@@ -17,7 +17,7 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let svg := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"120\"/>".toUTF8
   let imgs : Image.Store := { entries := #[
     { src := "sequence.pdf", page := .last, animated := true,
-      info := some plan, canvasSize := some (Dim.pt 120, Dim.pt 80),
+      info := some plan, canvasSize := some (Dim.bp 120, Dim.bp 80),
       webSvg := some svg, posterSvg := some svg }] }
   let doc := (elabStr (dvDoc ""
     "\\animategraphics[width=60pt,poster=last,alt={Moving square}]{10}{sequence.pdf}{}{}")).1
@@ -44,7 +44,7 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let barePlan : Image.Plan := { pxW := 60, pxH := 120 }
   let bareStore : Image.Store := { entries := #[
     { src := "sequence.pdf", animated := true, info := some barePlan,
-      canvasSize := some (Dim.pt 120, Dim.pt 80), webSvg := some svg,
+      canvasSize := some (Dim.bp 120, Dim.bp 80), webSvg := some svg,
       posterSvg := some svg }] }
   let bare := (elabStr (dvDoc ""
     "\\animategraphics[alt={Moving square}]{10}{sequence.pdf}{}{}")).1

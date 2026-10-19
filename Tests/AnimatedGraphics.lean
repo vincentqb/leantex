@@ -165,7 +165,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   for (keys, idx, w, h) in pages do
     let p := page "" ("Lead" ++ graphic keys ++ "Tail")
     t s!"graphicx '{keys}' selects its own dimensions and HTML source"
-      (selected p idx (Dim.pt w) (Dim.pt h))
+      (selected p idx (Dim.bp w) (Dim.bp h))
     t s!"graphicx '{keys}' is implemented without a warning"
       (p.diags.all (·.severity == .note))
   let localChoices := page "" (animate "poster=last,width=16pt" "" "" ++
@@ -177,18 +177,19 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   t "typed HTML keeps the four scoped requests in source order"
     (imageSrcs localChoices == #[hrefs[4]!, hrefs[6]!, hrefs[1]!, hrefs[0]!])
 
-  let sizes : Array (String × Int × Int) := #[
-    ("width=32pt", 32, 20), ("height=10pt", 16, 10),
-    ("totalheight=10pt", 16, 10), ("scale=0.5", 32, 20),
-    ("width=40pt,height=40pt", 40, 40),
-    ("width=40pt,height=40pt,keepaspectratio", 40, 25),
-    ("width=40pt,height=40pt,keepaspectratio=true", 40, 25),
-    ("width=40pt,height=40pt,keepaspectratio=false", 40, 40)]
+  -- A scale multiplies the image's own big points; a declared TeX length sets the rest.
+  let sizes : Array (String × Dim.Length × Dim.Length) := #[
+    ("width=32pt", Dim.pt 32, Dim.pt 20), ("height=10pt", Dim.pt 16, Dim.pt 10),
+    ("totalheight=10pt", Dim.pt 16, Dim.pt 10), ("scale=0.5", Dim.bp 32, Dim.bp 20),
+    ("width=40pt,height=40pt", Dim.pt 40, Dim.pt 40),
+    ("width=40pt,height=40pt,keepaspectratio", Dim.pt 40, Dim.pt 25),
+    ("width=40pt,height=40pt,keepaspectratio=true", Dim.pt 40, Dim.pt 25),
+    ("width=40pt,height=40pt,keepaspectratio=false", Dim.pt 40, Dim.pt 40)]
   for (keys, w, h) in sizes do
     let p := page "" (animate keys "" "")
     let c := page "" (graphic keys)
     t s!"animation sizing '{keys}' preserves inherited size fields"
-      (selected p 0 (Dim.pt w) (Dim.pt h) && graphicsSizingAttrs p == graphicsSizingAttrs c)
+      (selected p 0 w h && graphicsSizingAttrs p == graphicsSizingAttrs c)
   let extra := page "" ("Lead" ++ animate "width=32pt" "" "" ++ "{Extra}Tail")
   let extraControl := page "" ("Lead" ++ graphic "width=32pt" ++ "{Extra}Tail")
   t "animation stops after its fourth group and preserves a following group"
@@ -203,13 +204,13 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
 
   let controlled := page "" (animate "poster=1,controls,autoplay,loop,palindrome,nomouse" "" "")
   t "animation controls are named once at the use without losing the selected poster"
-    (selected controlled 3 (Dim.pt 64) (Dim.pt 40) &&
+    (selected controlled 3 (Dim.bp 64) (Dim.bp 40) &&
       ((Diag.forOutputs #[.html] controlled.diags).filter (·.code == "W0110")).size == 1 &&
       (Diag.forOutputs #[.html] controlled.diags).any fun d => d.subject == some "animategraphics:playback" &&
         ["controls", "autoplay", "loop", "palindrome", "nomouse"].all (hasStr d.message))
   let native := page "\\usepackage{animate}\n" (animate "" "" "")
   t "native animate loading still diagnoses playback at the command"
-    (selected native 0 (Dim.pt 64) (Dim.pt 40) &&
+    (selected native 0 (Dim.bp 64) (Dim.bp 40) &&
       native.diags.any (·.code == "N0100") &&
       native.diags.all fun d => d.severity == .note ||
         (d.code == "W0110" && d.subject == some "animategraphics:playback"))

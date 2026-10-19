@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 meta title "Affine Geometry Probe"
@@ -15,10 +15,10 @@ para
       text "T"
     role affineleft
       text "A"
-    hspace calc(20% + 3pt)
+    hspace calc(20% + 2.989pt)
     role affineright
       text "B"
-    rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+    rule calc(25% - 1.993pt) × calc(2% + 0.996pt) raise calc(1% + 0.996pt)
 para
   text "Minipage measure probe."
 columns
@@ -29,10 +29,10 @@ columns
           text "M"
         role affineleft
           text "A"
-        hspace calc(20% + 3pt)
+        hspace calc(20% + 2.989pt)
         role affineright
           text "B"
-        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+        rule calc(25% - 1.993pt) × calc(2% + 0.996pt) raise calc(1% + 0.996pt)
 para
   text "Column measure probe."
 columns
@@ -43,10 +43,10 @@ columns
           text "C"
         role affineleft
           text "A"
-        hspace calc(20% + 3pt)
+        hspace calc(20% + 2.989pt)
         role affineright
           text "B"
-        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+        rule calc(25% - 1.993pt) × calc(2% + 0.996pt) raise calc(1% + 0.996pt)
 para
   text "Paragraph cell probe."
 table @{}l:140pt@{}
@@ -57,10 +57,10 @@ table @{}l:140pt@{}
           text "P"
         role affineleft
           text "A"
-        hspace calc(20% + 3pt)
+        hspace calc(20% + 2.989pt)
         role affineright
           text "B"
-        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+        rule calc(25% - 1.993pt) × calc(2% + 0.996pt) raise calc(1% + 0.996pt)
 para
   text "Target-width cell probe."
 table @{}l:220pt@{}
@@ -71,10 +71,10 @@ table @{}l:220pt@{}
           text "X"
         role affineleft
           text "A"
-        hspace calc(20% + 3pt)
+        hspace calc(20% + 2.989pt)
         role affineright
           text "B"
-        rule calc(25% - 2pt) × calc(2% + 1pt) raise calc(1% + 1pt)
+        rule calc(25% - 1.993pt) × calc(2% + 0.996pt) raise calc(1% + 0.996pt)
 -- diagnostics
 note[N0100] 24:13 '\fontsize' → an affine font size and baseline skip
 note[N0100] 24:65 '\selectfont' → nothing: font declarations apply where they stand

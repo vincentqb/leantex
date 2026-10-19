@@ -532,7 +532,7 @@ private def unitsAgree (u v : String) (num den : Int) : Bool :=
   | _, _ => false
 
 private theorem unitScale_consistent :
-    unitsAgree "bp" "pt" 1 1 ∧ unitsAgree "pt" "sp" 1 65536 ∧ unitsAgree "in" "pt" 1 72 ∧
+    unitsAgree "pt" "bp" 7227 7200 ∧ unitsAgree "pt" "sp" 1 65536 ∧ unitsAgree "in" "bp" 1 72 ∧
     unitsAgree "pc" "pt" 1 12 ∧ unitsAgree "cm" "in" 254 100 ∧ unitsAgree "mm" "cm" 10 1 ∧
     unitsAgree "px" "in" 96 1 ∧ unitsAgree "dd" "in" 8361639 123800 ∧ unitsAgree "cc" "dd" 1 12 := by
   decide
@@ -931,8 +931,8 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   | some (.scalar _ _), 1 => throw "a bare number in a length expression needs a unit"
   | _, _ => throw "malformed expression"
 
-/-- Inches per unit, exactly as the engine reads the unit everywhere (`unitScale`), so a point is a
-big point; `none` for a font-relative or unknown unit. -/
+/-- Inches per unit, exactly as the engine reads the unit everywhere (`unitScale`), a point TeX's
+1⁄72.27 in; `none` for a font-relative or unknown unit. -/
 public def unitInches (u : String) : Option Rat :=
   (unitScale u).map fun (l, d) => l.inInches / (d : Rat)
 

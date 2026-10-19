@@ -936,9 +936,9 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
   let geo (o : String) : Ir.PageSpec := (elabStr (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")).1.page
   -- lualatex: letter paper's default body is 430.00462pt by 556.47656pt, 95.39737pt from the top.
   t s!"geometry's default layout: 0.7 of the paper each way, split 2:3 vertically ({(geo "").hmargin})"
-    ((geo "").hmargin == Dim.pt 612 * 3 / 20 && (geo "").vmargin == (Dim.pt 792 - Dim.pt 792 * 7 / 10) * 2 / 5)
+    ((geo "").hmargin == Dim.bp 612 * 3 / 20 && (geo "").vmargin == (Dim.bp 792 - Dim.bp 792 * 7 / 10) * 2 / 5)
   t "geometry's scale keys size the text block"
-    ((geo "hscale=0.6").hmargin == Dim.pt 612 / 5 && (geo "scale=0.8").hmargin == Dim.pt 612 / 10)
+    ((geo "hscale=0.6").hmargin == Dim.bp 612 / 5 && (geo "scale=0.8").hmargin == Dim.bp 612 / 10)
   let em := (elabStr (dvDoc "\\page{ fontsize = 12pt, hmargin = 4em }\n" "Alpha.")).1.page
   t s!"a \\page block's em is its own font size's ({em.hmargin})" (em.hmargin == Dim.pt 48)
   let strut := dvDoc "" "Alpha\\strut{} words."
@@ -970,7 +970,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     ((codes abs).contains "W0302" && !(codes abs).contains "W0110" && hasStr (text abs) "Short.")
   t "geometry: margins or a width place the block, a scale beside them sizing nothing"
     ((geo "hscale=0.8,margin=1in").hmargin == Dim.inch 1 &&
-      (geo "textwidth=5in,hscale=0.5").hmargin == (Dim.pt 612 - Dim.inch 5) / 2 &&
+      (geo "textwidth=5in,hscale=0.5").hmargin == (Dim.bp 612 - Dim.inch 5) / 2 &&
       (geo "margin=1in,hscale=0.5").hmargin == Dim.inch 1)
   let paperDoc (cls pre : String) : Ir.PageSpec :=
     (elabStr (cls ++ pre ++ "\\begin{document}\nAlpha.\n\\end{document}")).1.page
@@ -978,7 +978,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     footOfDoc (cls ++ pre ++ "\\begin{document}\nAlpha.\n\\end{document}")
   t "geometry: a paper option is the paper in force's, a later call's and KOMA-Script's paper= alike"
     ((paperDoc "\\documentclass{article}\n" "\\usepackage[a4paper]{geometry}\n\\geometry{letterpaper}\n").width ==
-        Dim.pt 612 &&
+        Dim.bp 612 &&
       (paperDoc "\\documentclass[paper=letter]{scrartcl}\n" "\\usepackage[a4paper]{geometry}\n").width ==
         Ir.a4Page.1)
   -- lualatex: book.cls's \footskip is .35in, 25.29494pt; a footskip set before geometry stands.
@@ -1024,9 +1024,9 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
   -- The paper in force follows a declared paper size and a class paper the page has no size for.
   t "geometry: a paper option after a declared paper size, or beside an unsized class paper, sets it"
     ((paperDoc "\\documentclass{article}\n" "\\usepackage[paperwidth=20cm,paperheight=20cm]{geometry}\n\\geometry{letterpaper}\n").width ==
-        Dim.pt 612 &&
+        Dim.bp 612 &&
       (paperDoc "\\documentclass[a6paper]{article}\n" "\\usepackage[letterpaper]{geometry}\n").width ==
-        Dim.pt 612 &&
+        Dim.bp 612 &&
       !(subjects (dvDoc "\\usepackage[paperwidth=20cm]{geometry}\n\\geometry{letterpaper}\n" "Alpha.")
         "N0100").contains (some "param:geometry:letterpaper"))
   -- lualatex: article's abstract is \normalsize on a title page and in two columns, 12pt at 10pt.

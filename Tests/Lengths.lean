@@ -49,7 +49,7 @@ def hspaceAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let html := (HtmlDoc.emit {} (elabStr (metricDoc
     "\\begin{minipage}{100pt}a\\hspace{0.5\\linewidth + 3pt}b\\end{minipage}")).1).1
   t "HTML carries an affine hspace as inline room"
-    (hasStr html "margin-inline-start:calc(50% + 3pt)")
+    (hasStr html s!"margin-inline-start:calc(50% + {(Dim.pt 3).toBpString}pt)")
 
 /-- `\rule` paints the typed rectangle at its local measure. -/
 def inlineRuleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -66,8 +66,10 @@ def inlineRuleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       !hasStr s "linewidth" && !hasStr s "pt")
   let html := (HtmlDoc.emit {} (elabStr (metricDoc src)).1).1
   t "HTML carries the rule's width, height, raise and paint"
-    (hasStr html "inline-size:calc(50% - 3pt)" && hasStr html "block-size:4pt" &&
-      hasStr html "vertical-align:1pt" && hasStr html "background:currentColor")
+    (hasStr html s!"inline-size:calc(50% - {(Dim.pt 3).toBpString}pt)" &&
+      hasStr html s!"block-size:{(Dim.pt 4).toBpString}pt" &&
+      hasStr html s!"vertical-align:{(Dim.pt 1).toBpString}pt" &&
+      hasStr html "background:currentColor")
   t "markdown keeps surrounding text and no metric spelling"
     (MarkdownDoc.inlineText #[.text "A", .rule (.lit (ptGlue 4))
       (.lit (ptGlue 1)) (.lit {}) , .text "B"] == "AB")
@@ -79,3 +81,17 @@ def inlineRuleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (register.any fun d => d.code == "E0331" && hasStr d.message "register")
 where
   ptGlue (n : Int) : Dim.SymGlue := { width := .ofLength (Dim.pt n) }
+
+/-- A document's `pt` is TeX's point: `\the` prints what TeX prints, and a big point stays PDF's. -/
+def pointDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := "\\documentclass{article}\n\\newlength\\la\\setlength\\la{10pt}\n" ++
+    "\\begin{document}\n\\edef\\x{\\the\\la}A\\x B\n\\end{document}\n"
+  let txt := match (elabStr src).1.body with
+    | #[.para xs] => Ir.plainText xs
+    | _ => ""
+  -- lualatex 1.24: `\the` of a length set to 10pt prints 10.0pt.
+  t s!"\\the of 10pt prints TeX's 10.0pt ({txt})" (txt == "A10.0ptB")
+  t "72.27 TeX points and 72 big points are each an inch"
+    (Decl.parseLength "72.27pt" == some (.ofLength (Dim.inch 1)) &&
+      Decl.parseLength "72bp" == some (.ofLength (Dim.inch 1)))

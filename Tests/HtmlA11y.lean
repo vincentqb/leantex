@@ -265,7 +265,8 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
         (!(← broken.get).isEmpty)
   -- `width` and `height` are CSS px, so a vector box is declared at 1pt = 4/3 px.
   t "html a11y: 56.693pt × 28.346pt reads 76 × 38 CSS px"
-    (HtmlDoc.cssPxOfSp (Dim.pt 56693 / 1000) == 76 && HtmlDoc.cssPxOfSp (Dim.pt 28346 / 1000) == 38)
+    (HtmlDoc.cssPxOfSp (Dim.Length.ofBpMilli 56693) == 76 &&
+      HtmlDoc.cssPxOfSp (Dim.Length.ofBpMilli 28346) == 38)
   match Image.decode (← IO.FS.readBinFile "testdata/corpus/figures/box.pdf") with
   | .error e => t s!"html a11y: the PDF-page probe decodes: {e}" false
   | .ok plan =>

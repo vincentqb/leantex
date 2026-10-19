@@ -415,11 +415,11 @@ def svgCorpusHtmlChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
 def svgAstralTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ink : Option Gfx.Fill := some { paint := .solid { r := 0, g := 0, b := 0 }, rule := .nonzero, alpha := Gfx.Alpha.opaque }
   let run (cs : List (Char × Dim.Length)) : Gfx.Shaped :=
-    { size := Dim.pt 10, xf := Gfx.Affine.unit, glyphs := (cs.map fun (c, x) => (0, 1, c, x)).toArray
+    { size := Dim.bp 10, xf := Gfx.Affine.unit, glyphs := (cs.map fun (c, x) => (0, 1, c, x)).toArray
       text := String.ofList (cs.map (·.1)), fill := ink, stroke := none, lang := none, role := 0
       weight := 400, italic := false }
-  let astral := FigureSvg.textNode { iso := none } (run [('a', 0), ('𝐀', Dim.pt 5), ('b', Dim.pt 12)])
-  let plain := FigureSvg.textNode { iso := none } (run [('a', 0), ('b', Dim.pt 5)])
+  let astral := FigureSvg.textNode { iso := none } (run [('a', 0), ('𝐀', Dim.bp 5), ('b', Dim.bp 12)])
+  let plain := FigureSvg.textNode { iso := none } (run [('a', 0), ('b', Dim.bp 5)])
   let spans := elemAttrsList (· == "tspan") #[] [astral]
   let attr (a : Array (String × String)) (k : String) : Option String := (a.find? (·.1 == k)).map (·.2)
   check ref "astral text: each glyph of a run past the plane sits in a tspan at its pen"

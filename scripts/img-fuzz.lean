@@ -424,7 +424,7 @@ def svgFuzz : IO (Nat × Nat) := do
   let mut figures : Array ByteArray := #[]
   for n in names do figures := figures.push (← IO.FS.readBinFile n)
   -- Anchors: the pristine figures' verdicts and boxes, and canonical spellings reading back.
-  let boxes : Array Dim.Length := #[Dim.pt 288, Dim.pt 150, Dim.pt 150, Dim.pt 60, Dim.pt 90, Dim.pt 72]
+  let boxes : Array Dim.Length := #[Dim.bp 288, Dim.bp 150, Dim.bp 150, Dim.bp 60, Dim.bp 90, Dim.bp 72]
   for h : k in [0:figures.size] do
     let b := figures[k]
     match Svg.importBytes b with

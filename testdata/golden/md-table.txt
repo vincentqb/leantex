@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 114
+page 612x792 vmargin 71.731 hmargin 114.717
 section* h1
   text "A Table of Tides"
 table @{}l<,r<,c<,r<@{}

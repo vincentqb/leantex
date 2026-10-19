@@ -535,7 +535,8 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
       (match tdest with
        | .ok (some (0, ds)) =>
          ds[1]? == some (.name "XYZ") && ds[2]? == some (.int 0) &&
-           ds[3]?.bind Obj.sp? == some (tgeom.pageH + 2 * tgeom.bleed)
+           (ds[3]?.bind Obj.sp?).any fun y =>
+             (y - (tgeom.pageH + 2 * tgeom.bleed)).abs ≤ Length.ofBpMilli 1
        | _ => false)
   let (adoc, _) := elabStr (dvDoc pre ("Words.\\newpage\\hypertarget{top}{TARGET words.}" ++
     "\\href{#top}{Up.}"))

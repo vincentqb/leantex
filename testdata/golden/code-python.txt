@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 114
+page 612x792 vmargin 71.731 hmargin 114.717
 meta title "code-python.py"
 section* 0
   text "code-python.py"

@@ -8,6 +8,9 @@ open LeanTex.Core
 
 namespace Tests.FrameGeometry
 
+/-- Thousandths of a big point: lualatex's positions as its PDF states them. -/
+private def bpMilli (milli : Int) : Dim.Length := Dim.bp 1 * milli / 1000
+
 /-- The slide stages of a document's web deck. -/
 private def stagesOf (doc : Ir.Doc) : Array Html.Node :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
@@ -29,7 +32,7 @@ def titleInsetChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"title inset {step}: the title starts the bar's inset from the paper's left edge"
       (title.map (·.x) == some inset)
     t s!"title inset {step}: the title starts within half a point of lualatex's"
-      (title.any fun l => withinSp (ptMilli 500) l.x (ptMilli lua))
+      (title.any fun l => withinSp (bpMilli 500) l.x (bpMilli lua))
     let (head, _, _) := HtmlDoc.emitTree {} doc
     let css := treeCssList "" head.toList
     t s!"title inset {step}: the web bar pads its title by the inset, in em of the title"
@@ -113,7 +116,7 @@ def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     hasStr (lineText l) "Alpha").map (·.y)
   t "title opening: the first line stands beamer's box and skips below the title, as lualatex sets it"
     (match titleY, bodyLineY out 0 "Kilo" with
-     | some ty, some bodyY => withinSp (ptMilli 500) (bodyY - ty) (ptMilli 17935)
+     | some ty, some bodyY => withinSp (bpMilli 500) (bodyY - ty) (bpMilli 17935)
      | _, _ => false)
   let (head, _, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
@@ -149,8 +152,8 @@ def centreSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"centre split {name}: the deck elaborates clean" (ds.all (·.severity != .error))
     let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
     t s!"centre split {name}: two and four centred lines stand where lualatex centres them"
-      ((bodyLineY out 0 "Kilo").any (withinSp (ptMilli 200) · (ptMilli luaTwo)) &&
-        (bodyLineY out 1 "Kilo").any (withinSp (ptMilli 200) · (ptMilli luaFour)))
+      ((bodyLineY out 0 "Kilo").any (withinSp (bpMilli 200) · (bpMilli luaTwo)) &&
+        (bodyLineY out 1 "Kilo").any (withinSp (bpMilli 200) · (bpMilli luaFour)))
     t s!"centre split {name}: the web stage's spacers grow by the key's shares"
       ((stagesOf doc).all (stageGrows · == grows) && (stagesOf doc).size == 2)
   -- A standout frame is moloch's key, which sets moloch's own `[c]` under any deck's keys.
@@ -185,8 +188,8 @@ def vfillChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"vfill {name}: the lines around a vfill stand where lualatex shares the leftover"
       ((List.range 3).all fun i => match lua[i]? with
         | some (before, after) =>
-          (bodyLineY out i "Kilo").any (withinSp (ptMilli 200) · (ptMilli before)) &&
-            (bodyLineY out i "Lima").any (withinSp (ptMilli 200) · (ptMilli after))
+          (bodyLineY out i "Kilo").any (withinSp (bpMilli 200) · (bpMilli before)) &&
+            (bodyLineY out i "Lima").any (withinSp (bpMilli 200) · (bpMilli after))
         | none => false)
     t s!"vfill {name}: the web stage grows a fill's spacer beside the frame's"
       ((stagesOf doc).size == 3 && ((stagesOf doc).zip grows).all fun (s, g) => stageGrows s == g)
@@ -266,12 +269,12 @@ def nestedFillChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, ds) := elabStr (beamerDeck theme [(opt, body)])
     t s!"nested fill {name}: the deck elaborates clean" (ds.all (·.severity != .error))
     let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-    let near := withinSp (ptMilli 200)
+    let near := withinSp (bpMilli 200)
     let lower := if hasStr name "nested" then "Oscar" else "Kilo"
     t s!"nested fill {name}: the lines stand where lualatex shares the frame's leftover"
       (match bodyLineY out page lower, bodyLineY out page "Lima", at? with
-       | some k, some l, some (lk, ll) => near k (ptMilli lk) && near l (ptMilli ll)
-       | some k, some l, none => near (l - k) (ptMilli apart)
+       | some k, some l, some (lk, ll) => near k (bpMilli lk) && near l (bpMilli ll)
+       | some k, some l, none => near (l - k) (bpMilli apart)
        | _, _, _ => false)
     t s!"nested fill {name}: the web stage grows by its spacers and the fills the deck reads"
       ((stagesOf doc).size == 1 && (stagesOf doc).all (stageGrows · == grows))
@@ -408,7 +411,7 @@ def articleFillChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((lines.back?.map fun l => hasStr (lineText l) "Mike") == some true)
     t s!"article fill {env}: the fill puts one paragraph's gap between it and the page's last line"
       (match bodyLineY out page "Lima", bodyLineY out page "Mike" with
-       | some l, some m => withinSp (ptMilli 500) (m - l) (ptMilli lua)
+       | some l, some m => withinSp (bpMilli 500) (m - l) (bpMilli lua)
        | _, _ => false)
 
 /-- An alerted word takes its theme's alert colour and the body's face. -/

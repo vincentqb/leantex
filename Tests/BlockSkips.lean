@@ -67,21 +67,17 @@ private def bigskipMoves : List (String × String × Int) :=
   (["paragraph", "block", "list", "centred", "display", "verbatim", "listing"].map
     fun y => ("listing", y, 12000))
 
-/-- Each skip spelling between blocks and paragraphs: lualatex's move in TeX points; a centimetre
-(28.453 TeX points) is compared as a length. -/
-private def skipMoves : List (String × String × Int × Bool) :=
-  [("\\smallskip", "small", 3000, false), ("\\medskip", "medium", 6000, false),
-   ("\\bigskip", "big", 12000, false), ("\\vspace{1cm}", "centimetre", 28453, true),
-   ("\\vspace{-4pt}", "negative", -4000, false), ("\\bigskip\n\\medskip", "two", 18000, false)]
+/-- Each skip spelling between blocks and paragraphs: lualatex's move in TeX points. -/
+private def skipMoves : List (String × String × Int) :=
+  [("\\smallskip", "small", 3000), ("\\medskip", "medium", 6000),
+   ("\\bigskip", "big", 12000), ("\\vspace{1cm}", "centimetre", 28453),
+   ("\\vspace{-4pt}", "negative", -4000), ("\\bigskip\n\\medskip", "two", 18000)]
 
 /-- lualatex's distance from a painted block's body box to the next block's title box, with each
 skip between them. -/
 private def blockGaps : List (String × Int) :=
   [("", 10000), ("\\smallskip", 13001), ("\\medskip", 16001), ("\\bigskip", 22000),
    ("\\vspace{1cm}", 38454)]
-
-/-- TeX points in thousandths, in the engine's point (PostScript's). -/
-private def bpMilli (texMilli : Int) : Int := (texMilli * 7200 + 3613) / 7227
 
 private def pagesOf (fonts : Font.FontSet) (src : String) : Array Layout.PageOut × Ir.Doc :=
   let (doc, _) := Elab.run "block-skips.tex" src
@@ -110,7 +106,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       | _, _ => check ref s!"block skips ({label}): the {x}/{y} probe's marks ship" false
     let pairs := [("block", "block"), ("paragraph", "paragraph"), ("block", "paragraph"),
       ("paragraph", "block")]
-    for (skip, name, lua, physical) in skipMoves do
+    for (skip, name, lua) in skipMoves do
       let frames := pairs.flatMap fun (x, y) =>
         [frame (above x ++ "\n\n" ++ below y), frame (above x ++ "\n\n" ++ skip ++ "\n\n" ++ below y)]
       let (pages, doc) := pagesOf fonts (document pre frames)
@@ -119,7 +115,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let width := (skipsOf doc).foldl (fun s g => s + (g.value.resolve size (size / 2)).width) (0 : Dim.Length)
       let width := width / pairs.length
       check ref s!"block skips ({label}): {name} resolves to lualatex's {lua} TeX points"
-        ((spMilli width - (if physical then bpMilli lua else lua)).natAbs ≤ probeTolerance.toNat)
+        ((spMilli width - lua).natAbs ≤ probeTolerance.toNat)
       for ((x, y), i) in pairs.zipIdx do
         match (pages[2 * i]?.bind probeSpan), (pages[2 * i + 1]?.bind probeSpan) with
         | some d0, some d1 =>
@@ -159,9 +155,8 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     let nextTop := ((fills.filter (·.color == titleColor))[1]?).map (·.y)
     match bodyBottom, nextTop with
     | some b, some t =>
-      let want := if skip.startsWith "\\vspace" then 10000 + bpMilli (lua - 10000) else lua
       check ref s!"block skips: '{skip}' sets two blocks {lua} apart (lualatex), got {spMilli (t - b)}"
-        ((spMilli (t - b) - want).natAbs ≤ probeTolerance.toNat)
+        ((spMilli (t - b) - lua).natAbs ≤ probeTolerance.toNat)
     | _, _ => check ref s!"block skips: the '{skip}' blocks ship their boxes" false
 
 /-- TeX's primitive `\vskip` reads its glue unbraced and moves what follows by it, and an element's

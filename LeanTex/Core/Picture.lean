@@ -4462,18 +4462,18 @@ private def shadeFrame (angle : Int) (box : Gfx.Box) : Option Gfx.Affine :=
   let as : Rat := if s < 0 then -s else s
   let w : Rat := (x1 - x0).toRat
   let h : Rat := (y1 - y0).toRat
-  let half : Rat := (Dim.pt 50).toRat -- the shading's middle 50 bp (pgfcoreshade.code.tex)
+  let half : Rat := (Dim.bp 50).toRat -- the shading's middle 50 bp (pgfcoreshade.code.tex)
   let sx := (w * ac + h * as) / ((ac + as) * half)
   let sy := (w * as + h * ac) / ((ac + as) * half)
   some ⟨c * sx, s * sx, -s * sy, c * sy, (x0.toRat + x1.toRat) / 2, (y0.toRat + y1.toRat) / 2⟩
 
 private def shadeFill (s : ShadeSpec) (box : Gfx.Box) : Option Gfx.Fill :=
   (shadeFrame s.angle box).map fun xf =>
-    let r := Dim.pt 50 -- the shading's 100 bp square (pgfcoreshade.code.tex)
+    let r := Dim.bp 50 -- the shading's 100 bp square (pgfcoreshade.code.tex)
     let g : Gfx.Gradient := match s.kind with
       | .axis => .linear (0, -r) (0, r) s.stops xf
       | .radial => .radial (0, 0) 0 (0, 0) r s.stops xf
-      | .ball => .radial (-(Dim.pt 10), Dim.pt 10) 0 (0, 0) r s.stops xf -- \pgfqpoint{-10bp}{10bp}
+      | .ball => .radial (-(Dim.bp 10), Dim.bp 10) 0 (0, 0) r s.stops xf -- \pgfqpoint{-10bp}{10bp}
     { paint := .gradient g, rule := .nonzero, alpha := Gfx.Alpha.opaque }
 
 private structure BraceSpec where
@@ -6603,7 +6603,7 @@ or node; the option is dropped")
 code, as an image placeholder is drawn. -/
 public def placeholder (code : String) : Ir.Pic.Picture :=
   let side := Dim.inch 1     -- the image-request default when nothing loads
-  let th := Dim.pt 3 / 4     -- the image placeholder's 0.75 pt outline
+  let th := Dim.bp 3 / 4     -- the image placeholder's 0.75 bp outline
   let grey : Ir.Color := { r := 158, g := 158, b := 168 }  -- its 0.62 0.62 0.66 RG stroke
   { shapes := #[
       .rect 0 0 side th grey,

@@ -1,5 +1,5 @@
 class poster
-page 3370.394x2383.937 vmargin 28.346 hmargin 28.346 fontsize 24.88 hyphenate off justify off
+page 3370.394x2383.937 vmargin 28.346 hmargin 28.346 fontsize 24.787 hyphenate off justify off
 assert text.xheight >= 10pt
 assert pages <= 1
 assert text.in_area

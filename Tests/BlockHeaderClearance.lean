@@ -207,9 +207,9 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
           (cssProperty decls "--clearancegap").or value else value) none
       let stages := (elemNodesList (· == "section") #[] nodes.toList).filter
         (hasClass · "slide")
-      let length := s!"{points}pt"
+      let length := s!"{(Dim.pt points).toBpString}pt"
       let expectedRoot := if scope == "fallback" then none else
-        some (if scope == "epoch" then "9pt" else length)
+        some (if scope == "epoch" then s!"{(Dim.pt 9).toBpString}pt" else length)
       let name := s!"block clearance tokens/{scope}/{points}"
       check ref (name ++ ": root declaration remains a length")
         (rootValue == expectedRoot)

@@ -949,7 +949,7 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let maskGroup (box : String) (ink : String) :=
     streamObj ink s!"/Type /XObject /Subtype /Form /BBox {box} /Group << /S /Transparency /CS /DeviceGray >> "
   let mask (n : Nat) := s!"<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G {n} 0 R >> >>"
-  let box (x y w h : Int) : Gfx.Geom := .rect (Dim.pt x) (Dim.pt y) (Dim.pt w) (Dim.pt h)
+  let box (x y w h : Int) : Gfx.Geom := .rect (Dim.bp x) (Dim.bp y) (Dim.bp w) (Dim.bp h)
   let reset := marksOf (statePdf "<< /ExtGState << /M 5 0 R /N 6 0 R >> >>"
     "1 0 0 rg /M gs 0 0 50 50 re f /N gs 0 0 1 rg 100 20 80 60 re f"
     #[mask 7, "<< /Type /ExtGState /SMask /None >>", maskGroup "[0 0 50 50]" "0.5 g 0 0 50 50 re f"])
@@ -982,7 +982,7 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let widths := glyphWidth.filterMap fun m => match m with
     | .paint _ _ _ (some st) _ _ => some st.width
     | _ => none
-  t s!"state: a Type 3 glyph strokes with the line width in force ({reprStr widths})" (widths == #[Dim.pt 7])
+  t s!"state: a Type 3 glyph strokes with the line width in force ({reprStr widths})" (widths == #[Dim.bp 7])
   let tile := streamObj "1 0 0 rg 0 0 5 5 re f"
     "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >> "
   t "state: a tiling pattern that strokes is named"
@@ -1065,7 +1065,7 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"state: an re of negative extent keeps the corner order PDF traces ({repr (inverted.map fun m => match m with
       | .paint _ g _ _ _ _ => some g | _ => none)})"
     (match inverted.toList with
-     | [.paint _ g _ _ _ _] => g == .path #[Gfx.Kit.rectPath (Dim.pt 150) (Dim.pt 80) (Dim.pt (-100)) (Dim.pt (-50))]
+     | [.paint _ g _ _ _ _] => g == .path #[Gfx.Kit.rectPath (Dim.bp 150) (Dim.bp 80) (Dim.bp (-100)) (Dim.bp (-50))]
      | _ => false)
   -- A stroked glyph's lengths stand in its frame: in user space 0.5 pt wide, dashed 2 on 1 from 0.25.
   let inUser (m : Gfx.Affine) (v : Dim.Length) : Rat := v.toRat * m.a / (Dim.bp 1).toRat

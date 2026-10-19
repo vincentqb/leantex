@@ -2324,7 +2324,7 @@ public def titleSlotCss (doc : Doc) : String :=
   let body := max doc.page.fontSize Length.quantum
   let emOf (l : Dim.SymLength) : String :=
     let e := if l.ex != 0 then s!" + {decMilli l.ex}ex" else ""
-    s!"{decMilli (l.em + l.sp * 1000 / body)}em{e}"
+    s!"{decMilli (l.em + Gfx.Trig.divRound (l.sp * (1000 : Int)).units body.units)}em{e}"
   let zero : Dim.SymLength := {}
   let rules := slots.zipIdx.toList.filterMap fun (sl, i) =>
     let (slotWidth, place) := sl.box

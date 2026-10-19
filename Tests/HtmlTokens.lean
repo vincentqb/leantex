@@ -140,7 +140,7 @@ def htmlSourcedGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (tok, fallback) in
       [("subtitlegap", "0.3em"), ("separatorgap", "0.8em"),
        ("authorgap", "0.5em"), ("institutegap", "1em"),
-       ("separatorheight", "0.5pt")] do
+       ("separatorheight", s!"{(Dim.pt 1 / 2).toBpString}pt")] do
     t s!"sourced gap {tok}: the rule defers to the property, resolved value \
 as the fallback" (hasStr html s!"var(--{tok}, {fallback})")
   -- Read on the element's own inline style: the static stylesheet defers plenty of its own margins.
@@ -148,5 +148,5 @@ as the fallback" (hasStr html s!"var(--{tok}, {fallback})")
   t "sourced gaps: the computed-gap probe elaborates clean" (bDs.isEmpty)
   let bHtml := (HtmlDoc.emit {} bDoc).1
   t "sourced gaps: a computed gap prints its length and references no property"
-    (hasStr bHtml "style=\"margin-top: 7pt\"" &&
+    (hasStr bHtml s!"style=\"margin-top: {(Dim.pt 7).toBpString}pt\"" &&
       !hasStr bHtml "style=\"margin-top: var(")

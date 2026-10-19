@@ -1090,6 +1090,7 @@ missing or unparsable font skips the face blocks. -/
 def commandSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pathFaceChecks ref
   Tests.lstInlineChecks ref
+  pointDoorChecks ref
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font
@@ -1252,7 +1253,7 @@ def main (args : List String) : IO UInt32 := do
 
   dimChecks ref
   -- A fractional case: its String.Slice ops get stuck for decide, so it runs here.
-  check ref "sp pt string fractional" ((Dim.pt 3 / 2).toBpString == "1.5")
+  check ref "sp pt string fractional" ((Dim.bp 3 / 2).toBpString == "1.5")
   kpChecks ref
   hyphenChecks ref
   walkChecks ref

@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 palette grid #2A6F4E
@@ -11,10 +11,10 @@ para
 role trivlist-env
   center
     picture 20 shapes
-      border 4.654 4.654 10.653 10.653
-      border 21.662 21.662 27.661 27.661
-      border 38.67 38.67 44.669 44.669
-      border 55.677 55.677 61.677 61.677
+      border 4.665 4.665 10.642 10.642
+      border 21.673 21.673 27.65 27.65
+      border 38.681 38.681 44.658 44.658
+      border 55.689 55.689 61.666 61.666
       draw rect 0 0 15.307 15.307 fill #AEC8BC
       draw rect 0 17.008 15.307 15.307 fill #88AE9C
       draw rect 0 34.016 15.307 15.307 fill #61947C

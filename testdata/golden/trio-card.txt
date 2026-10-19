@@ -13,7 +13,7 @@ meta author "Pat Placeholder"
 assert fonts.all_embedded
 assert pages <= 2
 assert text.in_area
-assert text.xheight >= 3.969pt
+assert text.xheight >= 3.983pt
 allow W0449
 frame
   title

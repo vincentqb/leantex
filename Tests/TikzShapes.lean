@@ -44,14 +44,14 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "shade: the left colour on the box's left edge, the right on its right"
     (match (figDraws oneFace axial).toList with
      | [(.rect x y w h, some { paint := .gradient (.linear _ _ _ xf), .. }, _)] =>
-       xf.apply (0, (Dim.pt 25).toRat) == (x.toRat, y.toRat + h.toRat / 2) &&
-         xf.apply (0, -(Dim.pt 25).toRat) == (x.toRat + w.toRat, y.toRat + h.toRat / 2)
+       xf.apply (0, (Dim.bp 25).toRat) == (x.toRat, y.toRat + h.toRat / 2) &&
+         xf.apply (0, -(Dim.bp 25).toRat) == (x.toRat + w.toRat, y.toRat + h.toRat / 2)
      | _ => false)
   let radial := picDoc "" "\\shade[inner color=white, outer color=grid] (0,0) circle (1);"
   t "shade: radial from the box's centre, inner to outer at half its radius"
     (match (figDraws oneFace radial).toList with
      | [(.ellipse ex ey _ _, some { paint := .gradient (.radial c0 r0 c1 r1 stops xf), .. }, _)] =>
-       c0 == (0, 0) && r0 == 0 && c1 == (0, 0) && r1 == Dim.pt 50 &&
+       c0 == (0, 0) && r0 == 0 && c1 == (0, 0) && r1 == Dim.bp 50 &&
          stops.map (·.color) == #[Ir.Color.white, grid, grid] &&
          stops.map (·.offset.val) == #[0, 32768, 65536] && xf.apply (0, 0) == (ex.toRat, ey.toRat)
      | _ => false)
@@ -59,7 +59,7 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "shade: a ball's highlight starts 10 bp up-left of centre, stops mixed from its colour"
     (match (figDraws oneFace ball).toList with
      | [(_, some { paint := .gradient (.radial c0 _ _ _ stops _), .. }, _)] =>
-       c0 == (-(Dim.pt 10), Dim.pt 10) &&
+       c0 == (-(Dim.bp 10), Dim.bp 10) &&
          stops.map (·.color) == #[Ir.Color.mix grid 15 Ir.Color.white, Ir.Color.mix grid 75 Ir.Color.white,
            Ir.Color.mix grid 70 Ir.Color.black, Ir.Color.mix grid 50 Ir.Color.black, Ir.Color.black]
      | _ => false)

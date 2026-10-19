@@ -35,8 +35,8 @@ public theorem frameBodySkip_projects (hasTitle : Bool) (valign : VAlign) (size 
   simp only [frameBodySkip]
 
 public structure Geom where
-  pageW : Length := pt 612 -- US letter
-  pageH : Length := pt 792 -- US letter
+  pageW : Length := bp 612 -- US letter
+  pageH : Length := bp 792 -- US letter
   hmargin : Length := inch 1 -- one-inch margins
   vmargin : Length := inch 1 -- one-inch margins
   /-- The bottom margin where the page declares one apart from the top's. -/
@@ -315,7 +315,7 @@ public theorem slides_lines_survive_bands (a d f : Length)
   simp only [furnitureBand, furnEdge, Option.getD, hv] at hhb hfb
   simp only [Geom.bodyBottom, Geom.bodyTop, Geom.bottomMargin, hm, Option.getD_none, hv]
   simp only [Ir.slidesVMargin, Ir.slidesFontSize, leadingFor, Ir.leadingFor, Ir.leadingMilli,
-    inkClearance, Ir.inkClearance, Dim.mm, Dim.pt, Dim.bp, unitsPerInch] at *
+    inkClearance, Ir.inkClearance, Dim.mm, Dim.pt, unitsPerInch] at *
   length_omega
 
 /-- How a page distributes its leftover vertical space: thousandths of a fil
@@ -7881,9 +7881,9 @@ public def continuedDiag (label : Option String) (span : Option Span) (o : Lengt
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
     (subject := label)
-    (detail := some (s!"{frameWho label}: {o.toBpString}pt taller" ++
+    (detail := some (s!"{frameWho label}: {o.toPtString}pt taller" ++
       match also with
-      | some p => s!", {p.toBpString}pt past on another step"
+      | some p => s!", {p.toPtString}pt past on another step"
       | none => ""))
 
 /-- W0400: the frame stands `o` past its text area, in the gap below it. -/
@@ -7892,21 +7892,21 @@ public def overfullDiag (label : Option String) (span : Option Span) (o : Length
     "a frame stands past its text area, in the gap below it"
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept a break")
-    (detail := some s!"{frameWho label}: {o.toBpString}pt past")
+    (detail := some s!"{frameWho label}: {o.toPtString}pt past")
 
 /-- A W0358 named at a frame's site, joined by the frame's overhang `o` past its text area on
 another overlay step, whose W0400 it carries. -/
 public def boxPastJoined (d : Diag) (o : Length) : Diag :=
   { d with message := d.message ++
              ", and on another overlay step the frame stands past its text area, in the gap below it"
-           detail := d.detail.map (· ++ s!", {o.toBpString}pt past on another step")
+           detail := d.detail.map (· ++ s!", {o.toPtString}pt past on another step")
            carries := d.carries ++ [.W0400] }
 
 /-- W0372: a note block pushes its band `over` past the page's floor. -/
 private def noteOverrunDiag (over : Length) (output : Option Diag.Output) : Diag :=
   Diag.of .W0372 "a footnote is taller than the text block; it overruns its page"
     (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })") (output := output)
-    (detail := some s!"{over.toBpString}pt taller")
+    (detail := some s!"{over.toPtString}pt taller")
 
 /-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
 it stood overfull, W0384 where it continued, nothing where it fit. -/
@@ -8302,7 +8302,7 @@ private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Length) : B :=
       (span := b.lastSource <|> b.frameSource) (subject := b.curFrameLabel)
       (output := if b.curStage then none else some .pdf)
       (help := "shrink the box, or raise the text height (\\page{ vmargin = ... })")
-      (detail := some s!"{who}{own.toBpString}pt taller"))
+      (detail := some s!"{who}{own.toPtString}pt taller"))
     else none
   { b with diags := (named.map b.diags.push).getD b.diags
            overruns := if recorded then (b.noteOverrun beyond).overruns else b.overruns }
@@ -9304,7 +9304,7 @@ def overfullSubject : Option Span → String
 
 /-- How far an overfull line runs, after its frame's name on a stage. -/
 private def overfullDetail (lead : String) (excess : Length) : String :=
-  lead ++ s!"{excess.toBpString}pt too wide"
+  lead ++ s!"{excess.toPtString}pt too wide"
 
 /-- The stage a line stands on: its frame, else the section page, the one stage no frame labels. -/
 private def stageWho (label : Option String) : String :=
@@ -10922,7 +10922,7 @@ private def collectTable (r : Rd) (a0 : Acc)
           "the table's words alone are wider than the measure at its smallest size; it " ++
             (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
         else "the table is wider than the measure")
-      (detail := some s!"{(tableW - total).toBpString}pt wider")
+      (detail := some s!"{(tableW - total).toPtString}pt wider")
       -- a flow's web page sets a table of natural columns at its natural width past the measure
       (output := if !r.slides && cols.all (·.width matches .natural) then some .pdf else none)
       (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
@@ -11550,8 +11550,8 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
       { a with diags := a.diags.push (Diag.of .W0335
         "the picture is larger than the text area; it may overrun the page"
         (span := source) (trigger := source.bind (·.pos.command))
-        (detail := some (s!"{w.toBpString}pt × {h.toBpString}pt against " ++
-          s!"{avail.toBpString}pt × {r.geom.textHeight.toBpString}pt"))
+        (detail := some (s!"{w.toPtString}pt × {h.toPtString}pt against " ++
+          s!"{avail.toPtString}pt × {r.geom.textHeight.toPtString}pt"))
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
@@ -15237,7 +15237,7 @@ private def reflowRecord (subject : String) (frame : Option String) (inFrame : B
   let places := placesSaid (site.map (·.file)) (over.filterMap (·.site))
   let past := if over.isEmpty then "" else
     s!"; {over.size} {if over.size == 1 then "line runs" else "lines run"} past the measure, \
-by up to {widest.toBpString}pt" ++ (if places.isEmpty then "" else s!", at {places}")
+by up to {widest.toPtString}pt" ++ (if places.isEmpty then "" else s!", at {places}")
   Diag.of .W0386 (subject := some subject)
     (if over.isEmpty then "a declared line did not fit the measure and re-flowed"
       else "a declared line did not fit the measure and re-flowed, and a line of it \
@@ -17054,7 +17054,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         s!"{what} is taller than the text block; it overruns its page"
         (output := if b2.curStage then none else some .pdf)
         (help := s!"shrink {shrink}, or raise the text height (\\page\{ vmargin = ... })")
-        (detail := some s!"{own.toBpString}pt taller"))
+        (detail := some s!"{own.toPtString}pt taller"))
       else if 0 < b2.notesH && 0 < over then
         some (noteOverrunDiag over (if b2.curStage then none else some .pdf))
       else none
@@ -19609,7 +19609,7 @@ shown, whatever reads the file"
               (help := "a band holds one line at a fixed position: shorten \
 the content, or widen the page (\\page{ width = ... })")
               (detail := some s!"on page {i + 1}, \
-{(geom.offMedium l.x l.setWidth).toBpString}pt past its edge") (output := furniture))
+{(geom.offMedium l.x l.setWidth).toPtString}pt past its edge") (output := furniture))
           placed := placed.push (slot, { l with furniture := true })
       let slots := placed
       for hj : j in [0:slots.size] do
@@ -20684,7 +20684,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       if gt != gb then
         acc.diags.push (Diag.of .N0021
           (s!"header and footer gaps differ by " ++
-            s!"{(if gt > gb then gt - gb else gb - gt).toBpString}pt as declared; " ++
+            s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
             "equal gaps are the default") (output := some .pdf))
       else acc.diags
     else acc.diags
@@ -20701,7 +20701,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
             s!"'{element}' sets more space below the heading than above it"
             (help := s!"a heading binds to the text it introduces: in " ++
               s!"\\style\{{element}}\{...} keep 'after' at most 'before'")
-            (detail := some s!"{down.toBpString}pt below, {up.toBpString}pt above"))
+            (detail := some s!"{down.toPtString}pt below, {up.toPtString}pt above"))
         else ds
       | _, _ => ds
     | none => ds) preDiags

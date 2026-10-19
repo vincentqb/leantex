@@ -2193,7 +2193,14 @@ def reports : List Report := [
       "the diagnostic oracle's 18 refused cases (a minipage or a tabular inside raisebox, fbox, an l or p cell, textbf or a footnote) and its 6 unknown-environment cases (a center or a quote in a p cell, textbf or a footnote) build here, each sentinel word shipped: inside a box command as a box, elsewhere its words in the line, named once (W0451); text beside a box holding a block is named once (W0452)",
       "in Chromium the web page's box paints the same ground, frame and padding round the minipage, the tabular's frame hugging it and centring with it, the framed row side by side",
       "the corpus built by main's binary at 6714141d and by this tree's: every artifact and diagnostic byte-identical but the boxes fixture's, whose framed and raised minipages now ship"]
-    state := .guarded "730c0b54" .before .author }
+    state := .guarded "730c0b54" .before .author },
+  { id := "R247", date := "2026-10-19"
+    what := "the engine read a document's pt as a big point, so every TeX length set 0.375% wide and a 10pt length printed as 10.0375pt"
+    pins := [check% pointDoorChecks]
+    accept := ["lualatex 1.24 on an invented article: a length set to 10pt prints as 10.0pt; this tree prints 10.0pt",
+      "main's binary at 9dd642df on the same probe prints 10.0375pt; the guard fails there",
+      "the corpus built by main's binary at 9dd642df and by this tree's: 84 changed artifacts invisible, 160 visible as the intended shrink toward TeX, a 10pt font set at 9.963 bp where lualatex sets 9.96264"]
+    state := .guarded "9dd642df" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

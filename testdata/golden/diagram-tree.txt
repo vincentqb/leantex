@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 palette leaf #2A6F4E
@@ -13,23 +13,23 @@ center
 section 1 number "1"
   text "A grown tree"
 picture 11 shapes
-  border -3 -3 3 3
-  border 31.016 31.016 37.015 37.015
-  border 50.859 65.032 56.858 71.031
-  border 11.174 65.032 17.173 71.031
-  border -37.015 31.016 -31.016 37.015
+  border -2.988 -2.988 2.988 2.988
+  border 31.027 31.027 37.004 37.004
+  border 50.87 65.043 56.847 71.02
+  border 11.185 65.043 17.162 71.02
+  border -37.004 31.027 -31.027 37.004
   group
-    draw path (5.545,5.545)--(31.016,31.016) stroke #000000 0.4
-    draw path (3,3)~(6.889,4.767)--(4.767,6.889)~(3,3) z fill #000000
+    draw path (5.525,5.525)--(31.027,31.027) stroke #000000 0.399
+    draw path (2.988,2.988)~(6.863,4.75)--(4.75,6.863)~(2.988,2.988) z fill #000000
   group
-    draw path (37.579,40.125)--(52.108,65.032) stroke #000000 0.4
-    draw path (35.766,37.015)~(39.077,39.715)--(36.485,41.226)~(35.766,37.015) z fill #000000
+    draw path (37.566,40.102)--(52.115,65.043) stroke #000000 0.399
+    draw path (35.759,37.004)~(39.058,39.693)--(36.476,41.199)~(35.759,37.004) z fill #000000
   group
-    draw path (-5.545,5.545)--(-31.016,31.016) stroke #000000 0.4
-    draw path (-3,3)~(-4.767,6.889)--(-6.889,4.767)~(-3,3) z fill #000000
+    draw path (-5.525,5.525)--(-31.027,31.027) stroke #000000 0.399
+    draw path (-2.988,2.988)~(-4.75,6.863)--(-6.863,4.75)~(-2.988,2.988) z fill #000000
   group
-    draw path (-34.016,40.615)--(-34.016,68.031) stroke #000000 0.4
-    draw path (-34.016,37.015)~(-32.516,41.015)--(-35.516,41.015)~(-34.016,37.015) z fill #000000
+    draw path (-34.016,40.591)--(-34.016,68.031) stroke #000000 0.399
+    draw path (-34.016,37.004)~(-32.521,40.989)--(-35.51,40.989)~(-34.016,37.004) z fill #000000
   label 0 0 #000000 900
     text "sum"
   label 34.016 34.016 #000000 900
@@ -43,26 +43,26 @@ picture 11 shapes
   label -34.016 34.016 #000000 900
     text "right"
   group
-    draw path (50.859,66.87)--(-30.587,35.343) stroke #000000 0.4
-    draw path (-28.89,34.284)~(-30.867,35.235)~(-30.046,37.268) stroke #000000 0.32 cap round join round
-  draw ellipse -34.016 68.031 2 2 fill #2A6F4E
+    draw path (50.87,66.875)--(-30.6,35.338) stroke #000000 0.399
+    draw path (-28.91,34.283)~(-30.879,35.23)~(-30.06,37.256) stroke #000000 0.319 cap round join round
+  draw ellipse -34.016 68.031 1.993 1.993 fill #2A6F4E
 section 1 number "2"
   text "Dots on a line"
 picture 7 shapes
-  border 22.179 0 28.845 6.666
-  border 48.357 -22.341 53.69 -17.008
-  label 25.512 3.333 #000000 1000
+  border 22.191 0 28.832 6.641
+  border 48.367 -22.321 53.68 -17.008
+  label 25.512 3.321 #000000 1000
     text "mid"
   group
-    draw path (0,0)--(51.024,0) stroke #000000 0.4
-  draw ellipse 0 0 1.5 1.5 fill #000000
-  draw ellipse 51.024 0 1.5 1.5 fill #000000
-  draw ellipse 25.512 0 25.512 8.504 stroke #000000 0.4
+    draw path (0,0)--(51.024,0) stroke #000000 0.399
+  draw ellipse 0 0 1.494 1.494 fill #000000
+  draw ellipse 51.024 0 1.494 1.494 fill #000000
+  draw ellipse 25.512 0 25.512 8.504 stroke #000000 0.399
   group
-    draw path (0.46,-17.008)--(50.564,-17.008) stroke #000000 0.4
-    draw path (1.66,-18.608)~(0.16,-17.008)~(1.66,-15.408) stroke #000000 0.32 cap round join round
-    draw path (49.364,-15.408)~(50.864,-17.008)~(49.364,-18.608) stroke #000000 0.32 cap round join round
-  label 51.024 -19.674 #000000 800
+    draw path (0.458,-17.008)--(50.565,-17.008) stroke #000000 0.399
+    draw path (1.654,-18.602)~(0.159,-17.008)~(1.654,-15.414) stroke #000000 0.319 cap round join round
+    draw path (49.37,-15.414)~(50.864,-17.008)~(49.37,-18.602) stroke #000000 0.319 cap round join round
+  label 51.024 -19.664 #000000 800
     text "span"
 -- diagnostics
 (none)

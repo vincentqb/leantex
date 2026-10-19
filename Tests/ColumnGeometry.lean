@@ -23,7 +23,7 @@ private def columnGeomInk (out : Layout.Out) : Array ColumnGeomInk :=
 private def columnGeomAtom (s : String) (measure : Length) : Option Length := do
   if s == "0" then return 0
   let (number, unit) ←
-    if s.endsWith "pt" then some ((s.dropEnd 2).toString, pt 1)
+    if s.endsWith "pt" then some ((s.dropEnd 2).toString, bp 1)
     else if s.endsWith "%" then some ((s.dropEnd 1).toString, measure)
     else none
   let (n, d) ← Decl.parseDecimal number
@@ -85,6 +85,11 @@ private structure ColumnGeomRow where
   gap : Length
   right : Length
   deriving BEq, Repr
+
+-- The emitted CSS spells each length to a thousandth of a big point, and a field sums up to three.
+private def ColumnGeomRow.near (a b : ColumnGeomRow) : Bool :=
+  let close (x y : Length) := (x - y).abs ≤ Length.ofBpMilli 2
+  close a.left b.left && close a.gap b.gap && close a.right b.right
 
 -- The browser's track arithmetic at the PDF's declared measure.
 private def columnGeomHtml (style : String) (measure : Length) : Option ColumnGeomRow := do
@@ -182,11 +187,11 @@ private def columnGeomCase (ref : IO.Ref (List String)) (fonts : Font.FontSet)
         | _, _ => false)
     let html := styles[i]?.bind (columnGeomHtml · measure)
     t s!"{label}: typed HTML resolves the same gutter and ratio widths"
-      (html == some want)
+      (html.any (·.near want))
     t s!"{label}: PDF origins and widths agree with typed HTML"
       (match pair, html with
        | (some a, some b), some h =>
-         a.width == h.left && b.width == h.right && b.x - a.x == h.left + h.gap
+         ColumnGeomRow.near ⟨a.width, b.x - a.x - a.width, b.width⟩ h
        | _, _ => false)
 
 private def columnGeomParagraphs (label : String) (count : Nat) : String :=
@@ -214,15 +219,18 @@ private def columnGeomScopeContinuation (ref : IO.Ref (List String))
 restoration, against an invented lualatex probe, in `Layout.Out` and the typed HTML. -/
 def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let css := "display: grid; column-gap: 10pt; grid-template-columns: "
+  let css := s!"display: grid; column-gap: {(pt 10).toBpString}pt; grid-template-columns: "
+  let affine :=
+    s!"calc(25% - {(pt 10 / 4).toBpString}pt) calc(75% - {(3 * pt 10 / 4).toBpString}pt)"
   let want := columnGeomExpected (pt 200) (pt 10) 1
+  let near (row : Option ColumnGeomRow) := row.any (·.near want)
   t "column geometry CSS reader accepts affine and fractional tracks"
-    (columnGeomHtml (css ++ "calc(25% - 2.5pt) calc(75% - 7.5pt)") (pt 200) == some want &&
-      columnGeomHtml (css ++ "1fr 3fr") (pt 200) == some want &&
-      columnGeomHtml (css ++ "minmax(0, 1fr) minmax(0, 3fr)") (pt 200) == some want)
+    (near (columnGeomHtml (css ++ affine) (pt 200)) &&
+      near (columnGeomHtml (css ++ "1fr 3fr") (pt 200)) &&
+      near (columnGeomHtml (css ++ "minmax(0, 1fr) minmax(0, 3fr)") (pt 200)))
   t "column geometry CSS reader resolves affine tracks with the implicit zero grid gap"
-    (columnGeomHtml ("display: grid; justify-content: space-between; " ++
-      "grid-template-columns: calc(25% - 2.5pt) calc(75% - 7.5pt)") (pt 200) == some want)
+    (near (columnGeomHtml ("display: grid; justify-content: space-between; " ++
+      "grid-template-columns: " ++ affine) (pt 200)))
   t "column geometry CSS reader rejects full-measure percentages plus a gap and unknown units"
     ((columnGeomHtml (css ++ "25% 75%") (pt 200)).isNone &&
       (columnGeomHtml ("display: grid; column-gap: 0.75rem; " ++

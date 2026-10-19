@@ -161,10 +161,10 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
           (.lit { width := { sp := size * 6 / 5 } }))
         #[.colored lowInk none #[.text "Size"]]]] }
   for (name, size, face, expected) in #[
-      ("regular below large", Dim.pt 17, font, false),
-      ("regular large", Dim.pt 18, font, true),
-      ("bold below large", Dim.pt 13, boldFont, false),
-      ("bold large", Dim.pt 14, boldFont, true)] do
+      ("regular below large", Dim.bp 17, font, false),
+      ("regular large", Dim.bp 18, font, true),
+      ("bold below large", Dim.bp 13, boldFont, false),
+      ("bold large", Dim.bp 14, boldFont, true)] do
     let out := atSize size face
     let judgments := Contrast.shippedJudgments geom (oneFaceOf face) out
     let body := judgments.filter fun judgment =>

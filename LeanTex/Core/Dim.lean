@@ -219,8 +219,8 @@ public theorem unitsPerInch_exact : unitsPerInch % 72 = 0 ∧ unitsPerInch % 96 
 /-- The big point, 1⁄72 in: PDF's and CSS's point. -/
 @[expose] public def bp (n : Int) : Length := ⟨n * unitsPerInch / 72⟩
 
-/-- The engine's point, which reads as a big point. -/
-@[expose] public def pt (n : Int) : Length := bp n
+/-- TeX's point, 1⁄72.27 in. -/
+@[expose] public def pt (n : Int) : Length := ⟨n * unitsPerInch * 100 / 7227⟩
 
 /-- Millimetres, 1 mm = 10⁄254 in rounded to the base unit. -/
 @[expose] public def mm (n : Int) : Length := ⟨n * unitsPerInch * 10 / 254⟩
@@ -256,7 +256,7 @@ public theorem unitsPerInch_exact : unitsPerInch % 72 = 0 ∧ unitsPerInch % 96 
   ⟨(unit.units * num * 2 + (den : Int)) / (2 * (den : Int))⟩
 
 public theorem pt_exact (n : Int) : pt n / pt 1 = n := by
-  simp only [pt, bp, unitsPerInch, Length.div_length]
+  simp only [pt, unitsPerInch, Length.div_length]
   omega
 
 public theorem bp_units (n : Int) : (bp n).units = n * (bp 1).units := by
@@ -277,7 +277,7 @@ public theorem Length.ofRatioRound_sp (n : Int) : (pt 1).ofRatioRound n 65536 = 
   omega
 
 public theorem Length.toSp_ofSp (n : Int) : (Length.ofSp n).toSp = n := by
-  simp only [Length.ofSp, Length.toSp, pt, bp, unitsPerInch]
+  simp only [Length.ofSp, Length.toSp, pt, unitsPerInch]
   omega
 
 /-- The length in inches, exactly. -/
@@ -327,7 +327,26 @@ value rounded to the nearest thousandth, `toBpMilli`). -/
     s!"{sign}{ip}." ++ String.ofList (fracDigits 3 fr)
 
 example : mm 254 = inch 10 := by decide
-example : (pt 10).toBpString = "10" := by rfl
+example : (bp 10).toBpString = "10" := by rfl
+
+/-- The value `toPtString` spells, in thousandths of TeX's point, rounded half away from zero. -/
+@[expose] public def Length.toPtMilli (x : Length) : Int :=
+  let p := (pt 1).units
+  if x.units < 0 then -((-x.units * 2000 + p) / (2 * p)) else (x.units * 2000 + p) / (2 * p)
+
+/-- Render as decimal TeX points with up to three fractional digits (`toPtMilli`). -/
+@[expose] public def Length.toPtString (x : Length) : String :=
+  let m := x.toPtMilli
+  let milli := m.natAbs
+  let ip := milli / 1000
+  let fr := milli % 1000
+  let sign := if m < 0 then "-" else ""
+  if fr == 0 then
+    s!"{sign}{ip}"
+  else
+    s!"{sign}{ip}." ++ String.ofList (fracDigits 3 fr)
+
+example : (pt 10).toPtString = "10" := by rfl
 
 /-- A rational `p / q` (`q > 0`) as a decimal rounded once at the ninth digit, half away from
 zero: the one matrix-entry printer. -/

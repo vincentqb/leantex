@@ -7088,7 +7088,7 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
   else if record.model == .face then
     if !page.sized then
       let named :=
-        if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
+        if opts.contains "us" then some (Dim.bp 252, Dim.bp 144)
         else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
         else none
       match named.orElse (fun _ => record.trimDefault) with
@@ -14999,7 +14999,7 @@ private theorem referent_recovered_para (keys : Ir.ReferentKeys) (lang : Option 
 /-- A declared value as its author would write it. -/
 private def renderValue : Decl.Value → String
   | .str s => s
-  | .dim sp => s!"{sp.toBpString}pt"
+  | .dim sp => s!"{sp.toPtString}pt"
   | .int n => toString n
   | .ident s => s
   | .block src => "{" ++ src ++ "}"

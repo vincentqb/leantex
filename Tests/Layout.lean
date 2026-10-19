@@ -490,7 +490,7 @@ def boxWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (decide (widest (boxDoc "" "900pt") ≤ geom.textWidth))
   t "each declared width has its own HTML track"
     (Ir.Track.css (Ir.BoxWidth.trackOf (.frac 500)) == "50%" &&
-      Ir.Track.css (Ir.BoxWidth.trackOf (.abs (Dim.pt 90))) == "90pt" &&
+      Ir.Track.css (Ir.BoxWidth.trackOf (.abs (Dim.pt 90))) == s!"{(Dim.pt 90).toBpString}pt" &&
       Ir.Track.css (Ir.BoxWidth.trackOf .share) == "1fr")
 
 /-- A declared ragged setting hangs its lines from the side it declares. -/
@@ -1663,9 +1663,9 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let hugeSize := body * 2488 / 1000
   t "a Huge title ends one paragraph, not two lines" (huge.size == 2)
   t "the line after a Huge title is spaced by the metric rule"
-    (huge.size == 2 && huge[1]! - huge[0]! ==
-      (leadedAt hugeSize (some "Huge")).2 + (leadedAt body).1 +
-        (geom.parskip.resolve body 0).width)
+    (huge.size == 2 && (huge[1]! - huge[0]! -
+      ((leadedAt hugeSize (some "Huge")).2 + (leadedAt body).1 +
+        (geom.parskip.resolve body 0).width)).abs ≤ Dim.Length.quantum)
   t "the line after a Huge title is not a Huge leading away"
     (huge.size == 2 && huge[1]! - huge[0]! < Ir.leadingFor hugeSize geom.leading)
   let hugeBox := ((layoutOf oneFace (Elab.run "t" "{\\Huge Title \\par}\n\nbody").1 geom).pages[0]?.bind
@@ -2419,7 +2419,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     pure (foot.y - (g.pageH - g.bottomMargin))
   let lost (s : String) : Bool :=
     (elabStr s).2.any fun d => d.code == "W0101" || d.code == "W0107"
-  let quarter := Dim.pt 18
+  let quarter := Dim.inch 1 / 4
   let geo := "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 0.25in + \\ht\\strutbox\\relax}"
   -- lualatex: `\the\ht\strutbox` 8.39996pt, 9.51996pt and 10.14995pt, `\dp` 3.60004pt at 10pt.
   for (cls, htSp) in [("[10pt]{article}", (550500 : Int)), ("[11pt]{article}", 623900),
@@ -3163,8 +3163,8 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "card defaults to ISO/IEC 7810 ID-1"
     (cDoc.page.width == Dim.mm100 8560 && cDoc.page.height == Dim.mm100 5398)
   t "us option is the 3.5 × 2 in trade size"
-    ((elabStr (card "[us]" "x")).1.page.width == Dim.pt 252 &&
-     (elabStr (card "[us]" "x")).1.page.height == Dim.pt 144)
+    ((elabStr (card "[us]" "x")).1.page.width == Dim.bp 252 &&
+     (elabStr (card "[us]" "x")).1.page.height == Dim.bp 144)
   t "jis option is the 91 × 55 mm meishi"
     ((elabStr (card "[jis]" "x")).1.page.width == Dim.mm 91 &&
      (elabStr (card "[jis]" "x")).1.page.height == Dim.mm 55)
@@ -4648,7 +4648,7 @@ def topskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let first (src : String) (pg : Nat) (word : String) : Option Dim.Length :=
     lineYOf (censusOfSrc oneFace src) pg word
   let near (y : Option Dim.Length) (milli : Int) : Bool :=
-    (y.map fun v => let want := Dim.pt 1 * milli / 1000
+    (y.map fun v => let want := Dim.Length.ofBpMilli milli
       v - want ≤ Dim.pt 1 / 10 && want - v ≤ Dim.pt 1 / 10).getD false
   t "topskip: a body line stands \\topskip below the text area, as in lualatex"
     (near (first (page "10pt" "Alpha Hotel words.") 0 "Alpha") 81963)

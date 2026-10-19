@@ -130,12 +130,13 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
       (folded.filter (·.severity == .note)).size == 3)
   let longLine := String.intercalate " " (List.replicate 40 "gadget")
   let mdHard := (elabMd (longLine ++ "\\\nlast words\n")).1
-  let texHard := (elabStr (dvDoc "\\page{ hmargin = 114pt }" (longLine ++ "\\\\\nlast words"))).1
+  let texHard := (elabStr (dvDoc s!"\\page\{ hmargin = {mdHard.page.hmargin.toSp}sp }"
+    (longLine ++ "\\\\\nlast words"))).1
   let mdOut := layoutOf split mdHard
   let texOut := layoutOf split texHard
   let texts (o : Layout.Out) := (bodyLines o).map lineText
   t s!"a markdown hard break sets its tex twin's page; only the twin names W0386 ({(texts mdOut).size} lines)"
-    (mdHard.page.hmargin == texHard.page.hmargin && texts mdOut == texts texOut
+    ((mdHard.page.hmargin - texHard.page.hmargin).abs ≤ Dim.Length.ofSp 1 && texts mdOut == texts texOut
       && (texts mdOut).size ≥ 3 && (texts mdOut).back? == some "last words"
       && !mdOut.diags.any (·.kind == .W0386) && texOut.diags.any (·.kind == .W0386))
   let code := String.intercalate "_" (List.replicate 24 "gadget")

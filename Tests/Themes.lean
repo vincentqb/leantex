@@ -1238,7 +1238,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "a declared page beats the stage"
     ((elabStr ("\\documentclass{slides}\\page{ width = 300pt, height = 200pt }" ++
       "\\begin{document}x\\end{document}")).1.page.width == Dim.pt 300)
-  t "article keeps its page" ((elabStr "x").1.page.width == Dim.pt 612)
+  t "article keeps its page" ((elabStr "x").1.page.width == Dim.bp 612)
   let threeFrames := deck169Body ("\\begin{frame}{A}\na\n\\end{frame}\n" ++
     "\\begin{frame}{B}\nb\n\\end{frame}\n\\section{S}\n\\begin{frame}{C}\nc\n\\end{frame}")
   let (dDoc, dDs) := elabStr threeFrames

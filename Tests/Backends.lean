@@ -335,14 +335,16 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html styled heading wraps in the template"
     ((stylePage.splitOn "</span>\u2003<span class=\"size-large\"><span class=\"sans\">").length == 2 &&
      (stylePage.splitOn "<h2 class=\"ruled\"><span class=\"section-number\">").length == 2)
-  t "html styled heading spacing" ((stylePage.splitOn "h2 { margin-top: 6pt; margin-bottom: 3pt;").length == 2)
+  -- the sheet spells a TeX length in CSS's points
+  t "html styled heading spacing" ((stylePage.splitOn
+    s!"h2 \{ margin-top: {(Dim.pt 6).toBpString}pt; margin-bottom: {(Dim.pt 3).toBpString}pt;").length == 2)
   t "html styled list indent and gap"
     ((stylePage.splitOn "\nul { padding-left: 1.5em; }").length == 2 &&
-     (stylePage.splitOn "ul > li { margin-top: 3pt; }").length == 2)
+     (stylePage.splitOn s!"ul > li \{ margin-top: {(Dim.pt 3).toBpString}pt; }").length == 2)
   t "css em keeps its unit" (HtmlDoc.cssLength { em := 1500 } == "1.5em")
   t "css ex keeps its unit" (HtmlDoc.cssLength { ex := 1500 } == "1.5ex")
   t "css whole em has no fraction" (HtmlDoc.cssLength { em := 2000 } == "2em")
-  t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.pt 3, em := 500 } == "calc(3pt + 0.5em)")
+  t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.bp 3, em := 500 } == "calc(3pt + 0.5em)")
   let (fromDoc, fromDs) := elabStr ("\\documentclass{article}\\runninghead[from = 2]{x}" ++
     "\\begin{document}y\\end{document}")
   t "running from clean" (fromDs.isEmpty && fromDoc.headFrom == 2 && fromDoc.footFrom == 1)
@@ -351,11 +353,11 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
 def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "html measure derives from the default page"
-    (HtmlDoc.measureRem {} == "46.8rem")
+    (HtmlDoc.measureRem {} == "46.975rem")
   let (narrowDoc, narrowDs) := elabStr ("\\documentclass{article}" ++
     "\\page{ hmargin = 0.75in }\\begin{document}x\\end{document}")
   t "html measure follows a declared page" (narrowDs.isEmpty &&
-    ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.4rem;").length == 2)
+    ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.589rem;").length == 2)
   let hasClass (name : String) (attrs : Array (String × String)) : Bool :=
     attrs.any fun (key, value) =>
       key == "class" && (value.splitOn " ").contains name
@@ -417,7 +419,7 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\section{H}\\end{document}")
   t "html baseline heading rule drops the translate and takes its thickness"
     (((HtmlDoc.emit {} baselineDoc).1.splitOn
-      "h2.ruled::after { transform: none; border-top-width: 2pt; }").length == 2)
+      s!"h2.ruled::after \{ transform: none; border-top-width: {(Dim.pt 2).toBpString}pt; }").length == 2)
   t "html x-height heading rule emits no per-element override"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn "h2.ruled::after").length == 1)
   let fromFontPage := (HtmlDoc.emit {} ruledDoc).1
@@ -1330,13 +1332,13 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
            ((d.splitOn ":").headD "").trimAscii.toString)
   -- 11pt over the 90mm stage, truncated to the printed milli.
   t "deck type is the PDF's stage ratio, in vh"
-    (has deckPage "font-size: 4.311vh; line-height: 1.200; }" &&
+    (has deckPage "font-size: 4.295vh; line-height: 1.200; }" &&
      has deckPage "h1 { font-size: 1.728em; }" &&
      has deckPage "section.slide > header h2 { font-size: 1.440em; }")
   let (tokDoc, _) := elabStr (deck169 "\\tokens{ safearea = 20pt }"
     "\\begin{frame}{T}\nx\n\\end{frame}")
   t "a declared safearea token overrides the engine default"
-    (has (HtmlDoc.emit {} tokDoc).1 "--safearea: 20pt;")
+    (has (HtmlDoc.emit {} tokDoc).1 s!"--safearea: {(Dim.pt 20).toBpString}pt;")
   -- Two stages of equal height and different width emit identical screen decks; 16:10 differs.
   t "the deck page carries no stage millimetre"
     (!(deckPage.splitOn "mm").dropLast.any fun piece => piece.back.isDigit || piece.back == '.')
@@ -1679,9 +1681,11 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "size scale source clean" bigDs.isEmpty
   let bigPdf := pdfText (Pdf.write geom twoFace (layoutOf twoFace bigDoc geom).pages)
   t "pdf references a second face" (bytesContain bigPdf "/F2 ")
-  t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
-  t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
-  t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
+  -- the content stream spells TeX's points in PDF's
+  let tf (step : String) : String := s!"{(Ir.scaleStepIn Ir.sizeScale (Dim.pt 10) step).toBpString} Tf"
+  t "pdf sets Huge at 2.488x" (bytesContain bigPdf (tf "Huge"))
+  t "pdf sets small at 0.9x" (bytesContain bigPdf (tf "small"))
+  t "pdf keeps the body size" (bytesContain bigPdf (tf "normalsize"))
   let plainPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages)
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
   let bigPages := (layoutOf twoFace bigDoc geom).pages
@@ -2960,33 +2964,33 @@ def contentOpsTags : Array (Option String) := #[some "P", some "H2", none]
 
 def contentOpsTextPage : Layout.PageOut := {
   lines := #[
-    { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, leaf := some 0, segs := #[
-        contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(36, 'A'), (37, 'B')],
-        .gap (Dim.pt 5) true,
-        contentOpsRun 0 Ir.Color.black (Dim.pt 20) [(38, 'C')],
-        contentOpsRun 1 contentOpsRed (Dim.pt 20) [(39, 'D')] (Dim.pt 9) (Dim.pt 3),
-        contentOpsRun 1 contentOpsRed (Dim.pt 20) [(40, 'E')] (Dim.pt 9) (Dim.pt 3) ] },
-    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100, expand := 20,
+    { x := Dim.bp 10, y := Dim.bp 20, size := Dim.bp 12, setWidth := Dim.bp 100, leaf := some 0, segs := #[
+        contentOpsRun 0 Ir.Color.black (Dim.bp 30) [(36, 'A'), (37, 'B')],
+        .gap (Dim.bp 5) true,
+        contentOpsRun 0 Ir.Color.black (Dim.bp 20) [(38, 'C')],
+        contentOpsRun 1 contentOpsRed (Dim.bp 20) [(39, 'D')] (Dim.bp 9) (Dim.bp 3),
+        contentOpsRun 1 contentOpsRed (Dim.bp 20) [(40, 'E')] (Dim.bp 9) (Dim.bp 3) ] },
+    { x := Dim.bp 10, y := Dim.bp 40, size := Dim.bp 12, setWidth := Dim.bp 100, expand := 20,
       leaf := some 1, segs := #[
-        contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(70000, 'x'), (4096, 'y')],
-        .gap (Dim.pt 5) true,
-        contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(1, 'z')] ] },
-    { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, leaf := some 2, segs := #[
-        contentOpsRun 0 Ir.Color.black (Dim.pt 2) [],
-        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(50, 'a')],
-        .gap (Dim.pt 500) true,
-        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(51, 'b')],
-        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(52, 'c')] (Dim.pt 12) (Dim.pt (-3)),
-        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(53, 'd')] (Dim.pt 12) (Dim.pt (-3)) ] },
-    { x := Dim.pt 10, y := Dim.pt 80, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
-        .rule (Dim.pt 40) (Dim.pt 1) (Dim.pt 2) contentOpsRed,
-        .image (some 0) (Dim.pt 20) (Dim.pt 15) true 0,
-        .image (some 1) (Dim.pt 20) (Dim.pt 15) true 0,
-        .image none (Dim.pt 10) (Dim.pt 5) true 0,
-        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(54, 'e')],
-        .rule (Dim.pt 10) (Dim.pt 2) 0 Ir.Color.black ] } ],
-  fills := #[{ x := 0, y := 0, w := Dim.pt 200, h := Dim.pt 100, color := contentOpsGrey },
-             { x := Dim.pt 5, y := Dim.pt 5, w := Dim.pt 50, h := Dim.pt 10, color := contentOpsCyan }] }
+        contentOpsRun 0 contentOpsCyan (Dim.bp 30) [(70000, 'x'), (4096, 'y')],
+        .gap (Dim.bp 5) true,
+        contentOpsRun 0 contentOpsCyan (Dim.bp 30) [(1, 'z')] ] },
+    { x := Dim.bp 10, y := Dim.bp 60, size := Dim.bp 12, setWidth := Dim.bp 100, leaf := some 2, segs := #[
+        contentOpsRun 0 Ir.Color.black (Dim.bp 2) [],
+        contentOpsRun 0 Ir.Color.black (Dim.bp 10) [(50, 'a')],
+        .gap (Dim.bp 500) true,
+        contentOpsRun 0 Ir.Color.black (Dim.bp 10) [(51, 'b')],
+        contentOpsRun 0 Ir.Color.black (Dim.bp 10) [(52, 'c')] (Dim.bp 12) (Dim.bp (-3)),
+        contentOpsRun 0 Ir.Color.black (Dim.bp 10) [(53, 'd')] (Dim.bp 12) (Dim.bp (-3)) ] },
+    { x := Dim.bp 10, y := Dim.bp 80, size := Dim.bp 12, setWidth := Dim.bp 100, segs := #[
+        .rule (Dim.bp 40) (Dim.bp 1) (Dim.bp 2) contentOpsRed,
+        .image (some 0) (Dim.bp 20) (Dim.bp 15) true 0,
+        .image (some 1) (Dim.bp 20) (Dim.bp 15) true 0,
+        .image none (Dim.bp 10) (Dim.bp 5) true 0,
+        contentOpsRun 0 Ir.Color.black (Dim.bp 10) [(54, 'e')],
+        .rule (Dim.bp 10) (Dim.bp 2) 0 Ir.Color.black ] } ],
+  fills := #[{ x := 0, y := 0, w := Dim.bp 200, h := Dim.bp 100, color := contentOpsGrey },
+             { x := Dim.bp 5, y := Dim.bp 5, w := Dim.bp 50, h := Dim.bp 10, color := contentOpsCyan }] }
 
 /-- A synthetic figure of plain draws, its frame y up. -/
 def contentOpsFigure {L : Type} (nodes : Array (Gfx.Node L)) : Gfx.Figure L :=
@@ -2995,32 +2999,32 @@ def contentOpsFigure {L : Type} (nodes : Array (Gfx.Node L)) : Gfx.Figure L :=
 
 /-- The placement a synthetic page's pictures stand under: picture y up
 from the 100pt page's bottom, so picture and PDF coordinates coincide. -/
-def contentOpsPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.pt 100 }
+def contentOpsPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.bp 100 }
 
 /-- Two pictures' ink under leaf 0 and leaf 1, which the writer groups as two figures. -/
 def contentOpsPathPage : Layout.PageOut := {
   inks := #[
     { fig := contentOpsFigure #[
-        .draw (.ellipse (Dim.pt 50) (Dim.pt 50) (Dim.pt 20) (Dim.pt 20)) none
+        .draw (.ellipse (Dim.bp 50) (Dim.bp 50) (Dim.bp 20) (Dim.bp 20)) none
           (some (Ir.Pic.strokeOf { color := contentOpsRed, dash := .dashed })),
-        .draw (.rect (Dim.pt 10) (Dim.pt 70) (Dim.pt 30) (Dim.pt 20))
+        .draw (.rect (Dim.bp 10) (Dim.bp 70) (Dim.bp 30) (Dim.bp 20))
           (some (Ir.Pic.solidFill contentOpsGrey))
-          (some (Ir.Pic.strokeOf { dash := .dotted, width := Dim.pt 1 })),
+          (some (Ir.Pic.strokeOf { dash := .dotted, width := Dim.bp 1 })),
         .draw (.path (Ir.Pic.edgeSubpaths #[
-            .line (Dim.pt 1) (Dim.pt 98) (Dim.pt 3) (Dim.pt 96),
-            .line (Dim.pt 3) (Dim.pt 96) (Dim.pt 5) (Dim.pt 94),
-            .cubic (Dim.pt 7) (Dim.pt 92) (Dim.pt 9) (Dim.pt 90) (Dim.pt 11) (Dim.pt 88) (Dim.pt 13)
-              (Dim.pt 86),
-            .cubic (Dim.pt 13) (Dim.pt 86) (Dim.pt 1) (Dim.pt 99) (Dim.pt 2) (Dim.pt 98) (Dim.pt 3)
-              (Dim.pt 97)]))
+            .line (Dim.bp 1) (Dim.bp 98) (Dim.bp 3) (Dim.bp 96),
+            .line (Dim.bp 3) (Dim.bp 96) (Dim.bp 5) (Dim.bp 94),
+            .cubic (Dim.bp 7) (Dim.bp 92) (Dim.bp 9) (Dim.bp 90) (Dim.bp 11) (Dim.bp 88) (Dim.bp 13)
+              (Dim.bp 86),
+            .cubic (Dim.bp 13) (Dim.bp 86) (Dim.bp 1) (Dim.bp 99) (Dim.bp 2) (Dim.bp 98) (Dim.bp 3)
+              (Dim.bp 97)]))
           none (some (Ir.Pic.strokeOf {}))]
       place := contentOpsPlace, leaf := some 0 },
     { fig := contentOpsFigure #[
-        .draw (.path #[{ start := (Dim.pt 1, Dim.pt 98)
-                         segs := #[.line (Dim.pt 3, Dim.pt 96), .line (Dim.pt 5, Dim.pt 94)]
+        .draw (.path #[{ start := (Dim.bp 1, Dim.bp 98)
+                         segs := #[.line (Dim.bp 3, Dim.bp 96), .line (Dim.bp 5, Dim.bp 94)]
                          closed := true }])
           (some (Ir.Pic.solidFill contentOpsRed)) none,
-        .draw (.rect (Dim.pt 1) (Dim.pt 97) (Dim.pt 2) (Dim.pt 2)) none none]
+        .draw (.rect (Dim.bp 1) (Dim.bp 97) (Dim.bp 2) (Dim.bp 2)) none none]
       place := contentOpsPlace, leaf := some 1 } ] }
 
 /-- The recorded streams of the synthetic text pages, which the typed operators reproduce byte for
@@ -3040,10 +3044,10 @@ def contentOpsTextExpected : String :=
   "q 0 0 0 rg 110 20 10 2 re f Q"
 
 def contentOpsPathExpected : String :=
-  "q 0.784 0.118 0.118 RG 0.4 w [3 3] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
+  "q 0.784 0.118 0.118 RG 0.399 w [2.989 2.989] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
   "38.954 70 30 61.046 30 50 c 30 38.954 38.954 30 50 30 c 61.046 30 70 38.954 70 50 c h S Q\n" ++
-  "q 0.941 0.941 0.941 rg 0 0 0 RG 1 w [1 1] 0 d 10 70 30 20 re B Q\n" ++
-  "q 0 0 0 RG 0.4 w 1 98 m 3 96 l 5 94 l 7 92 m 9 90 11 88 13 86 c 1 99 2 98 3 97 c S Q\n" ++
+  "q 0.941 0.941 0.941 rg 0 0 0 RG 1 w [1 0.996] 0 d 10 70 30 20 re B Q\n" ++
+  "q 0 0 0 RG 0.399 w 1 98 m 3 96 l 5 94 l 7 92 m 9 90 11 88 13 86 c 1 99 2 98 3 97 c S Q\n" ++
   "q 0.784 0.118 0.118 rg 1 98 m 3 96 l 5 94 l h f Q\n" ++
   "q 1 97 2 2 re n Q\n" ++
   "BT\nET"
@@ -3073,8 +3077,8 @@ def stripMarkLines (s : String) : String :=
 streams. -/
 def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
-  let bleed : Layout.Geom := { geom with bleed := Dim.pt 3 }
+  let geom : Layout.Geom := { pageW := Dim.bp 200, pageH := Dim.bp 100 }
+  let bleed : Layout.Geom := { geom with bleed := Dim.bp 3 }
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
@@ -3442,10 +3446,10 @@ def artifactTextExpected : String :=
 /-- The path page: two pictures, each its paths under one `/P` sequence, the text object empty. -/
 def artifactPathExpected : String :=
   "/P << /MCID 0 >> BDC\n" ++
-  "q 0.784 0.118 0.118 RG 0.4 w [3 3] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
+  "q 0.784 0.118 0.118 RG 0.399 w [2.989 2.989] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
   "38.954 70 30 61.046 30 50 c 30 38.954 38.954 30 50 30 c 61.046 30 70 38.954 70 50 c h S Q\n" ++
-  "q 0.941 0.941 0.941 rg 0 0 0 RG 1 w [1 1] 0 d 10 70 30 20 re B Q\n" ++
-  "q 0 0 0 RG 0.4 w 1 98 m 3 96 l 5 94 l 7 92 m 9 90 11 88 13 86 c 1 99 2 98 3 97 c S Q\nEMC\n" ++
+  "q 0.941 0.941 0.941 rg 0 0 0 RG 1 w [1 0.996] 0 d 10 70 30 20 re B Q\n" ++
+  "q 0 0 0 RG 0.399 w 1 98 m 3 96 l 5 94 l 7 92 m 9 90 11 88 13 86 c 1 99 2 98 3 97 c S Q\nEMC\n" ++
   "/H2 << /MCID 1 >> BDC\n" ++
   "q 0.784 0.118 0.118 rg 1 98 m 3 96 l 5 94 l h f Q\n" ++
   "q 1 97 2 2 re n Q\nEMC\n" ++
@@ -3454,13 +3458,13 @@ def artifactPathExpected : String :=
 /-- Two furniture lines around a flow line, the second carrying a rule. -/
 def artifactFurniturePage : Layout.PageOut := {
   lines := #[
-    { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, furniture := true,
-      segs := #[contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(36, 'A')]] },
-    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100,
-      segs := #[contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(37, 'B')]] },
-    { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, furniture := true,
-      segs := #[contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(38, 'C')],
-                .rule (Dim.pt 10) (Dim.pt 1) 0 Ir.Color.black] } ] }
+    { x := Dim.bp 10, y := Dim.bp 20, size := Dim.bp 12, setWidth := Dim.bp 100, furniture := true,
+      segs := #[contentOpsRun 0 Ir.Color.black (Dim.bp 30) [(36, 'A')]] },
+    { x := Dim.bp 10, y := Dim.bp 40, size := Dim.bp 12, setWidth := Dim.bp 100,
+      segs := #[contentOpsRun 0 Ir.Color.black (Dim.bp 30) [(37, 'B')]] },
+    { x := Dim.bp 10, y := Dim.bp 60, size := Dim.bp 12, setWidth := Dim.bp 100, furniture := true,
+      segs := #[contentOpsRun 0 Ir.Color.black (Dim.bp 30) [(38, 'C')],
+                .rule (Dim.bp 10) (Dim.bp 1) 0 Ir.Color.black] } ] }
 
 def artifactFurnitureExpected : String :=
   "BT\n/Artifact << /Type /Pagination >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<0024>] TJ\nEMC\n" ++
@@ -3529,7 +3533,7 @@ corpus fixture. -/
 def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
-  let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
+  let geom : Layout.Geom := { pageW := Dim.bp 200, pageH := Dim.bp 100 }
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags

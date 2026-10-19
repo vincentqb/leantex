@@ -73,16 +73,16 @@ private def rasterSamples (b : ByteArray) (components : Nat) : Except String Byt
   Flate.pngUnfilter rows 2 (3 * components) components
 
 private def rasterGeometry (p : Image.Plan) : Bool :=
-  p.pxW == 3 && p.pxH == 2 && p.width == pt 3 && p.height == pt 2 &&
+  p.pxW == 3 && p.pxH == 2 && p.width == bp 3 && p.height == bp 2 &&
     p.dpiX == 72 && p.dpiY == 72 && p.bitDepth == 8 && p.color == .rgb &&
     p.form.isNone && p.losses.isEmpty && p.orientation == 1
 
 private def rasterWrapper (fs : Font.FontSet) (p : Image.Plan) : ByteArray :=
   let imgs : Image.Store := { entries := #[{ src := "invented-raster", info := some p }] }
   let line : Layout.LineOut := {
-    x := pt 10, y := pt 20, size := pt 12, setWidth := p.width,
+    x := bp 10, y := bp 20, size := bp 12, setWidth := p.width,
     segs := #[.image (some 0) p.width p.height true 0] }
-  Pdf.write { pageW := pt 100, pageH := pt 100 } fs #[{ lines := #[line] }] (imgs := imgs)
+  Pdf.write { pageW := bp 100, pageH := bp 100 } fs #[{ lines := #[line] }] (imgs := imgs)
 
 private def rasterImageDict (e : PdfRead.Entry) (color : String) : Bool :=
   e.val.get? "Subtype" == some (.name "Image") &&
@@ -205,10 +205,10 @@ def rasterPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       | .ok plan =>
         match plan.form with
         | some form =>
-          plan.width == pt (if last then 30 else 40) &&
-            plan.height == pt (if last then 40 else 60) &&
-            form.val.x0 == pt (if last then 5 else 0) &&
-            form.val.y0 == pt (if last then 10 else 0) &&
+          plan.width == bp (if last then 30 else 40) &&
+            plan.height == bp (if last then 40 else 60) &&
+            form.val.x0 == bp (if last then 5 else 0) &&
+            form.val.y0 == bp (if last then 10 else 0) &&
             form.val.content == (if last then "0 0 1 rg 5 10 30 40 re f\n"
                                 else "1 0 0 rg 0 0 40 60 re f\n").toUTF8
         | none => false

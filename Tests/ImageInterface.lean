@@ -47,7 +47,7 @@ example (w h : Image.Len) (iW iH textW textH : Dim.Length) :
     Image.resolveSize { width := some w, height := some h } iW iH textW textH =
       (w.resolve textW textH, h.resolve textW textH) := rfl
 
-example (px : Nat) : Image.Plan.width { pxW := px, pxH := px } = Dim.pt px :=
+example (px : Nat) : Image.Plan.width { pxW := px, pxH := px } = Dim.bp px :=
   Image.width_at_default_dpi px
 
 -- Normal consumers cannot name parser, scan, planner, or accumulator internals.

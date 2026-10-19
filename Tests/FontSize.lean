@@ -54,12 +54,13 @@ def fontSizeAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let html := (HtmlDoc.emit {} (elabStr (metricDoc
     "{\\fontsize{12pt}{18pt}\\selectfont Alpha}")).1).1
   t "HTML projects fontsize and leading from the typed style"
-    (hasStr html "font-size:12pt" && hasStr html "line-height:18pt")
+    (hasStr html s!"font-size:{(Dim.pt 12).toBpString}pt" &&
+      hasStr html s!"line-height:{(Dim.pt 18).toBpString}pt")
   let localDoc := (elabStr (metricDoc localBody)).1
   let (_, localTree, _) := HtmlDoc.emitTree {} localDoc
   let localHtml := (HtmlDoc.emit {} localDoc).1
   t "HTML resolves a local fontsize against its nearest box container"
-    (hasStr localHtml "font-size:calc(10cqi + 2pt)" &&
+    (hasStr localHtml s!"font-size:calc(10cqi + {(Dim.pt 2).toBpString}pt)" &&
       cqiOwnersList "" #[] localTree.toList == #["column"])
   let topDoc := (elabStr (metricDoc
     "{\\fontsize{0.1\\linewidth + 2pt}{14pt}\\selectfont Alpha}")).1

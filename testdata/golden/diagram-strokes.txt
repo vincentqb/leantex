@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 71.731 hmargin 150.583
 font dir "fonts"
 font body "Source Serif Pro"
 meta title "Joined Strokes"
@@ -17,11 +17,11 @@ role trivlist-env
   center
     picture 3 shapes
       group
-        draw path (0,0)--(56.693,0)--(56.693,42.52) stroke #000000 3
+        draw path (0,0)--(56.693,0)--(56.693,42.52) stroke #000000 2.989
       group
         draw path (0,-17.008)--(113.386,-17.008) stroke #000000 0
       group
-        draw path (79.37,0)--(96.378,42.52)--(113.386,0) stroke #000000 1 dash 3,3
+        draw path (79.37,0)--(96.378,42.52)--(113.386,0) stroke #000000 0.996 dash 2.989,2.989
 para
   text "After the strokes, the prose resumes."
 -- diagnostics

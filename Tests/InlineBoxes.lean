@@ -128,14 +128,16 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   t "box HTML: a raised box is an inline block lifted as the PDF's"
     (hasStr html "display: inline-block; max-width: 100%; box-sizing: border-box; vertical-align: 0.5ex\">B")
   t "box HTML: a framed ground pads its content by fboxsep inside fboxrule"
-    (hasStr html "border: 0.4pt solid" && hasStr html "padding: 3pt\">C")
+    (hasStr html s!"border: {(Dim.pt 2 / 5).toBpString}pt solid" &&
+      hasStr html s!"padding: {(Dim.pt 3).toBpString}pt\">C")
   t "box HTML: a declared zero extent claims no line height" (hasStr html "line-height: 0\">D")
   let (hds, _, sized, _) := sourceArtifacts fonts
     (doc "" "A \\raisebox{0pt}[20pt][10pt]{P} \\raisebox{2pt}[0pt][0pt]{Q} \\raisebox{\\depth}{R}")
   t "box HTML: a declared height and depth claim the line through a strut, the content's line none"
-    (hasStr sized "display: inline-block; width: 0; height: 30pt; vertical-align: -10pt")
+    (hasStr sized s!"display: inline-block; width: 0; height: {(Dim.pt 30).toBpString}pt; \
+vertical-align: -{(Dim.pt 10).toBpString}pt")
   t "box HTML: a lift beside a declared extent moves the content in place"
-    (hasStr sized "position: relative; top: -2pt\">Q")
+    (hasStr sized s!"position: relative; top: -{(Dim.pt 2).toBpString}pt\">Q")
   t "box HTML: a lift by the content's own depth reads it as zero"
     (hasStr sized "box-sizing: border-box\">R")
   t "box HTML: a lift by the content's own depth, which the page cannot measure, is named for it"
@@ -436,6 +438,7 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (doc "" "\\noindent\\fcolorbox{red}{yellow}{\\begin{minipage}{100pt}Alpha\\end{minipage}}")
   t "box blocks: the web page's box paints its ground, frame and padding round the minipage"
     (hasStr html "class=\"column\" style=\"container-type: inline-size; box-sizing: border-box; background-color:" &&
-      hasStr html "border: 0.4pt solid" && hasStr html "padding: 3pt\">")
+      hasStr html s!"border: {(Dim.pt 2 / 5).toBpString}pt solid" &&
+      hasStr html s!"padding: {(Dim.pt 3).toBpString}pt\">")
 
 end Tests.InlineBoxes

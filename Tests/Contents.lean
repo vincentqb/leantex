@@ -110,7 +110,7 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   | [some k, some s, some te, some tr] =>
     let pitch := s - k
     t s!"the sections' groups share the frame's leftover equally ({reprStr (te - s - pitch)}, {reprStr (tr - te - pitch)})"
-      (te - s - pitch == tr - te - pitch && te - s - pitch > 0)
+      ((te - s - pitch - (tr - te - pitch)).abs ≤ Dim.Length.quantum && te - s - pitch > 0)
   | _ => t "the overview's four entries ship" false
   -- beamer's links: a section's entry opens the page set after it, a subsection's its frame.
   let lands (w : String) : Option Nat := (lineWith out 0 w).bind (landsOn out)

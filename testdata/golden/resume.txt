@@ -1,5 +1,5 @@
 class resume [paper=a4, fontsize=11pt]
-page 595x842 vmargin 51.024 hmargin 62.362 fontsize 11 parskip 0
+page 595x842 vmargin 51.024 hmargin 62.362 fontsize 10.959 parskip 0
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
@@ -22,7 +22,7 @@ meta author "Alex Doe"
 assert fonts.all_embedded
 assert pages == 1
 assert text.in_area
-assert text.xheight >= 3.969pt
+assert text.xheight >= 3.983pt
 para
   styled sans
     styled bold

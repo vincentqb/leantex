@@ -97,11 +97,11 @@ def htmlStepChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((withClassIn deckMixed "size-small").size == 1 &&
       (withClassIn deckMixed "size-small").all (· matches .elem "span" _ _) &&
       (withClassIn deckMixed "lead-small").isEmpty)
-  -- The 4:3 stage is 96 mm (272.126 pt) high, so the sheet's quantum `0.725rem` is the page's 6 pt.
+  -- The 4:3 stage is 96 mm (273.146 pt) high, so the sheet's quantum `0.725rem` is the page's 6 pt.
   t "a deck's body sets the page's leading, not the screen's"
-    (hasStr deck "font-size: 3.674vh; line-height: 1.200;")
+    (hasStr deck "font-size: 3.661vh; line-height: 1.200;")
   t "a deck's root size is the stage's rhythm unit"
-    (hasStr deck "html { font-size: 3.041vh; }")
+    (hasStr deck "html { font-size: 3.029vh; }")
 
 /-- A declared paragraph gap reaches the screen at its length: an `em` `\parskip` is evaluated once
 at the body, and a deck's `\bigskip` stands its share of the stage. -/

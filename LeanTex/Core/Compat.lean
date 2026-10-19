@@ -6111,7 +6111,7 @@ public def kernelSkip : String → Option String
 /-- Class-independent length defaults readable before an assignment: the skip
 amounts and the column gap. -/
 private def kernelLength (n : String) : Option String :=
-  if n == "columnsep" then some s!"{Ir.columnSep.sp.toBpString}pt" else kernelSkip n
+  if n == "columnsep" then some s!"{Ir.columnSep.sp.toPtString}pt" else kernelSkip n
 
 /-- The operand `\ht\strutbox` or `\dp\strutbox` reads as, under a name no document spells. -/
 private def strutOperand (dimen : String) : String := dimen ++ " strutbox"

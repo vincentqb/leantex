@@ -17,28 +17,28 @@ def fillOf (c : Ir.Color) : Gfx.Fill := { paint := .solid c, rule := .nonzero, a
 
 /-- A stroke stating every field away from both formats' initial values. -/
 def fancyStroke : Gfx.Stroke :=
-  { paint := .solid blue, width := Dim.pt 2, cap := .round, join := .bevel, miterLimit := 4
-    dash := #[Dim.pt 2, Dim.pt 1], phase := Dim.pt 1, alpha := half }
+  { paint := .solid blue, width := Dim.bp 2, cap := .round, join := .bevel, miterLimit := 4
+    dash := #[Dim.bp 2, Dim.bp 1], phase := Dim.bp 1, alpha := half }
 
 def stops : Array Gfx.Stop := #[{ offset := 0, color := red }, { offset := 65536, color := blue }]
 
-def linear : Gfx.Gradient := .linear (0, 0) (Dim.pt 10, 0) stops Gfx.Affine.unit
+def linear : Gfx.Gradient := .linear (0, 0) (Dim.bp 10, 0) stops Gfx.Affine.unit
 
-def radial : Gfx.Gradient := .radial (Dim.pt 5, Dim.pt 5) 0 (Dim.pt 5, Dim.pt 5) (Dim.pt 5) stops
+def radial : Gfx.Gradient := .radial (Dim.bp 5, Dim.bp 5) 0 (Dim.bp 5, Dim.bp 5) (Dim.bp 5) stops
   Gfx.Affine.unit
 
 /-- A rotation by the 3-4-5 angle, then a translation: exact in rationals. -/
-def turn : Gfx.Affine := ⟨3 / 5, 4 / 5, -4 / 5, 3 / 5, (Dim.pt 10).toRat, (Dim.pt 20).toRat⟩
+def turn : Gfx.Affine := ⟨3 / 5, 4 / 5, -4 / 5, 3 / 5, (Dim.bp 10).toRat, (Dim.bp 20).toRat⟩
 
-def square : Gfx.Geom := .rect 0 0 (Dim.pt 10) (Dim.pt 10)
+def square : Gfx.Geom := .rect 0 0 (Dim.bp 10) (Dim.bp 10)
 
 def tri : Gfx.Subpath :=
-  { start := (0, 0), segs := #[.line (Dim.pt 10, 0), .cubic (Dim.pt 10, Dim.pt 5) (Dim.pt 5, Dim.pt 10)
-      (0, Dim.pt 10)], closed := true }
+  { start := (0, 0), segs := #[.line (Dim.bp 10, 0), .cubic (Dim.bp 10, Dim.bp 5) (Dim.bp 5, Dim.bp 10)
+      (0, Dim.bp 10)], closed := true }
 
 def figure (nodes : Array (Gfx.Node Empty)) (symbols : Array (Array (Gfx.Node Empty)) := #[])
     (outlines : Array (Array Gfx.Subpath) := #[]) : Gfx.Figure Empty :=
-  { box := ((0, 0), (Dim.pt 100, Dim.pt 100)), clipToBox := false, nodes := nodes
+  { box := ((0, 0), (Dim.bp 100, Dim.bp 100)), clipToBox := false, nodes := nodes
     outlines := outlines, symbols := symbols
     rasters := #[{ bytes := ByteArray.empty, jpeg := false, pxW := 1, pxH := 1, smooth := false }]
     title := none, losses := #[] }
@@ -49,7 +49,7 @@ def cases : Array (String × Gfx.Figure Empty) := #[
   ("solid fill and a stroke stating every field",
     figure #[.draw square (some (fillOf red)) (some fancyStroke)]),
   ("an ellipse filled and stroked with gradients",
-    figure #[.draw (.ellipse (Dim.pt 5) (Dim.pt 5) (Dim.pt 5) (Dim.pt 3))
+    figure #[.draw (.ellipse (Dim.bp 5) (Dim.bp 5) (Dim.bp 5) (Dim.bp 3))
       (some { paint := .gradient linear, rule := .nonzero, alpha := Gfx.Alpha.opaque })
       (some { fancyStroke with paint := .gradient radial })]),
   ("an even-odd path",
@@ -67,12 +67,12 @@ def cases : Array (String × Gfx.Figure Empty) := #[
   ("an outline stamped",
     figure #[.stamp 0 turn (some (fillOf blue)) none] (outlines := #[#[tri]])),
   ("a raster mapped",
-    figure #[.image 0 ⟨20, 0, 0, 10, (Dim.pt 5).toRat, (Dim.pt 5).toRat⟩]),
+    figure #[.image 0 ⟨20, 0, 0, 10, (Dim.bp 5).toRat, (Dim.bp 5).toRat⟩]),
   ("ink-free words", figure #[.words "recovered text",
     .draw square none (some { Ir.Pic.strokeOf {} with width := Dim.Length.ofBpMilli 400 })])]
 
-def pdfPlace : Gfx.Iso := { flipY := false, dx := Dim.pt 3, dy := Dim.pt 4 }
-def svgPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.pt 100 }
+def pdfPlace : Gfx.Iso := { flipY := false, dx := Dim.bp 3, dy := Dim.bp 4 }
+def svgPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.bp 100 }
 
 def names : GfxPdf.Request → Nat := fun _ => 0
 
@@ -161,7 +161,7 @@ def gfxMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
       has a "preserveAspectRatio" "none" && a.any (·.1 == "transform"))
   -- A raster's unit square is one frame unit: both formats' image space.
   t "gfx matrix: a 20 × 10 raster spans 20 pt by 10 pt in the model"
-    (f7.geomBox == some ((Dim.pt 5, Dim.pt 5), (Dim.pt 25, Dim.pt 15)))
+    (f7.geomBox == some ((Dim.bp 5, Dim.bp 5), (Dim.bp 25, Dim.bp 15)))
   t "gfx matrix: and in the PDF, its unit square under the placed matrix"
     (Pdf.render (pdfOps f7) == "q 20 0 0 10 8 9 cm /Ri1 Do Q")
   t "gfx matrix: and in the SVG, its top edge at 85 pt down the 100 pt viewport"

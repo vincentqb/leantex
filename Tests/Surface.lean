@@ -797,7 +797,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- geometry centres a declared `textwidth` and splits a declared `textheight` 2:3 (geometry manual §5.2).
   t "compat newgeometry textwidth/textheight place the text block as geometry does"
     (let doc := (elabStr (pre "\\newgeometry{textwidth=396pt, textheight=576pt}")).1
-     doc.page.hmargin == Dim.pt 108 && geometrySplit doc.page (Dim.pt 576))
+     doc.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 && geometrySplit doc.page (Dim.pt 576))
   -- A local `.sty` is read as `\usepackage` reads it (ltfiles.dtx `\@onefilewithoptions`).
   let parseRaws (file s : String) : Array Parse.Raw :=
     (Parse.parse file (Lex.lex file s).1).1
@@ -815,7 +815,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (raws2, spliced) := Compat.applyLocalSty docRaws #[("guide", parseRaws "guide.sty" sty)]
   let (doc2, elabDs) := Elab.runRaws "t" raws2
   t "a local .sty is \\input of its text: its \\geometry reaches \\page"
-    (doc2.page.hmargin == Dim.pt 108 && geometrySplit doc2.page (Dim.pt 576) &&
+    (doc2.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 && geometrySplit doc2.page (Dim.pt 576) &&
      doc2.tokens.find? "captionsep" == some { width := { sp := Dim.pt 7 } } &&
      elabDs.all (·.code != "W0103"))
   t "what of the .sty's text is refused is named at the .sty's own file"
@@ -1537,14 +1537,14 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabStr s!"\\documentclass[{opts}]\{article}{pre}\\begin\{document}x\\end\{document}").1.page
   t "class option a4paper sets the page size"
     (let p := pageOf "a4paper"
-     p.width == Dim.pt 595 && p.height == Dim.pt 842)
+     p.width == Dim.bp 595 && p.height == Dim.bp 842)
   t "class option letterpaper and KOMA paper= set the page size"
-    ((pageOf "letterpaper").width == Dim.pt 612 && (pageOf "paper=a5").width == Dim.pt 420)
+    ((pageOf "letterpaper").width == Dim.bp 612 && (pageOf "paper=a5").width == Dim.bp 420)
   t "class option landscape swaps the axes"
     (let p := pageOf "a4paper,landscape"
-     p.width == Dim.pt 842 && p.height == Dim.pt 595)
+     p.width == Dim.bp 842 && p.height == Dim.bp 595)
   t "a declared page wins over the class option"
-    ((pageOf "a4paper" "\\page{ size = a5 }").width == Dim.pt 420)
+    ((pageOf "a4paper" "\\page{ size = a5 }").width == Dim.bp 420)
   let classDoc (cls pre body : String) : String :=
     "\\documentclass" ++ cls ++ pre ++ "\\begin{document}" ++ body ++ "\\end{document}"
   let loud (src : String) : Array (Option String) :=
@@ -1556,9 +1556,9 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabStr src).2.any (·.subject == some "partial:\\documentclass:titlepage:maketitle")
   let komaOf (pre : String) : Ir.PageSpec := (elabStr (classDoc "{scrartcl}" pre "x")).1.page
   t "a KOMA-Script class's page is A4 unless a declaration names one, letter included"
-    ((komaOf "").height == Dim.pt 842 &&
-      (komaOf "\\usepackage[letterpaper]{geometry}").height == Dim.pt 792 &&
-      (komaOf "\\page{ size = letter }").height == Dim.pt 792)
+    ((komaOf "").height == Dim.bp 842 &&
+      (komaOf "\\usepackage[letterpaper]{geometry}").height == Dim.bp 792 &&
+      (komaOf "\\page{ size = letter }").height == Dim.bp 792)
   -- lualatex: a standard class's title page resets the counter only one-sided, book defaulting to
   -- two sides, and KOMA-Script's never does, so the body after a titlepage is page 2 there.
   let titled := "\\begin{titlepage}T\\end{titlepage}Body."
@@ -1571,10 +1571,10 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
       d.code == "N0100" && d.subject == some "param:documentclass:oneside")
   t "class landscape turns a declared paper, as geometry does"
     (let p := (elabStr (classDoc "[landscape]{article}" "\\usepackage[letterpaper]{geometry}" "x")).1.page
-     p.width == Dim.pt 792 && p.height == Dim.pt 612)
+     p.width == Dim.bp 792 && p.height == Dim.bp 612)
   t "a declared text width stands centred on the page the class settles"
     (let p := komaOf "\\usepackage[textwidth=400pt]{geometry}"
-     p.width == Dim.pt 595 && p.hmargin == (Dim.pt 595 - Dim.pt 400) / 2)
+     p.width == Dim.bp 595 && p.hmargin == (Dim.bp 595 - Dim.pt 400) / 2)
   t "titlepage=true is KOMA-Script's alone: read there, the standard classes' title page kept"
     (!(loud (classDoc "[titlepage=true]{scrartcl}" "\\title{T}" "\\maketitle x")).contains
         (some "param:documentclass:titlepage") &&
@@ -1699,19 +1699,19 @@ def hookChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the hooked section ships its own text" (hasStr (shippedText secHook) "Hooked")
   let geoHook := hook "\\AtBeginDocument{\\newgeometry{textwidth=396pt, textheight=576pt}}" "x"
   t "a hook body's declaration reaches the preamble"
-    ((elabStr geoHook).1.page.hmargin == Dim.pt 108 &&
+    ((elabStr geoHook).1.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 &&
       geometrySplit (elabStr geoHook).1.page (Dim.pt 576))
   t "a hook mixing a declaration and content honours both"
     (let mixed := hook
       "\\AtBeginDocument{\\newgeometry{textwidth=396pt, textheight=576pt}seen}" "x"
-     (elabStr mixed).1.page.hmargin == Dim.pt 108 && hasStr (shippedText mixed) "seen")
+     (elabStr mixed).1.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 && hasStr (shippedText mixed) "seen")
   -- Declaration order is replay order (ltfiles.dtx appends).
   t "hook bodies replay in declaration order"
     (hasStr (shippedText (hook "\\AtBeginDocument{one}\\AtBeginDocument{two}" "three"))
       "onetwothree")
   t "AtEndPreamble defers a declaration to the end of the preamble"
     ((elabStr (hook "\\AtEndPreamble{\\newgeometry{textwidth=396pt, textheight=576pt}}"
-      "x")).1.page.hmargin == Dim.pt 108)
+      "x")).1.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2)
   t "the two points are distinguishable: content deferred to the preamble is not body content"
     (errCodes (hook "\\AtEndPreamble{x}" "y") == ["E0313"])
   let nested := hook "\\AtBeginDocument{a\\AtBeginDocument{b}c}" "d"
@@ -2045,7 +2045,7 @@ trip within 33 sp. -/
 def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "dim 1pc is 12pt" (Decl.parseValue "1pc" == Decl.parseValue "12pt")
-  t "dim 6pc is 1in" (Decl.parseValue "6pc" == Decl.parseValue "1in")
+  t "dim 6pc is 72pt" (Decl.parseValue "6pc" == Decl.parseValue "72pt")
   t "dim 72bp is 1in" (Decl.parseValue "72bp" == Decl.parseValue "1in")
   t "dim 65536sp is 1pt" (Decl.parseValue "65536sp" == Decl.parseValue "1pt")
   t "dim 10mm is 1cm" (Decl.parseValue "10mm" == Decl.parseValue "1cm")
@@ -2068,8 +2068,8 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
     [1, 7, 65536, 1000000000, 3 * 65536].find? fun q => Dim.ratString p q != legacyRatString p q
   t s!"rat string spells as the legacy printer does ({ratBad.take 3})" ratBad.isEmpty
   -- toBpString rounds exact thirds to the nearest thousandth and collapses tiny values to "0" unsigned.
-  t "sp pt string thirds" ((Dim.pt 1 / 3).toBpString == "0.333")
-  t "sp pt string negative thirds" ((-(Dim.pt 1) / 3).toBpString == "-0.333")
+  t "sp pt string thirds" ((Dim.bp 1 / 3).toBpString == "0.333")
+  t "sp pt string negative thirds" ((-(Dim.bp 1) / 3).toBpString == "-0.333")
   t "sp pt string eighth" ((Dim.bp 1 / 8).toBpString == "0.125")
   t "sp pt string tiny is unsigned zero"
     ((-(Dim.Length.ofBpMilli 1 / 2 - Dim.Length.quantum)).toBpString == "0")
@@ -2084,7 +2084,7 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (mag, s') := rand s (2 ^ 32)
     s := s'
     let x : Dim.Length := ((mag : Int) - 2 ^ 31) * Dim.Length.quantum
-    match Decl.parseLength (x.toBpString ++ "pt") with
+    match Decl.parseLength (x.toBpString ++ "bp") with
     | some l =>
       let err := (l.sp - x).abs
       worst := max worst err
@@ -3250,7 +3250,7 @@ def declChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}hi\\end{document}"
   let (declDoc, declDs) := elabStr declSrc
   t "decl source clean" declDs.isEmpty
-  t "decl page size" (declDoc.page.width == Dim.pt 420 && declDoc.page.height == Dim.pt 595)
+  t "decl page size" (declDoc.page.width == Dim.bp 420 && declDoc.page.height == Dim.bp 595)
   t "decl margin both axes"
     (declDoc.page.vmargin == Dim.inch 1 / 2 && declDoc.page.hmargin == Dim.inch 1 / 2)
   t "decl metadata" (declDoc.info.title == some "T" && declDoc.info.author == some "A")
@@ -4381,7 +4381,7 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let run := runStyParity
   let (docA, dsA, splicedA) ← run "inputpre"
   t "parity a: a usepackage inside an input'ed preamble file splices — never W0103"
-    (dsA.all (·.code != "W0103") && docA.page.hmargin == Dim.pt 108 &&
+    (dsA.all (·.code != "W0103") && docA.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 &&
      splicedA.toList.map (·.1) == ["venuea.sty"])
   t "parity a: N0020 quotes the counts and names the file that asked"
     (dsA.any fun d => d.code == "N0020" &&
@@ -4390,12 +4390,12 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (docB, dsB, splicedB) ← run "requirechain"
   t "parity b: a nested RequirePackage reads the .sty beside the document"
     (dsB.all (·.code != "W0103") &&
-     docB.page.hmargin == Dim.pt 108 &&
+     docB.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 &&
      splicedB.toList.map (·.1) == ["venueb.sty", "venueb2.sty"] &&
      Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
   -- lualatex: the later `\newgeometry` resets the height to geometry's default body (95.40pt top).
   t "parity b: the later newgeometry sets geometry's default text block, the height before it cleared"
-    (docB.page.vmargin == (Dim.pt 792 - Dim.pt 792 * 7 / 10) * 2 / 5 &&
+    (docB.page.vmargin == (Dim.bp 792 - Dim.bp 792 * 7 / 10) * 2 / 5 &&
      Compat.styCounts "venueb.sty" dsB == (1, 0, 0) &&
      Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
   t "parity b: the nested read's N0020 names the .sty that asked, not the document"
@@ -4404,7 +4404,7 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (docC, dsC, _) ← run "styinput"
   t "parity c: an input inside a .sty expands on the next pass"
     (dsC.all (fun d => d.code != "W0103" && d.code != "E0502") &&
-     docC.page.hmargin == Dim.pt 108)
+     docC.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2)
   let (_, dsD, splicedD) ← run "styloop"
   t "a self-requiring .sty reads once, within the nesting depth"
     (dsD.all (·.severity == .note) && splicedD.toList.map (·.1) == ["venued.sty"])
@@ -5823,7 +5823,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "an ordinary wide image keeps its natural size and the overfull is named"
     (((allLines imgOut).flatMap (·.segs.filterMap fun s => match s with
         | .image _ w _ _ _ => some w
-        | _ => none)) == #[Dim.pt 2000] &&
+        | _ => none)) == #[Dim.bp 2000] &&
      imgOut.diags.any (·.code == "W0005"))
 
 /-- A definition a picture needs reaches its renderer wherever in the document it was written

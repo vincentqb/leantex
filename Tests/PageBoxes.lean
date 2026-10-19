@@ -113,14 +113,15 @@ def edefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let (bds, _) := pageOf ("\\def" ++ level 0 ++ "{x}" ++ doubling ++ "\\edef\\big{" ++ level 20 ++ "}\n") "x"
   t "an expansion past the step cap is refused, its nested groups counted"
     (codes bds .W0357 == 1)
-  let (_, _, ppdf, _) := artifacts oneFace
+  let (_, pds, ppdf, _) := artifacts oneFace
     ("\\documentclass{article}\n\\newlength{\\pw}\\newlength{\\ph}\\setlength{\\pw}{270pt}" ++
       "\\setlength{\\ph}{162pt}\n\\usepackage[paperwidth=270pt,paperheight=162pt,margin=20pt]{geometry}\n" ++
       "\\makeatletter\\edef\\pbattr{/BleedBox [0 0 \\strip@pt\\dimexpr\\pw*7200/7227\\relax\\space" ++
       "\\strip@pt\\dimexpr\\ph*7200/7227\\relax]}\\makeatother\n" ++ hook ++
       "\\begin{document}\nx\n\\end{document}")
   t "a length reads its units as the paper does, so a box computed from it fits the medium"
-    (bytesContain ppdf "/MediaBox [0 0 270 162]" && bytesContain ppdf "/BleedBox [0 0 270 162]")
+    (bytesContain ppdf "/MediaBox [0 0 268.991 161.395]" &&
+      bytesContain ppdf "/BleedBox [0 0 268.991 161.395]" && codes pds .W0442 == 0)
   let (cds, _) := pageOf
     "\\newcommand{\\pp}{\\pq}\\newcommand{\\pq}{\\pp}\\edef\\pr{\\pp}\n\\edef\\ps{\\csname x\\endcsname}\n" "x"
   t "an edef whose expansion meets a cycle, or a control outside the subset, stays refused"
@@ -146,6 +147,9 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     (bytesContain wpdf "/TrimBox [9 9 270 153]" && codes wds .W0442 == 1 &&
       wds.any (fun d => d.code == DiagCode.W0442.code && d.output == some .pdf && d.span.isSome) &&
       codes wds .W0443 == 1 && !bytesContain wpdf "/Rotate")
+  let (_, eds, _, _) := artifacts oneFace (card (attrHook "/BleedBox [0 0 270.001 162]") "x")
+  t "a box a thousandth of a big point past the medium's spelling is named"
+    (codes eds .W0442 == 1)
   let (_, zds, zpdf, _) := artifacts oneFace
     (card (attrHook "/TrimBox [300 300 400 400] /CropBox [0 0 0 0] /BleedBox [0 0 270 162]") "x")
   t "a box with no area inside the medium is not written, and named"

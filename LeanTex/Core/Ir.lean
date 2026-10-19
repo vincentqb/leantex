@@ -52,20 +52,20 @@ public def texParskipDefault : SymGlue := { stretch := Dim.SymLength.ofLength (D
 
 public theorem rhythmQuantum_pos (size : Length) (h : Dim.pt 1 ≤ size) :
     0 < rhythmQuantum size := by
-  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, Dim.bp, unitsPerInch] at h ⊢
+  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, unitsPerInch] at h ⊢
   length_omega
 
 public theorem rhythmQuantum_lt_double (size : Length) (h : Dim.pt 1 ≤ size) :
     rhythmQuantum size < 2 * rhythmQuantum size := by
-  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, Dim.bp, unitsPerInch] at h ⊢
+  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, unitsPerInch] at h ⊢
   length_omega
 
 /-- The default gap between a cut mark's inner end and the trim, wider than
 guillotine cutting tolerance (1/16 in). -/
 public def cutMarkGap : Length := inch 3 / 40
 
-/-- The default cut-mark thickness: a 0.5 bp hairline, with `bp` read as `pt`. -/
-public def cutMarkThickness : Length := pt 1 / 2
+/-- The default cut-mark thickness: a 0.5 bp hairline. -/
+public def cutMarkThickness : Length := bp 1 / 2
 
 /-- The line-through rule thickness both backends draw: ulem's default `\ULthickness`. -/
 @[expose] public def lineThroughThickness : Length := pt 2 / 5
@@ -175,9 +175,9 @@ public structure PagePenalties where
 
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
-  width : Length := pt 612
-  height : Length := pt 792
-  vmargin : Length := inch 1
+  width : Length := bp 612
+  height : Length := bp 792
+  vmargin : Length := 6 * leadingFor baseFontSize
   /-- The bottom margin where the page declares one apart from the top's (`vmargin`). -/
   bmargin : Option Length := none
   /-- The vertical keys declared so far, placed by `PageSpec.placed`. -/
@@ -303,9 +303,11 @@ public def boxDiags (spec : PageSpec) : Array Diag :=
       (subject := some s!"pagebox:{b.kind.key}") (output := some .pdf)
       (detail := some s!"[{b.x0.toBpString} {b.y0.toBpString} {b.x1.toBpString} \
 {b.y1.toBpString}] against the medium's {medium}")
+    -- a box the PDF spells as the medium's edge meets it
+    let near (a d : Length) : Bool := a.toBpMilli == d.toBpMilli
     if !c.hasArea then
       some (diag s!"the {b.kind.key} has no area inside the page's medium; it is not written")
-    else if c == b then none
+    else if near c.x0 b.x0 && near c.y0 b.y0 && near c.x1 b.x1 && near c.y1 b.y1 then none
     else some (diag s!"the {b.kind.key} reaches past the page's medium; it is written inside it")
 
 public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
@@ -2507,7 +2509,7 @@ public def AssertKind.source : AssertKind → String
   | .pages op n => s!"pages {op.label} {n}"
   | .fontsAllEmbedded => "fonts.all_embedded"
   | .textInArea => "text.in_area"
-  | .minXHeight m => s!"text.xheight >= {m.toBpString}pt"
+  | .minXHeight m => s!"text.xheight >= {m.toPtString}pt"
   | .accessibilityAA => "accessibility = AA"
   | .pdfProfile name => s!"pdf.profile = {name}"
 
@@ -2849,7 +2851,7 @@ public theorem card_floor_within_scale :
       baseFontSize * (p.2 : Int) / 1000 / 2 ≥ cardXHeightFloor := by decide
 
 public theorem poster_floor_within_scale :
-    ∀ p ∈ sizeScale, 800 ≤ p.2 →
+    ∀ p ∈ sizeScale, 900 ≤ p.2 →
       posterFontSize * (p.2 : Int) / 1000 / 2 ≥ posterXHeightFloor := by decide
 
 /-- Whether a ladder never decreases in its named order. -/
@@ -7954,17 +7956,17 @@ public inductive AbstractForm where
 public def abstractInset : Dim.SymLength := { em := 2000 }
 
 /-- ISO 216's A4 in PDF points, 210 × 297 mm. -/
-public def a4Page : Length × Length := (Dim.pt 595, Dim.pt 842)
+public def a4Page : Length × Length := (Dim.bp 595, Dim.bp 842)
 
 /-- Named page sizes: ISO 216's A4 and A5 at TeX's big-point rounding, ISO B5, and US letter,
 legal and executive. -/
 public def pageSizes : List (String × (Length × Length)) :=
-  [("letter", (Dim.pt 612, Dim.pt 792)),
-   ("legal", (Dim.pt 612, Dim.pt 1008)),
+  [("letter", (Dim.bp 612, Dim.bp 792)),
+   ("legal", (Dim.bp 612, Dim.bp 1008)),
    ("a4", a4Page),
-   ("a5", (Dim.pt 420, Dim.pt 595)),
+   ("a5", (Dim.bp 420, Dim.bp 595)),
    ("b5", (Dim.mm 176, Dim.mm 250)),
-   ("executive", (Dim.pt 522, Dim.pt 756))]
+   ("executive", (Dim.bp 522, Dim.bp 756))]
 
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/
@@ -8525,7 +8527,7 @@ public def Doc.lineModulo (doc : Doc) : Nat :=
 /-- A symbolic glue as it was declared, for goldens. -/
 public def dumpGlue (g : SymGlue) : String :=
   let part (l : SymLength) : String :=
-    let bits := (if l.sp != 0 then [s!"{l.sp.toBpString}pt"] else []) ++
+    let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
       (if l.em != 0 then [s!"{l.em}/1000em"] else []) ++
       (if l.ex != 0 then [s!"{l.ex}/1000ex"] else [])
     if bits.isEmpty then "0" else String.intercalate "+" bits
@@ -10763,7 +10765,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
   | .image src size alt =>
     let dim (label : String) (l : Image.Len) : String :=
       let v := match l.value with
-        | .lit g => g.width.sp.toBpString ++ "pt"
+        | .lit g => g.width.sp.toPtString ++ "pt"
         | .scale n d (.ref .textHeight) => s!"{n * 1000 / d}/1000th"
         | .scale n d (.ref _) => s!"{n * 1000 / d}/1000tw"
         | .ref .textHeight => "1000/1000th"
@@ -10808,7 +10810,7 @@ private def dumpColSpec (c : ColSpec) : String :=
     let width := match e with
       | .scale n d (.ref _) => s!"{n * 1000 / d}/1000"
       | .ref _ => "1000/1000"
-      | .lit g => g.width.sp.toBpString ++ "pt"
+      | .lit g => g.width.sp.toPtString ++ "pt"
       | other => Track.css (.affine other)
     s!"{al}:{width}"
   | .flex target => s!"{al}:flex:{target.css}"
@@ -10866,7 +10868,7 @@ private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) :
       | .sized (.scale n d (.ref _)) =>
         s!"{ind}column {n * 1000 / d}/1000{pos}\n"
       | .sized (.ref _) => s!"{ind}column 1000/1000{pos}\n"
-      | .sized (.lit g) => s!"{ind}column {g.width.sp.toBpString}pt{pos}\n"
+      | .sized (.lit g) => s!"{ind}column {g.width.sp.toPtString}pt{pos}\n"
       | .sized e => s!"{ind}column {Track.css (.affine e)}{pos}\n"
       | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
@@ -15649,7 +15651,7 @@ public def pictureSwitch (page : PageSpec) (size : Option String) : Option Strin
     size.map ("\\" ++ ·)
   else
     let sz := scaleStepIn page.scale page.fontSize (size.getD "normalsize")
-    some s!"\\fontsize\{{sz.toBpString}pt}\{{(leadingFor sz).toBpString}pt}\\selectfont"
+    some s!"\\fontsize\{{sz.toPtString}pt}\{{(leadingFor sz).toPtString}pt}\\selectfont"
 
 public theorem wrapStandalone_picture_exact (preamble fonts : String)
     (colors : Array (String × Color)) (macros : Array (String × String)) (body : String) :

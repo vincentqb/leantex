@@ -33,7 +33,7 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "markdown takes the markdown text block, an article its own"
     (width mdDoc == Ir.markdownTextBlock && width texDoc == Ir.articleTextBlock)
   t "a declared page geometry still keeps every value it names"
-    (width (elabStr (dvDoc "\\page{ hmargin = 100pt }\n" prose)).1 == Dim.pt 412)
+    (width (elabStr (dvDoc "\\page{ hmargin = 100pt }\n" prose)).1 == Dim.bp 612 - 2 * Dim.pt 100)
   let measureOf (d : Ir.Doc) : String :=
     let (head, _, _) := HtmlDoc.emitTree {} d
     String.join (head.toList.filterMap fun
