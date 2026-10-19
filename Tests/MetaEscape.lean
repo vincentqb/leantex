@@ -451,8 +451,8 @@ def templateArgChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     t s!"template: {what} in an environment's code prints no argument on the web page"
       (!shown.isEmpty && words.all fun w => !hasStr shown w)
     if let some c := cmd then
-      t s!"template: {what} in an environment's code is named once, where it stands"
-        ((ds.filter (·.subject == some ("envcode:" ++ c))).size == 1)
+      t s!"template: {what} in an environment's code is set at each use, unnamed"
+        ((ds.filter (·.subject == some ("envcode:" ++ c))).isEmpty)
   t "template: a span's language in an environment's code keeps the span's text"
     (hasStr (pageTextOf fonts (dvDoc (babel ++ "\\newenvironment{fl}[2]{\\foreignlanguage{#1}{#2}}{}\n")
       "\\begin{fl}{french}{mot}\nAlpha.\n\\end{fl}")) "mot")

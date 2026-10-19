@@ -15116,6 +15116,80 @@ termination_by structural r => r
 
 end
 
+/-- Whether environment begin code holds a parameter and a setting an argument can give its value. -/
+private def readsArgSetting (code : Array Raw) : Bool :=
+  holdsParam code.toList && (settingNamesIn #[] code.toList).any paramSettings.contains
+
+/-- The environment a `\newenvironment` whose name group follows `j` defines: its name, default,
+arity, its begin code's index and that code. -/
+private def envDefAt (raws : Array Raw) (j : Nat) :
+    Option (String × Option (Array Raw) × Nat × Nat × Array Raw) := do
+  let (args, j) := takeGroups raws (skipStar raws j) 1
+  let name ← args[0]?.map fun a => (rawSrc a).trimAscii.toString
+  let (count, j) := takeOpt raws j
+  let (dflt, j) := takeRawOpt raws j
+  let b := skipSpaces raws j
+  let some (.group code _) := raws[b]? | none
+  return (name, dflt, (count.bind String.toNat?).getD 0, b, code)
+
+/-- An environment's body with the begin code a use's arguments give their values set after them,
+or none where the use spells too few arguments. -/
+private def envCodeAtUse (dflt : Option (Array Raw)) (n : Nat) (code body : Array Raw) :
+    Option (Array Raw) := Id.run do
+  let (first, k) := match dflt with
+    | some d => match takeRawOpt body (skipSpaces body 0) with
+      | (some o, k) => (#[o], k)
+      | (none, _) => (#[d], 0)
+    | none => (#[], 0)
+  let (rest, k) := takeGroups body k (n - first.size)
+  let args := first ++ rest
+  if args.size != n then return none
+  return some (body.extract 0 k ++ bindRawArgsList args #[] code.toList ++ body.extract k body.size)
+
+/-- The environments whose begin code a setting reads an argument in, with their default, arity
+and that code. -/
+private abbrev EnvCodes := Array (String × Option (Array Raw) × Nat × Array Raw)
+
+mutual
+
+-- conserves: none — a definition's begin code moves to each use, its arguments substituted
+/-- Every environment whose begin code a setting reads an argument in with that code set at each
+use, where the arguments hold their values, as LaTeX's `\begin` expands it. -/
+private def envCodesList (codes : EnvCodes) (raws : Array Raw) (out : Array Raw) :
+    List Raw → Nat → Nat → Array Raw × EnvCodes
+  | [], _, _ => (out, codes)
+  | _ :: rest, i, skip + 1 => envCodesList codes raws out rest (i + 1) skip
+  | .ctrl c p :: rest, i, 0 =>
+    if c == "newenvironment" || c == "renewenvironment" then
+      match envDefAt raws (i + 1) with
+      | some (name, dflt, n, b, code) =>
+        let codes := codes.filter (·.1 != name)
+        if readsArgSetting code then
+          let out := (out.push (.ctrl c p) ++ raws.extract (i + 1) b).push (.group #[] p)
+          envCodesList (codes.push (name, dflt, n, code)) raws out rest (i + 1) (b - i)
+        else envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
+      | none => envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
+    else envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
+  | r :: rest, i, 0 =>
+    let (r', codes) := envCodesRaw codes r
+    envCodesList codes raws (out.push r') rest (i + 1) 0
+termination_by structural l => l
+
+private def envCodesRaw (codes : EnvCodes) : Raw → Raw × EnvCodes
+  | .group body p =>
+    let (b, codes) := envCodesList codes body #[] body.toList 0 0
+    (.group b p, codes)
+  | .env n body p =>
+    let (b, codes) := envCodesList codes body #[] body.toList 0 0
+    let b := match codes.find? (·.1 == n) with
+      | some (_, dflt, arity, code) => (envCodeAtUse dflt arity code b).getD b
+      | none => b
+    (.env n b p, codes)
+  | r => (r, codes)
+termination_by structural r => r
+
+end
+
 /-- The passes before the compatibility walk: overlay inputs, live groups,
 delimiters, columns, overprints and `\only`'s alternations. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
@@ -15128,6 +15202,7 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     let raws := frameCommands raws
     let raws := (splitColumnsList raws.toList).toArray
     let raws := trivlistEnvsList raws.toList #[]
+    let raws := (envCodesList #[] raws #[] raws.toList 0 0).1
     let raws ← overprintList raws.toList #[] 0
     pure (onlyAlternationsIn cx raws)
   let st0 : St :=
@@ -15168,13 +15243,16 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
   have htriv : trivlistEnvsList (packageCall command names pos gp np).toList #[] =
       packageCall command names pos gp np := by
     simp [packageCall, trivlistEnvsList, trivlistEnvsRaw]
+  have hcodes : (envCodesList #[] (packageCall command names pos gp np) #[]
+      (packageCall command names pos gp np).toList 0 0).1 = packageCall command names pos gp np := by
+    rcases hc with rfl | rfl <;> simp [packageCall, envCodesList, envCodesRaw]
   have hframes : frameCommands (packageCall command names pos gp np) =
       packageCall command names pos gp np := by
     rcases hc with rfl | rfl <;>
       simp [frameCommands, declaresPresentation, packageCall, List.findIdx?_cons]
   simp only [hw, StateT.run, bind, StateT.bind,
     pairGroups_package_exact, hdelim, hframes,
-    hcols, htriv, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
+    hcols, htriv, hcodes, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
     pure, StateT.pure, packageRewriteState]
 
 /-- The gathered declarations and deferred bodies

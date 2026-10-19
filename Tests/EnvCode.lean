@@ -29,8 +29,8 @@ private def sameShip (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   t s!"{label}: the control's text ({text})" (text == ctext)
 
 /-- A macro whose body gives a setting its argument, used in an environment's code, sets there what
-the setting written in that code sets, for every setting a definition body leaves to its uses; a
-value from the environment's own arguments is named once, its text nowhere. -/
+the setting written in that code sets, for every setting a definition body leaves to its uses, and
+so does one the environment's own argument gives its value at each use. -/
 def templateCodeUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let colour := "\\usepackage{xcolor}\n"
@@ -111,15 +111,26 @@ def templateCodeUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       "\\newenvironment{probe}{\\sel{french}}{\\sel{english}}\n") inline)
     (dvDoc (babel ++ "\\newenvironment{probe}{\\selectlanguage{french}}{\\selectlanguage{english}}\n")
       inline)
-  let src := dvDoc (colour ++ "\\newcommand\\use[1]{\\color{#1}}\n\\newenvironment{probe}[1]{\\use{#1}}{}\n")
-    "Alpha \\begin{probe}{teal}Bravo words\\end{probe} Delta."
-  let (ds, _, _, shown) := sourceArtifacts fonts src
-  let page := pageTextOf fonts src
-  t "template code: a value from the environment's arguments is named once, where the macro is used"
-    ((ds.filter (·.subject == some "envcode:color")).size == 1 &&
-      (ds.filter (·.subject == some "envcode:color")).all fun d => d.span.map (·.pos.line) == some 4)
-  t "template code: a value from the environment's arguments reaches neither page"
-    (hasStr page "Bravo" && !hasStr page "teal" && hasStr shown "Bravo" && !hasStr shown "teal")
+  -- An environment's own arguments give the same settings their values at each use, where the begin
+  -- code sets them as written there.
+  for (setting, pre, define, use, written, body) in cases do
+    let code := (define.drop "\\newcommand\\use".length).toString
+    let args := (use.drop "\\use".length).toString
+    sameShip ref fonts s!"environment code: '{setting}' reading the environment's argument"
+      (dvDoc (pre ++ "\\newenvironment{probe}" ++ code ++ "{}\n")
+        (body.replace "\\begin{probe}" ("\\begin{probe}" ++ args ++ "{}")))
+      (dvDoc (pre ++ "\\newenvironment{probe}{}{}\n")
+        (body.replace "\\begin{probe}" ("\\begin{probe}" ++ written ++ "{}")))
+  sameShip ref fonts "environment code: a macro given the environment's argument sets its value"
+    (dvDoc (colour ++ "\\newcommand\\use[1]{\\color{#1}}\n\\newenvironment{probe}[1]{\\use{#1}}{}\n")
+      "Alpha \\begin{probe}{teal}Bravo words\\end{probe} Delta.")
+    (dvDoc (colour ++ "\\newenvironment{probe}{\\color{teal}}{}\n")
+      "Alpha \\begin{probe}Bravo words\\end{probe} Delta.")
+  sameShip ref fonts "environment code: an optional argument given or defaulted"
+    (dvDoc (colour ++ "\\newenvironment{probe}[2][teal]{\\color{#1}\\textbf{#2:} }{}\n")
+      "Alpha \\begin{probe}{Note}Bravo\\end{probe} and \\begin{probe}[blue]{Tip}Charlie\\end{probe}.")
+    (dvDoc colour
+      "Alpha {\\color{teal}\\textbf{Note:} Bravo} and {\\color{blue}\\textbf{Tip:} Charlie}.")
 
 /-- An inline environment's content and end code stand under the declarations its begin code makes,
 to the environment's end, as the group LaTeX's environment opens holds them. -/
