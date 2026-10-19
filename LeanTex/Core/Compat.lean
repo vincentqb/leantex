@@ -11750,7 +11750,6 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
     some { args := [some "shipout/background", none, some "\\put(1cm,1cm){\\rule{1cm}{1pt}}"],
            inDoc := false }
   | .newLength => some { args := [some "\\zzlength"], inDoc := false }
-  | .mathOperator => some { args := [none, some "\\zzop", some "zzop"], inDoc := false }
   | .hyperSetup => some { args := [some "colorlinks=true"], inDoc := false }
   | .pageStyle => some { args := [some "empty"], inDoc := false }
   | .printBibliography => some { args := [none], inDoc := true, resources := #["refs.bib"] }
