@@ -2227,7 +2227,8 @@ def reports : List Report := [
     state := .guarded "6714141d" .before .author },
   { id := "R251", date := "2026-10-19"
     what := "a deck's title frame went uncounted whatever the theme, where beamer's maketitle frame counts and only moloch's is plain and uncounted; a noframenumbering frame showed no number, where beamer's shows the one before it; beamer's plain frame option was ignored, the frame keeping its footline and logo; and a section page the document's own frame set was centred as moloch's, about 20pt below beamer's"
-    pins := [check% frameCountChecks, check% contentsDeckChecks, thm% Ir.frameShown_numbered]
+    pins := [check% frameCountChecks, check% contentsDeckChecks, thm% Ir.shownFrom_exact,
+      thm% Ir.frameShown_numbered]
     accept := ["lualatex with beamer on invented probes: the default theme's maketitle frame and a frame holding titlepage number 1, the next frame 2, a noframenumbering frame after it 2 again and the frame after that 3; moloch's maketitle frame shows no number and its next frame 1; a plain frame sets no footline and no logo; and a frame setting only sectionpage under the default theme puts its section name 80.3pt and its title 114.5pt below the paper's top; this tree sets the numbers the same, a title page showing none, and the name and title at 79.4pt and 114.5pt",
       "main's binary at 730c0b54 on the same probes: the title frame takes no number, the noframenumbering frame shows none, the plain frame shows its number and logo, and the section page's name stands at 99.9pt; the guards fail there",
       "the corpus built by main's binary at 730c0b54 and by this tree's: the seven decks whose maketitle runs under a theme other than moloch number every frame after the title one more, and the parity deck whose plain frame sets its title page counts it the same; every other artifact is visually identical, most byte-identical"]

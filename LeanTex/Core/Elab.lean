@@ -7482,9 +7482,9 @@ private def sectionPageArm (ctx : Ctx) (n : String) (pos : Pos) (blocks : Array 
 /-- The blocks with a last frame that sets only its heading's page standing as that page; one
 setting it under a title or beside other content is named, that page not set. -/
 private def sectionPageFrame (ctx : Ctx) (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
-  if let some (.frame title _ _ _ body) := blocks.back? then
+  if let some (.frame title _ valign _ body) := blocks.back? then
     if title.isEmpty && body.size == 1 && Ir.standsOnPage body[0]? then
-      return blocks.pop.push (.role Ir.framedSectionPageRole #[])
+      return blocks.pop.push (.role (Ir.framedSectionPageRole valign) #[])
     else if body.any fun b => Ir.standsOnPage (some b) then
       warnOnce ctx "sectionpage:shared" .W0307
         "a section page sharing its frame with a title or other content is not set yet; the frame \

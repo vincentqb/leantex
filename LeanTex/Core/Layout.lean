@@ -11861,7 +11861,8 @@ private def collectKomaChapter (r : Rd) (a : Acc) (num : Option String) (title :
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     (num : Option String) (title : Array Inline) (indent : Length) (top : Bool := false)
-    (anchor : Option String := none) (page : Bool := false) (framed : Bool := false) : Acc :=
+    (anchor : Option String := none) (page : Bool := false)
+    (pageGlue : Ir.FrameGlue := Ir.VAlign.glue .moloch .center) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
@@ -11891,9 +11892,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
       origin := none, number := none, label := none, allowed := false, stage := true }
     let a := { a with ops := (a.ops.push .frameClose).push (.frameOpen false none opening) }
     let ground := Ir.frameGroundOf a.pal false .center
-    -- A theme's divider is moloch's `[c]` frame; the document's own frame the deck's.
-    let dist := if framed then VDist.of r.frameKeys .center else VDist.center
-    let a := { a with ops := a.ops.push (.pageStyle ground dist) }
+    let a := { a with ops := a.ops.push (.pageStyle ground ⟨pageGlue.above, pageGlue.below, pageGlue.joins⟩) }
     let a := openFrameBody r a false .center area
     let mp : Length := Ir.sectionPageMeasure r.geom.textWidth
     let indent : Length := (r.geom.textWidth - mp) / 2
@@ -20059,7 +20058,7 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
         { routed with ops := routed.ops.push (.anchor (Ir.outlineMark i)) }
       else routed
     acc := collectSection rd routed level num title 0 (top := true)
-      (page := Ir.standsOnPage doc.body[i + 1]?) (framed := Ir.framedSectionPage doc.body[i + 1]?)
+      (page := Ir.standsOnPage doc.body[i + 1]?) (pageGlue := Ir.sectionPageGlue rd.frameKeys doc.body[i + 1]?)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
   return (acc, firstBlk)

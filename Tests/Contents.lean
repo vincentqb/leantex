@@ -576,13 +576,20 @@ def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
 ({(lineWith sout 2 "Section").map (·.y.toBpString)}, \
 {(lineWith sout 2 "Teapots").map (·.y.toBpString)} of {pageH.toBpString})"
     (match lineWith sout 2 "Section", lineWith sout 2 "Teapots" with
-      | some n, some ti => (n.y + ti.y) / 2 < pageH / 2 - pageH / 20
+      | some n, some ti =>
+        (n.y + ti.y) / 2 < pageH / 2 - pageH / 16 && (n.y + ti.y) / 2 > pageH / 2 - pageH / 8
       | _, _ => false)
   let sweb := (HtmlDoc.emit {} sp).1
-  t "the web section page spends the same shares"
+  t "the web section page spends the same shares, the smaller above"
     (((sweb.splitOn "<section class=\"section-page")[1]?.map fun sec =>
       let sec := (sec.splitOn "</section>").headD ""
-      hasStr sec "flex-grow: 1000" && hasStr sec "flex-grow: 1500") == some true)
+      match (sec.splitOn "flex-grow: 1000"), (sec.splitOn "flex-grow: 1500") with
+      | [before, _], [_, after] => !hasStr before "Section" && !hasStr after "Section"
+      | _, _ => false) == some true)
+  let (top, _) := elabStr (paged.replace "\\begin{frame}\\sectionpage" "\\begin{frame}[t]\\sectionpage")
+  let tout := (fittedOf fonts top).out
+  t "a top-aligned section page frame sets its page at the top"
+    ((lineWith tout 2 "Section").any fun n => n.y < pageH / 4)
   -- A hook calls a command the preamble defines after it, a shaded entry mixes its declared colour,
   -- and beamer's hyperref option is hypersetup's keys.
   let (hooked, hds) := elabStr ("\\documentclass[hyperref={colorlinks}]{beamer}\n\\usetheme{default}\n" ++
@@ -647,6 +654,11 @@ plain frame none ({bout.pages.map footText})"
   let mout := (fittedOf fonts moloch).out
   t s!"moloch's title frame is plain and uncounted ({mout.pages.map footText})"
     (mout.pages.map footText == #["", "1", "1", "", "3"])
+  let (framed, _) := elabStr ((deck "\\usetheme{moloch}\n").replace "\\maketitle"
+    "\\begin{frame}\\titlepage\\end{frame}")
+  t s!"moloch's own footline numbers a title page its frame counts \
+({(fittedOf fonts framed).out.pages.map footText})"
+    ((fittedOf fonts framed).out.pages.map footText == #["1", "2", "2", "", "4"])
   t "a plain frame sets no logo, the frames beside it theirs"
     ((lineWith bout 3 "Logomark").isNone && (lineWith bout 2 "Logomark").isSome &&
       (lineWith mout 3 "Logomark").isNone && (lineWith mout 4 "Logomark").isSome)

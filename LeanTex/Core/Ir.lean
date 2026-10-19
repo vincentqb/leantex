@@ -3494,7 +3494,8 @@ public inductive FrameKeys where
   /-- beamer's own keys (beamerbaseframe.sty:256-272): `[c]` sets
   `0pt plus 1fill` above against `0pt plus 1.5fill` below. -/
   | beamer
-  /-- moloch's inner theme, which redefines `[c]` alone: `0pt plus 1fil` on either side. -/
+  /-- moloch's inner theme, which redefines `[c]` to `0pt plus 1fil` on either side and
+  `\maketitle` outside a frame to a plain uncounted frame. -/
   | moloch
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -5783,19 +5784,21 @@ public def Block.plainFrame : Block → Bool
   | .frame _ _ _ _ body => (body.toList.takeWhile (· matches .role _ #[])).contains (.role plainRole #[])
   | _ => false
 
-/-- Whether a frame shows no number: a `[plain]` frame, which sets no footline, a title page and a
-standout frame, whose furniture shows none; every other block. -/
-public def Block.numberless : Block → Bool
-  | b@(.frame _ standout valign _ _) => b.plainFrame || standout || (valign matches .golden)
+/-- Whether a frame shows no number: a `[plain]` frame, which sets no footline, a standout frame,
+whose furniture shows none, and a title page where the theme leaves it bare (`titled` false); every
+other block. -/
+public def Block.numberless (titled : Bool) : Block → Bool
+  | b@(.frame _ standout valign _ _) =>
+    b.plainFrame || standout || (!titled && (valign matches .golden))
   | _ => true
 
 /-- The footline number fold: a frame showing a number shows the counter beamer's
 `\insertframenumber` reads, the count of numbered frames up to it; every other block none. -/
-public def shownFrom (k : Nat) : List Block → List (Option Nat)
+public def shownFrom (titled : Bool) (k : Nat) : List Block → List (Option Nat)
   | [] => []
   | b :: rest =>
     let k' := if b.countable then k + 1 else k
-    (if b.numberless then none else some k') :: shownFrom k' rest
+    (if b.numberless titled then none else some k') :: shownFrom titled k' rest
 
 public def countTrue : List Bool → Nat
   | [] => 0
@@ -5914,19 +5917,40 @@ public theorem frameNumbers_size (body : Array Block) :
   simp [frameNumbers, frameMask, numbersFrom_length]
 
 /-- The number each top-level block's footline shows (`shownFrom`). -/
-public def frameShown (body : Array Block) : Array (Option Nat) :=
-  (shownFrom 0 body.toList).toArray
+public def frameShown (titled : Bool) (body : Array Block) : Array (Option Nat) :=
+  (shownFrom titled 0 body.toList).toArray
 
-public theorem shownFrom_numbered (k : Nat) (bs : List Block) (i n : Nat)
+/-- Each block shows none where it is numberless, else the count of numbered frames up to and
+including it. -/
+public theorem shownFrom_exact (t : Bool) (k : Nat) (bs : List Block) (i : Nat) :
+    (shownFrom t k bs)[i]? = bs[i]?.map fun b =>
+      if b.numberless t then none else some (k + countTrue ((bs.take (i + 1)).map Block.countable)) := by
+  induction bs generalizing k i with
+  | nil => simp [shownFrom]
+  | cons b rest ih =>
+    cases i with
+    | zero => cases hc : b.countable <;> simp [shownFrom, countTrue, hc]
+    | succ j =>
+      have h := ih (if b.countable then k + 1 else k) j
+      simp only [shownFrom, List.getElem?_cons_succ, List.take_succ_cons, List.map_cons, countTrue]
+      rw [h]
+      cases rest[j]? with
+      | none => rfl
+      | some c =>
+        cases b.countable
+        · simp
+        · simp [Nat.add_assoc]
+
+public theorem shownFrom_numbered (t : Bool) (k : Nat) (bs : List Block) (i n : Nat)
     (hn : (numbersFrom k (bs.map Block.countable))[i]? = some (some n))
-    (hp : bs[i]?.map Block.numberless = some false) :
-    (shownFrom k bs)[i]? = some (some n) := by
+    (hp : bs[i]?.map (Block.numberless t) = some false) :
+    (shownFrom t k bs)[i]? = some (some n) := by
   induction bs generalizing k i with
   | nil => simp [numbersFrom] at hn
   | cons b rest ih =>
     cases i with
     | zero =>
-      have hpb : b.numberless = false := by simpa using hp
+      have hpb : b.numberless t = false := by simpa using hp
       cases hc : b.countable
       · simp [numbersFrom, hc] at hn
       · simp only [List.map_cons, numbersFrom, hc, ite_true, List.getElem?_cons_zero,
@@ -5942,11 +5966,11 @@ public theorem shownFrom_numbered (k : Nat) (bs : List Block) (i n : Nat)
         simpa [shownFrom, hc] using this
 
 /-- A numbered frame that shows a number shows its own. -/
-public theorem frameShown_numbered (body : Array Block) (i n : Nat)
+public theorem frameShown_numbered (t : Bool) (body : Array Block) (i n : Nat)
     (hn : (frameNumbers body)[i]? = some (some n))
-    (hp : body[i]?.map Block.numberless = some false) :
-    (frameShown body)[i]? = some (some n) := by
-  have := shownFrom_numbered 0 body.toList i n
+    (hp : body[i]?.map (Block.numberless t) = some false) :
+    (frameShown t body)[i]? = some (some n) := by
+  have := shownFrom_numbered t 0 body.toList i n
     (by simpa [frameNumbers, frameMask] using hn) (by simpa using hp)
   simpa [frameShown] using this
 
@@ -8375,22 +8399,33 @@ public def sectionPageCtrl : String := " sectionpage"
 /-- The block a theme's section hook leaves right after its section: the section's own page. -/
 public def sectionPageRole : String := "section-page"
 
-/-- The block a frame of the document's own setting only `\sectionpage` leaves after its section:
-the section's page, centred as the deck's `[c]` frames are. -/
-public def framedSectionPageRole : String := "section-page framed"
+/-- The block a frame of the document's own setting only `\sectionpage` leaves after its section,
+by the frame's alignment. -/
+public def framedSectionPageRole : VAlign → String
+  | .top => "section-page framed t"
+  | .bottom => "section-page framed b"
+  | .center | .golden => "section-page framed"
+
+/-- The alignment of the document's own frame a section page after a deck's section stands in. -/
+public def framedSectionPage? (next : Option Block) : Option VAlign :=
+  match next with
+  | some (.role n body) =>
+    if body.isEmpty then [VAlign.top, .center, .bottom].find? (framedSectionPageRole · == n) else none
+  | _ => none
 
 /-- Whether the block after a deck's section is its section page, so the section stands on a page
 of its own; any other names navigation alone, as beamer's `\section` does. -/
 @[expose] public def standsOnPage (next : Option Block) : Bool :=
-  match next with
-  | some (.role n body) => (n == sectionPageRole || n == framedSectionPageRole) && body.isEmpty
-  | _ => false
+  (match next with
+    | some (.role n body) => n == sectionPageRole && body.isEmpty
+    | _ => false) || (framedSectionPage? next).isSome
 
-/-- Whether the block after a deck's section is a section page the document's own frame set. -/
-public def framedSectionPage (next : Option Block) : Bool :=
-  match next with
-  | some (.role n body) => n == framedSectionPageRole && body.isEmpty
-  | _ => false
+/-- The glue a section page spends about its content: the document's own frame's under the deck's
+keys, a theme's divider moloch's `[c]`. -/
+public def sectionPageGlue (keys : FrameKeys) (next : Option Block) : FrameGlue :=
+  match framedSectionPage? next with
+  | some v => frameGlue keys false v
+  | none => VAlign.glue .moloch .center
 
 /-- A heading's short title, `\section[short]{long}`'s: the heading by its number, its words and how
 many unstarred headings before it set both, and its short title. -/
@@ -8500,11 +8535,13 @@ public def frameNumbersFrom (restart : Option Nat) (body : Array Block) : Array 
 public def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
   frameNumbersFrom doc.frameRestart doc.body
 
-/-- The document's footline numbers, from 1 again where `frameRestart` splits the body. -/
+/-- The document's footline numbers, from 1 again where `frameRestart` splits the body; a counted
+title page shows its number under moloch's inner theme, whose footline it keeps. -/
 public def Doc.frameShown (doc : Doc) : Array (Option Nat) :=
+  let t := doc.frameKeys == .moloch
   match doc.frameRestart with
-  | none => Ir.frameShown doc.body
-  | some p => Ir.frameShown (doc.body.extract 0 p) ++ Ir.frameShown (doc.body.extract p doc.body.size)
+  | none => Ir.frameShown t doc.body
+  | some p => Ir.frameShown t (doc.body.extract 0 p) ++ Ir.frameShown t (doc.body.extract p doc.body.size)
 
 /-- The numbering's denominator at body index `i`: the count of the part `i` stands in. -/
 public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=

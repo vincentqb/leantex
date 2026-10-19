@@ -10364,9 +10364,10 @@ retitle them apart, or link to the numbered anchor")
               else kids.push (Html.elem "div"
                 #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
                 #[("class", "progress")])
-            -- a frame of the document's own spends the deck's `[c]` shares, a theme's divider centres
-            let kids := if Ir.framedSectionPage doc.body[i + 1]? then
-                let (above, below) := vdistShares doc.frameKeys .center
+            -- a frame of the document's own spends its glue's shares, a theme's divider centres
+            let kids := if (Ir.framedSectionPage? doc.body[i + 1]?).isSome then
+                let g := Ir.sectionPageGlue doc.frameKeys doc.body[i + 1]?
+                let (above, below) := (g.above, g.below)
                 let spacer (n : Nat) : Array Node := if n == 0 then #[] else
                   #[Html.elem "div" #[] #[("class", "fill"), ("style", s!"flex-grow: {n}")]]
                 let up := spacer above
