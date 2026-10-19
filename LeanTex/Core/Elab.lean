@@ -18716,48 +18716,201 @@ private def definedEnvName : List Raw → Option String
   | .group #[.word n _] _ :: _ => some n
   | _ => none
 
+/-- An environment whose definition takes mandatory arguments alone and whose halves open and close
+one environment: its argument count, what its begin code sets before that environment, the
+environment, what opens it, and what its end code sets after it. -/
+private structure EnvWrap where
+  name : String
+  arity : Nat
+  pre : Array Raw
+  env : String
+  opens : Array Raw
+  post : Array Raw
+
+mutual
+
+/-- Whether raws hold a half of a split construct. -/
+private def holdsHalf : List Raw → Bool
+  | [] => false
+  | r :: rest => holdsHalfOne r || holdsHalf rest
+
+private def holdsHalfOne : Raw → Bool
+  | .env n body _ =>
+    (Parse.splitOpen? n).isSome || (Parse.splitClose? n).isSome || holdsHalf body.toList
+  | .group body _ | .math _ body _ => holdsHalf body.toList
+  | _ => false
+
+end
+
+/-- The environment a half opens or closes, its command's name or its own. -/
+private def halfEnv (half : String) : String := (Parse.cmdHalf? half).getD half
+
+/-- A definer's argument count `[n]` before its bodies, and what follows it; no count, zero. -/
+private def envArity : List Raw → Option (Nat × List Raw)
+  | .sym '[' _ :: .word w _ :: .sym ']' _ :: more => w.toNat?.map (·, more)
+  | .sym '[' _ :: _ => none
+  | more => some (0, more)
+
+/-- The wrapper a definer's operands declare, when its halves pair and every argument it takes is
+mandatory. -/
+private def envWrapOf (rest : List Raw) : Option EnvWrap :=
+  let ops := rest.filter fun r => !(r matches .space)
+  let ops := if ops.head? matches some (.sym '*' _) || ops.head? matches some (.word "*" _)
+    then ops.drop 1 else ops
+  match ops with
+  | .group named _ :: more =>
+    match envArity more with
+    | some (arity, .group b _ :: .group e _ :: _) =>
+      let n := match named.toList with
+        | [.word n _] => n
+        | _ => ""
+      let begin := b.toList.reverse.dropWhile (· matches .space)
+      let finish := e.toList.dropWhile (· matches .space)
+      match begin, finish with
+      | .env o ob _ :: preRev, .env c _ _ :: post =>
+        match Parse.splitOpen? o, Parse.splitClose? c with
+        | some x, some y =>
+          let pre := preRev.reverse
+          -- Only an environment's halves pair: a formula's delimiters split stay the parse's.
+          let math := x == "$" || x == "$$" || x.startsWith "\\"
+          if !n.isEmpty && !math && halfEnv x == halfEnv y && !holdsHalf (pre ++ ob.toList ++ post)
+          then
+            some { name := n, arity, pre := pre.toArray, env := halfEnv x, opens := ob
+                   post := post.toArray }
+          else none
+        | _, _ => none
+      | _, _ => none
+    | _ => none
+  | _ => none
+
+mutual
+
+/-- Raws with each `#k` a definition's body spells replaced by its `k`th argument's raws. -/
+private def substArgs (args : Array (Array Raw)) (out : Array Raw) : List Raw → Array Raw
+  | [] => out
+  | .sym '#' p :: .word w wp :: rest =>
+    let digits := w.toList.takeWhile Char.isDigit
+    let tail := String.ofList (w.toList.drop digits.length)
+    match (String.ofList digits).toNat?.bind fun k => args[k - 1]? with
+    | some arg =>
+      substArgs args (if tail.isEmpty then out ++ arg else (out ++ arg).push (.word tail wp)) rest
+    | none => substArgs args ((out.push (.sym '#' p)).push (.word w wp)) rest
+  | r :: rest => substArgs args (out.push (substArgsOne args r)) rest
+
+private def substArgsOne (args : Array (Array Raw)) : Raw → Raw
+  | .group body p => .group (substArgs args #[] body.toList) p
+  | .env n body p => .env n (substArgs args #[] body.toList) p
+  | .math d body p => .math d (substArgs args #[] body.toList) p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl c p => .ctrl c p
+  | .sym c p => .sym c p
+  | .verb e s p => .verb e s p
+
+end
+
+/-- A use's leading arguments, `n` groups past spaces, and the index past them. -/
+private def useArgs (body : Array Raw) (n : Nat) : Option (Array (Array Raw) × Nat) := Id.run do
+  let mut args : Array (Array Raw) := #[]
+  let mut j := 0
+  for _ in [0:n] do
+    let k := skipSpaces body j
+    match body[k]? with
+    | some (.group g _) =>
+      args := args.push g
+      j := k + 1
+    | _ => return none
+  return some (args, j)
+
+mutual
+
+/-- A wrapper's use: its halves around its content, its arguments in them, as LaTeX expands them,
+the environment it opens one of the `others` wrappers in force at the use expanded in turn. -/
+private def expandWrap (others : List EnvWrap) (w : EnvWrap) (body : Array Raw) (p : Pos) :
+    Option (Array Raw) :=
+  (useArgs body w.arity).bind fun (args, j) =>
+    let sub (rs : Array Raw) : Array Raw := substArgs args #[] rs.toList
+    (wrapInner [] others w.env (sub w.opens ++ body.extract j body.size) p).map fun inner =>
+      -- What the halves set beside the environment ends with it, as the environment's group does.
+      if w.pre.all (· matches .space) && w.post.all (· matches .space) then inner
+      else #[.group (sub w.pre ++ inner ++ sub w.post) p]
+termination_by (others.length, 1, 0)
+decreasing_by all_goals (simp_wf; simp [Prod.lex_def])
+
+/-- The environment `env` around `body`: the wrapper of `ws` named so, the rest and the `seen`
+ones its inner wrappers, else the environment itself. -/
+private def wrapInner (seen ws : List EnvWrap) (env : String) (body : Array Raw) (p : Pos) :
+    Option (Array Raw) :=
+  match ws with
+  | [] => some #[.env env body p]
+  | w :: rest =>
+    if w.name == env then expandWrap (seen.reverse ++ rest) w body p
+    else wrapInner (w :: seen) rest env body p
+termination_by (seen.length + ws.length, 0, ws.length)
+decreasing_by all_goals (simp_wf; simp [Prod.lex_def] <;> omega)
+
+end
+
 mutual
 
 /-- Settles split environment halves as a plain parse does; the `skip`
-groups a refused definition still holds pass through unsettled. -/
+groups a refused definition still holds pass through unsettled, the `drop` groups a wrapper's
+definition holds leave the tree, and a wrapper's use sets its halves around its content. -/
 -- conserves: none — rebuilds the parse's recovery tree
-private def settleList (file : String) (skip : Nat) (out : Array Raw)
+private def settleList (file : String) (skip drop : Nat) (wraps : Array EnvWrap) (out : Array Raw)
     (ds : Array Diag) : List Raw → Array Raw × Array Diag
   | [] => (out, ds)
   | .ctrl d p :: rest =>
     -- premise: refusedEnvChecks — a refused definition's halves owe nothing
     let refused := Parse.envDefiners.contains d &&
       (definedEnvName rest).any builtinEnvNames.contains
-    settleList file (if refused then 3 else skip) (out.push (.ctrl d p)) ds rest
+    let wrap := if Parse.envDefiners.contains d && !refused then envWrapOf rest else none
+    match wrap with
+    | some w => settleList file 0 3 (wraps.push w) out ds rest
+    | none =>
+      let wraps := if Parse.envDefiners.contains d then
+          wraps.filter fun w => some w.name != definedEnvName rest
+        else wraps
+      settleList file (if refused then 3 else skip) drop wraps (out.push (.ctrl d p)) ds rest
   | .group body p :: rest =>
-    if skip > 0 then settleList file (skip - 1) (out.push (.group body p)) ds rest
+    if drop > 0 then settleList file skip (drop - 1) wraps out ds rest
+    else if skip > 0 then settleList file (skip - 1) drop wraps (out.push (.group body p)) ds rest
     else
-      let (rs, ds) := settleOne file ds (.group body p)
-      settleList file 0 (out ++ rs) ds rest
+      let (rs, ds) := settleOne file wraps ds (.group body p)
+      settleList file 0 drop wraps (out ++ rs) ds rest
   | r :: rest =>
-    let (rs, ds) := settleOne file ds r
-    settleList file skip (out ++ rs) ds rest
+    if drop > 0 then settleList file skip drop wraps out ds rest else
+    let (rs, ds) := settleOne file wraps ds r
+    settleList file skip drop wraps (out ++ rs) ds rest
 
-/-- One raw of `settleList`'s walk: a half settles, anything else descends. -/
-private def settleOne (file : String) (ds : Array Diag) : Raw → Array Raw × Array Diag
+/-- One raw of `settleList`'s walk: a half settles, a wrapper's use expands, anything else
+descends. -/
+private def settleOne (file : String) (wraps : Array EnvWrap) (ds : Array Diag) :
+    Raw → Array Raw × Array Diag
   | .group body p =>
-    let (body', ds) := settleList file 0 #[] ds body.toList
+    let (body', ds) := settleList file 0 0 wraps #[] ds body.toList
     (#[.group body' p], ds)
   | .env n body p =>
     let quiet := Compat.packageFile file
     match Parse.splitOpen? n, Parse.splitClose? n with
     | some e, _ =>
-      let (body', ds) := settleList file 0 #[] ds body.toList
-      let (rs, d) := Parse.settleOpenHalf file e body' p
-      (rs, if quiet then ds else ds.push d)
+      let (body', ds) := settleList file 0 0 wraps #[] ds body.toList
+      match Parse.cmdHalf? e with
+      | some c => (#[.ctrl c p] ++ body', ds)
+      | none =>
+        let (rs, d) := Parse.settleOpenHalf file e body' p
+        (rs, if quiet then ds else ds.push d)
     | none, some e =>
-      (#[], if quiet then ds else ds.push (Parse.closeHalfDiag file e p))
+      match Parse.cmdHalf? e with
+      | some c => (#[.ctrl ("end" ++ c) p], ds)
+      | none => (#[], if quiet then ds else ds.push (Parse.closeHalfDiag file e p))
     | none, none =>
       let (body', ds) :=
-        settleList ((Parse.inputEnvFile? n).getD file) 0 #[] ds body.toList
-      (#[.env n body' p], ds)
+        settleList ((Parse.inputEnvFile? n).getD file) 0 0 wraps #[] ds body.toList
+      ((wrapInner [] wraps.toList.reverse n body' p).getD #[.env n body' p], ds)
   | .math dm body p =>
-    let (body', ds) := settleList file 0 #[] ds body.toList
+    let (body', ds) := settleList file 0 0 wraps #[] ds body.toList
     (#[.math dm body' p], ds)
   | .word w p => (#[.word w p], ds)
   | .space => (#[.space], ds)
@@ -18770,13 +18923,13 @@ end
 
 /-- Settles every definer body's split halves in a parsed tree. -/
 public def settleSplits (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
-  settleList file 0 #[] #[] raws.toList
+  settleList file 0 0 #[] #[] #[] raws.toList
 
 public theorem settleSplits_package_exact (file command names : String)
     (pos groupPos namePos : Pos) :
     settleSplits file (Compat.packageCall command names pos groupPos namePos) =
       (Compat.packageCall command names pos groupPos namePos, #[]) := by
-  simp [settleSplits, Compat.packageCall_exact, settleList, settleOne]
+  simp [settleSplits, Compat.packageCall_exact, settleList, settleOne, envWrapOf, envArity]
 
 /-- Executes input-bearing macros with the driver's reader, after settling
 split halves. -/

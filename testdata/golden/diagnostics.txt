@@ -760,7 +760,7 @@
 ⚠ [W0370] - \footnotemark
   '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place
   suggestion: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
-── W0371 (degraded) a paragraph break inside \footnote is set as a space
+── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin
 ⚠ [W0371] - \footnote
   a paragraph break inside '\footnote' is set as a space
   suggestion: a footnote is one paragraph; split a long note into two \footnote calls

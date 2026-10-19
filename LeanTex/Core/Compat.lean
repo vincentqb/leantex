@@ -289,6 +289,93 @@ public inductive ParamSite where
 
 private def listEnvs : List String := ["itemize", "enumerate", "description"]
 
+/-- The environments that set block content only, never a box in a line. -/
+private def blockOnlyEnvs : List String :=
+  listEnvs ++ ["trivlist", "center", "flushleft", "flushright", "quote", "quotation", "verse"]
+
+/-- The declaration a text style command's argument sets in, `\bfseries` for `\textbf`. -/
+private def textStyleDecl? : String → Option String
+  | "textbf" => some "bfseries"
+  | "textit" => some "itshape"
+  | "textsl" => some "slshape"
+  | "textsf" => some "sffamily"
+  | "texttt" => some "ttfamily"
+  | "textsc" => some "scshape"
+  | "textrm" => some "rmfamily"
+  | "textup" => some "upshape"
+  | "textmd" => some "mdseries"
+  | "textnormal" => some "normalfont"
+  | "emph" => some "em"
+  | _ => none
+
+/-- Whether raws hold, at their top level, an environment setting block content only. -/
+private def holdsBlockEnv (raws : Array Raw) (envs : List String) : Bool :=
+  raws.any fun r => match r with
+    | .env n _ _ => envs.contains n
+    | _ => false
+
+/-- The group a control word reads next, past spaces and a bracketed option. -/
+private def nextArgGroup (raws : Array Raw) (start : Nat) : Option (Array Raw) :=
+  let k := skipSpaces raws start
+  let k := if raws[k]? matches some (.sym '[' _) then
+      ((List.range (raws.size - k)).find? fun d => raws[k + d]? matches some (.sym ']' _)).map
+        (fun d => skipSpaces raws (k + d + 1)) |>.getD k
+    else k
+  match raws[k]? with
+  | some (.group g _) => some g
+  | _ => none
+
+/-- A list set in a line: each item on a line of its own after its mark, as a footnote's text sets
+it, the line after the list a line of its own. -/
+private def inlineListRaws (raws : Array Raw) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut breakNext : Option Pos := none
+  for r in raws do
+    match r with
+    | .env n body p =>
+      if listEnvs.contains n then
+        let mut num := 0
+        -- The list's options are its own, read by no line.
+        let k0 := skipSpaces body 0
+        let mut j := if body[k0]? matches some (.sym '[' _) then
+            (((List.range (body.size - k0)).find? fun d => body[k0 + d]? matches some (.sym ']' _)).map
+              (k0 + · + 1)).getD 0
+          else 0
+        for _ in [0:body.size] do
+          match (body[j]? : Option Raw) with
+          | some (.ctrl "item" ip) =>
+            num := num + 1
+            if out.any fun x => !(x matches .space || x matches .par _) then
+              out := out.push (.ctrl "\\" ip)
+            let k := skipSpaces body (j + 1)
+            let close := if body[k]? matches some (.sym '[' _) then
+                (List.range (body.size - k)).find? fun d => body[k + d]? matches some (.sym ']' _)
+              else none
+            match close with
+            | some d =>
+              let label := body.extract (k + 1) (k + d)
+              let mark : Array Raw := if n == "description" then #[.ctrl "textbf" ip, .group label ip]
+                else label
+              out := (out ++ mark).push .space
+              j := k + d + 1
+            | none =>
+              let mark : Array Raw := if n == "enumerate" then #[.word s!"{num}." ip]
+                else if n == "description" then #[] else #[.ctrl "textbullet" ip]
+              out := (out ++ mark).push .space
+              j := j + 1
+          | some b =>
+            unless num == 0 && (b matches .space || b matches .par _) do out := out.push b
+            j := j + 1
+          | none => break
+        breakNext := some p
+      else out := out.push r
+    | .space | .par _ => out := out.push r
+    | _ =>
+      if let some bp := breakNext then out := out.push (.ctrl "\\" bp)
+      breakNext := none
+      out := out.push r
+  return out
+
 /-- Environments whose bodies the elaborator reads as table cells. -/
 public def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
 
@@ -705,6 +792,13 @@ private structure GeometryBlock where
   scale : Option (String × String) := none
   deriving Inhabited
 
+/-- What an argument group holding block environments becomes: a style command's declaration over
+it, or a footnote's text whose lists set in lines. -/
+private inductive ArgBlocks where
+  | decl (name : String)
+  | inlineLists
+  deriving Inhabited
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -954,6 +1048,8 @@ private structure St where
   /-- The `\baselineskip` the next argument group sets at: a footnote's size, or none for a
   heading's, whose size its class sets. -/
   argSkip : Option (Option Int) := none
+  /-- What the next argument group holding block environments becomes (`ArgBlocks`). -/
+  argBlocks : Option ArgBlocks := none
   /-- Environments open around the walk inside the document body, each narrowing its lines. -/
   envDepth : Nat := 0
   /-- State mutations performed through `write`, which with `diags.size` the
@@ -9830,6 +9926,19 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if let some result ← styOptionsRequest name pos raws start then return some result
+  -- A style command over block content is its declaration over a group (latex.ltx `\textbf`).
+  if let some decl := textStyleDecl? name then
+    if (nextArgGroup raws start).any (holdsBlockEnv · blockOnlyEnvs) &&
+        raws[skipSpaces raws start]? matches some (.group _ _) then
+      write fun st => { st with argBlocks := some (.decl decl) }
+      return some (#[], start)
+  -- A footnote's text is lines: a list in it sets each item on a line of its own.
+  if name == "footnote" && (nextArgGroup raws start).any (holdsBlockEnv · listEnvs) then
+    sayOnce "footnote:list" .W0371 "a list inside '\\footnote' is set as lines at the note's \
+margin, each item after its mark, the list's options unread" pos
+      (help := "a footnote is one paragraph; a list that needs its indent or its own marks reads \
+better in the text")
+    write fun st => { st with argBlocks := some .inlineLists }
   rewriteCtrlLaterNamed name pos raws start
 
 /-- The dispatcher's silence guard: a consumed construct must have been paid for
@@ -13536,6 +13645,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     -- An argument a footnote or a heading reads sets at its own size.
     if let some sk := (← get).argSkip then
       write fun st => { st with argSkip := none, bodySkip := if arg then sk else st.bodySkip }
+    let blocks := (← get).argBlocks
+    write fun st => { st with argBlocks := none }
     let savedLengths := (← get).localLengths
     let savedTop := (← get).tableTop
     let savedDefTop := (← get).defTop
@@ -13550,6 +13661,11 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
                               tableTop := false, defTop := saved > 0, localLengths := #[]
                               quietNext := false, envCode := st.envCode || envBody, envNext := 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
+    -- A style command's block argument sets under its declaration, a footnote's lists in lines.
+    let body' := match blocks with
+      | some (.decl d) => #[Raw.ctrl d p] ++ body'
+      | some .inlineLists => inlineListRaws body'
+      | none => body'
     if quiet then
       write fun st => { st with diags := st.diags.extract 0 said, warned := warned }
     let restores := restoreLengths (← get).localLengths p

@@ -141,4 +141,78 @@ def inlineEnvScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     (dvDoc "\\newenvironment{probe}{\\ttfamily}{}\n" "Alpha \\begin{probe}\"x\" 'y' a--b\\end{probe} Delta.")
     (dvDoc "" "Alpha {\\ttfamily \"x\" 'y' a--b} Delta.")
 
+/-- An environment whose halves open and close one environment, its arguments read where its
+halves set them, ships what the environment written in place ships; so do an environment's commands,
+`\trivlist` for `\begin{trivlist}`, and a command no close follows stays a command. -/
+def wrapEnvChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\nLead words.\n" ++ body ++
+      "\nTail words.\n\\end{document}\n"
+  sameShip ref fonts "wrapper: a list"
+    (doc "\\newenvironment{kilo}{\\begin{itemize}}{\\end{itemize}}\n"
+      "\\begin{kilo}\\item One.\\item Two.\\end{kilo}")
+    (doc "" "\\begin{itemize}\\item One.\\item Two.\\end{itemize}")
+  sameShip ref fonts "wrapper: a trivlist opening its item"
+    (doc "\\newenvironment{lima}{\\begin{trivlist}\\item}{\\end{trivlist}}\n"
+      "\\begin{lima}Inside words.\\end{lima}")
+    (doc "" "\\begin{trivlist}\\item Inside words.\\end{trivlist}")
+  sameShip ref fonts "wrapper: an environment's commands as its halves"
+    (doc "\\newenvironment{mike}{\\center\\small}{\\endcenter}\n"
+      "\\begin{mike}Centred words.\\end{mike}")
+    (doc "" "\\begin{center}\\small Centred words.\\end{center}")
+  sameShip ref fonts "wrapper: an argument read in its halves"
+    (doc "\\newenvironment{oscar}[1]{\\begin{center}#1}{\\end{center}}\n"
+      "\\begin{oscar}{Papa} words.\\end{oscar}")
+    (doc "" "\\begin{center}Papa words.\\end{center}")
+  sameShip ref fonts "commands: a trivlist's command form"
+    (doc "" "\\trivlist\\item Command words.\\endtrivlist")
+    (doc "" "\\begin{trivlist}\\item Command words.\\end{trivlist}")
+  let (_, ds) := elabStr (doc "\\let\\keep\\center\n\\let\\endkeep\\endcenter\n" "")
+  t "commands: an environment's command no close follows stays a command, no error"
+    (ds.all (·.severity != .error))
+  for pre in ["\\let\\center\\relax\n\\let\\endcenter\\relax\n",
+      "\\renewcommand\\itemize{\\list{--}{}}\n\\renewcommand\\enditemize{\\endlist}\n",
+      "\\let\\oldcenter=\\center\n\\let\\oldendcenter=\\endcenter\n",
+      "\\renewcommand*\\itemize{\\relax}\n\\renewcommand*\\enditemize{\\relax}\n"] do
+    let (_, ds) := elabStr (doc pre "")
+    t s!"commands: a definition naming an environment's commands opens none: {pre}"
+      (ds.all (·.severity != .error))
+  let (_, cds) := elabStr (doc "" "\\begin{center}\\center Bravo words.\\end{center}")
+  t "commands: an environment's command inside it leaves its end to its begin"
+    (cds.all (·.severity != .error))
+  sameShip ref fonts "wrapper: an inner wrapper expands as defined where the outer is used"
+    (doc ("\\newenvironment{kilo}{\\begin{itemize}}{\\end{itemize}}\n" ++
+      "\\newenvironment{lima}{\\begin{kilo}}{\\end{kilo}}\n" ++
+      "\\renewenvironment{kilo}{\\begin{center}}{\\end{center}}\n") "\\begin{lima}Centred words.\\end{lima}")
+    (doc "" "\\begin{center}Centred words.\\end{center}")
+  sameShip ref fonts "wrapper: a wrapper's environment a wrapper itself"
+    (doc ("\\newenvironment{kilo}{\\begin{itemize}}{\\end{itemize}}\n" ++
+      "\\newenvironment{lima}{\\begin{kilo}}{\\end{kilo}}\n") "\\begin{lima}\\item One.\\end{lima}")
+    (doc "" "\\begin{itemize}\\item One.\\end{itemize}")
+
+/-- A style command over a list sets the list under its declaration, and a footnote's list sets
+each item on a line of its own after its mark. -/
+def blockArgChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (body : String) : String :=
+    "\\documentclass{article}\n\\begin{document}\n" ++ body ++ "\n\\end{document}\n"
+  -- Departure: LaTeX's `\textbf` leaves vertical mode first, an empty line above the list.
+  sameShip ref fonts "block argument: a bold list"
+    (doc "Lead words.\n\n\\textbf{\\begin{itemize}\n\\item Kilo words.\n\\end{itemize}}\nTail words.")
+    (doc "Lead words.\n\n{\\bfseries\\begin{itemize}\n\\item Kilo words.\n\\end{itemize}}\nTail words.")
+  let (fd, fds) := elabStr (doc ("Lead words.\\footnote{Mike words.\n\\begin{itemize}\n" ++
+    "\\item Kilo words.\n\\item Lima words.\n\\end{itemize}\nOscar words.}\nTail words."))
+  let notes := (bodyLines (layoutOf fonts fd)).filter (·.note) |>.map (letters ∘ lineText)
+  t s!"block argument: a footnote's list ships, each item on a line after its mark: {notes}"
+    (fds.all (·.severity != .error) && notes.any (hasStr · "•Kilowords.") &&
+      notes.any (hasStr · "•Limawords.") && notes.any (hasStr · "Oscarwords."))
+  t "block argument: a footnote's list names its lines as the loss"
+    (fds.any (·.code == "W0371"))
+  let (od, _) := elabStr (doc ("Lead words.\\footnote{Mike words.\n\\begin{enumerate}[label=(\\alph*)]\n" ++
+    "\\item Kilo words.\n\\end{enumerate}}\nTail words."))
+  let optNotes := (bodyLines (layoutOf fonts od)).filter (·.note) |>.map (letters ∘ lineText)
+  t s!"block argument: a footnote list's options set no ink: {optNotes}"
+    (optNotes.any (hasStr · "Kilowords.") && !optNotes.any (hasStr · "label"))
+
 end Tests.EnvCode

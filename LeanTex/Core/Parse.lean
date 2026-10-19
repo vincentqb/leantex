@@ -283,6 +283,47 @@ private structure Frame where
   openPos : Pos
   outer : Array Raw
   body : Bool := false
+  /-- The environment opened by its command, `\center` for `\begin{center}`. -/
+  cmd : Bool := false
+
+/-- The environments whose commands open and close them in the flow, as `\center` and `\endcenter`
+do. -/
+public def cmdEnvs : List String :=
+  ["trivlist", "itemize", "enumerate", "description", "center", "flushleft", "flushright", "quote",
+   "quotation", "verse"]
+
+/-- The environment a command closes, `center` for `\endcenter`. -/
+public def cmdEnvClose? (name : String) : Option String :=
+  if name.startsWith "end" then
+    let e := (name.drop 3).toString
+    if cmdEnvs.contains e then some e else none
+  else none
+
+/-- A half's name for an environment its command opened or closed, unforgeable because it holds a
+space. -/
+public def cmdHalf (name : String) : String := "command " ++ name
+
+/-- The command a half of a command-opened environment names, `center` for `\center`. -/
+public def cmdHalf? (half : String) : Option String :=
+  if half.startsWith "command " then some (half.drop "command ".length).toString else none
+
+/-- The commands whose next control is an operand they read, not one they run: a definition's
+name, a copy's source, a patch's target. -/
+private def operandReaders : List String :=
+  Definer.names (·.defines == .command) ++ ["patchcmd", "pretocmd", "apptocmd", "xpatchcmd",
+    "xpretocmd", "xapptocmd", "show", "meaning", "ifx"]
+
+/-- Whether a command standing next is an operand, as in `\let\keep\center` or
+`\renewcommand\itemize`. -/
+private def operandNext (acc : Array Raw) : Bool :=
+  let rs := (acc.toList.reverse.filter fun r =>
+    !(r matches .space) && !(r matches .word "=" _) && !(r matches .word "*" _)).take 2
+  let reads (r : Raw) : Bool := match r with
+    | .ctrl c _ => operandReaders.contains c
+    | _ => false
+  match rs with
+  | r :: rest => reads r || ((r matches .ctrl ..) && (rest.head?.map reads).getD false)
+  | [] => false
 
 /-- The definers whose two body groups are token lists. -/
 public def envDefiners : List String := Definer.tokenListEnvs
@@ -408,7 +449,7 @@ private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : D
 with that parse's diagnostic. -/
 public def settleOpenHalf (file name : String) (body : Array Raw) (pos : Pos) : Array Raw × Diag :=
   let stop := halfStop name
-  ((⟨stop, pos, #[], false⟩ : Frame).close body, unclosedAtBrace file stop pos)
+  ((⟨stop, pos, #[], false, false⟩ : Frame).close body, unclosedAtBrace file stop pos)
 
 /-- The diagnostic a plain parse raises at a close half. -/
 public def closeHalfDiag (file name : String) (pos : Pos) : Diag :=
@@ -441,7 +482,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
       i := i + 1
       match tok with
       | .lbrace =>
-        frames := frames.push ⟨.brace, pos, acc, envBodyNext acc⟩
+        frames := frames.push ⟨.brace, pos, acc, envBodyNext acc, false⟩
         acc := #[]
       | .rbrace =>
         -- The group boundary wins: a delimiter still open at the `}` closes there, diagnosed.
@@ -454,11 +495,15 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
               match body, f.stop with
               | true, s =>
                 frames := frames.pop
-                acc := f.outer.push (.env (splitOpen s.halfName) acc f.openPos)
-              | _, _ =>
-                diags := diags.push (unclosedAtBrace file f.stop f.openPos)
+                acc := f.outer.push
+                  (.env (splitOpen (if f.cmd then cmdHalf s.halfName else s.halfName)) acc f.openPos)
+              | _, s =>
                 frames := frames.pop
-                acc := f.close acc
+                -- An environment's command a group closes over is the command alone.
+                if f.cmd then acc := f.outer.push (.ctrl s.halfName f.openPos) ++ acc
+                else
+                  diags := diags.push (unclosedAtBrace file f.stop f.openPos)
+                  acc := f.close acc
             | none => break
           match frames.back? with
           | some f =>
@@ -483,10 +528,10 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         -- Pair shifts only when opening display math.
         let display := toks[i]?.any (·.tok == .math)
         if display then i := i + 1
-        frames := frames.push ⟨if display then .dollarDisplay else .math, pos, acc, false⟩
+        frames := frames.push ⟨if display then .dollarDisplay else .math, pos, acc, false, false⟩
         acc := #[]
       | .ctrl "(" =>
-        frames := frames.push ⟨.parenMath, pos, acc, false⟩
+        frames := frames.push ⟨.parenMath, pos, acc, false, false⟩
         acc := #[]
       | .ctrl ")" =>
         match frames.back? with
@@ -501,7 +546,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         | none =>
           diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
       | .ctrl "[" =>
-        frames := frames.push ⟨.displayMath, pos, acc, false⟩
+        frames := frames.push ⟨.displayMath, pos, acc, false, false⟩
         acc := #[]
       | .ctrl "]" =>
         match frames.back? with
@@ -519,12 +564,23 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
         i := j
-        frames := frames.push ⟨.env name, pos, acc, false⟩
+        frames := frames.push ⟨.env name, pos, acc, false, false⟩
         acc := #[]
       | .ctrl "end" =>
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
         i := j
+        -- An environment's command an `\end` of another, or of a `\begin` below it, closes over is
+        -- the command alone.
+        let begun := frames.any fun g => !g.cmd && g.stop == .env name
+        for _ in [0:frames.size] do
+          match frames.back? with
+          | some f =>
+            if f.cmd && (f.stop != .env name || begun) then
+              frames := frames.pop
+              acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
+            else break
+          | none => break
         match frames.back? with
         | some f =>
           match f.stop with
@@ -541,7 +597,19 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
             diags := diags.push (unmatchedEnd file name pos)
         | none =>
           diags := diags.push (unmatchedEnd file name pos)
-      | .ctrl name => acc := acc.push (.ctrl name pos)
+      | .ctrl name =>
+        if cmdEnvs.contains name && !operandNext acc then
+          frames := frames.push { stop := .env name, openPos := pos, outer := acc, cmd := true }
+          acc := #[]
+        else match cmdEnvClose? name, frames.back? with
+          | some e, some f =>
+            if f.cmd && f.stop == .env e then
+              frames := frames.pop
+              acc := f.close acc
+            else if f.stop == .brace && f.body then
+              acc := acc.push (.env (splitClose (cmdHalf e)) #[] pos)
+            else acc := acc.push (.ctrl name pos)
+          | _, _ => acc := acc.push (.ctrl name pos)
       | .word s => acc := acc.push (.word s pos)
       | .space => acc := acc.push .space
       | .par => acc := acc.push (.par pos)
@@ -551,10 +619,12 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
   for _ in [0:frames.size] do
     match frames.back? with
     | some f =>
-      diags := diags.push
-        (err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
       frames := frames.pop
-      acc := f.close acc
+      if f.cmd then acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
+      else
+        diags := diags.push
+          (err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
+        acc := f.close acc
     | none => pure ()
   return (acc, diags)
 

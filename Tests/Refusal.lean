@@ -43,7 +43,7 @@ def refusedEnvChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
 /-- Split shapes an accepted definition does not pair yet, each keeping the parse's E0201; a row
 fails once pairing lands. -/
 def splitPairingOwed : List (String × String) :=
-  [("\\begin{center}", "\\end{center}"), ("\\[", "\\]"), ("$", "$"), ("\\(", "\\)")]
+  [("\\[", "\\]"), ("$", "$"), ("\\(", "\\)")]
 
 def splitPairingOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

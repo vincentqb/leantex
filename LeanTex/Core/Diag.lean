@@ -426,7 +426,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0369 => ("0369", .degraded, "a per-language font binding; one face serves every language, so the binding is dropped")
   | .E0375 => ("0375", .dropped, "\\dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped")
   | .W0370 => ("0370", .pending, "\\footnotemark and \\footnotetext are not paired yet; kept as text")
-  | .W0371 => ("0371", .degraded, "a paragraph break inside \\footnote is set as a space")
+  | .W0371 => ("0371", .degraded, "a footnote is one paragraph: a paragraph break inside \\footnote is set as a space, a list's items as lines at its margin")
   | .W0372 => ("0372", .degraded, "a footnote taller than the text block overruns its page")
   | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
