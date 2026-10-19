@@ -652,23 +652,6 @@ public def Showing.lostIncluded (s : Showing) : String :=
     let said := String.join parts
     "it is included whole in place of the declarations `decls` names" ++ said
 
-/-- The first line among a file's leading comments that spells a directive the reader does not
-read, past its first line or the line after `#!`. -/
-public def strayDirective? (lang : Ir.CodeLang) (src : Array Char) : Option Nat := Id.run do
-  let marker := directiveMarker lang
-  let read := (directive? lang src).map (·.1.start)
-  let comment := lang.row.lineComment
-  let mut i := 0
-  for _ in [0:src.size + 1] do
-    if i ≥ src.size then break
-    let e := lineEnd src i
-    let line := String.ofList (src.extract i e).toList
-    let body := String.ofList (line.toList.dropWhile (· == ' '))
-    if body.startsWith marker && read != some (i + (line.length - body.length)) then return some i
-    unless body.isEmpty || body.startsWith comment do break
-    i := e + 1
-  return none
-
 /-! ### Lean -/
 
 private def leanLetterLike (c : Char) : Bool :=
@@ -1053,11 +1036,11 @@ private def formAt? (forms : List Ir.DocForm) (src : Array Char) (i : Nat) : Opt
       | .lines .. => false
     opensAt src i f.opener && !(doubled && src[i + n]? == o[n - 1]?) && !closed
 
-/-- Whether a token type is a comment's, a preprocessor line's not. -/
+/-- Whether a token type is a comment's: not a preprocessor line's, nor the bare `Comment` a lexer
+reads code it skips as, such as C's `#if 0` block. -/
 private def commentKind (k : String) : Bool :=
   k == "Literal.String.Doc" ||
-    ((k == "Comment" || k.startsWith "Comment.") && !k.startsWith "Comment.Preproc" &&
-      k != "Comment.Hashbang")
+    (k.startsWith "Comment." && !k.startsWith "Comment.Preproc" && k != "Comment.Hashbang")
 
 /-- For each position, whether only spaces and tabs stand before it on its line. -/
 private def opensLine (src : Array Char) : Array Bool := Id.run do
@@ -1071,6 +1054,25 @@ private def opensLine (src : Array Char) : Array Bool := Id.run do
 
 /-- Whether a token type writes no ink. -/
 private def blankKind (k : String) : Bool := k == "Text" || k == "Text.Whitespace"
+
+/-- Past a block comment opening at `i` and read by the lexer to `runEnd`: its first closer leaving
+nested openers (the closer reversed) balanced, else the run's end where the run ends on a closer. -/
+private def blockEnd (src : Array Char) (i runEnd : Nat) (closer : String) : Option Nat := Id.run do
+  let nested := String.ofList closer.toList.reverse
+  let mut depth : Nat := 0
+  let mut k := i
+  for _ in [i:runEnd] do
+    if k ≥ runEnd then break
+    if opensAt src k nested then
+      depth := depth + 1
+      k := k + nested.length
+    else if opensAt src k closer then
+      k := k + closer.length
+      if depth ≤ 1 then return some k
+      depth := depth - 1
+    else k := k + 1
+  return if runEnd ≥ i + closer.length && opensAt src (runEnd - closer.length) closer then some runEnd
+    else none
 
 /-- The comments the lexer reads that open with a form, first on their line: a run of line docs one
 comment, a block to the end of its kind's tokens and closed, the first documenting what holds it
@@ -1089,10 +1091,12 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
     let r := raws[t]
     if r.start < skip then continue
     let isComment := commentKind r.kind
-    let lineFirst := opens.getD r.start false
-    match (if isComment && lineFirst then formAt? forms src r.start else none) with
+    -- A comment opens where the token before it is not one of its kind ending there.
+    let continues := t > 0 && (raws[t - 1]?.map fun q => q.stop == r.start && q.kind == r.kind).getD false
+    let opensHere := isComment && !continues
+    match (if opensHere && opens.getD r.start false then formAt? forms src r.start else none) with
     | some f =>
-      let stop := match f with
+      let (stop, consumed) := match f with
         | .lines m _ _ => Id.run do
           let mut stop := lineEnd src r.start
           for _ in [0:src.size] do
@@ -1101,17 +1105,14 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
                 opensAt src k m then
               stop := lineEnd src k
             else break
-          return some stop
+          return (some stop, stop)
         | .block _ c _ _ => Id.run do
-          let mut stop := r.stop
+          let mut run := r.stop
           for u in [t + 1:raws.size] do
             let q := raws.getD u default
-            if q.start == stop && q.kind == r.kind then stop := q.stop else break
-          let e := min stop src.size
-          let body := src.extract r.start e
-          let closer := c.toList.toArray
-          return if body.size ≥ f.opener.length + closer.size &&
-              body.extract (body.size - closer.size) body.size == closer then some e else none
+            if q.start == run && q.kind == r.kind then run := q.stop else break
+          let runEnd := min run src.size
+          return (blockEnd src r.start runEnd c, runEnd)
       match stop with
       | some e =>
         let holder := match f with
@@ -1121,12 +1122,39 @@ private def commentCuts (lang : Ir.CodeLang) (forms : List Ir.DocForm) (src : Ar
         out := out.push ⟨.prose module (if module then .aboveAll else .inPlace), r.start, e⟩
         if module then head := false
         skip := e
-      | none => if !blankKind r.kind then head := false
+      | none =>
+        head := false
+        skip := consumed
     | none =>
       let inDirective := (dir.map fun d => d.start ≤ r.start && r.start < d.stop).getD false
       if !(blankKind r.kind || isComment || inDirective || (r.start == 0 && shebang src)) then
         head := false
   return out
+
+/-- The first line among a file's leading comments that spells a directive the reader does not
+read, past its first line or the line after `#!`; for a row its lexer reads comments for, the leading
+comments are what the lexer reads before the first code. -/
+public def strayDirective? (lang : Ir.CodeLang) (src : Array Char) : Option Nat := Id.run do
+  let marker := directiveMarker lang
+  let read := (directive? lang src).map (·.1.start)
+  let comment := lang.row.lineComment
+  let codeStart : Option Nat := match lang.row.docs, Highlight.Lexer.ofName? lang.listing with
+    | .comments _, some lexer =>
+      ((Highlight.lex lexer ⟨src.push '\n'⟩).find? fun r =>
+        !(blankKind r.kind || commentKind r.kind || (r.start == 0 && shebang src))).map (·.start)
+    | _, _ => none
+  let mut i := 0
+  for _ in [0:src.size + 1] do
+    if i ≥ src.size then break
+    let e := lineEnd src i
+    let line := String.ofList (src.extract i e).toList
+    let body := String.ofList (line.toList.dropWhile (· == ' '))
+    if body.startsWith marker && read != some (i + (line.length - body.length)) then return some i
+    match codeStart with
+    | some c => if i + (line.length - body.length) ≥ c then break
+    | none => unless body.isEmpty || body.startsWith comment do break
+    i := e + 1
+  return none
 
 /-- The cuts a language's scanner makes in a source. -/
 public def cutsOf (lang : Ir.CodeLang) (src : Array Char) : Array Cut :=
@@ -1302,19 +1330,31 @@ private def doctests (pr : Prose) : Prose := Id.run do
       places := places.push place
   return { text := "\n".intercalate text.toList, lines := places }
 
-/-- The prose of lines that carry their place, rustdoc's way: the indentation every line holding text
-shares removed, blank lines at either end dropped. -/
+/-- The prose of lines that carry their place, rustdoc's way: a line's carriage return dropped, the
+indentation every line holding text shares removed, a tab to the next column of four, and blank lines
+at either end dropped. -/
 private def unindented (raw : Array (Nat × Nat × List Char)) : Prose :=
-  let lead (t : List Char) : Nat := (t.takeWhile (· == ' ')).length
-  let expand (t : List Char) : List Char :=
-    t.flatMap fun c => if c == '\t' then [' ', ' ', ' ', ' '] else [c]
-  let lines := raw.map fun (ln, col, t) => (ln, col, expand t)
-  let margin := lines.foldl (fun m (_, _, t) =>
-    if t.all (· == ' ') then m else some ((m.map (min · (lead t))).getD (lead t))) none
-  let m := margin.getD 0
-  let out := lines.map fun (ln, col, t) => (ln, col + min m t.length, t.drop m)
-  let first := (out.findIdx? fun (_, _, t) => !t.all (· == ' ')).getD out.size
-  let last := (out.toList.reverse.findIdx? fun (_, _, t) => !t.all (· == ' ')).getD out.size
+  let trimCr (t : List Char) : List Char := if t.getLast? == some '\r' then t.dropLast else t
+  let blank (t : List Char) : Bool := t.all fun c => c == ' ' || c == '\t'
+  let step (w : Nat) (c : Char) : Nat := if c == '\t' then w + 4 - w % 4 else w + 1
+  let lead (t : List Char) : Nat := (t.takeWhile fun c => c == ' ' || c == '\t').foldl step 0
+  let lines := raw.map fun (ln, col, t) => (ln, col, trimCr t)
+  let margin := (lines.foldl (fun m (_, _, t) =>
+    if blank t then m else some ((m.map (min · (lead t))).getD (lead t))) none).getD 0
+  -- The scalars a margin's columns take, and the spaces a tab across it leaves.
+  let cut (t : List Char) : Nat × List Char := Id.run do
+    let mut w := 0
+    let mut k := 0
+    for c in t do
+      if w ≥ margin || !(c == ' ' || c == '\t') then break
+      w := step w c
+      k := k + 1
+    return (k, List.replicate (w - margin) ' ' ++ t.drop k)
+  let out := lines.map fun (ln, col, t) =>
+    let (k, rest) := cut t
+    (ln, col + k, if blank rest then [] else rest)
+  let first := (out.findIdx? fun (_, _, t) => !t.isEmpty).getD out.size
+  let last := (out.toList.reverse.findIdx? fun (_, _, t) => !t.isEmpty).getD out.size
   let kept := out.extract first (out.size - last)
   { text := String.intercalate "\n" (kept.toList.map fun (_, _, t) => String.ofList t)
     lines := kept.map fun (ln, col, _) => (ln, col) }
@@ -1351,7 +1391,8 @@ public def proseIn (lang : Ir.CodeLang) (text : List Char) (line col : Nat) : Pr
     | some (.block o c _ _) =>
       let inner := (((text.drop o.length).reverse.drop c.length).dropWhile fun ch =>
         ch == ' ' || ch == '\t').reverse
-      let lines := placed inner line (col + o.length)
+      let lines := (placed inner line (col + o.length)).map fun (ln, cl, t) =>
+        (ln, cl, if t.getLast? == some '\r' then t.dropLast else t)
       let starred := (lines.extract 1 lines.size).all fun (_, _, t) =>
         let body := t.dropWhile fun ch => ch == ' ' || ch == '\t'
         body.isEmpty || body.head? == some '*'

@@ -1,10 +1,11 @@
 /-
 The native listing lexers against the installed Pygments release they mirror and its declared
 departures, over the snippets, seeded fuzz and `--docs` listings, by stream, scalar type and colour.
-Usage: lake build ScriptsModules && lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--without-departures] [--docs FILE...] | --record [--python P] | --selftest
+Usage: lake build ScriptsModules && lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S] [--lexer NAME] [--python P] [--any-version] [--without-departures] [--patterns] [--docs FILE...] | --record [--python P] | --selftest
 -/
 import LeanTex
 import LeanTex.Core.Highlight
+import LeanTex.Core.Highlight.Table
 import Lean.Data.Json
 import scripts.GenData
 import Tests.Support.Rand
@@ -461,15 +462,31 @@ structure Pool where
   words : Array String := #[]
   chars : Array Char := #[]
 
+/-- The scalars a table lexer's draws add to its snippets': the Unicode classes' members past ASCII,
+tabs, carriage returns and the other ASCII white space. -/
+def poolExtras : Array String :=
+  #["é", "λ", "\u00a0", "\u2028", "\u0663", "\u3000", "\t", "\r", "\r\n", "\x0b", "\x0c", "ℕ", "_é1"]
+
 def Pool.of (sources : Array String) : Pool := Id.run do
+  let mut lines : Std.HashSet String := {}
+  let mut words : Std.HashSet String := {}
+  let mut chars : Std.HashSet Char := {}
   let mut p : Pool := {}
-  for src in sources do
+  let drawn := Array.append sources poolExtras
+  for src in drawn do
     for line in src.splitOn "\n" do
-      unless p.lines.contains line do p := { p with lines := p.lines.push line }
-      for w in line.splitOn " " do
-        unless w.isEmpty || p.words.contains w do p := { p with words := p.words.push w }
+      unless lines.contains line do
+        lines := lines.insert line
+        p := { p with lines := p.lines.push line }
+      let whole := if poolExtras.contains src then [src] else []
+      for w in List.append (line.splitOn " ") whole do
+        unless w.isEmpty || words.contains w do
+          words := words.insert w
+          p := { p with words := p.words.push w }
     for c in src.toList do
-      unless p.chars.contains c do p := { p with chars := p.chars.push c }
+      unless chars.contains c do
+        chars := chars.insert c
+        p := { p with chars := p.chars.push c }
   return p
 
 /-- A table lexer's near misses: its snippets' lines whole or cut, and their words, joined. -/
@@ -759,6 +776,7 @@ structure Opts where
   departed : Bool := true
   docs : List String := []
   shown : Nat := 3
+  patterns : Bool := false
 
 def parse : List String → Opts → Except String Opts
   | [], o => .ok o
@@ -774,8 +792,92 @@ def parse : List String → Opts → Except String Opts
   | "--python" :: p :: rest, o => parse rest { o with python := p }
   | "--any-version" :: rest, o => parse rest { o with anyVersion := true }
   | "--without-departures" :: rest, o => parse rest { o with departed := false }
+  | "--patterns" :: rest, o => parse rest { o with patterns := true }
   | "--docs" :: rest, o => .ok { o with docs := o.docs ++ rest }
   | a :: _, _ => .error s!"unknown argument {a}"
+
+/-- The program Python's `re` answers the pattern comparison with: each request's match end and its
+groups' spans, `null` for no match or an unset group. -/
+def patternBridge : String := r#"import json
+import re
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as stream:
+    batch = json.load(stream)
+compiled, out = {}, []
+for source, flags, text, pos in batch:
+    rx = compiled.get((source, flags))
+    if rx is None:
+        rx = compiled[(source, flags)] = re.compile(source, flags)
+    m = rx.match(text, pos)
+    out.append(None if m is None else
+               [m.end(), [list(m.span(g)) if m.group(g) is not None else None
+                          for g in range(1, rx.groups + 1)]])
+json.dump(out, sys.stdout)
+"#
+
+def tablePatternsPath : System.FilePath := "testdata/highlight/table-patterns.json"
+
+/-- Each table lexer's every pattern against Python's `re` at every position of texts drawn from its
+snippets and their scalars: the match's end and every group's span. -/
+def comparePatterns (o : Opts) (cases : Array Case) : IO UInt32 := do
+  let sources ← match Json.parse (← IO.FS.readFile tablePatternsPath) with
+    | .ok j => pure j
+    | .error e => die s!"{tablePatternsPath} is not JSON: {e}"
+  let mut failed := false
+  for l in o.lexers do
+    let .table i := l | continue
+    let some lx := Table.lexer? i | die s!"table lexer {l.pygmentsAlias} does not decode"
+    let cls := PygmentsLexData.tableClasses.getD i ""
+    let some srcs := (sources.getObjVal? cls).toOption.bind (·.getArr?.toOption)
+      | die s!"{tablePatternsPath} has no patterns for {cls}"
+    if srcs.size != lx.patterns.size then die s!"{cls}: {srcs.size} sources for {lx.patterns.size} patterns"
+    let pool := Pool.of ((cases.filter (·.lexer == l)).map (·.source))
+    let mut seed := o.seed ^^^ UInt64.ofNat (i * 7919 + 17)
+    let mut texts : Array String := #[]
+    for k in [0:24] do
+      let d := poolCase pool { seed }
+      seed := d.seed
+      let text := if k % 2 == 0 then d.out else (pool.lines.getD (k % max 1 pool.lines.size) "")
+      texts := texts.push (String.ofList (text.toList.take 48))
+    let mut batch : Array Json := #[]
+    let mut keys : Array (Nat × String × Nat) := #[]
+    for k in [0:srcs.size] do
+      let some pair := (srcs[k]?).bind (·.getArr?.toOption) | die s!"{cls}: pattern {k} is malformed"
+      for text in texts do
+        for pos in [0:text.length + 1] do
+          batch := batch.push (Json.arr #[pair.getD 0 .null, pair.getD 1 .null, Json.str text, Lean.toJson pos])
+          keys := keys.push (k, text, pos)
+    let answers ← IO.FS.withTempDir fun dir => do
+      let input := dir / "patterns.json"
+      IO.FS.writeFile input (Json.arr batch).compress
+      let out ← IO.Process.output { cmd := o.python, args := #["-I", "-B", "-c", patternBridge, input.toString] }
+      if out.exitCode != 0 then die s!"re failed:\n{out.stderr}"
+      match Json.parse out.stdout with
+      | .ok (.arr a) => pure a
+      | _ => die "the re reply is not a list"
+    let mut misses := 0
+    let mut shownMiss := 0
+    for ((k, text, pos), ans) in keys.zip answers do
+      let p := lx.patterns.getD k default
+      let ours := (p.matchAt (Src.ofString text) pos).map fun (e, caps) =>
+        (e, (List.range p.groups).map fun g => (caps.getD (g + 1) none))
+      let theirs : Option (Nat × List (Option (Nat × Nat))) := match ans with
+        | .null => none
+        | .arr #[e, .arr gs] => (e.getNat?.toOption).map fun e => (e, gs.toList.map fun g =>
+            match g with
+            | .arr #[a, b] => do some (← a.getNat?.toOption, ← b.getNat?.toOption)
+            | _ => none)
+        | _ => some (0, [])
+      if ours != theirs then
+        misses := misses + 1
+        if shownMiss < o.shown then
+          shownMiss := shownMiss + 1
+          IO.println s!"highlight-diff: {cls} pattern {k} at {pos} of {repr text}: ours {repr ours}, re {repr theirs}"
+    if misses > 0 then failed := true
+    IO.println s!"highlight-diff: patterns lexer={l.pygmentsAlias} patterns={srcs.size} matches={keys.size} misses={misses}"
+  IO.println s!"highlight-diff: patterns {if failed then "FAIL" else "ok"}"
+  return if failed then 1 else 0
 
 def main (args : List String) : IO UInt32 := do
   if args == ["--selftest"] then return ← selftest
@@ -785,6 +887,7 @@ def main (args : List String) : IO UInt32 := do
     | .ok o => pure o
     | .error e => die e
   let mut cases := (← snippetCases).filter fun c => o.lexers.contains c.lexer
+  if o.patterns then return ← comparePatterns o cases
   for l in o.lexers do
     let pool := match l with
       | .table _ => Pool.of ((cases.filter (·.lexer == l)).map (·.source))

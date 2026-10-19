@@ -467,7 +467,7 @@ private def advance (root : σ) (step : Src → Machine σ → Machine σ) (s : 
 end Machine
 
 /-- Run a lexer from `stack`, top first, to the end of the text; a step that neither reads nor
-pops takes the fallback, which resets to the root. -/
+pops takes the fallback, which at a line feed resets to the root. -/
 public def driveFrom {σ : Type} (root : σ) (stack : List σ) (step : Src → Machine σ → Machine σ)
     (s : Src) : Array Raw :=
   let stack := if stack.isEmpty then [root] else stack

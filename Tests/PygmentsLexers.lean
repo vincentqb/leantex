@@ -118,13 +118,17 @@ def randomRe (depth : Nat) (seed : UInt64) : Console.Re × UInt64 :=
 
 /-- A body reading exactly one scalar, of the shapes a table lexer's repeats take. -/
 def randomUnit (seed : UInt64) : Regex.Node × UInt64 :=
-  let (k, s) := rand seed 6
+  let (k, s) := rand seed 10
   match k with
   | 0 => (.str #['a'], s)
   | 1 => (.notChar '\n', s)
   | 2 => (.set false #[.char 'a', .range 'b' 'c'], s)
   | 3 => (.set true #[.char 'b', .word], s)
   | 4 => (.cat (.str #['a']) (.look true true 0 (.str #['b'])), s)
+  | 5 => (.cat (.look false false 1 (.str #['a'])) (.any false), s)
+  | 6 => (.cat (.boundary true) (.set false #[.word]), s)
+  | 7 => (.cat .lineStart (.any true), s)
+  | 8 => (.cat (.str #['b']) .lineEnd, s)
   | _ => (.alt (.str #['b']) (.any true), s)
 
 /-- The first occurrence of `w`'s first `k` scalars at or after `fromPos`. -/

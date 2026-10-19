@@ -5,8 +5,8 @@ public import Std.Data.HashSet
 import LeanTex.Core.PygmentsLexData
 
 /-! Pygments' `RegexLexer` over a lexer's exported rule table (pygments/lexer.py; BSD-licensed:
-testdata/highlight/LICENSE-Pygments); a run of transitions reading nothing longer than the lexer has
-states, which never ends in Pygments, takes the fallback. -/
+testdata/highlight/LICENSE-Pygments); a run of transitions reading nothing takes the fallback at a
+stack it held before, where Pygments never ends, or past the square of the states plus one. -/
 namespace LeanTex.Core.Highlight.Table
 
 open Regex
@@ -99,6 +99,18 @@ public def lexer? (rules : String) (retype : Array String) : Option Lexer := do
       states := states.modify (states.size - 1) (·.push rule)
     | _ => failure
   if states.size != count || root ≥ count then failure
+  let inRange (n : Nat) : Bool := n < count
+  let opOk : Op → Bool
+    | .push st => inRange st
+    | .pop _ | .dup => true
+  let actOk : Action → Bool
+    | .relex stack => stack.all inRange
+    | .groups acts => acts.all fun
+      | .relex stack => stack.all inRange
+      | .skip | .token _ => true
+    | .none | .token _ => true
+  unless states.all (·.all fun r => r.pattern < patterns.size && r.next.all opOk && actOk r.action) do
+    failure
   return { patterns, states, root, retype := retype.foldl (·.insert ·) {} }
 
 end Decode
@@ -147,12 +159,13 @@ private def written (s : Src) (sub : Src → List Nat → Array Raw) (out : Arra
         | .relex stack => o := relexed s sub o a b stack
     return o
 
-/-- One step: rules tried until one reads a scalar or pops below where the step began, at most once
-per state, else the fallback. -/
+/-- One step: rules tried until one reads a scalar or pops below where the step began, else the
+fallback at a stack the step held before or past its bound. -/
 private def step (lx : Lexer) (sub : Src → List Nat → Array Raw) (s : Src) (m : Machine Nat) :
     Machine Nat := Id.run do
   let mut cur := m
-  for _ in [0:lx.states.size + 1] do
+  let mut held : Array (List Nat) := #[m.stack]
+  for _ in [0:(lx.states.size + 1) * (lx.states.size + 1)] do
     let rules := lx.states.getD (cur.top?.getD lx.root) #[]
     match firstMatch lx rules s cur.pos with
     | none => return cur.fallback s lx.root
@@ -160,6 +173,8 @@ private def step (lx : Lexer) (sub : Src → List Nat → Array Raw) (s : Src) (
       let out := written s sub cur.out cur.pos res r.action
       let next := r.next.foldl apply { cur with out, pos := res.1 }
       if next.pos > m.pos || next.depth < m.depth then return next
+      if held.contains next.stack then return next.fallback s lx.root
+      held := held.push next.stack
       cur := next
   return cur.fallback s lx.root
 

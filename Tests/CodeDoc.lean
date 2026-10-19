@@ -100,6 +100,20 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((prosePieces .java java).size == 3 &&
       (codePieces .java java).any (·.contains "/* A plain comment. */") &&
       (codePieces .java java).any (·.contains "\"/** not a doc */\""))
+  t "code files: a doc form inside a plain block comment or C's `#if 0` stays code"
+    (prosePieces .rust "/*\n/// x\nfn f() {}\n*/\nfn g() {}\n" == #[] &&
+      prosePieces .rust "/*\n/** y */\n*/\nfn g() {}\n" == #[] &&
+      prosePieces .c "#if 0\n/// x\n/** y */\n#endif\nint z;\n" == #[])
+  t "code files: a block doc ends at its closer, nested ones balanced where the lexer nests them"
+    (prosePieces .c "/** a */ int x;\n/** b /* c */\nint y;\n" == #["/** a */", "/** b /* c */"] &&
+      prosePieces .rust "/** a /* b */ c */\nfn f() {}\n" == #["/** a /* b */ c */"])
+  t "code files: a line doc's carriage returns and its text's tabs read as written, its margin's tabs as columns"
+    (proseOf .rust "/// One\r\n///\r\n///     code" == "One\n\n    code" &&
+      proseOf .rust "///\tTabbed\tinside" == "Tabbed\tinside" &&
+      proseOf .java "/**\r\n * Adds.\r\n */" == "Adds.")
+  let (strayC, strayCDs) := elabCode "t.c" "/* An invented licence. */\n// leantex: formats = html\nint x;\n"
+  t "code files: a directive after a leading block comment is named, not read"
+    (strayC.output.formats.isEmpty && strayCDs.any (·.kind == .W0387))
   let cSrc ← fixtureText "testdata/codedoc/langs/c-docs.c"
   t "code files: a C doc comment after a macro on its line stays in the macro"
     ((prosePieces .c cSrc).size == 3 &&

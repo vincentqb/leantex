@@ -266,14 +266,9 @@ def classify (cases : Array (String × String)) (oracle : Array (String × Array
 /-- The languages a parser of their own answers for. -/
 def oracleLangs : List Ir.CodeLang := [.lean, .python, .bash]
 
-def langItem : Ir.CodeLang → String
-  | .lean => "lean"
-  | .python => "python"
-  | .bash => "shell"
-  | .c => "c"
-  | .cpp => "cpp"
-  | .rust => "rust"
-  | .java => "java"
+/-- A language's tier item: its listing language, but the shell's and Lean's own names. -/
+def langItem (l : Ir.CodeLang) : String :=
+  if l == .bash then "shell" else if l == .lean then "lean" else l.listing
 
 def tierRows (rows : Array (String × String × String)) : Array Row :=
   oracleLangs.toArray.flatMap fun l =>

@@ -202,15 +202,17 @@ lines around a listing ship nowhere.
   above the script.
 - **Rust:** rustdoc's `///` and `/** … */` outer docs and `//!` and
   `/*! … */` inner docs that open a line, indented or not, are prose where
-  they stand; a run of line docs is one comment, and `////` and `/***` are
-  plain comments. Inner docs before any code describe the file.
+  they stand. Inner docs before any code describe the file.
 - **C and C++:** Doxygen's `/** … */`, `/*! … */`, `///` and `//!` comments
   that open a line are prose where they stand.
 - **Java:** a `/** … */` Javadoc comment that opens a line is prose where it
   stands.
 
-A block doc's prose drops its leading `*` decoration, and a line doc's its
-markers; then the margin its lines share goes.
+In these languages a run of line docs is one comment, `////` and `/***` are
+plain comments, and a doc form inside a plain comment, a string or a
+preprocessor line is no doc. A block doc's prose drops its leading `*`
+decoration, and a line doc's its markers; then the margin its lines share
+goes.
 
 A Lean page's documentation cites into its project's bibliography:
 `docs/references.bib` beneath the nearest directory above the file that holds
