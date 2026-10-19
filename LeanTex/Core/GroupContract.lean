@@ -22,15 +22,14 @@ private theorem groupPictureInSentence_alone (ctx : Ctx) (body : Array Raw) (pos
 
 private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hb : bodyIsBlock body = true) (hl : n ≠ Compat.linkedBoxRowMark)
-    (hmode : n ≠ Parse.modeEnv) :
+    (hb : bodyIsBlock body = true) (hl : n ≠ Compat.linkedBoxRowMark) :
     (elabBlocksGo ctx #[.env n body pos] 0 #[] #[] st.flowGen).run st =
       ((do
         let bs ← envGroup n ctx.palette false false false 0 (elabEnvArm ctx n body pos #[])
         elabBlocksGo ctx #[.env n body pos] 1 bs #[] st.flowGen) : EM (Array Block)).run st := by
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
-  simp [hl, hmode, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.opensInParagraph_empty_exact,
+  simp [hl, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.opensInParagraph_empty_exact,
     Ir.lastLeavesEndPe_empty_exact, endPeAt, parFollows, elabBlocksNext_blank, parContinues,
       textOpens, Parse.skipSpaces]
 
@@ -69,7 +68,7 @@ private theorem envGroup_state (n : String) (base : Palette) (inPar parEnd after
 public theorem elabBlocks_env_scope_id (ctx : Ctx) (st : ESt) (n : String) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hb : bodyIsBlock body = true) (hl : n ≠ Compat.linkedBoxRowMark)
-    (hmode : n ≠ Parse.modeEnv) (hfile : Parse.inputEnvFile? n = none)
+    (hfile : Parse.inputEnvFile? n = none)
     (hglobal : ((elabBlocks ctx #[.env n body pos]).run st).2.scope.globals = st.scope.globals) :
     ((elabBlocks ctx #[.env n body pos]).run st).2.scope = st.scope := by
   have hlen : openLengthScope ctx #[.env n body pos] =
@@ -77,7 +76,7 @@ public theorem elabBlocks_env_scope_id (ctx : Ctx) (st : ESt) (n : String) (body
     rw [openLengthScope, lengthScopeKeys?]
     rfl
   have hrun := elabBlocks_scope ctx st #[.env n body pos] hm hlen
-  have hgo := elabBlocksGo_env_alone ctx (enterBodyScope st) n body pos hm hp hb hl hmode
+  have hgo := elabBlocksGo_env_alone ctx (enterBodyScope st) n body pos hm hp hb hl
   rw [show (enterBodyScope st).flowGen = st.flowGen from rfl] at hgo
   let act := elabEnvArm ctx n body pos #[]
   let s1 := (envGroup n ctx.palette false false false 0 act).run (enterBodyScope st)

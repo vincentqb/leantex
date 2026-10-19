@@ -231,11 +231,6 @@ private theorem input_ne_linesEnv {n f : String} (hn : Parse.inputEnvFile? n = s
   rintro rfl
   simp [Parse.inputEnvFile?, Parse.linesEnv] at hn
 
-private theorem input_ne_modeEnv {n f : String} (hn : Parse.inputEnvFile? n = some f) :
-    n ≠ Parse.modeEnv := by
-  rintro rfl
-  simp [Parse.inputEnvFile?, Parse.modeEnv] at hn
-
 private theorem input_ne_linkedBoxRowMark {n f : String} (hn : Parse.inputEnvFile? n = some f) :
     n ≠ Compat.linkedBoxRowMark := by
   rintro rfl
@@ -393,7 +388,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
   · rename_i heq
     rw [hr] at heq
     cases heq
-    simp [input_ne_modeEnv hn, input_ne_linkedBoxRowMark hn, hn, hb, pictureInSentence_input ctx hn,
+    simp [input_ne_linkedBoxRowMark hn, hn, hb, pictureInSentence_input ctx hn,
       flushPara_empty ctx _ hm, Ir.opensInParagraph_empty_exact, Ir.lastLeavesEndPe_empty_exact,
       Ir.markInParagraph_false_id, endPeAt, envGroup]
   · rename_i heq; rw [hr] at heq; cases heq

@@ -12884,23 +12884,6 @@ private theorem linkedRowChoice_splice {raws : Array Raw} {i : Nat}
     simp only [nestedPars, ← nestedParsList_eq] at hs
     omega
 
-/-- An `\ifmmode`'s text branch spliced where it stands lowers the slice's measures. -/
-private theorem modeBranch_splice {raws : Array Raw} {i : Nat}
-    (h : i < raws.size) {n : String} {body : Array Raw} {pos : Pos}
-    (hr : raws[i] = .env n body pos) :
-    sliceWeight (raws.extract 0 i ++ body.extract 1 body.size ++ raws.extract (i + 1) raws.size) i
-        < sliceWeight raws i ∧
-      slicePars (raws.extract 0 i ++ body.extract 1 body.size ++ raws.extract (i + 1) raws.size) i
-        ≤ slicePars raws i := by
-  refine ⟨sliceWeight_splice h hr 1, ?_⟩
-  simp only [slicePars_eq]
-  have hs := sliceMeas_splice (μ := nestedPars) h (body.extract 1 body.size)
-  have he := extract_nested_le body 1 body.size
-  have hn := nestedParsList_le body.toList
-  rw [hr] at hs
-  simp only [nestedPars, ← nestedParsList_eq] at hs
-  omega
-
 /-- A group's blocks followed by the epoch its end restores. -/
 @[noinline] private def groupBlocks (base : Palette) (act : EM (Array Block)) :
     EM (Array Block) := do
@@ -14327,16 +14310,6 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .env n body epos =>
-      if n == Parse.modeEnv then
-        -- Text reads an `\ifmmode`'s text branch in place, as TeX expands it, ungrouped.
-        modeNote ctx' epos
-        let branch := body.extract 1 body.size
-        if !branch.any isParRaw && !bodyIsBlock branch then
-          return ← elabBlocksGo ctx' raws (i + 1) blocks (cur ++ branch) gen'
-        have _ := modeBranch_splice h hr
-        return ← elabBlocksGo ctx'
-          (raws.extract 0 i ++ body.extract 1 body.size ++ raws.extract (i + 1) raws.size)
-          i blocks cur gen'
       if hn : n = Compat.linkedBoxRowMark then
         -- premise: nativeLinkedRow_gated — macros and parameters own their arguments
         if nativeLinkedRow ctx' body then noteLinkedRow ctx' body epos

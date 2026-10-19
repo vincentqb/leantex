@@ -1236,6 +1236,9 @@ private def withGroupScope (arg : Bool) (act : Bool → Nat → M α) : M α := 
   (if arg then closeArgScope else closeScope) st
     (act (st.defaultAt matches .inside _) st.bodyNext { st with defaultAt := .none })
 
+/-- An `\ifmmode`'s text branch the walk read in text, spliced where it stood. -/
+private def modeSplice : String := "ifmmode text "
+
 /-- The environment a `\parbox` arm opens until the walk rewrites its body group. -/
 private def parboxPending : String := "parbox "
 
@@ -13806,6 +13809,8 @@ private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
     | some (.env n head p) =>
       if n == parboxPending then out.pop.push (.env "minipage" (head ++ body) p) else out.push r'
     | _ => out.push r'
+  | _, .env n body _ =>
+    if n == modeSplice then out ++ body else out.push r'
   | .group _ _, _ =>
     match out.back? with
     | some (.env n head p) =>
@@ -13909,7 +13914,12 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     return .group (body' ++ restores) p
   | .env n body p => do
     -- An `\ifmmode`'s text branch is text, its math branch a formula.
-    if n == Parse.modeEnv then return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+    if n == Parse.modeEnv then
+      -- Outside a definition text is text, so the text branch stands in place, ungrouped.
+      if (← get).inDef then return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+      sayOnce "cond:ifmmode" .N0114
+        "'\\ifmmode' is false outside a formula, so its text branch sets" p
+      return .env modeSplice (← rewriteList inBody body #[] body.toList 0 1) p
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
@@ -14825,6 +14835,7 @@ private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
   have ht : cursor.raws.toList.drop (cursor.index + 1) = rest := by
     rw [← List.drop_drop, hs]
     rfl
+  have hd : ("document" == modeSplice) = false := by decide
   simp only [rewriteCursor, hs]
   rw [rewriteList]
   case x_3 => simp
@@ -14832,7 +14843,7 @@ private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
   case x_5 => simp
   simp only [bind, StateT.bind, rewriteRaw_document_exact _ _ _ _ _ hp,
     RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody, closeScope,
-    closeDocumentBody, pushRewritten]
+    closeDocumentBody, pushRewritten, hd, Bool.false_eq_true, ite_false]
 
 private def closeLastDocument (cursor : RewriteCursor) (pos : Pos)
     (result : Array Raw × St) : Array Raw × St :=
