@@ -730,23 +730,82 @@ private inductive ApartAt where
   | work
   | post
 
+/-- How many works stand inside a citation's brackets before they close, every citation inside a
+work or a `\NAT@cmt`; `none` for any other citation or brackets left open. -/
+private def apartWorks (pipes : Bool) (n : Nat) : List Inline → Option Nat
+  | [] => none
+  | x :: rest =>
+    match citeOf? x with
+    | some (f, _) =>
+      if f.cmd == .bracket false then some n
+      else if f.cmd == .noteSep then apartWorks pipes n rest
+      else if (apartWork pipes x).isSome then apartWorks pipes (n + 1) rest
+      else none
+    | none => apartWorks pipes n rest
+
+/-- The style a content node leaves for the next to join, under any source location; an italic
+correction, which writes nothing, leaves the one before it. -/
+private def apartStyle (prev : Option Style) : Inline → Option Style
+  | .styled st _ => some st
+  | .italicCorr _ => prev
+  | .located _ body => match body.toList with
+    | [.styled st _] => some st
+    | _ => none
+  | _ => none
+
+/-- Whether a note's node spells as itself inside brackets: no `;` or `@` its markup would hide
+from the reader's escape, and no run of the style just before it, which would join it. -/
+private def apartContent (prev : Option Style) (x : Inline) : Bool :=
+  let said := Ir.plainTextOne x
+  let joins := match apartStyle none x, prev with
+    | some st, some p => st == p
+    | _, _ => false
+  !joins && (x matches .text _ || !(said.contains ';' || said.contains '@'))
+
 /-- Whether the siblings after a citation's opening bracket close it as `citeNotesApart` and
-`\citetext` set it: works separated by `; `, each with content before it and after a `\NAT@cmt`
-holding no citation, one work at least. -/
-private def apartGroup (pipes : Bool) (seen : Bool) (at_ : ApartAt) : List Inline → Bool
+`\citetext` set it, `left` works still to come: works separated by `; `, each with content before
+it and after a `\NAT@cmt`, a `; ` after the last work's note its content. -/
+private def apartGroup (pipes : Bool) (left : Nat) (at_ : ApartAt) (prev : Option Style) :
+    List Inline → Bool
   | [] => false
   | x :: rest =>
     match citeOf? x, at_ with
-    | some _, .pre =>
-      (apartWork pipes x).isSome && apartGroup pipes true .work rest
+    | some _, .pre => (apartWork pipes x).isSome && apartGroup pipes (left - 1) .work none rest
     | some (f, _), .work | some (f, _), .post =>
-      if f.cmd == .bracket false then seen
-      else if f.cmd == .noteSep && at_ matches .work then apartGroup pipes seen .post rest
+      if f.cmd == .bracket false then left == 0
+      else if f.cmd == .noteSep && at_ matches .work then apartGroup pipes left .post none rest
       else false
-    | none, .pre => apartGroup pipes seen .pre rest
-    | none, .work => x matches .text "; " && apartGroup pipes seen .pre rest
+    | none, .work => x matches .text "; " && left > 0 && apartGroup pipes left .pre none rest
     | none, .post =>
-      if x matches .text "; " then apartGroup pipes seen .pre rest else apartGroup pipes seen .post rest
+      if x matches .text "; " && left > 0 then apartGroup pipes left .pre none rest
+      else apartContent prev x && apartGroup pipes left .post (apartStyle prev x) rest
+    | none, .pre => apartContent prev x && apartGroup pipes left .pre (apartStyle prev x) rest
+
+/-- The works a citation group's brackets hold, where they close as `citeNotesApart` sets them. -/
+private def apartShape (pipes : Bool) (rest : List Inline) : Option Nat := do
+  let n ← apartWorks pipes 0 rest
+  if n > 0 && apartGroup pipes n .pre none rest then some n else none
+
+/-- A group whose notes stand apart at the head of `x :: rest`, or an author before one (`@k [p. 3;
+@b]`): its opening spelling, its works, whether the first spells its post-note alone, and the
+siblings to skip. -/
+private def apartRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inline) :
+    Option (String × Nat × Bool × Nat) := do
+  let (f, ks) ← citeOf? x
+  if f.cmd == .bracket true then
+    let n ← apartShape pipes rest
+    return ("[", n, false, 0)
+  if f.cmd != .author || f.full || f.up || !f.pre.isEmpty || !f.post.isEmpty then none
+  let [k] := ks.toList | none
+  let .text " " :: g :: more := rest | none
+  let (gf, _) ← citeOf? g
+  if gf.cmd != .bracket true then none
+  let y :: _ := more | none
+  let (yf, yks) ← citeOf? y
+  if yf.cmd != .year || yks != #[k] || !yf.pre.isEmpty then none
+  let n ← apartShape pipes more
+  let s ← CiteKey.spelling? k none
+  return ((if inTextAfter acc then "" else apart) ++ s ++ " [", n, true, 2)
 
 /-- A note's text inside a citation's brackets, its `;` and `@` escaped, which would part or cite. -/
 private def apartText (pipes : Bool) (s : String) : String :=
@@ -884,9 +943,10 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
     match (if cites then citeRun (site != .cell) acc x rest else none) with
     | some (spelled, n) => inlinesInto site cites (acc ++ spelled) none after n rest
     | none =>
-    if cites && (citeOf? x).any (·.1.cmd == .bracket true) &&
-        apartGroup (site != .cell) false .pre rest
-    then apartInto site cites (acc ++ "[") after rest else
+    match (if cites then apartRun (site != .cell) acc x rest else none) with
+    | some (opened, left, bare, skip) =>
+      apartInto site cites (acc ++ opened) after left .pre bare "; " skip rest
+    | none =>
     match x with
     | .hspace e keep =>
       let zero := Dim.MeasureValues.horizontal 0 0
@@ -933,27 +993,37 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
         rest
 
 /-- The siblings inside a citation's brackets whose notes stand apart from its works, Pandoc's
-`[see *a* @k, p. 3]`: each work its keys, the separator a comma, the notes as content; the walk
-resumes after the closing bracket. -/
-private def apartInto (site : Site) (cites : Bool) (acc : String) (after : Bool) :
-    List Inline → String
+`[see *a* @k, p. 3]`, `left` works to come: each work its keys, or its post-note alone after its
+author, the separator a comma, the notes as content; the walk resumes after the closing bracket. -/
+private def apartInto (site : Site) (cites : Bool) (acc : String) (after : Bool) (left : Nat)
+    (at_ : ApartAt) (bare : Bool) (sep : String) (skip : Nat) : List Inline → String
   | [] => acc
   | x :: rest =>
+    if skip > 0 then apartInto site cites acc after left at_ bare sep (skip - 1) rest else
     match citeOf? x with
     | some (f, _) =>
       if f.cmd == .bracket false then
         let close := if opensOn ((rest.head?.map Ir.plainTextOne).getD "") ||
           rest.head?.any bracketCite then apart else ""
         inlinesInto site cites (acc ++ "]" ++ close) none after 0 rest
-      else if f.cmd == .noteSep then apartInto site cites (acc ++ ", ") after rest
-      else apartInto site cites (acc ++ (apartWork (site != .cell) x).getD "") after rest
+      else if f.cmd == .noteSep then
+        apartInto site cites (acc ++ ", ") after left .post false sep 0 rest
+      else if bare then
+        let note := citeNote (site != .cell) f.post
+        apartInto site cites (acc ++ note) after (left - 1) .work false
+          (if note.isEmpty then "" else "; ") 0 rest
+      else
+        apartInto site cites (acc ++ (apartWork (site != .cell) x).getD "") after (left - 1) .work
+          false "; " 0 rest
     | none =>
       match x with
       | .text s =>
-        let said := keepAbbrevSpaces acc (apartText (site != .cell) s)
-        apartInto site cites (acc ++ said) after rest
-      | _ => apartInto site cites (inlineInto site cites acc false x) after rest
-
+        if s == "; " && left > 0 && !(at_ matches .pre) then
+          apartInto site cites (acc ++ sep) after left .pre false "; " 0 rest
+        else
+          let said := keepAbbrevSpaces acc (apartText (site != .cell) s)
+          apartInto site cites (acc ++ said) after left at_ false sep 0 rest
+      | _ => apartInto site cites (inlineInto site cites acc false x) after left at_ false sep 0 rest
 end
 
 /-- A trailing `#` escaped, so a heading's text never reads

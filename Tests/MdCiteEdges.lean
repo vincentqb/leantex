@@ -212,15 +212,27 @@ fixed point ({repr twin})"
     (hasStr twin "[see *also* @a; @b, p. 3[^1]]" && MarkdownDoc.emit back == twin &&
       pageText back == pageText d)
   for (body, spelled) in [("\\citep[see; \\emph{a}][]{a}", "[see\\; *a* @a]"),
-      ("\\citep[][\\emph{a}; b]{a}", "[@a, *a*\\; b]")] do
+      ("\\citep[][\\emph{a}; b]{a}", "[@a, *a*\\; b]"),
+      ("\\citetext{\\citealp[\\emph{a}][]{a}; \\citealp{b}}", "[*a* @a; @b]"),
+      ("\\citeauthor{a} \\citetext{\\citeyear[][p.~3]{a}; \\citealp[\\emph{see}][]{b}}",
+        "; *see* @b]"),
+      ("\\citep[][\\emph{a}; \\emph{b}]{a}", "[@a, *a*\\; *b*]")] do
     let (d, _) := bibBuild ("\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
 A " ++ body ++ " end.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n")
       #[("works", worksBib)]
     let twin := MarkdownDoc.emit d
     let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
-    t s!"tex twin: {repr body} spells its brackets' content once, reading back to its page \
-({repr twin})"
-      (hasStr twin spelled && pageText back == pageText d)
+    t s!"tex twin: {repr body} spells its brackets' content once, the twin its round trip's fixed \
+point ({repr twin})"
+      (hasStr twin spelled && MarkdownDoc.emit back == twin)
+  for (body, wrong) in [("\\citep[\\emph{a}\\emph{b}][]{a}", "*a**b*"),
+      ("\\citep[\\emph{x; y}][]{a}", "*x; y* @a")] do
+    let (d, _) := bibBuild ("\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A " ++ body ++ " end.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n")
+      #[("works", worksBib)]
+    t s!"tex twin: {repr body}, whose note a reader would read otherwise, spells no citation group \
+({repr (MarkdownDoc.emit d)})"
+      (!hasStr (MarkdownDoc.emit d) wrong)
   let (d, _) := bibBuild ("\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
 A \\citetext{\\citealp{a} and \\citealp{b}} end.\n\\bibliographystyle{plainnat}\n\
 \\bibliography{works}\n\\end{document}\n") #[("works", worksBib)]

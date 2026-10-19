@@ -3049,7 +3049,11 @@ private def citeNotesApart (form : Ir.CiteForm) (works : Ir.CiteCmd × Bool) (ke
   let work : Inline := .cite { form with cmd := works.1, pre := if pre.isSome then "" else form.pre
                                          post := if post.isSome then "" else form.post } keys
   let close := mark false
-  mark true ++ (match pre with | some ink => ink.push (.text " ") | none => #[]) ++ #[work] ++
+  let lead := match pre with
+    | some ink =>
+      (ink.toList.reverse.dropWhile (· matches .text " ")).reverse.toArray.push (.text " ")
+    | none => #[]
+  mark true ++ lead ++ #[work] ++
     (match post with | some ink => #[.cite { cmd := .noteSep } #[]] ++ ink | none => #[]) ++ close
 
 /-- Whether a citation note holds anything but text. -/
