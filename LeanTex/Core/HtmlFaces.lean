@@ -463,9 +463,11 @@ private def nestsRules (body : String) : Bool :=
   (Css.atoms body).any (·.head? == some '{')
 
 /-- Whether an at-rule's block may set text's font in a way this reading does not model: a
-registered property's initial value, or a page margin box's generated content. -/
+registered property's initial value but a length's, which selects no face, or a page margin box's
+generated content. -/
 private def unmodeledAt (name body : String) : Bool :=
-  name == "@property" || (name == "@page" && (nestsRules body || (body.splitOn "content").length > 1))
+  (name == "@property" && !(declsOf body).any (fun (p, v, _) => p == "syntax" && v == "\"<length>\"")) ||
+    (name == "@page" && (nestsRules body || (body.splitOn "content").length > 1))
 
 /-- Whether a value rolls back to an earlier origin's, which this reading does not model. -/
 private def reverts (v : String) : Bool :=

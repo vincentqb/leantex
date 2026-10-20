@@ -190,8 +190,8 @@ public structure PagePenalties where
   predisplay : Int := 10000
   deriving Repr, BEq, Inhabited, DecidableEq
 
-/-- A flow's web page layout, after the MyST site themes (jupyter-book/myst-theme 1.11 at their
-widest breakpoint; testdata/oracles/myst-themes.tsv). -/
+/-- A flow's web page layout, after the MyST site themes (@myst-theme/book and article 1.4.1 at
+their widest breakpoint; testdata/oracles/myst-themes.tsv). -/
 public inductive WebLayout where
   /-- book-theme's: the outline in a sidebar before the text, a free column after it. -/
   | book
@@ -212,9 +212,10 @@ public structure WebGrid where
   /-- Between the lead and the text, or the text and the margin column: the sidebar's 1.5rem, or
   the margin column's 0.75rem gap and its outline's 2.5rem inset. -/
   gapMilli : Nat
-  /-- After the text: article-grid's 3rem, 13rem and 3rem page outset, or article-left-grid's
-  margin column at its 10rem least and, its outline 388 px wide at a 1440 px viewport, 24rem. -/
+  /-- After the text, at least: none (book), or article-left-grid's margin column's 10rem. -/
   marginMinMilli : Nat
+  /-- After the text, at most: article-grid's 3rem, 13rem and 3rem page outset, or the 24rem the
+  article outline's 388 px at a 1440 px viewport rounds to. -/
   marginMilli : Nat
   deriving Repr, BEq, Inhabited
 
@@ -226,10 +227,9 @@ public def WebLayout.grid : WebLayout → WebGrid
     { proseCh := 72, insetMilli := 7250, leadMilli := 3000, gapMilli := 3250
       marginMinMilli := 10000, marginMilli := 24000 }
 
-public def WebLayout.ofName? : String → Option WebLayout
-  | "book" => some .book
-  | "article" => some .article
-  | _ => none
+public def WebLayout.names : List (String × WebLayout) := [("book", .book), ("article", .article)]
+
+public def WebLayout.ofName? (n : String) : Option WebLayout := WebLayout.names.lookup n
 
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where

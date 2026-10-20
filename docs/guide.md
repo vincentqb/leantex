@@ -8,8 +8,9 @@ layout of MyST's book theme: where the screen is wide enough, its outline
 stands in a sidebar before the text and stays in view as the page scrolls.
 `\page{ web = article }` takes the article theme's instead, the outline in a
 margin column after a wider text. A Markdown or code page sets its text at the
-layout's measure, sixty digits of its face wide (the article's seventy-two); a
-TeX page sets its text block's width unless it declares the layout.
+book layout's measure, sixty digits of its face wide; a TeX page sets its text
+block's width unless it declares a layout and no text width, which then sets
+that layout's measure, the article's seventy-two digits.
 
 Diagnostics identify the source location and unsupported construct. A warning
 repeated in the same words within one phase of a build prints once, at its

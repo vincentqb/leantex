@@ -2045,9 +2045,10 @@ def faceUseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "face use: a disclosure's summary asks both of its markers"
     (asksIn "" #[list "details" #[list "summary" #[.text "x"]]] '▸' &&
       asksIn "" #[list "details" #[list "summary" #[.text "x"]]] '▾')
-  t "face use: a sheet's nested rule, registered property or rollback leaves every face"
+  t "face use: a sheet's nested rule, registered property but a length or rollback leaves every face"
     (reads "p { font-weight: bold }" && !reads "p { & em { font-weight: bold } }" &&
       !reads "@property --w { syntax: '*'; inherits: true; initial-value: bold }" &&
+      reads "@property --w { syntax: \"<length>\"; inherits: true; initial-value: 0px }" &&
       !reads "em { font-style: revert }" &&
       !reads "@page { @top-center { content: \"x\" } }" && reads "@page { margin: 1cm }")
   t "face use: an import the sheet's end ends, in any case, leaves every face"

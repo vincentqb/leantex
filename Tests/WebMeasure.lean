@@ -63,26 +63,29 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       rooms.any (fun (c, sel, d) => c.isEmpty && sel == s!":where(main) :not({HtmlDoc.roomKeepers})" &&
         d == "--wide-room: 0px;") &&
       rooms.all (fun (c, sel, d) => d == "--wide-room: 0px;" || (screen c && sel == "main")) &&
-      !hasStr css "@property")
+      hasStr css "@property --wide-room { syntax: \"<length>\"; inherits: true; initial-value: 0px; }")
   t "web measure: the room reads the viewport and the reader's size alone, up to the free column"
     (rooms.any fun (_, _, d) => d == "--wide-room: clamp(0px, (100vw - 2 * 1.25rem - var(--measure)) / 2, 19rem);")
-  let bp := HtmlDoc.outlineBreakMilli doc 500
-  let grid := ["@media screen and (min-width: 56.25em)"]
+  let ch := HtmlDoc.chMilli none
+  let bp := HtmlDoc.outlineBreakMilli doc ch
+  let grid := ["@media screen and (min-width: 64.65em)"]
   t s!"web measure: the book layout's grid stands only where the viewport holds its sidebar ({bp})"
-    (bp == 2 * 1250 + 15000 + 1500 + 37250 &&
+    (ch == 640 && bp == 2 * 1250 + 15000 + 1500 + 60 * 640 + 7250 &&
       blocks.any (fun (c, sel, d) => c.isEmpty && sel == "nav.outline" && d.startsWith "display: none;") &&
       blocks.any (fun (c, sel, d) => c == grid && sel == "body" && hasStr d "display: grid;" &&
-        hasStr d "[lead-start] 15rem [lead-end] 1.5rem [main-start] var(--measure) [main-end]") &&
+        hasStr d "[lead-start] 15rem [lead-end] 1.5rem [main-start] min(var(--measure), 100% - 16.5rem) [main-end]" &&
+        hasStr d "padding-block-end: 0;") &&
       blocks.any (fun (c, sel, d) => c == grid && sel == "nav.outline" &&
         hasStr d "grid-column: lead;" && hasStr d "position: sticky;" && hasStr d "overflow-y: auto;") &&
-      blocks.any fun (c, sel, d) => c == grid && sel == "main" && hasStr d "grid-column: main;")
+      blocks.any fun (c, sel, d) => c == grid && sel == "main" && hasStr d "grid-column: main;" &&
+        hasStr d "margin: 0 0 4.350rem;")
   let (art, artDs) := elabStr ("\\documentclass{article}\\page{ web = article }\\begin{document}" ++
     "\\section{A}x\\section{B}y\\end{document}")
   let artCss := HtmlDoc.baseCss {} art
-  let artGrid := ["@media screen and (min-width: 62em)"]
+  let artGrid := ["@media screen and (min-width: 72.08em)"]
   t "web measure: a declared article layout takes article-theme's measure and margin column"
     (artDs.isEmpty && hasStr artCss "--measure: calc(72ch + 7.25rem);" &&
-      HtmlDoc.outlineBreakMilli art 500 == 2 * 1250 + 3000 + 3250 + 43250 + 10000 &&
+      HtmlDoc.outlineBreakMilli art ch == 2 * 1250 + 3000 + 3250 + 72 * 640 + 7250 + 10000 &&
       (cssBlocksIn artCss).any (fun (c, sel, d) => c == artGrid && sel == "nav.outline" &&
         hasStr d "grid-column: margin;") &&
       (cssBlocksIn artCss).any fun (c, sel, d) => c == artGrid && sel == "main" &&
@@ -90,6 +93,14 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, badDs) := elabStr ("\\documentclass{article}\\page{ web = magazine }\\begin{document}" ++
     "x\\end{document}")
   t "web measure: a layout no theme names is named" (badDs.any (·.kind == .E0323))
+  let (_, dimDs) := elabStr ("\\documentclass{article}\\page{ web = 3pt }\\begin{document}" ++
+    "x\\end{document}")
+  t "web measure: a value of the wrong type names the layouts"
+    (dimDs.any fun d => d.kind == .E0323 && hasStr d.message "'book' or 'article'")
+  let (_, deckDs) := elabStr ("\\documentclass{beamer}\\page{ web = book }\\begin{document}" ++
+    "\\begin{frame}{One}x\\end{frame}\\end{document}")
+  t "web measure: a layout declared on a page no flow sets is named"
+    (deckDs.any fun d => d.kind == .W0104 && hasStr d.message "'web'")
   let topTags := body.filterMap fun n => match n with
     | .elem tag attrs _ => some (tag, (classOf attrs).contains HtmlDoc.outlineClass)
     | _ => none

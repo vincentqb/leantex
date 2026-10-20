@@ -15749,6 +15749,7 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .modulo => "a count of at least 1"
   | .bottom => "'flush' or 'ragged'"
   | .lists => "'parskip' or 'standard'"
+  | .web => " or ".intercalate (Ir.WebLayout.names.map fun (n, _) => s!"'{n}'")
   | .rule | .frontRule => "\"x; y; width; height; colour\""
   | .tmargin | .bmargin | .textheight | .textheightUnder => "a dimension, or auto"
   | .vmarginratio | .hmarginratio => "a ratio such as 2:3, or auto"
@@ -15984,7 +15985,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       | .web, .ident v =>
         match Ir.WebLayout.ofName? v with
         | some l => spec := { spec with web := some l }
-        | none => evs := say evs .E0323 s!"'web' in '\\page' expects book or article, got '{v}'"
+        | none => evs := say evs .E0323 s!"'web' in '\\page' expects {pageExpects .web}, got '{v}'"
       | .bottom, .ident v =>
         match v with
         | "flush" => spec := { spec with flushBottom := some true }
@@ -19092,6 +19093,9 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
   if record.model == .flow && !sawPage then
     page := { page with hmargin := (page.width - surface.textBlock) / 2
                         webMeasure := surface != .tex || page.web.isSome }
+  if record.model != .flow && page.web.isSome then
+    diag ctx .W0104 "'web' in '\\page' sets nothing: only a flowing document takes a web layout, \
+and this class's page is a fixed stage or face" none
   if record.runningFurniture && !page.twoside && (headEven.isSome || footEven.isSome) then
     diag ctx .W0104 "a verso's own running head or foot ('pages = even') applies to two-sided pages, \
 and the pages here are one-sided; ignored" none

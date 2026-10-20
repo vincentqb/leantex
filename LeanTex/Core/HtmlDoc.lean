@@ -5978,21 +5978,15 @@ public def figureWordsNode (words : String) : Node :=
 /-- A page's inline padding on screen, in milli-rem. -/
 public def pageInlinePadMilli : Nat := 1250
 
-/-- The margin outline's inline size in milli-rem: about thirty characters of its small sans. -/
-public def outlineWidthMilli : Nat := 15000
-
-/-- The outline's gap to the text in milli-rem: the page's inline padding on both sides of it. -/
-public def outlineGapMilli : Nat := 2 * pageInlinePadMilli
-
 /-- The web layout a flow's page takes: as declared, else its class's. -/
 public def webLayoutOf (doc : Doc) : Ir.WebLayout := doc.page.web.getD doc.docClass.record.webLayout
 
-/-- The body face's digit width in milli-em, the `ch` a layout's measure counts; half an em where no
-face is known. -/
+/-- The body face's digit width in milli-em, the `ch` a layout's measure counts; where the page ships
+no face, DejaVu's 0.636 em rounded up, the text's `min` track yielding to a wider fallback. -/
 public def chMilli (fonts : Option Font.FontSet) : Nat :=
   match fonts with
   | some fs => fs.body.advance '0' * 1000 / max 1 fs.body.unitsPerEm
-  | none => 500
+  | none => 640
 
 /-- The content measure in milli-rem: the layout's prose width in the body face's digits where the
 surface leaves the text block undeclared, else the text block's width over the body size. -/
@@ -6038,12 +6032,16 @@ public def flowPageCss (doc : Doc) (ch : Nat) : String :=
   let (columns, navColumn, wide) := match webLayoutOf doc with
     | .book =>
       (s!"{fr} [lead-start] {remMilli g.leadMilli} [lead-end] {remMilli g.gapMilli} " ++
-        s!"[main-start] var(--measure) [main-end] minmax(0, {room}) {fr}", "lead",
+        s!"[main-start] min(var(--measure), 100% - {remMilli (g.leadMilli + g.gapMilli)}) [main-end] " ++
+        s!"minmax(0, {room}) {fr}", "lead",
        s!"clamp(0px, {free} - {remMilli (g.leadMilli + g.gapMilli)}, {room})")
     | .article =>
-      (s!"{fr} {remMilli g.leadMilli} [main-start] var(--measure) [main-end] " ++
+      (s!"{fr} {remMilli g.leadMilli} [main-start] " ++
+        s!"min(var(--measure), 100% - {remMilli (g.leadMilli + g.gapMilli + g.marginMinMilli)}) [main-end] " ++
         s!"{remMilli g.gapMilli} [margin-start] minmax({remMilli g.marginMinMilli}, {room}) " ++
         s!"[margin-end] {fr}", "margin", "0px")
+  -- registered, the room resolves on `main`, in the body face's `ch`, before a wide block inherits it
+  "@property --wide-room { syntax: \"<length>\"; inherits: true; initial-value: 0px; }\n" ++
   "main { --wide-room: 0px; }\n" ++
   s!":where(main) :not({roomKeepers}) \{ --wide-room: 0px; }\n" ++
   "@media screen {\n" ++
@@ -6061,8 +6059,9 @@ public def flowPageCss (doc : Doc) (ch : Nat) : String :=
     s!"nav.{outlineClass} a \{ text-decoration: none; }\n" ++
     s!"nav.{outlineClass} a:hover \{ text-decoration: underline; }\n" ++
     s!"@media screen and (min-width: {decMilli (outlineBreakMilli doc ch)}em) \{\n" ++
-    s!"  body \{ display: grid; grid-template-columns: {columns}; align-items: start; }\n" ++
-    s!"  main \{ grid-column: main; grid-row: 1; margin: 0; --wide-room: {wide}; }\n" ++
+    s!"  body \{ display: grid; grid-template-columns: {columns}; align-items: start;\n" ++
+    "    padding-block-end: 0; }\n" ++
+    s!"  main \{ grid-column: main; grid-row: 1; margin: 0 0 {quantaRem 6}; --wide-room: {wide}; }\n" ++
     s!"  nav.{outlineClass} \{ display: grid; grid-column: {navColumn}; grid-row: 1;\n" ++
     s!"    position: sticky; inset-block-start: 0; max-block-size: 100vh;\n" ++
     s!"    margin-block-start: -{quantaRem 3}; padding-block: {quantaRem 3};\n" ++

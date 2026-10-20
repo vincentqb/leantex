@@ -843,23 +843,32 @@ const codeWrap = async (page) => {
     why: (off.length ? off : runs).map(([k, r]) => k + ': ' + r.why).join('; ') };
 };
 
-// A flow page's outline and text stand as its MyST layout sets them (testdata/oracles/myst-themes.tsv):
-// at 1440 px the outline is shown, sticky, in the sidebar before the text (book) or the margin column
-// after it (article), its width and its gap to the text within the reference's tolerance, and a page
-// whose measure is its layout's sets the text that many digits wide; on a phone the outline is not
-// shown. The layout is the column the outline's grid item names.
+// On a flow page wider than its measure no wide block, text or outline passes the viewport, and the
+// outline and text stand as its MyST layout sets them within testdata/oracles/myst-themes.tsv's.
 const webRows = (process.env.LT_MYST || '').split('\n')
   .filter(l => l && !l.startsWith('#') && !l.startsWith('layout\t')).map(l => l.split('\t'));
 const webRef = (layout, key) => {
   const r = webRows.find(r => r[0] === layout && r[1] === key);
   return r && r[4] !== '-' ? { v: +r[2], tol: +r[4] } : null;
 };
-const webMeasured = new Set((process.env.LT_WEB_MEASURED || '').split(' ').filter(Boolean));
 const webRead = () => {
   const main = document.querySelector('body > main');
-  const nav = document.querySelector('body > nav.outline');
-  if (!main || !nav || /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType))
+  if (!main || /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType))
     return { flow: false };
+  const root = document.documentElement;
+  const rem = parseFloat(getComputedStyle(root).fontSize);
+  let grid = null;
+  for (const sheet of document.styleSheets) for (const r of sheet.cssRules)
+    if (r instanceof CSSMediaRule && [...r.cssRules].some(x => x.selectorText === 'body' &&
+        x.style.gridTemplateColumns)) {
+      const m = /min-width:\s*([\d.]+)em/.exec(r.conditionText);
+      if (m) grid = +m[1] * rem;
+    }
+  const nav = document.querySelector('body > nav.outline');
+  const over = Math.max(0, ...[main, nav, ...main.querySelectorAll('pre, .display, div.math-display, table.bt-natural')]
+    .filter(e => e && getComputedStyle(e).display !== 'none')
+    .map(e => Math.round(e.getBoundingClientRect().right - root.clientWidth)));
+  if (!nav) return { flow: true, nav: false, grid, over };
   const ns = getComputedStyle(nav);
   const col = ns.gridColumnStart;
   const probe = document.createElement('span');
@@ -869,57 +878,70 @@ const webRead = () => {
   main.appendChild(probe);
   const ch = probe.getBoundingClientRect().width / 100;
   probe.remove();
-  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
   const m = main.getBoundingClientRect(), n = nav.getBoundingClientRect();
   const ms = getComputedStyle(main);
   const text = m.width - parseFloat(ms.paddingLeft) - parseFloat(ms.paddingRight);
-  const room = document.documentElement.scrollHeight - innerHeight;
+  const room = root.scrollHeight - innerHeight;
   let stays = true;
-  if (room > 200) {
-    window.scrollTo(0, room);
+  for (const y of room > 0 ? [room / 2, room] : []) {
+    window.scrollTo(0, y);
     const t = nav.getBoundingClientRect();
-    stays = t.top > -1 && t.top < 1 && t.bottom > 0;
-    window.scrollTo(0, 0);
+    stays = stays && t.top > -1 && t.top < 1;
   }
-  return { flow: true, shown: ns.display !== 'none' && n.width > 0,
+  window.scrollTo(0, 0);
+  return { flow: true, nav: true, grid, over, shown: ns.display !== 'none' && n.width > 0,
     layout: col === 'lead' ? 'book' : col === 'margin' ? 'article' : null,
+    ownMeasure: getComputedStyle(root).getPropertyValue('--measure').includes('ch'),
     ch, rem, text, mainX: m.left, mainR: m.right, navX: n.left, navR: n.right, navW: n.width,
     sticky: ns.position === 'sticky' && stays };
 };
-const webLayout = async (page, fx) => {
+const webLayout = async (page) => {
   const settle = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
-  try {
-    await page.setViewportSize({ width: 1440, height: 900 });
+  const at = async (w) => {
+    await page.setViewportSize({ width: Math.round(w), height: 900 });
     await settle();
-    const wide = await page.evaluate(webRead);
-    if (!wide.flow || !wide.shown) return { ok: true, n: 0, why: '' };
+    return page.evaluate(webRead);
+  };
+  try {
+    const first = await at(1440);
+    if (!first.flow) return { ok: true, n: 0, why: '' };
     const why = [];
-    const near = (key, got) => {
-      const r = webRef(wide.layout, key);
-      if (r && Math.abs(got - r.v) > r.tol) why.push(`${key} ${got.toFixed(1)} against ${r.v}±${r.tol}`);
-    };
-    if (!wide.layout) why.push('the outline stands in no layout column at 1440 px');
-    else {
-      if (wide.layout === 'book') {
-        if (wide.navR > wide.mainX) why.push('the book outline does not stand before the text');
-        near('nav-gap@1440', wide.mainX - wide.navR);
-      } else {
-        if (wide.navX < wide.mainR) why.push('the article outline does not stand after the text');
-        near('nav-gap@1440', wide.navX - wide.mainR);
-      }
-      near('nav-width@1440', wide.navW);
-      if (!wide.sticky) why.push('the outline does not stay at the viewport top as the page scrolls');
-      if (webMeasured.has(fx) || wide.layout === 'article') {
-        const r = webRef(wide.layout, 'prose-ch');
-        const inset = +((webRows.find(r => r[0] === wide.layout && r[1] === 'prose-inset') || [])[2] || 0);
-        if (r) near('prose-ch', (wide.text - inset * wide.rem) / wide.ch);
+    const widths = [1000, 1100, 1200, 1440];
+    if (first.grid) widths.push(first.grid - 1, first.grid + 1, first.grid + 40);
+    for (const w of widths) {
+      const r = await at(w);
+      if (r.over > 1) why.push(`a block passes the viewport by ${r.over} px at ${Math.round(w)} px`);
+    }
+    if ((await at(390)).shown) why.push('the outline is shown on a phone');
+    const wideAt = first.grid && first.grid + 1 > 1440 ? first.grid + 1 : 1440;
+    const wide = await at(wideAt);
+    if (wide.nav) {
+      const near = (key, got) => {
+        const r = webRef(wide.layout, key);
+        if (r && wideAt === 1440 && Math.abs(got - r.v) > r.tol)
+          why.push(`${key} ${got.toFixed(1)} against ${r.v}±${r.tol}`);
+      };
+      if (!wide.shown || !wide.layout) why.push(`the outline stands in no layout column at ${wideAt} px`);
+      else {
+        if (wide.layout === 'book') {
+          if (wide.navR > wide.mainX) why.push('the book outline does not stand before the text');
+          near('nav-gap@1440', wide.mainX - wide.navR);
+        } else {
+          if (wide.navX < wide.mainR) why.push('the article outline does not stand after the text');
+          near('nav-gap@1440', wide.navX - wide.mainR);
+        }
+        near('nav-width@1440', wide.navW);
+        if (!wide.sticky) why.push('the outline does not stay at the viewport top as the page scrolls');
       }
     }
-    await page.setViewportSize({ width: 390, height: 844 });
-    await settle();
-    const phone = await page.evaluate(webRead);
-    if (phone.shown) why.push('the outline is shown on a phone');
-    return { ok: why.length === 0, n: 1, why: (wide.layout || 'none') + ': ' + (why.join('; ') || 'as the reference') };
+    if (wide.nav && wide.ownMeasure && wide.layout) {
+      const r = webRef(wide.layout, 'prose-ch');
+      const inset = +((webRows.find(r => r[0] === wide.layout && r[1] === 'prose-inset') || [])[2] || 0);
+      if (r && Math.abs((wide.text - inset * wide.rem) / wide.ch - r.v) > r.tol)
+        why.push(`prose ${((wide.text - inset * wide.rem) / wide.ch).toFixed(2)} ch against ${r.v}±${r.tol}`);
+    }
+    return { ok: why.length === 0, n: 1,
+      why: (wide.layout || 'single column') + ': ' + (why.join('; ') || 'as the reference') };
   } finally {
     await page.setViewportSize({ width: 1280, height: 720 });
   }
@@ -1992,7 +2014,7 @@ async function runReader(name) {
       out(fx, name, 'deck-links', cell(links));
       if (links.after) throw links.after;
       out(fx, name, 'code-wrap', cell(await codeWrap(page)));
-      out(fx, name, 'web-layout', cell(await webLayout(page, fx)));
+      out(fx, name, 'web-layout', cell(await webLayout(page)));
       const light = await page.evaluate(readColors);
       await page.evaluate((follows) => { document.documentElement.dataset.ltxFollows = follows; },
         light.bg === lightSurface && light.fg === lightInk ? 'tokens' : 'declared');
@@ -2459,7 +2481,6 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
   try
     copyTree "testdata/corpus" (work / "corpus")
     let mut fixtures : Array String := #[]
-    let mut measured : Array String := #[]
     let mut unbuilt : Array String := #[]
     let mut faceFailures : Array Scoreboard.BrowserFace := #[]
     for (name, path) in ← Scoreboard.Hermetic.corpusDocs (work / "corpus") do
@@ -2470,7 +2491,6 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
       let log := r.stdout ++ r.stderr
       faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
       if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
-      if path.extension != some "tex" then measured := measured.push name
       -- A deck's stage premise, read off TeX source: what its PDF build does not vouch for.
       if path.extension == some "tex" then
         if let some breakable ← breakableFrames path then
@@ -2535,8 +2555,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
                    ("LT_CODE_NARROW", some (control / "code-narrow.html").toString),
                    ("LT_DECK_KEYS", some (control / "deck-keys.html").toString),
                    ("LT_DECK_THIN", some (control / "deck-thin.html").toString),
-                   ("LT_MYST", some (← IO.FS.readFile mystPath)),
-                   ("LT_WEB_MEASURED", some (String.intercalate " " measured.toList))] }
+                   ("LT_MYST", some (← IO.FS.readFile mystPath))] }
       if out.exitCode != 0 then
         IO.eprintln s!"html-oracle: the probe exited {out.exitCode}:\n{out.stderr}"
       probe := parseProbe out.stdout
