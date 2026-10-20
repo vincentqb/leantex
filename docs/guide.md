@@ -6,8 +6,9 @@ A successful HTML build is one portable file containing its fonts, images
 and styles. Ordinary hyperlinks remain links. A document's web page takes the
 layout of MyST's book theme: where the screen is wide enough, its outline
 stands in a sidebar before the text and stays in view as the page scrolls.
-`\page{ web = article }` takes the article theme's instead, the outline in a
-margin column after a wider text. A Markdown or code page sets its text at the
+`\page{ web = article }`, or `web: article` in a Markdown document's metadata
+block, takes the article theme's instead, the outline in a margin column after a
+wider text. A Markdown or code page sets its text at the
 book layout's measure, sixty digits of its face wide; a TeX page sets its text
 block's width unless it declares a layout and no text width, which then sets
 that layout's measure, the article's seventy-two digits.

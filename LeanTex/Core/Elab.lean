@@ -7385,7 +7385,7 @@ private def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
       || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
-      || n == Parse.citeSetupMark
+      || n == Parse.citeSetupMark || n == Parse.markdownWebControl
       -- Definitions and counter commands expand only through the block walk.
       || n == "define" || counterCtrl n
       || (blockHeading? n).isSome
@@ -17049,6 +17049,8 @@ public inductive PDecl where
   | tokens (body : Option (Array Raw)) (pos : Pos)
   | chrome (body : Option (Array Raw)) (pos : Pos)
   | page (body : Option (Array Raw)) (pos : Pos)
+  /-- A markdown document's `web` metadata, as written. -/
+  | webLayout (name : String) (pos : Pos)
   | fonts (body : Option (Array Raw)) (pos : Pos)
   | pdfmeta (body : Option (Array Raw)) (pos : Pos)
   /-- hyperref's metadata lowered by Compat: the construct, its link styles, its dates and trapping
@@ -17300,6 +17302,12 @@ private def scanDeclStep (preamble : Array Raw) (i : Nat) (h : i < preamble.size
       out := out.push (.pageGround none pos)
     else if let some (.ink, source) := marker then
       out := out.push (.bodyStart source pos)
+    else if name == Parse.markdownWebControl then
+      match preamble[i]? with
+      | some (.group body _) =>
+        i := i + 1
+        out := out.push (.webLayout (rawSrc body).trimAscii.toString pos)
+      | _ => out := out.push (.webLayout "" pos)
     else if runningCtrl.contains name then
       let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
       let j := skipSpaces preamble k
@@ -18087,6 +18095,13 @@ draws; skipped" pos
   | .chrome none pos => stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos)
   | .page (some src) pos => stepDone s.ctx (stepPage s src pos)
   | .page none pos => stepDone s.ctx (stepMissing s "page" "a {...} block" pos)
+  | .webLayout v pos =>
+    match Ir.WebLayout.ofName? v with
+    | some l => return { s with page := { s.page with web := some l } }
+    | none =>
+      diag s.ctx .E0323 (Diag.say .E0323 .value (Diag.Name.value v) (obj := some (some .key, "web")))
+        pos (help := some ("write " ++ " or ".intercalate (Ir.WebLayout.names.map fun (n, _) => s!"'web: {n}'")))
+      return s
   | .fonts (some body) pos => stepDone s.ctx (stepFonts s body pos)
   | .fonts none pos => stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos)
   | .pictures body pos =>
@@ -19079,6 +19094,12 @@ private def applyTemplate (s : PreState) : Compat.TemplateDecl → EM PreState
   | .block element r colors file pos => applyBlockShape s element r colors file pos
   | .titlePage .. => pure s
 
+/-- How many raws open a document with its markdown metadata's declarations. -/
+private def mdDeclPrefix (raws : Array Raw) : Nat :=
+  match raws[0]?, raws[1]? with
+  | some (Raw.ctrl n _), some (Raw.group _ _) => if n == Parse.markdownWebControl then 2 else 0
+  | _, _ => 0
+
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
     (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
@@ -19095,7 +19116,10 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
         | .env _ b _ => b
         | _ => #[]
       (raws.extract 0 idx, bodyRaws, raws.extract (idx + 1) raws.size)
-    | none => (#[], raws, #[])
+    | none =>
+      -- A markdown document's metadata declarations stand before its text.
+      let k := mdDeclPrefix raws
+      (raws.extract 0 k, raws.extract k raws.size, #[])
   let decls := scanDecls file preamble
   -- Read before the fold, so a `\pictures` line binds the settings above it.
   let picTool0 : Option String :=

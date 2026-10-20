@@ -93,6 +93,24 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, badDs) := elabStr ("\\documentclass{article}\\page{ web = magazine }\\begin{document}" ++
     "x\\end{document}")
   t "web measure: a layout no theme names is named" (badDs.any (·.kind == .E0323))
+  let (mdArt, mdArtDs) := elabMd ("---\nweb: article\n---\n\n" ++ guide)
+  let mdArtCss := HtmlDoc.baseCss {} mdArt
+  t "web measure: a markdown document's metadata declares the article layout as the TeX page's does"
+    (mdArtDs.isEmpty && mdArt.page.web == some .article && hasStr mdArtCss "--measure: calc(72ch + 7.25rem);" &&
+      (cssBlocksIn mdArtCss).any fun (c, sel, d) => c == artGrid && sel == "nav.outline" &&
+        hasStr d "grid-column: margin;")
+  let (mdBook, mdBookDs) := elabMd ("---\nweb: book\n---\n\n" ++ guide)
+  t "web measure: a markdown document declaring the book layout ships the page declaring none"
+    (mdBookDs.isEmpty && mdBook.page.web == some .book &&
+      (HtmlDoc.emit {} mdBook).1 == (HtmlDoc.emit {} doc).1)
+  let (mdBad, mdBadDs) := elabMd ("---\nweb: magazine\n---\n\n" ++ guide)
+  t s!"web measure: a markdown layout no theme names is named as the TeX one is ({mdBadDs.map (·.message)})"
+    (mdBad.page.web.isNone && mdBadDs.size == 1 && mdBadDs.all fun d => d.kind == .E0323 &&
+      d.message == "invalid value 'magazine' for key web" && (d.span.map (·.pos.line)) == some 2 &&
+      (d.help.getD "") == "write 'web: book' or 'web: article'")
+  let (_, mdListDs) := elabMd ("---\nweb: [book, article]\n---\n\n" ++ guide)
+  t "web measure: a markdown layout that is no single name is named unread"
+    (mdListDs.any fun d => d.kind == .W0307 && hasStr d.message "'web'")
   let (_, dimDs) := elabStr ("\\documentclass{article}\\page{ web = 3pt }\\begin{document}" ++
     "x\\end{document}")
   t "web measure: a value of the wrong type names the layouts"

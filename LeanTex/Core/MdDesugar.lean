@@ -1050,7 +1050,8 @@ public inductive Role where
   | included
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- What a markdown file's metadata declares for its citations, and the keys it names unread. -/
+/-- What a markdown file's metadata declares for its citations and its web layout, and the keys it
+names unread. -/
 public structure MetaRead where
   sources : Array String := #[]
   bibPos : Pos := { line := 1, col := 1 }
@@ -1058,6 +1059,8 @@ public structure MetaRead where
   decls : Array CiteDecl := #[]
   nocite : Option (Array String × Pos) := none
   title : Option (Array Inl × Pos) := none
+  /-- The web layout `web` names, as written. -/
+  web : Option (String × Pos) := none
   /-- Each key the reader took, with its field's site, which only a citation reads. -/
   taken : Array (String × Pos) := #[]
   diags : Array Diag := #[]
@@ -1080,11 +1083,14 @@ private def MetaValue.bool? : MetaValue → Option Bool
 public def metaKeys : List (String × Role) :=
   [("bibliography", .document), ("biblio-style", .document), ("natbiboptions", .document),
    ("nocite", .document), ("nocite", .included), ("reference-section-title", .document),
-   ("link-citations", .document), ("link-citations", .included)]
+   ("link-citations", .document), ("link-citations", .included), ("web", .document)]
 
-/-- What a metadata block's fields declare for citations, read as Pandoc reads them; every other
-key is named, as is a key written twice, which takes its last value, and in a document a citation
-key with no bibliography to act on; a key ending in `_` is ignored. -/
+/-- The keys only a document's citations read. -/
+private def citationKey (key : String) : Bool := key != "web"
+
+/-- What a metadata block's fields declare for citations, read as Pandoc reads them, and for the
+web layout; every other key is named, as is a key written twice, which takes its last value, and in
+a document a citation key with no bibliography to act on; a key ending in `_` is ignored. -/
 public def metaRead (file : String) (role : Role) (fields : Array MetaField) : MetaRead := Id.run do
   let mut last : Std.HashMap String Nat := {}
   for (f, k) in fields.zipIdx do last := last.insert f.key k
@@ -1102,7 +1108,9 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
     let known := metaKeys.any fun (k, r) => k == f.key && r == role
     if !known then
       let csl := f.key == "csl" || f.key == "citation-style"
-      let why := if role == .included && metaKeys.any (·.1 == f.key) then
+      let why := if role == .included && f.key == "web" then
+          "an included file's page takes the including document's layout"
+        else if role == .included && metaKeys.any (·.1 == f.key) then
           "an included file's citations take the including document's bibliography and style"
         else if csl then "no CSL processor reads it; citations set in a BibTeX style"
         else "its value does not reach the page"
@@ -1111,7 +1119,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         else none
       out := { out with diags := out.diags.push (unread f why help) }
       continue
-    if role == .document && !declared && f.key != "bibliography" then
+    if role == .document && !declared && f.key != "bibliography" && citationKey f.key then
       out := { out with diags := out.diags.push (unread f "the document declares no bibliography"
         (some "name the .bib file the citations take, as 'bibliography: refs.bib'")) }
       continue
@@ -1165,8 +1173,9 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         out := { out with diags := out.diags.push d }
       | some true => pure ()
       | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
+    | "web", .scalar v => out := { out with web := some (v.trimAscii.toString, f.pos) }
     | _, _ => out := { out with diags := out.diags.push (unread f "its value is not one the key takes") }
-    if out.diags.size == before && f.key != "nocite" then
+    if out.diags.size == before && f.key != "nocite" && citationKey f.key then
       out := { out with taken := out.taken.push (f.key, f.pos) }
   return out
 
@@ -1178,6 +1187,12 @@ public def MetaRead.opening (m : MetaRead) : Array Raw :=
 public def MetaRead.nociteRaws (m : MetaRead) : Array Raw :=
   match m.nocite with
   | some (keys, q) => citeCmdRaws "nocite" #[] #[] keys q
+  | none => #[]
+
+/-- The web layout the metadata declares, as the bridged control the elaborator reads. -/
+public def MetaRead.layout (m : MetaRead) : Array Raw :=
+  match m.web with
+  | some (v, q) => #[.ctrl Parse.markdownWebControl q, .group #[.word v q] q]
   | none => #[]
 
 /-- The raws a file opens with, closed by a paragraph end. -/
@@ -1325,7 +1340,7 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
         #[route file "refs" "a '::: {#refs}' division places the reference list, and no \
 bibliography is declared for this file: nothing sets there" p] else #[]
     | none => #[]
-  (m.prelude ++ body.1 ++ m.tail file dialect cited placed.isSome,
+  (m.layout ++ m.prelude ++ body.1 ++ m.tail file dialect cited placed.isSome,
     read.2 ++ m.diags ++ unused ++ body.2 ++ unplaced)
 
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/

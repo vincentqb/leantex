@@ -964,6 +964,10 @@ public def citeSetupMark : String := "citation setup"
 and its file's, unforgeable because it holds a space. -/
 public def markdownImageControl : String := "markdown image"
 
+/-- The control a markdown document's `web` metadata desugars to, then its value's group, read where
+`\page{ web = … }` is, unforgeable because it holds a space. -/
+public def markdownWebControl : String := "markdown web layout"
+
 /-- A citation setup as the raws that carry it: its mark, then a group of a word per declaration. -/
 public def citeSetupRaws (ds : Array CiteDecl) (pos : Pos) : Array Raw :=
   #[.ctrl citeSetupMark pos, .group (ds.map fun d => .word d.spelling pos) pos]

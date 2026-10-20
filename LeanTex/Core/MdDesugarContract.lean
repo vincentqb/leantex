@@ -52,7 +52,8 @@ public structure Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
     "toprule", "midrule", "bottomrule", "footnote"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
-    [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl]
+    [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl,
+      Parse.markdownWebControl]
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
@@ -884,6 +885,18 @@ private theorem nociteRaws_adm (m : MetaRead) : Adm d m.nociteRaws := by
   · exact citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls]) adm_empty adm_empty
   · exact adm_empty
 
+private theorem layout_adm (m : MetaRead) : Adm d m.layout := by
+  unfold MetaRead.layout
+  split
+  · exact adm_lit (by
+      intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl
+      · simp only [Vocab.admits, Bool.or_eq_true]
+        exact Or.inr (List.contains_iff_mem.mpr (by simp [vocabularyFor, vocabulary]))
+      · exact adm_group _ _ fun r hr => by simp at hr; subst hr; rfl)
+  · exact adm_empty
+
 private theorem prelude_adm (m : MetaRead) : Adm d m.prelude := by
   unfold MetaRead.prelude
   split
@@ -934,7 +947,7 @@ public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect :
     ∀ r ∈ (desugar file input dialect role citing known false).1,
       (vocabularyFor dialect).admits r = true := by
   unfold desugar bodyRaws
-  exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
+  exact adm_append (adm_append (adm_append (layout_adm _) (prelude_adm _)) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
     adm_empty)) (tail_adm _ _ _ _)
 
 public theorem read_desugar_exact (file input : String) : read file input = desugar file input := by
@@ -1038,6 +1051,15 @@ private theorem list_starts (m : MetaRead) (cited : Bool) : Starts (m.list cited
   · exact Or.inl rfl
   · exact Or.inr ⟨.par m.bibPos, by simp, Or.inl ⟨_, rfl⟩⟩
 
+private theorem layout_starts (m : MetaRead) : Starts m.layout := by
+  unfold MetaRead.layout
+  split
+  · rename_i q _
+    refine Or.inr ⟨.ctrl Parse.markdownWebControl q, by simp, Or.inr (Or.inl ⟨_, _, rfl, ?_, ?_⟩)⟩
+    · simp [vocabulary]
+    · simp [Parse.markdownWebControl, Parse.markdownImageControl]
+  · exact Or.inl rfl
+
 private theorem prelude_starts (m : MetaRead) : Starts m.prelude := by
   unfold MetaRead.prelude
   split
@@ -1064,7 +1086,7 @@ public theorem desugar_blockStart_contract (file input : String) (dialect : Dial
     (h : (desugar file input dialect role citing known false).1 ≠ #[]) :
     ∃ r ∈ (desugar file input dialect role citing known false).1, BlockStart r := by
   unfold desugar bodyRaws at h ⊢
-  exact (starts_append (starts_append (prelude_starts _)
+  exact (starts_append (starts_append (starts_append (layout_starts _) (prelude_starts _))
     (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))
     (tail_starts _ _ _ _ _)).resolve_left h
 
@@ -1073,7 +1095,8 @@ public theorem vocabulary_contract :
       Parse.splitOpen? n = none ∧ Parse.splitClose? n = none) ∧
     (∀ n ∈ vocabulary.ctrls, ' ' ∉ n.toList) ∧
     (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl ∨
-      n = Parse.citeSetupMark ∨ n = Parse.markdownImageControl) ∧ ' ' ∈ n.toList) ∧
+      n = Parse.citeSetupMark ∨ n = Parse.markdownImageControl ∨ n = Parse.markdownWebControl) ∧
+      ' ' ∈ n.toList) ∧
     (∀ n ∈ (vocabularyFor .document).requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
       ' ' ∈ n.toList) := by
   refine ⟨?_, ?_, ?_, ?_⟩
@@ -1092,8 +1115,9 @@ public theorem vocabulary_contract :
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [Parse.headingControl, Parse.headingControl?]
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-      rcases hn with rfl | rfl | rfl <;>
-        simp [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl]
+      rcases hn with rfl | rfl | rfl | rfl <;>
+        simp [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl,
+          Parse.markdownWebControl]
   · intro n hn
     simp only [vocabularyFor, Dialect.divisions, ↓reduceIte, List.mem_cons, List.not_mem_nil,
       or_false] at hn
