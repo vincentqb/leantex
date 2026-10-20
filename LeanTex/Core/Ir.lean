@@ -274,9 +274,46 @@ public structure PageSpec where
   blockWidth : Option Length := none
   /-- The text block's width as thousandths of the page's (geometry's `hscale`), centred likewise. -/
   widthScale : Option Nat := none
+  /-- Whether pages are two-sided: an even page is a verso, its margins and running fields mirrored. -/
+  twoside : Bool := false
+  /-- The left margin's share against the right's of the width the text block leaves, on a recto
+  (geometry's `hmarginratio`); `none` centres the block, or splits 2:3 on two-sided pages. -/
+  sideRatio : Option (Nat × Nat) := none
+  /-- Whether the running head shows the headings' marks (LaTeX's `headings` page style). -/
+  markHeads : Bool := false
+  /-- Whether a chapter opens on a recto of two-sided pages (book.cls's `openright`). -/
+  openRight : Bool := false
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin
+
+/-- The left margin's share against the right's: as declared, else 2:3 on two-sided pages, as the
+standard classes' `\oddsidemargin` and geometry's `twoside` split it. -/
+public def PageSpec.sides (spec : PageSpec) : Option (Nat × Nat) :=
+  spec.sideRatio.orElse fun _ => if spec.twoside then some (2, 3) else none
+
+/-- A recto's left margin: the width the text block leaves, split by the sides' ratio. -/
+public def PageSpec.rectoLeft (spec : PageSpec) : Length :=
+  match spec.sides with
+  | some (a, b) =>
+    let free : Length := 2 * spec.hmargin
+    if a + b == 0 then spec.hmargin else free * (a : Int) / ((a + b : Nat) : Int)
+  | none => spec.hmargin
+
+/-- The text block's left edge on the page numbered `folio`: a verso's is the recto's right margin. -/
+public def PageSpec.leftMargin (spec : PageSpec) (folio : Nat) : Length :=
+  if spec.twoside && folio % 2 == 0 then 2 * spec.hmargin - spec.rectoLeft else spec.rectoLeft
+
+/-- Two-sided pages mirror: a verso's left margin and its recto's sum to the width the block
+leaves, so the inner margins of facing pages match. -/
+public theorem PageSpec.leftMargin_mirror (spec : PageSpec) (k : Nat) (h : spec.twoside = true) :
+    spec.leftMargin (2 * k + 2) + spec.leftMargin (2 * k + 1) = 2 * spec.hmargin := by
+  have he : (2 * k + 2) % 2 = 0 := by omega
+  have ho : ((2 * k + 1) % 2 == 0) = false := by
+    rw [show (2 * k + 1) % 2 = 1 by omega]; rfl
+  simp only [PageSpec.leftMargin, h, he, ho, Bool.true_and, Bool.and_false, beq_self_eq_true,
+    ite_true, ite_false, Bool.false_eq_true]
+  length_omega
 
 /-- Whether a declaration named the page's size on either axis. -/
 public def PageSpec.sized (spec : PageSpec) : Bool := spec.widthSized || spec.heightSized
@@ -921,13 +958,16 @@ public structure PageState where
   folio : Nat := 1
   furniture : Bool := true
   style : NumStyle := .arabic
+  /-- Whether the page is set in the plain style, as a chapter's opening page is. -/
+  plain : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Apply only the opening's declarations; a reset keeps an empty style that has not yet shipped. -/
 public def PageState.applyOpening (s : PageState) (opening : PageOpening) : PageState :=
   { folio := opening.folio.getD s.folio
     furniture := s.furniture && !opening.empty
-    style := opening.style.getD s.style }
+    style := opening.style.getD s.style
+    plain := s.plain }
 
 /-- Ship one physical page: advance its logical folio and restore the ordinary
 running style, as `\@outputpage` does. -/
@@ -971,7 +1011,7 @@ public def pageOpeningOfRole? (n : String) : Option PageOpening :=
 
 public theorem titlepage_empty_exact (s : PageState) :
     (s.applyOpening { folio := some 1, empty := true }).applyOpening
-        { folio := some 1 } = { folio := 1, furniture := false, style := s.style } := by
+        { folio := some 1 } = { folio := 1, furniture := false, style := s.style, plain := s.plain } := by
   simp [PageState.applyOpening]
 
 /-- The role an empty marker rides in after an environment whose paragraph goes on past it, as
@@ -986,12 +1026,16 @@ public def parRunsOnRole : String := "par runs on"
 float sets after the caption (latex.ltx `\endtrivlist`). -/
 public def captionCloseRole : String := "caption close"
 
+/-- The reserved role `\cleardoublepage` declares: a two-sided page's next folio falls odd, a
+blank verso before it where needed. -/
+public def rectoRole : String := "page recto"
+
 /-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
     n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
-    n == captionCloseRole
+    n == captionCloseRole || n == rectoRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -8604,6 +8648,10 @@ public structure Doc where
   out in the margin after the body. -/
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
+  /-- A verso's own running head and foot on two-sided pages (fancyhdr's `E` fields), else `head`
+  and `foot` serve every page. -/
+  headEven : Option (Array Inline) := none
+  footEven : Option (Array Inline) := none
   /-- beamer's `\logo`: inline content placed at the lower-right corner of
   every page carrying running content. -/
   logo : Option (Array Inline) := none

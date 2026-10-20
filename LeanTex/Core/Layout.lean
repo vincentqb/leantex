@@ -1062,6 +1062,27 @@ placed picture ink; every emptiness test reads this. -/
 @[expose] public def PageOut.blank (p : PageOut) : Bool :=
   p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty && p.front.isEmpty
 
+/-- A fill moved `d` across, unless it starts at the medium's left edge `edge`, as a page's ground. -/
+@[expose] public def Fill.shiftX (edge d : Length) (f : Fill) : Fill :=
+  if f.x ≤ edge then f else { f with x := f.x + d }
+
+/-- The page's ink moved `d` across, as a two-sided page moves its text block: every line, fill,
+link and picture, a fill from the medium's left edge `edge` staying. -/
+@[expose] public def PageOut.shiftX (edge d : Length) (p : PageOut) : PageOut :=
+  { p with lines := p.lines.map fun l => { l with x := l.x + d }
+           fills := p.fills.map (Fill.shiftX edge d)
+           links := p.links.map fun r => { r with x := r.x + d }
+           inks := p.inks.map (·.shiftX d)
+           front := p.front.map (Fill.shiftX edge d) }
+
+/-- A move keeps every placed thing, and a fill from the medium's edge where it stood. -/
+public theorem PageOut.shiftX_keeps (edge d : Length) (p : PageOut) :
+    (p.shiftX edge d).lines.size = p.lines.size ∧ (p.shiftX edge d).inks.size = p.inks.size ∧
+      ∀ f ∈ p.fills, f.x ≤ edge → f ∈ (p.shiftX edge d).fills := by
+  refine ⟨by simp [PageOut.shiftX], by simp [PageOut.shiftX], fun f hf hx => ?_⟩
+  simp only [PageOut.shiftX]
+  exact Array.mem_map.mpr ⟨f, hf, by simp [Fill.shiftX, hx]⟩
+
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
 
@@ -9625,6 +9646,11 @@ private inductive Op where
   | regionClose
   /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
   | brk
+  /-- At a fresh page whose folio falls even, a blank verso first, as `\cleardoublepage` sets one
+  before a two-sided class's chapter. -/
+  | recto
+  /-- The page standing sets in the plain style, as `\thispagestyle{plain}` at a chapter. -/
+  | plainPage
   /-- The folio and running style declared at a boundary. -/
   | pageOpening (opening : Ir.PageOpening)
   /-- Column markers: `colOpen` saves the vertical position, `colNext`
@@ -9727,6 +9753,10 @@ public structure Spacing.Context where
   private chapters : Bool := false
   /-- A chapter's head sets its number before its title on one line, as KOMA-Script's classes do. -/
   private chapterInline : Bool := false
+  /-- Whether a chapter opens on a recto, a blank verso before it where needed. -/
+  private openRight : Bool := false
+  /-- Whether the pages are two-sided. -/
+  private twoSided : Bool := false
   /-- A frame body owns its headings: they neither open section dividers
   nor replace the enclosing top-level section or its footer. -/
   private inFrame : Bool := false
@@ -11907,6 +11937,7 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
 private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
     (indent : Length) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
   let a := a.pageBreak
+  let a := (if r.openRight then a.pushOp .recto else a).pushOp .plainPage
   -- A label in the title lands where the chapter opens, as hyperref's anchor at `\refstepcounter`.
   let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
     (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
@@ -14037,6 +14068,9 @@ private def collectBlock (r : Rd) (a : Acc)
     if let some opening := Ir.pageOpeningOfRole? n then
       { a with ops := a.ops.push (.pageOpening opening) }
     else
+    if n == Ir.rectoRole then
+      if r.twoSided then a.pageBreak.pushOp .recto else a
+    else
     if let some c := Ir.DisplayCtx.ofRole? n then collectBlocks { r with display := c } a body indent
     else
     if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
@@ -14434,13 +14468,13 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   have hst' : (r.underParskip a.tokens).styles.find? n = none := by
     rw [Spacing.Context.underParskip_styles]; exact hst
   simp only [collectBlock, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
-    hdc, hop, hpic, Bool.false_eq_true, ite_false]
+    hdc, hop, hpic, hre, Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
     (opening : Ir.PageOpening) (indent : Length)
@@ -16643,7 +16677,7 @@ public def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
 private def stagedLabelRequests (ops : Array Op) : Array LabelAudit.Request :=
   ops.flatMap fun op => match op with
     | .picture _ pic _ origin => pictureLabelRequests origin pic
-    | .skip _ | .skipAlt _ _ | .bodyOpen _ _ | .brk | .pageOpening _
+    | .skip _ | .skipAlt _ _ | .bodyOpen _ _ | .brk | .recto | .plainPage | .pageOpening _
       | .pageStyle _ _ | .pageGround _ | .titleBar _ _ _ | .frameOpen _ _ _
       | .frameClose | .boxAnchor _ _ _ | .hrule _ _ | .tableRule _ _ _ _
       | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .regionOpen _
@@ -17106,6 +17140,10 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                   curFoot := none, footBox := none, curFootLook := none,
                   frameArea := .margins }
   | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
+  | .recto =>
+    if !b.noBreak && b.cur.blank && !b.pages.isEmpty && b.pageState.folio % 2 == 0 then
+      b := b.finishPage b.closingOwed
+  | .plainPage => b := { b with pageState := { b.pageState with plain := true } }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
   | .pin =>
@@ -17780,6 +17818,13 @@ private theorem foldSteps_noBreak (fs : FontSet) (imgs : Image.Store)
 private def bgFilled (g : Geom) (p : PageOut) : Prop :=
   ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
     f.w = g.pageW + 2 * g.bleed ∧ f.h = g.pageH + 2 * g.bleed
+
+/-- A page's ground, standing at the medium's left edge, stays where a move leaves it. -/
+private theorem bgFilled_shiftX (g : Geom) (q : PageOut) (d : Length) (h : bgFilled g q) :
+    bgFilled g (q.shiftX (-g.bleed) d) := by
+  obtain ⟨f, hf, hx, hy, hw, hh⟩ := h
+  exact ⟨f, Array.mem_toList_iff.mpr ((PageOut.shiftX_keeps _ _ q).2.2 f
+    (Array.mem_toList_iff.mp hf) (by rw [hx]; exact Length.le_refl _)), hx, hy, hw, hh⟩
 
 /-- One placement step keeping a declared background: geometry
 unchanged, the ground still declared, and every new page filled. -/
@@ -18771,6 +18816,12 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
     all_goals first
       | exact hb.step ((frameStep_landTrailing_finishPage _ st.b.closingOwed false).trans
           (FrameStep.of_eq rfl rfl))
+      | exact hb.step ((frameStep_finishPage _ st.b.closingOwed false).trans (FrameStep.of_eq rfl rfl))
+      | exact hb.step (FrameStep.of_eq rfl rfl)
+  | recto =>
+    simp only [stepStaged, Id.run, Id, pure]
+    repeat' split
+    all_goals first
       | exact hb.step ((frameStep_finishPage _ st.b.closingOwed false).trans (FrameStep.of_eq rfl rfl))
       | exact hb.step (FrameStep.of_eq rfl rfl)
   | colClose =>
@@ -19799,6 +19850,93 @@ private def deadLinks (surface : Ir.Surface) (idx : Std.HashMap String (Nat × A
         (help := some (deadLinkHelp surface)) (subject := some f) (output := some .pdf))
   return out
 
+/-- A character's capital in the Latin-1, Latin Extended-A, Greek and Cyrillic blocks, as
+`\MakeUppercase` sets it, any other character itself. -/
+private def upperChar (c : Char) : Char :=
+  let n := c.toNat
+  let shift (d : Nat) : Char := Char.ofNat (n - d)
+  if c.isLower then c.toUpper
+  else if (0xE0 ≤ n && n ≤ 0xFE && n != 0xF7) then shift 0x20
+  else if n == 0xFF then Char.ofNat 0x178
+  else if ((0x100 ≤ n && n ≤ 0x137) || (0x14A ≤ n && n ≤ 0x177)) && n % 2 == 1 then shift 1
+  else if ((0x139 ≤ n && n ≤ 0x148) || (0x179 ≤ n && n ≤ 0x17E)) && n % 2 == 0 then shift 1
+  else if n == 0x3C2 then Char.ofNat 0x3A3
+  else if 0x3B1 ≤ n && n ≤ 0x3C9 then shift 0x20
+  else if 0x430 ≤ n && n ≤ 0x44F then shift 0x20
+  else if 0x450 ≤ n && n ≤ 0x45F then shift 0x50
+  else c
+
+/-- A text in capitals as `\MakeUppercase` sets it, `ß` as `SS`. -/
+private def upperText (t : String) : String :=
+  t.foldl (fun acc c => if c == 'ß' then acc ++ "SS" else acc.push (upperChar c)) ""
+
+/-- A heading's mark under LaTeX's `headings` page style, as book.cls's and article.cls's
+`\chaptermark`, `\sectionmark` and `\subsectionmark` set it: whether it marks both sides (a
+`\markboth`) and its text; `none` where the style marks nothing for the heading. -/
+private def headingMark (chapters twoside : Bool) (title : Array Inline) :
+    Ir.Block → Option (Bool × Array Inline)
+  | .section level starred num _ =>
+    if starred then none else
+    let shown := Ir.mapInlines (fun x => match x with | .label _ => .text "" | y => y) title
+    let upper (xs : Array Inline) : Array Inline :=
+      Ir.mapInlines (fun x => match x with | .text t => .text (upperText t) | y => y) xs
+    -- book.cls's `\thechapter. \ `, a sentence space and a control space; article.cls's `\quad`.
+    let numbered (sep : Int) : Array Inline := match num with
+      | some n => #[.text (if chapters then n ++ "." else n),
+          .hspace (.lit { width := { em := sep } }) true] ++ shown
+      | none => shown
+    if chapters then
+      if level == .h1 then some (twoside, upper (numbered 777))
+      else if level == .h2 && twoside then some (false, upper (numbered 777))
+      else none
+    else if level == .h2 then some (twoside, upper (numbered 1000))
+    else if level == .h3 && twoside then some (false, numbered 1000)
+    else none
+  | _ => none
+
+/-- The starred headings a contents or a reference list stands under. -/
+private def listHeadings (doc : Ir.Doc) : Array Nat :=
+  (Array.range doc.body.size).filter fun i =>
+    (doc.body[i]? matches some (.section _ true _ _)) &&
+      (doc.body[i + 1]? matches some (.contents ..) | some (.bibliography ..))
+
+/-- The headings whose lines carry their outline mark: the outline's, and the lists' under the
+`headings` style. -/
+private def markedHeadings (doc : Ir.Doc) : Std.HashSet Nat :=
+  if doc.info.outline == some false && !doc.page.markHeads then {} else
+  ((Ir.outlineHeadings doc).foldl (·.insert ·.index) ({} : Std.HashSet Nat)).insertMany
+    (if doc.page.markHeads then listHeadings doc else #[])
+
+/-- Each page's marks under the `headings` style: its left mark, the last `\markboth` on or before
+it (TeX's `\botmark`), and its right mark, its first mark's right part or else the last before it
+(`\firstmark`). -/
+private def pageMarks (doc : Ir.Doc) (pages : Array PageOut) :
+    Array (Array Inline × Array Inline) := Id.run do
+  let mut marks : Std.HashMap String (Bool × Array Inline) := {}
+  let shorts := Ir.shortTitlesAt doc.shortTitles doc.body
+  for h in Ir.outlineHeadings doc do
+    if let some blk@(.section _ _ _ title) := doc.body[h.index]? then
+      if let some m := headingMark doc.chapters doc.page.twoside (Ir.listedTitleAt shorts h.index title) blk then
+        marks := marks.insert (Ir.outlineMark h.index) m
+  -- A contents or a reference list marks both sides with its heading in capitals.
+  for i in listHeadings doc do
+    if let some (.section _ _ _ title) := doc.body[i]? then
+      marks := marks.insert (Ir.outlineMark i)
+        (true, Ir.mapInlines (fun x => match x with | .text t => .text (upperText t) | y => y) title)
+  let mut left : Array Inline := #[]
+  let mut right : Array Inline := #[]
+  let mut out := #[]
+  for p in pages do
+    let here := (p.anchors ++ p.lines.flatMap (·.anchors)).filterMap marks.get?
+    let first := match here[0]? with
+      | some (both, text) => if both then #[] else text
+      | none => right
+    for (both, text) in here do
+      if both then left := text; right := #[]
+      else right := text
+    out := out.push (left, first)
+  return out
+
 /-- The postlude: running furniture per page (`furnishFrom`),
 one report per problem, and the resolved outline. -/
 public def runPost (sh : Shipped) : Out := Id.run do
@@ -19817,6 +19955,8 @@ public def runPost (sh : Shipped) : Out := Id.run do
   let pages := sh.pages
   -- a flow's running furniture is its paper's alone
   let furniture : Option Diag.Output := if doc.docClass.record.model == .flow then some .pdf else none
+  let marked := if doc.page.markHeads && doc.head.isNone then pageMarks doc pages else #[]
+  let sides := { doc.page with hmargin := geom.hmargin }
   -- Running content is laid out per page once the count is known, into the margin.
   let total := pages.size
   let furnGround := Ir.Design.declared? doc.palette .page
@@ -19921,19 +20061,29 @@ public def runPost (sh : Shipped) : Out := Id.run do
     -- Pages before a declaration's `from` carry none of it; the chrome footer follows its frame.
     let headOn := page.pageState.furniture && doc.headFrom ≤ i + 1
     let footOn := page.pageState.furniture && doc.footFrom ≤ i + 1
+    let verso := doc.page.twoside && page.pageState.folio % 2 == 0
+    -- The `headings` style: the folio outside, the mark inside; a chapter's opening page is plain.
+    let (headContent, opens) : Option (Array Inline) × Bool := match marked[i]? with
+      | some (left, right) =>
+        let opens := page.pageState.plain
+        (if opens then none
+         else if verso then some #[.pageNumber, .fill, .styled .italic left]
+         else some #[.styled .italic right, .fill, .pageNumber], opens)
+      | none => ((if verso then doc.headEven.orElse fun _ => doc.head else doc.head), true)
+    let footContent := if verso then doc.footEven.orElse fun _ => doc.foot else doc.foot
     if headOn then
-      if let some content := doc.head then
+      if let some content := headContent then
         let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then head := #[l]
     if footOn then
-      if let some content := doc.foot then
+      if let some content := footContent then
         let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) footY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
-      else if plainFoot then
+      else if plainFoot && opens then
         -- plain's foot: the page number between two fills, as `\ps@plain` sets it.
         let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (ListMark.folioText page.pageState) footY
           geom.fontSize {} cache
@@ -20011,7 +20161,10 @@ slot yields in place: shorten the content or drop a slot")
           diags := diags ++ ds
           cache := c
           if let some l := l? then lines := lines.push { l with furniture := true }
-    return ((head, lines), diags, cache, count)
+    -- Furniture stands over its page's text block, a verso's mirrored.
+    let dx := sides.leftMargin page.pageState.folio - geom.hmargin
+    let moved (ls : Array LineOut) : Array LineOut := ls.map fun l => { l with x := l.x + dx }
+    return ((moved head, moved lines), diags, cache, count)
   let fout := furnishFrom (furnishStep fs furnishPage) pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
@@ -20972,6 +21125,33 @@ private theorem bgStep_landTrailing {b0 X : B} (h : BgStep b0 X) (h0 : b0.pages 
     simp at hin
   · exact hf
 
+/-- Each page's ink set by its own side's margins: a two-sided document's verso moved to its
+mirrored text block, a declared side ratio's page off the centre. -/
+public def mirrorSides (geom : Geom) (page : Ir.PageSpec) (pages : Array PageOut) : Array PageOut :=
+  let sides := { page with hmargin := geom.hmargin }
+  pages.map fun p => p.shiftX (-geom.bleed) (sides.leftMargin p.pageState.folio - geom.hmargin)
+
+/-- What holds of every page and survives a move holds of every mirrored page. -/
+private theorem mirrorSides_forall (geom : Geom) (page : Ir.PageSpec) (P : PageOut → Prop)
+    (hP : ∀ q d, P q → P (q.shiftX (-geom.bleed) d)) (pages : Array PageOut)
+    (h : ∀ q ∈ pages, P q) : ∀ p ∈ mirrorSides geom page pages, P p := by
+  intro p hp
+  obtain ⟨q, hq, rfl⟩ := Array.mem_map.mp hp
+  exact hP q _ (h q hq)
+
+/-- A reading a move leaves alone reads the mirrored pages as the pages. -/
+private theorem mirrorSides_map {α : Type} (geom : Geom) (page : Ir.PageSpec) (f : PageOut → α)
+    (hf : ∀ q d, f (q.shiftX (-geom.bleed) d) = f q) (pages : Array PageOut) :
+    (mirrorSides geom page pages).map f = pages.map f := by
+  simp only [mirrorSides, Array.map_map, Function.comp_def, hf]
+
+/-- A moved page's lines are its lines moved, each keeping all but its left edge. -/
+private theorem shiftX_line_mem (e d : Length) (q : PageOut) (l : LineOut)
+    (h : l ∈ (q.shiftX e d).lines) : ∃ l0 ∈ q.lines, l = { l0 with x := l0.x + d } := by
+  simp only [PageOut.shiftX] at h
+  obtain ⟨l0, hl0, rfl⟩ := Array.mem_map.mp h
+  exact ⟨l0, hl0, rfl⟩
+
 /-- The collected ops, the initial page state and the postlude, the
 continuation reading the exact ops placement consumes. -/
 private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
@@ -21004,11 +21184,11 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let headFurn := furnitureBand geom.vmargin runInk gapTop
   let footFurn := furnitureBand geom.bottomMargin runInk gapBot
   -- A footer reserves its band before anything is placed (`bodyBottom_clears_footer`).
-  let geom := if doc.foot.isSome || plainFoot then
+  let geom := if doc.foot.isSome || doc.footEven.isSome || plainFoot then
       { geom with footBand := if latexFoot.isSome then 0 else footFurn.band }
     else geom
   -- The running head reserves its band the same way (`bodyTop_clears_head`).
-  let geom := if doc.head.isSome then
+  let geom := if doc.head.isSome || doc.headEven.isSome || doc.page.markHeads then
       { geom with headBand := headFurn.band }
     else geom
   -- TeX's `\topskip` on a TeX page: the document's own, else the class's body size (size10.clo).
@@ -21029,6 +21209,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    abstractForm := doc.abstractForm
                    chapters := doc.chapters
                    chapterInline := doc.docClass == Ir.DocClass.koma
+                   openRight := doc.page.twoside && doc.page.openRight
+                   twoSided := doc.page.twoside
                    lists := doc.docClass.record.lists
                    listExtra := doc.listExtra
                    quotationIndent := doc.docClass.record.quotationIndent
@@ -21042,8 +21224,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                      deckIds.frames else #[]
                    sectionRoutes := if doc.docClass.record.model == .frame then
                      doc.sectionRoutes else #[]
-                   outlineMarks := if doc.info.outline == some false then {} else
-                     (Ir.outlineHeadings doc).foldl (·.insert ·.index) {}
+                   outlineMarks := markedHeadings doc
                    imgs := imgs
                    pictureSpans := pictureSpans
                    headline := doc.headline
@@ -21137,7 +21318,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
         else b.diags
       else b.diags
     return {
-      pages := b.pages
+      pages := mirrorSides geom doc.page b.pages
       footGap := b.footGap
       overruns := b.overruns
       needs := b.needs
@@ -21206,6 +21387,11 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
     · exact sourceBound_landTrailing _ hb
   unfold shipCore withLayoutOps
   dsimp only [Id.run, bind, pure, Id]
+  apply mirrorSides_forall _ _ (fun p => ∀ l ∈ p.lines, l.SourceBound _)
+  · intro q d hq l hl
+    obtain ⟨l0, hl0, rfl⟩ := shiftX_line_mem _ _ q l hl
+    have h0 := hq l0 hl0
+    simpa only [LineOut.SourceBound] using h0
   apply (close _ _ _ ?_).pages
   apply sourceBound_placeFrom
   · exact sourceBound_trailing (n := (Struct.ofDoc (pdfView doc)).leaves.size)
@@ -21415,6 +21601,16 @@ private theorem clean_measured (a b c : Prop) [Decidable a] [Decidable b] [Decid
   repeat' split at h
   all_goals first | exact h | exact fun e he => h e (Array.mem_push.mpr (Or.inl he))
 
+private theorem mirrorSides_census (pick : Option Nat → Bool → Bool) (geom : Geom)
+    (page : Ir.PageSpec) (pages : Array PageOut) :
+    (mirrorSides geom page pages).toList.flatMap (pageCensus pick) =
+      pages.toList.flatMap (pageCensus pick) := by
+  have h := congrArg Array.toList (mirrorSides_map geom page (pageCensus pick)
+    (fun q d => by simp only [pageCensus, PageOut.shiftX, Array.toList_map, List.flatMap_map]; rfl)
+    pages)
+  simp only [Array.toList_map] at h
+  rw [List.flatMap_def, h, ← List.flatMap_def]
+
 private theorem shipCore_census (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (pick : Option Nat → Bool → Bool)
@@ -21456,6 +21652,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   have he := (hacc.2 hac).2
   change inkCensus (acc.census pick) = [] ++
     sourceInkPrefix pick d.body 0 true d.body.size at he
+  rw [mirrorSides_census]
   change inkCensus ((Spacing.Page.pages (if _ then _ else _)).toList.flatMap _) = _
   rw [census_close pick _ hbp, hplaced.1, hstage, htrail.census]
   simpa only [Spacing.Page.census, pageCensus, b0, acc0, Spacing.Pending.census, Array.toList_empty,
@@ -22132,6 +22329,9 @@ private theorem shipCore_frames (geom : Geom) (fs : FontSet)
     · exact framesFooted_landTrailing hb
   unfold shipCore frameOpeningsCore withLayoutOps
   dsimp only [Id.run, bind, pure, Id]
+  apply mirrorSides_forall _ _ (fun p => SelectedFrame _ p.frameStamp)
+  · intro q _ hq
+    exact hq
   apply (close _ _ _ ?_).2
   apply placeFrom_frames
   · intro op hop opening hf
@@ -22324,8 +22524,9 @@ private theorem runCore_bg
     split
     · exact h.trans (bgStep_landTrailing_finishPage _)
     · exact bgStep_landTrailing h h0
-  refine fin _ (key _ _ (bgStep_close _ _ _ rfl
-    (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch) (by simp))) ?_ rfl q hq)
+  obtain ⟨q0, hq0, rfl⟩ := Array.mem_map.mp hq
+  refine fin _ (bgFilled_shiftX _ q0 _ (key _ _ (bgStep_close _ _ _ rfl
+    (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch) (by simp))) ?_ rfl q0 hq0))
     ?_ ?_ ?_
   all_goals first
     | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, Ir.Design.resolve, pdfView, hbg]
@@ -22586,11 +22787,12 @@ private def closeLast (b : B) : B :=
     landTrailing (b.finishPage b.closingOwed)
   else landTrailing b
 
-private theorem program_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
-    (ship geom fs none doc).pages =
+private theorem program_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc) {α : Type}
+    (f : PageOut → α) (hf : ∀ q d, f (q.shiftX (-(ship geom fs none doc).geom.bleed) d) = f q) :
+    (ship geom fs none doc).pages.map f =
       (closeLast (placeFrom fs {} (program geom fs doc).ops
-        { b := (program geom fs doc).initial } 0).b).pages := by
-  rfl
+        { b := (program geom fs doc).initial } 0).b).pages.map f :=
+  mirrorSides_map _ _ f hf _
 
 private theorem close_natural (b : B)
     (hcur : b.cur.lines.isEmpty = false)
@@ -23212,11 +23414,12 @@ public def AtTail (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
 private theorem tail_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
     (b : Page) (j : Paragraph) (breaks : Array Nat) (gs : Array Glue)
     (h : AtTail geom fs doc b j breaks gs) (hk : j.keepNext ≤ 0)
-    (hf : Spacing.Page.fresh b = false) :
-    (ship geom fs none doc).pages =
-      (closeLast (placePara fs { b with skip := gs.foldl Glue.add b.skip } j breaks)).pages := by
+    (hf : Spacing.Page.fresh b = false) {α : Type} (f : PageOut → α)
+    (hm : ∀ q d, f (q.shiftX (-(ship geom fs none doc).geom.bleed) d) = f q) :
+    (ship geom fs none doc).pages.map f =
+      (closeLast (placePara fs { b with skip := gs.foldl Glue.add b.skip } j breaks)).pages.map f := by
   obtain ⟨st, i, t, hp, hs, ht, htail⟩ := h
-  rw [program_ship]
+  rw [program_ship geom fs doc f hm]
   unfold placeFrom
   rw [prefix_continue fs (program geom fs doc) hp]
   rw [paragraph_tail_place fs _ j t htail hk st (hs.symm ▸ hf), hs, ht]
@@ -23254,6 +23457,34 @@ public def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
 private def paintedInk (fs : FontSet) (ls : Array LineOut) : List LineOut :=
   (paintLines fs ls).toList.filter inkLine
 
+private theorem LinesRise.ys_eq {as bs : List LineOut} (h : LinesRise as bs)
+    (h' : LinesRise bs as) : as.map (·.y) = bs.map (·.y) := by
+  induction h with
+  | nil => rfl
+  | @cons a b as bs hl _ ih =>
+    cases h' with
+    | cons hl' ht' =>
+      simp only [List.map_cons, ih ht', List.cons.injEq, and_true]
+      exact Length.le_antisymm hl.baseline hl'.baseline
+
+private theorem shifted_rise (d : Length) (ls : List LineOut) :
+    LinesRise (ls.map fun l => { l with x := l.x + d }) ls ∧
+      LinesRise ls (ls.map fun l => { l with x := l.x + d }) := by
+  induction ls with
+  | nil => exact ⟨.nil, .nil⟩
+  | cons l ls ih =>
+    exact ⟨.cons ⟨rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih.1,
+      .cons ⟨rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih.2⟩
+
+/-- A move across leaves every painted line's baseline where it was. -/
+private theorem paintedInk_shiftX_ys (fs : FontSet) (e d : Length) (q : PageOut) :
+    (paintedInk fs (q.shiftX e d).lines).map (·.y) = (paintedInk fs q.lines).map (·.y) := by
+  have hr := shifted_rise d q.lines.toList
+  have h1 := (paint_rise fs hr.1).filter
+  have h2 := (paint_rise fs hr.2).filter
+  simp only [paintedInk, paintLines_toList, PageOut.shiftX, Array.toList_map]
+  exact LinesRise.ys_eq h1 h2
+
 private theorem run_ink_projects (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
     (run geom fs none doc).pages.map (fun p => p.lines.toList.filter inkLine) =
       (ship geom fs none doc).pages.map (fun p => paintedInk fs p.lines) := by
@@ -23271,16 +23502,24 @@ private theorem tail_baselines (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
         (fun p => paintedInk fs p.lines) ++
           paintedInk fs (boundaryEnd fs b j breaks gs).cur.lines).map (·.y) := by
   have hr := run_ink_projects geom fs doc
-  rw [tail_ship geom fs doc b j breaks gs ha hs.2.1 hs.1] at hr
+  have ht := congrArg (fun xs : Array (List Length) => xs.toList.flatten)
+    (tail_ship geom fs doc b j breaks gs ha hs.2.1 hs.1
+      (fun p : PageOut => (paintedInk fs p.lines).map (·.y))
+      (fun q d => paintedInk_shiftX_ys fs _ d q))
   rcases hs.2.2.2.2.2 with ⟨hc, hn, hv, hf, hg, hp, hq⟩
   have hclose := close_natural (boundaryEnd fs b j breaks gs) hc hn hv hf hg hp hq
   have hm := congrArg (fun xs : Array (Array LineOut) =>
     (xs.toList.flatMap (paintedInk fs)).map (·.y)) hclose
   have ho := congrArg (fun xs : Array (List LineOut) =>
     xs.toList.flatten.map (·.y)) hr
-  simp only [Array.toList_map, ← List.flatMap_def] at ho
+  have e1 : ∀ l : List PageOut, (l.flatMap fun p => paintedInk fs p.lines).map (·.y) =
+      l.flatMap fun p => (paintedInk fs p.lines).map (·.y) := fun l => List.map_flatMap ..
+  simp only [Array.toList_map, ← List.flatMap_def] at ho ht
+  rw [e1] at ho
+  rw [ht] at ho
   simp only [Array.toList_map, List.flatMap_map, Array.toList_push,
     List.flatMap_append, List.flatMap_cons, List.flatMap_nil, List.append_nil] at hm
+  rw [e1] at hm
   exact ho.trans hm
 
 public theorem run_tail_monotone (geom : Geom) (fs : FontSet) (before after : Ir.Doc)

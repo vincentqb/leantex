@@ -1116,6 +1116,7 @@ def commandSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.EnvCode.blockArgChecks ref oneFace
   if let some faces ← serifFacesSet then algWordChecks ref faces
   Tests.Chapters.chapterChecks ref oneFace
+  Tests.Chapters.twosideChecks ref oneFace
   Tests.Chapters.chapterReadingChecks ref oneFace
   Tests.Chapters.chapterDeclarationChecks ref oneFace
   Tests.Chapters.numberingStateChecks ref oneFace

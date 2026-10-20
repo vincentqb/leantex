@@ -10117,7 +10117,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     diags := diags.push (Diag.of .W0007
       "a page reference names a paged-media folio; omitted from HTML"
       (help := "say where the target stands in words, or link it with \\ref"))
-  if doc.head.isSome || doc.foot.isSome then
+  if doc.head.isSome || doc.foot.isSome || doc.headEven.isSome || doc.footEven.isSome ||
+      doc.page.markHeads then
     diags := diags.push (Diag.of .W0007
       "running head/foot is paged-media furniture; omitted from HTML"
       (help := "body content reaches both backends: move the masthead there"))

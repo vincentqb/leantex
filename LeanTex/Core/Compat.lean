@@ -218,10 +218,6 @@ private def titlepageDefaults : List String := ["report", "book", "scrreprt", "s
 /-- The classes two-sided unless an option says otherwise, as their `\ExecuteOptions` declare. -/
 private def twosideClasses : List String := ["book", "memoir", "scrbook"]
 
-/-- Whether an option asks a two-sided class for one side, which only book's title page reads. -/
-private def oneSidedOf (cls kv : String) : Bool :=
-  twosideClasses.contains cls && cls != "book" && (kv == "oneside" || kv == "twoside=false")
-
 /-- Résumé classes, mapped onto the native `resume` class. -/
 private def resumeClasses : List String :=
   ["moderncv", "res"]
@@ -808,6 +804,14 @@ private structure St where
   1 centre, 2 outer, a repeat replacing. -/
   head : Array (Nat × Array Raw) := #[]
   foot : Array (Nat × Array Raw) := #[]
+  /-- A verso's running fields where they differ (fancyhdr's `E` places, KOMA-Script's inner and
+  outer sides mirrored). -/
+  headEven : Array (Nat × Array Raw) := #[]
+  footEven : Array (Nat × Array Raw) := #[]
+  /-- Whether the pages are in the `headings` style, `none` where nothing set a style. -/
+  headingsStyle : Option Bool := none
+  /-- Whether the class sets two-sided pages. -/
+  twoSided : Bool := false
   runPos : Pos := { line := 1, col := 1 }
   runFrom : Nat := 1
   /-- Whether the counter resets after the title page:
@@ -1015,7 +1019,7 @@ private structure St where
   /-- Whether the class heads chapters (report.cls, book.cls), which its `\chapter` opens. -/
   chapters : Bool := false
   /-- Whether the class opens each chapter on a right-hand page of two-sided pages (book.cls's
-  `openright`), which one-sided pages here do not. -/
+  `openright`). -/
   chaptersRight : Bool := false
   /-- biblatex's declared resources (`\addbibresource`). -/
   bibResources : Array String := #[]
@@ -8395,6 +8399,9 @@ private def ctrlRows2 : List CtrlRow :=
    ⟨"cfoot", [.group], .lower .runningField {}⟩,
    ⟨"chead", [.group], .lower .runningField {}⟩,
    ⟨"citestyle", [.needed], .lower .natbibStyle declared⟩,
+   -- `\cleardoublepage` breaks the page and, on two-sided pages, opens a recto.
+   ⟨"cleardoublepage", [], .tokens [.ctrl "pagebreak" {}, .ctrl Ir.rectoRole {}]
+     (some "\\pagebreak and a recto")⟩,
    -- With no floats to flush, `\clearpage` and `\newpage` are the declared page break.
    ⟨"clearpage", [], .tokens [.ctrl "pagebreak" {}] (some "\\pagebreak")⟩,
    ⟨"clearpairofpagestyles", [], .lower .clearPageStyles {}⟩,
@@ -9613,12 +9620,6 @@ and patterns stand in" pos
   | "chapter" =>
     -- A class without chapters has no `\chapter`.
     if !(← get).chapters then return none
-    -- premise: chapterChecks — the openings are named only where the class opens right-hand pages
-    if (← get).chaptersRight then
-      sayOnce "chapters:openright" .W0110
-        "the class opens each chapter on a right-hand page, leaving a blank page where it would \
-fall on a left; the pages here are one-sided, so each opens the next page" pos
-        (help := "the class option openany opens a chapter on the next page, as here")
     became "\\chapter" "the class's chapter heading" pos
     if (← get).inDoc then write fun st => { st with argSkip := some none }
     return some (#[.ctrl Parse.chapterControl pos], start)
@@ -9640,8 +9641,10 @@ fall on a left; the pages here are one-sided, so each opens the next page" pos
     let numbering := if name == "frontmatter" then #[.ctrl (Ir.pageNumberingRole .roman) pos]
       else if name == "mainmatter" then #[.ctrl (Ir.pageNumberingRole .arabic) pos] else #[]
     became s!"\\{name}" "a page break, the chapters' numbering and the pages' numbering" pos
-    return some (#[.ctrl "pagebreak" pos, .ctrl (matterMark (name == "mainmatter")) pos] ++ numbering,
-      start)
+    -- book.cls opens each division on a recto where its chapters open on one.
+    let recto := if (← get).chaptersRight then #[Raw.ctrl Ir.rectoRole pos] else #[]
+    return some (#[.ctrl "pagebreak" pos] ++ recto ++ #[.ctrl (matterMark (name == "mainmatter")) pos] ++
+      numbering, start)
   | "pagenumbering" =>
     -- latex.ltx's `\pagenumbering`: the page counter from 1, in the numeral style named.
     let (args, k) := takeGroups raws start 1
@@ -10698,6 +10701,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       write fun st => { st with titlePageAsked := true }
     let twoside := given.contains "twoside" || given.contains "twoside=true" ||
       (twosideClasses.contains cls && !given.contains "oneside" && !given.contains "twoside=false")
+    write fun st => { st with twoSided := twoside }
     if chapterClasses.contains cls || keptItems.contains "chapters" then
       -- book.cls and report.cls declare `openright` before `openany`, which so wins given both;
       -- memoir and scrbook open right by default, KOMA-Script spelling it `open=`.
@@ -10727,23 +10731,30 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else []) ++
         (if chapterClasses.contains cls then
           -- memoir's `\thefigure` and `\thetable` carry the chapter through the main matter.
-          [if cls == "memoir" then "chapters=floats" else "chapters"] else [])
+          [if cls == "memoir" then "chapters=floats" else "chapters"] else []) ++
+        (if twoside then ["twoside"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
       -- premise: none — lualatex sets memoir alike under either option, as scripts/inert-diff.lean probes
       let memoirTitle (kv : String) : Bool := cls == "memoir" && ["titlepage", "notitlepage"].contains kv
-      -- premise: classRow — the engine sets every page one-sided
-      for kv in keptItems.filter (oneSidedOf cls) do
-        inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
-          (.engineSets "the page is set one-sided, as the engine sets every page") pos
       for kv in keptItems.filter memoirTitle do
         inertParam "documentclass" kv s!"\\documentclass[{kv}]\{memoir}"
           InertSite.memoirTitle.inert pos
-      -- KOMA's `parskip` is read here; a two-sided chapter class's `openright` is named where a
-      -- chapter opens.
+      -- The sides are read here, a class's own default named as changing nothing.
+      let sided (kv : String) : Bool :=
+        kv == "oneside" || kv == "twoside" || kv == "twoside=true" || kv == "twoside=false"
+      for kv in keptItems.filter sided do
+        if (kv == "twoside" || kv == "twoside=true") == twosideClasses.contains cls then
+          inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
+            (.asWithout (if twosideClasses.contains cls then "the pages are two-sided, as without \
+the option" else "the page is one-sided, as without the option")) pos
+      -- KOMA's `parskip` is read here; a two-sided chapter class's `openright` too, book's own
+      -- default named as changing nothing.
       let rightNamed := (← get).chaptersRight
-      let kept := (keptItems ++ extra).filter fun kv =>
-        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright") && !memoirTitle kv &&
-          !(cls == "book" && (kv == "oneside" || kv == "twoside=false")) && !oneSidedOf cls kv
+      if rightNamed && cls == "book" && keptItems.contains "openright" then
+        inertParam "documentclass" "openright" s!"\\documentclass[openright]\{{cls}}"
+          (.asWithout "a chapter opens on a recto, as without the option") pos
+      let kept := (keptItems.filter (!sided ·) ++ extra).filter fun kv =>
+        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright") && !memoirTitle kv
       -- A class's `\parskip` is latex.ltx's `0pt plus 1pt` unless KOMA's `parskip=` asks for a skip
       -- (scrkernel-paragraphs.dtx `\setparsizes`).
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
@@ -10756,7 +10767,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         | ("parskip", none) => some "1.2em plus 0.12em"
         | _ => none
       let cls0 := Native.Head.documentclass kept.toArray native0
-      let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt plus 1pt")]
+      -- book.cls and memoir set their pages in the `headings` style.
+      if cls == "book" || cls == "memoir" then write fun st => { st with headingsStyle := some true }
+      let heads := if rightNamed then #[(Native.PageKey.openright, "on")] else #[]
+      let page : Native.Setting := .page (#[(.parskip, komaSkip.getD "0pt plus 1pt")] ++ heads)
       became s!"\\documentclass\{{cls}}" (cls0.render ++ (page.note?.getD "")) pos
       -- memoir.cls numbers and lists headings down to the section (`\setsecnumdepth{section}`).
       let depths : Array Raw := if cls != "memoir" then #[] else
@@ -10789,27 +10803,31 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       -- The options passed to a class before it loads are its own, before its written ones.
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList.filter (!keptItems.contains ·) else []
-      -- premise: classRow — the engine sets every page one-sided
-      for kv in keptItems.filter (oneSidedOf cls) do
-        inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
-          (.engineSets "the page is set one-sided, as the engine sets every page") pos
-      -- KOMA-Script's `titlepage=true` is read by the title page, and its two sides mirror margins
-      -- the engine does not, its page counter left alone.
-      let twoSided (kv : String) : Bool :=
-        koma && !twosideClasses.contains cls && (kv == "twoside" || kv == "twoside=true")
-      for kv in keptItems.filter twoSided do
-        unreadParam "documentclass" "twoside" s!"class option '{kv}', whose mirrored margins the \
-engine does not set," pos
-      let consumed (kv : String) : Bool := oneSidedOf cls kv || twoSided kv || (koma && kv == "titlepage=true")
+      -- KOMA-Script's `titlepage=true` is read by the title page; its sides are read here, typearea
+      -- splitting a two-sided page's margins 1:2, inner to outer.
+      let sided (kv : String) : Bool :=
+        kv == "oneside" || kv == "twoside" || kv == "twoside=true" || kv == "twoside=false"
+      let consumed (kv : String) : Bool := koma && (sided kv || kv == "titlepage=true")
+      for kv in keptItems.filter fun kv => koma && sided kv do
+        if (kv == "twoside" || kv == "twoside=true") == twosideClasses.contains cls then
+          inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
+            (.asWithout (if twosideClasses.contains cls then "the pages are two-sided, as without \
+the option" else "the page is one-sided, as without the option")) pos
+      let sides : Array (Native.PageKey × String) :=
+        if koma && twoside then #[(.twoside, "on"), (.hmarginratio, "1:2")] else #[]
       -- KOMA-Script's report and book classes head chapters.
       let chapterOpt := if chapterClasses.contains cls && !keptItems.contains "chapters" then
         ["chapters"] else []
-      if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty then
+      if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty &&
+          sides.isEmpty then
         return none
       let kept := (passed ++ keptItems).filter (!consumed ·) ++ chapterOpt
       let native := Native.Head.documentclass kept.toArray cls
-      became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native.render pos
-      return some (native.raws pos, k)
+      let page : Native.Setting := .page sides
+      became s!"\\documentclass[{opt.getD ""}]\{{cls}}"
+        (native.render ++ (if sides.isEmpty then "" else page.note?.getD "")) pos
+      let carried ← if sides.isEmpty then pure #[] else carry page pos
+      return some (native.raws pos ++ carried, k)
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont"
   | "newfontfamily" | "setfontfamily" | "renewfontfamily" | "providefontfamily"
   | "newfontface" | "setfontface" | "renewfontface" | "providefontface" =>
@@ -11381,57 +11399,73 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     let name := c.name
     let slot := if name.startsWith "i" || name.startsWith "l" then 0
       else if name.startsWith "c" then 1 else 2
+    -- KOMA-Script's inner and outer sides change places on a verso.
+    let mirrored := if name.startsWith "i" then 2 else if name.startsWith "o" then 0 else slot
     write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
       if name.endsWith "head" then
-        { st with head := Ir.redeclare st.head slot src }
+        { st with head := Ir.redeclare st.head slot src
+                  headEven := Ir.redeclare st.headEven mirrored src }
       else
-        { st with foot := Ir.redeclare st.foot slot src }
+        { st with foot := Ir.redeclare st.foot slot src
+                  footEven := Ir.redeclare st.footEven mirrored src }
     return #[]
   | .fancyField => do
-    -- fancyhdr's `[places]`: one page sequence, so even and odd collapse onto the slot letter.
+    -- fancyhdr's `[places]`: each item's L, C and R slots (all three where it names none) on its E
+    -- and O pages (both where it names neither).
     let src := trimBlank (c.arg 1)
-    let mut slots : Array Nat := #[]
-    let mut evenOdd := false
+    let mut odd : Array Nat := #[]
+    let mut even : Array Nat := #[]
     for e in KeyVal.items ((c.optSrc 0).getD "LCR") do
-      for ch in e.toList do
-        let ch := ch.toUpper
-        if ch == 'L' && !slots.contains 0 then slots := slots.push 0
-        else if ch == 'C' && !slots.contains 1 then slots := slots.push 1
-        else if ch == 'R' && !slots.contains 2 then slots := slots.push 2
-        else if ch == 'E' || ch == 'O' then evenOdd := true
-    if evenOdd then
-      sayOnce "fancyhdr:evenodd" .N0102
-        "even and odd pages are one sequence here; the field applies to every page" c.pos
+      let cs := e.toList.map Char.toUpper
+      let sl := [('L', 0), ('C', 1), ('R', 2)].filterMap fun (ch, k) =>
+        if cs.contains ch then some k else none
+      let sl := if sl.isEmpty then [0, 1, 2] else sl
+      let (onE, onO) := if cs.contains 'E' || cs.contains 'O' then (cs.contains 'E', cs.contains 'O')
+        else (true, true)
+      for k in sl do
+        if onO && !odd.contains k then odd := odd.push k
+        if onE && !even.contains k then even := even.push k
     let toHead := c.name != "fancyfoot"
     let toFoot := c.name != "fancyhead"
     write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
-      let put (parts : Array (Nat × Array Raw)) : Array (Nat × Array Raw) :=
+      let put (slots : Array Nat) (parts : Array (Nat × Array Raw)) : Array (Nat × Array Raw) :=
         slots.foldl (init := parts) fun parts slot =>
           let parts := parts.filter (·.1 != slot)
           if src.isEmpty then parts else parts.push (slot, src)
       { st with
-        head := if toHead then put st.head else st.head
-        foot := if toFoot then put st.foot else st.foot }
+        head := if toHead then put odd st.head else st.head
+        foot := if toFoot then put odd st.foot else st.foot
+        headEven := if toHead then put even st.headEven else st.headEven
+        footEven := if toFoot then put even st.footEven else st.footEven }
     return #[]
   | .clearPageStyles => do
     -- scrlayer-scrpage's field reset clears every gathered head and foot field.
-    write fun st => { st with head := #[], foot := #[] }
+    write fun st => { st with head := #[], foot := #[], headEven := #[], footEven := #[] }
     became "\\clearpairofpagestyles" "no running fields; fields declared after apply" c.pos
     return #[]
   | .pageStyle => do
     let v := (c.src 0).trimAscii.toString
     match v with
     | "fancy" | "scrheadings" =>
+      write fun st => { st with headingsStyle := some false }
       discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
         s!"pagestyle:{v}" c.pos
       return #[]
     | "plain" =>
       -- article's initial style is the centred page number in the foot.
+      write fun st => { st with headingsStyle := some false }
       setting "\\pagestyle{plain}" (.page #[(.numbers, "on")]) c.pos
+    | "headings" =>
+      -- The standard classes' style, the folio and the headings' marks in the head, set once the
+      -- preamble ends.
+      write fun st => { st with headingsStyle := some true }
+      became "\\pagestyle{headings}" "\\page{ numbers = on, headings = on }" c.pos
+      carry (.page #[(.numbers, "on")]) c.pos
     | "empty" =>
-      write fun st => { st with head := #[], foot := #[] }
+      write fun st => { st with head := #[], foot := #[], headEven := #[], footEven := #[],
+                                headingsStyle := some false }
       let page : Native.Setting := .page #[(.numbers, "off")]
       became "\\pagestyle{empty}" s!"{page.note?.getD ""}, and no running fields" c.pos
       carry page c.pos
@@ -12627,7 +12661,8 @@ end
 private def QuietTail (st : St) : Prop :=
   st.head = #[] ∧ st.foot = #[] ∧ st.runFrom ≤ 1 ∧
     st.listResets = #[] ∧ st.listDefs = #[] ∧
-    st.deferred = #[] ∧ st.beamerFootline = none ∧ st.beamerTemplates = #[]
+    st.deferred = #[] ∧ st.beamerFootline = none ∧ st.beamerTemplates = #[] ∧
+    st.headEven = #[] ∧ st.footEven = #[] ∧ st.headingsStyle = none
 
 private def TailDiag (d : Diag) (st : St) : Prop :=
   QuietTail st ∧ d ∈ st.diags
@@ -14935,6 +14970,19 @@ private def flushRunning : M (Array Raw) := do
   unless st.foot.isEmpty do
     became "\\ifoot / \\cfoot / \\ofoot" s!"\\runningfoot{opt}\{{lineSrc st.foot}}" pos
     out := out ++ #[.ctrl "runningfoot" pos] ++ optRaws ++ #[.group (line st.foot) pos]
+  -- A verso's own fields, where they differ from a recto's on two-sided pages.
+  let evenRaws : Array Raw := #[.sym '[' pos, .word "pages = even" pos, .sym ']' pos]
+  unless !st.twoSided || st.headEven == st.head || st.headEven.isEmpty do
+    became "\\fancyhead[E] / \\ihead / \\ohead"
+      s!"\\runninghead[pages = even]\{{lineSrc st.headEven}}" pos
+    out := out ++ #[.ctrl "runninghead" pos] ++ evenRaws ++ #[.group (line st.headEven) pos]
+  unless !st.twoSided || st.footEven == st.foot || st.footEven.isEmpty do
+    became "\\fancyfoot[E] / \\ifoot / \\ofoot"
+      s!"\\runningfoot[pages = even]\{{lineSrc st.footEven}}" pos
+    out := out ++ #[.ctrl "runningfoot" pos] ++ evenRaws ++ #[.group (line st.footEven) pos]
+  -- The `headings` style in force where the preamble ends.
+  if st.headingsStyle == some true then
+    out := out ++ (Native.Setting.page #[(.headings, "on")]).raws pos
   -- `\thispagestyle{empty}` with no field of its own still gates the opening page's furniture.
   if st.runFrom > 1 && st.head.isEmpty then
     out := out ++ (Native.Head.runningFrom false st.runFrom).raws st.runPos
@@ -14945,9 +14993,9 @@ private def flushRunning : M (Array Raw) := do
 private theorem flushRunning_quiet (st : St) (h : QuietTail st) :
     flushRunning st = (#[], st) := by
   simp only [flushRunning, bind, StateT.bind, get, getThe, MonadStateOf.get,
-    StateT.get, pure, h.1, h.2.1, Array.isEmpty_empty,
+    StateT.get, pure, h.1, h.2.1, h.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.2, Array.isEmpty_empty,
     Bool.false_eq_true, ↓reduceIte, Nat.not_lt.mpr h.2.2.1, decide_false,
-    Bool.false_and]
+    Bool.false_and, Bool.or_true]
   rfl
 
 private theorem flushListLevels_quiet (st : St) (h : QuietTail st) :
@@ -14963,7 +15011,7 @@ private theorem flushListLevels_quiet (st : St) (h : QuietTail st) :
 private theorem flushBeamerBlocks_quiet (st : St) (h : QuietTail st) :
     flushBeamerBlocks st = (#[], st) := by
   simp only [flushBeamerBlocks, bind, StateT.bind, get, getThe,
-    MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2.2, Array.isEmpty_empty, ↓reduceIte]
+    MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2.2.1, Array.isEmpty_empty, ↓reduceIte]
   rfl
 
 private theorem flushBeamerFootline_quiet (st : St) (h : QuietTail st) :
@@ -15903,7 +15951,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
     have hquiet : QuietTail after := by
-      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl, rfl⟩
+      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
     have hmem : atSource st pos (packageRefusal st.file pos part.trimAscii.toString) ∈
         after.diags := by
       apply Array.mem_append.mpr

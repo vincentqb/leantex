@@ -71,20 +71,103 @@ def chapterChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       "\\chapter{Charlie}\nWords.\n\\end{document}"
   t "chapters: a book's chapters number as a report's"
     ((pagesOf fonts (book "")).flatten.map (·.2.2) |>.contains "1.1Bravo")
-  let right (opts : String) : Nat :=
-    ((elabStr (book opts)).2.filter fun d =>
-      d.subject == some "chapters:openright" && d.severity != .note).size
-  t "chapters: a book's right-hand openings, which one-sided pages lack, are named once"
-    (right "" == 1 && right "[openany]" == 0 && right "[oneside]" == 0 &&
-      right "[openany,openright]" == 0 && right "[openright,openany]" == 0 &&
-      ((elabStr src).2.filter (·.subject == some "chapters:openright")).isEmpty)
-  t "chapters: an explicit openright is named once, by the chapters' openings alone"
-    (["[openright]", "[twoside,openright]"].all fun o =>
-      ((elabStr (book o)).2.filter fun d => d.severity != .note &&
-        (d.subject == some "chapters:openright" || hasStr d.message "openright")).size == 1)
+  t "chapters: a book's right-hand openings warn nothing, set as book.cls sets them"
+    (["", "[openany]", "[oneside]", "[openright]", "[twoside,openright]"].all fun o =>
+      (elabStr (book o)).2.all fun d => d.severity == .note)
   let article := "\\documentclass{article}\n\\begin{document}\n\\chapter{Alpha}\nWords.\n\\end{document}"
   t "chapters: an article has no \\chapter"
     ((elabStr article).2.any fun d => d.code == "W0301" && hasStr d.message "chapter")
+
+/-- Two-sided pages as lualatex sets them: mirrored margins, the headings style's marks, plain
+chapter openings on a recto, and fancyhdr's E and O fields. -/
+def twosideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let filler := String.join ((List.range 90).map fun i =>
+    s!"Words of an invented paragraph number {i} run on across the measure and down the page. ")
+  let doc (cls pre body : String) : String :=
+    s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+  let pages (src : String) : Array CensusPage := censusOfSrc fonts src
+  let left (ps : Array CensusPage) (i : Nat) : Option Dim.Length :=
+    ps[i]?.bind fun p => (p.lines.filter (!·.furniture)).foldl (fun m l => some (match m with
+      | some v => min v l.x
+      | none => l.x)) none
+  let furniture (ps : Array CensusPage) (i : Nat) : Array CensusLine :=
+    (ps[i]?.map fun p => p.lines.filter (·.furniture)).getD #[]
+  let head (ps : Array CensusPage) (i : Nat) : String :=
+    (((furniture ps i).foldl (fun m l => match m with
+      | some (a : CensusLine) => if l.y < a.y then some l else m
+      | none => some l) none).map (·.text.replace " " "")).getD ""
+  let heads (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (head ps)
+  let hm (src : String) : Dim.Length := (elabStr src).1.page.hmargin
+  let bk := doc "{book}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}"
+  let ps := pages bk
+  let free : Dim.Length := 2 * hm bk
+  let recto : Dim.Length := free * (2 : Int) / (5 : Int)
+  t s!"twoside: a book's recto and verso mirror their margins ({(List.range 3).map (left ps)})"
+    (ps.size ≥ 3 && left ps 2 == some recto && left ps 1 == some (free - recto))
+  t s!"twoside: the verso's head is its folio and the chapter's mark, the recto's the section's \
+and its folio ({heads ps 3})"
+    (head ps 1 == "2CHAPTER1.ALPHA" && head ps 2 == "1.1.BRAVO3")
+  t s!"twoside: a chapter's opening page carries no head, its folio in the foot ({head ps 0})"
+    ((furniture ps 0).map (·.text.trimAscii.toString) == #["1"])
+  let os := pages (doc "[oneside]{book}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}")
+  t s!"twoside: a one-sided book keeps one margin and marks the chapter on every head ({heads os 3})"
+    (os.size ≥ 3 && left os 1 == left os 2 && head os 1 == "CHAPTER1.ALPHA2" &&
+      head os 2 == "CHAPTER1.ALPHA3")
+  let opens := pages (doc "{book}" "" "\\chapter{Alpha}\nWords.\n\\chapter{Bravo}\nWords.")
+  t s!"twoside: a chapter opens on a recto, a blank verso before it ({opens.size})"
+    (opens.size == 3 && left opens 1 == none &&
+      (opens[2]?.any fun p => p.lines.any fun l => l.text == "Chapter 2"))
+  let art := pages (doc "[twoside]{article}" "\\pagestyle{headings}"
+    s!"\\section\{Alpha}\n\\subsection\{Bravo}\n{filler}")
+  t s!"twoside: an article's verso marks its section in capitals, a recto its subsection \
+({heads art 3})"
+    (art.size ≥ 3 && head art 1 == "21ALPHA" && head art 2 == "1.1Bravo3")
+  let fancy := pages (doc "[twoside]{article}" ("\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n" ++
+    "\\fancyhf{}\n\\fancyhead[LE,RO]{\\thepage}\n\\fancyhead[RE,LO]{Probe}") filler)
+  t s!"twoside: fancyhdr's E fields set a verso, its O fields a recto ({heads fancy 2})"
+    (fancy.size ≥ 2 && head fancy 0 == "Probe1" && head fancy 1 == "2Probe")
+  let plain := doc "{book}" "\\pagestyle{plain}" s!"\\chapter\{Alpha}\n{filler}"
+  t s!"twoside: a book's declared plain style sets no head and warns nothing ({heads (pages plain) 2})"
+    ((elabStr plain).2.all (·.severity == .note) && head (pages plain) 1 == "2" &&
+      (elabStr (doc "{book}" "\\pagestyle{empty}" "x")).2.all (·.severity == .note))
+  let memo := pages (doc "{memoir}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}")
+  t s!"twoside: memoir heads its pages as book does ({heads memo 3})"
+    (head memo 0 == "1" && head memo 1 == "2CHAPTER1.ALPHA" && head memo 2 == "1.1.BRAVO3")
+  let accents := pages (doc "{book}" "" s!"\\chapter\{Équilibre ŝtraße}\n{filler}")
+  t s!"twoside: a mark sets accented and sharp letters in capitals ({head accents 1})"
+    (head accents 1 == "2CHAPTER1.ÉQUILIBREŜTRASSE")
+  let short := pages (doc "{book}" "" s!"\\chapter[Brief]\{A much longer title}\n{filler}")
+  t s!"twoside: a heading's short title is its mark ({head short 1})"
+    (head short 1 == "2CHAPTER1.BRIEF")
+  let refs := String.join ((List.range 60).map fun i =>
+    s!"\\bibitem\{k{i}} An invented entry number {i} of a reference list that runs on.\n")
+  let bib := pages (doc "{book}" "" s!"\\chapter\{Alpha}\nWords.\n\\begin\{thebibliography}\{99}\n{refs}\\end\{thebibliography}")
+  -- lualatex: book's reference list opens a recto chapter, the verso before it keeping the
+  -- chapter's mark, and its later pages read its heading.
+  t s!"twoside: a reference list marks its pages with its heading ({heads bib 5})"
+    (bib.size ≥ 4 && hasStr (head bib 1) "CHAPTER1.ALPHA" && hasStr (head bib 3) "BIBLIOGRAPHY")
+  let off := pages (doc "[twoside]{article}" "\\pagestyle{headings}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhf{}"
+    s!"\\section\{Alpha}\n{filler}")
+  t s!"twoside: a later fancy style clears the headings marks ({heads off 2})"
+    (head off 1 == "2")
+  t "twoside: a verso's field on one-sided pages is named"
+    ((elabStr (doc "{article}" "\\runninghead[pages = even]{E}" "x")).2.any fun d =>
+      d.code == "W0104" && hasStr d.message "one-sided")
+  let cdp (cls : String) := pages (doc cls "" "Alpha.\n\\cleardoublepage\nBravo.")
+  t s!"twoside: cleardoublepage opens a recto on two-sided pages, the next page on one-sided ones \
+({(cdp "[twoside]{article}").size}, {(cdp "{article}").size})"
+    ((cdp "[twoside]{article}").size == 3 && left (cdp "[twoside]{article}") 1 == none &&
+      (cdp "{article}").size == 2)
+  let geo := pages (doc "{book}" "\\usepackage[margin=1in]{geometry}" filler)
+  t s!"twoside: equal declared margins stand on both sides ({(List.range 2).map (left geo)})"
+    (geo.size ≥ 2 && left geo 0 == left geo 1)
+  let koma := doc "{scrbook}" "" filler
+  let ks := pages koma
+  let kfree : Dim.Length := 2 * hm koma
+  let kinner : Dim.Length := kfree * (1 : Int) / (3 : Int)
+  t s!"twoside: KOMA-Script's two sides split the margins 1:2 ({(List.range 2).map (left ks)})"
+    (ks.size ≥ 2 && left ks 0 == some kinner && left ks 1 == some (kfree - kinner))
 
 /-- A report's chapter as references and assistive technology read it: cleveref names it a chapter,
 a label in its title lands on its head, and its word and number stand in its heading's structure. -/
@@ -147,9 +230,10 @@ equations ({lines roman}, {said})"
     (!bds.any fun d => d.subject == some "matter:pages" || d.code == "W0301")
   let bgeom := Layout.Geom.ofPage bdoc.page
   let numbers := artFolios (driverPdf fonts bgeom bdoc (layoutOf fonts bdoc bgeom))
-  -- lualatex: book's front matter numbers its pages i, ii, …, the main matter from 1 again.
+  -- lualatex: book's front matter numbers its pages i, ii, …, the main matter from 1 again, each
+  -- division and chapter on a recto.
   t s!"chapter declarations: the front matter's pages number in roman numerals, the main matter's from 1 ({numbers})"
-    (numbers == #[some "i", some "1", some "2"])
+    (numbers == #[some "i", some "ii", some "1", some "2", some "3"])
   let listing := report "\\usepackage{listings}\n"
     "\\chapter{Alpha}\n\\begin{lstlisting}[caption={A probe}]\nx = 1\n\\end{lstlisting}"
   t "chapter declarations: a listing numbered through the document is named"

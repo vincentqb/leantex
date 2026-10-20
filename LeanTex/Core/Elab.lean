@@ -7171,6 +7171,8 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
     -- geometry turns whatever paper it sets under the class's global `landscape`.
     if opts.contains "landscape" then
       page := { page with width := page.height, height := page.width }
+    if opts.contains "twoside" || opts.contains "twoside=true" then
+      page := { page with twoside := true }
   if record.model == .frame then
     if !page.sized then
       let (w, h) := slidesStageOf opts
@@ -7211,15 +7213,14 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
 public def classOptionsInert : List (Ir.PageModel × List (String × Compat.Inert)) :=
   let final := ("final", Compat.Inert.asWithout "the document is rendered in full, as without the \
 option")
-  let opensNoPage := Compat.Inert.engineSets "the pages are one-sided, so a chapter opens wherever the \
-next page falls, as without the option"
-  [(.flow, [("oneside", .engineSets "the page is one-sided, as the engine sets every page"),
-     ("twoside=false", .engineSets "the page is one-sided, as the engine sets every page"),
+  let opensNoPage := Compat.Inert.asWithout "a chapter opens wherever the next page falls, as \
+without the option"
+  [(.flow, [("oneside", .asWithout "the page is one-sided, as without the option"),
+     ("twoside=false", .asWithout "the page is one-sided, as without the option"),
      ("onecolumn", .asWithout "the text is set in one column, as without the option"),
      final,
      ("reqno", .asWithout "equation numbers stand on the right, as without the option"),
-     ("openany", opensNoPage), ("open=any", opensNoPage), ("headings=openany", opensNoPage),
-     ("openright", opensNoPage),
+     ("openany", opensNoPage), ("openright", opensNoPage), ("open=any", opensNoPage), ("headings=openany", opensNoPage),
      ("titlepage=false", .engineSets "the title opens the first page, as the engine sets it"),
      ("version=last", .asWithout "the layout is KOMA-Script's current one, as without the option"),
      ("footinclude=false",
@@ -12956,7 +12957,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
-    || (Ir.pageOpeningOfRole? n).isSome
+    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
@@ -13307,7 +13308,7 @@ private def pageMark? (n : String) : Option Block :=
   else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
   else if n == Ir.captionCloseRole then some (.role n #[])
-  else if (Ir.pageOpeningOfRole? n).isSome then some (.role n #[])
+  else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole then some (.role n #[])
   else none
 
 /-- The length keys Compat's closing mark restores at a scope's end. -/
@@ -15399,9 +15400,12 @@ private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Optio
 private def pageDim : Native.PageKey → Option (Length → PageSpec → PageSpec)
   | .width => some fun d s => { s with width := d, widthSized := true }
   | .height => some fun d s => { s with height := d, heightSized := true }
-  | .margin => some fun d s => { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none }
+  -- Declared side margins are equal on both sides, so they split the width 1:1 on either page.
+  | .margin => some fun d s =>
+    { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1) }
   | .vmargin => some fun d s => { s with vmargin := d }
-  | .hmargin => some fun d s => { s with hmargin := d, blockWidth := none, widthScale := none }
+  | .hmargin => some fun d s =>
+    { s with hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1) }
   | .markGap => some fun d s => { s with markGap := d }
   | .markThickness => some fun d s => { s with markThickness := d }
   -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
@@ -15418,6 +15422,9 @@ private def pageSwitch : Native.PageKey → Option (Bool → PageSpec → PageSp
   | .expansion => some fun b s => { s with expand := some b }
   | .numbers => some fun b s => { s with numbers := some b }
   | .linenumbers => some fun b s => { s with linenumbers := some b }
+  | .twoside => some fun b s => { s with twoside := b }
+  | .headings => some fun b s => { s with markHeads := b }
+  | .openright => some fun b s => { s with openRight := b }
   | _ => none
 
 /-- What a page key's value must be, as its type error names it. -/
@@ -15431,7 +15438,7 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .lists => "'parskip' or 'standard'"
   | .rule | .frontRule => "\"x; y; width; height; colour\""
   | .tmargin | .bmargin | .textheight | .textheightUnder => "a dimension, or auto"
-  | .vmarginratio => "a ratio such as 2:3, or auto"
+  | .vmarginratio | .hmarginratio => "a ratio such as 2:3, or auto"
   | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty | .interlinepenalty
   | .predisplaypenalty =>
     "a whole number"
@@ -15561,6 +15568,16 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
           match (r.splitOn ":").map (·.toNat?) with
           | [some a, some b] =>
             if 0 < a + b then spec := { spec with block := { spec.block with ratio := some (a, b) } }
+            else evs := wrong key v evs
+          | _ => evs := wrong key v evs
+        | _ => evs := wrong key v evs
+      | .hmarginratio, .ident "auto" => spec := { spec with sideRatio := none }
+      | .hmarginratio, v =>
+        match v with
+        | .ident r =>
+          match (r.splitOn ":").map (·.toNat?) with
+          | [some a, some b] =>
+            if 0 < a + b then spec := { spec with sideRatio := some (a, b) }
             else evs := wrong key v evs
           | _ => evs := wrong key v evs
         | _ => evs := wrong key v evs
@@ -16628,6 +16645,8 @@ public structure PreState where
   itemLabels : Array (Nat × UserCmd × Pos) := #[]
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
+  headEven : Option (Array Inline) := none
+  footEven : Option (Array Inline) := none
   headFrom : Nat := 1
   footFrom : Nat := 1
   styles : Styles := {}
@@ -17351,6 +17370,7 @@ optional; the default is ignored" pos
   | .running name opts body pos =>
     -- `from` gates only this head or foot; a redeclaration without it resets.
     let mut fromPage : Nat := 1
+    let mut verso := false
     if let some opt := opts then
       for e in Entries.read .native opt do
         match e.pair? with
@@ -17358,9 +17378,14 @@ optional; the default is ignored" pos
           match v.trimAscii.toString.toNat? with
           | some n => fromPage := n
           | none => diag s.ctx .E0321 s!"'from' needs a page number, got {v.quote}" pos
+        | some ("pages", v) =>
+          match v.trimAscii.toString with
+          | "even" => verso := true
+          | "all" => verso := false
+          | w => diag s.ctx .E0321 s!"'pages' needs even or all, got {w.quote}" pos
         | _ =>
           diag s.ctx .E0320 s!"unknown option in \\{name}: {e.src.quote}" pos
-            (help := "options: from = <page>")
+            (help := "options: from = <page>, pages = even")
     match body with
     | some b =>
       let content ← elabInlines s.ctx b
@@ -17372,13 +17397,20 @@ optional; the default is ignored" pos
           return { s with footFrom := max s.footFrom fromPage }
       let raw := (rawSrc b).trimAscii.toString
       let store := (← get).seenScalars
-      if let some prev := store.find? (fun e => e.1 == name && e.2.1 == "content") then
+      let slot := if verso then "content:even" else "content"
+      if let some prev := store.find? (fun e => e.1 == name && e.2.1 == slot) then
         if prev.2.2 != raw then
           diag s.ctx .W0343 s!"a second '\\{name}' replaces the first" (some pos)
             (help := s!"one '\\{name}' declares the line; delete the one you do not mean")
-      let store := (store.filter fun e => !(e.1 == name && e.2.1 == "content"))
-      let store := store.push (name, "content", raw)
+      let store := (store.filter fun e => !(e.1 == name && e.2.1 == slot))
+      let store := store.push (name, slot, raw)
       modify fun st => { st with seenScalars := store }
+      if verso then
+        if fromPage != 1 then
+          diag s.ctx .W0104 s!"'from' beside 'pages = even' in '\\{name}' is not read; the verso \
+follows the recto's 'from'" pos
+        if name == "runninghead" then return { s with headEven := some content }
+        else return { s with footEven := some content }
       if name == "runninghead" then
         return { s with head := some content, headFrom := fromPage }
       else
@@ -18647,6 +18679,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     locale := s.info.locale }
   let mut head := s.head
   let mut foot := s.foot
+  let mut headEven := s.headEven
+  let mut footEven := s.footEven
   let headFrom := s.headFrom
   let footFrom := s.footFrom
   let chromeDeclared := s.chromeDeclared
@@ -18724,11 +18758,19 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
     page := { page with hmargin := (page.width - surface.textBlock) / 2 }
-  if !record.runningFurniture && (head.isSome || foot.isSome) then
+  if record.runningFurniture && !page.twoside && (headEven.isSome || footEven.isSome) then
+    diag ctx .W0104 "a verso's own running head or foot ('pages = even') applies to two-sided pages, \
+and the pages here are one-sided; ignored" none
+    headEven := none
+    footEven := none
+  if !record.runningFurniture && (head.isSome || foot.isSome || headEven.isSome ||
+      footEven.isSome) then
     diag ctx .W0317
       "a card carries no running head or foot; the declaration is dropped" none
     head := none
     foot := none
+    headEven := none
+    footEven := none
   if output.formats.isEmpty then
     for f in record.formats do
       output := output.addFormat f
@@ -18937,6 +18979,8 @@ the .bib file"
       itemLabels := itemLabels
       head := head
       foot := foot
+      headEven := headEven
+      footEven := footEven
       logo := logo
       headline := headline
       logoLeft := logoLeft

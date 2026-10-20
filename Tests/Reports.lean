@@ -2333,7 +2333,14 @@ def reports : List Report := [
       "main's binary at 70096387 on the same probes: E0312 and no PDF for the bold heading, E0359 for the nested note, and nothing for either listing; the checks fail there",
       "lualatex 1.24 on invented articles: a red heading under a colour command, an LR box's verbatim and a definition's verbatim refused, and a listing a macro reads from a file set cleanly; this tree colours the heading, names each refused listing once and stays silent on the file's",
       "the corpus built by main's binary at 70096387 and by this tree's: every artifact and every diagnostic byte-identical"]
-    state := .guarded "70096387" .before .author }
+    state := .guarded "70096387" .before .author },
+  { id := "R999", date := "2026-10-19"
+    what := "two-sided pages were set one-sided: a book's verso kept its recto's margins, the standard classes' headings style (a book's default, or a declared one) set no running head and a folio in every foot, a chapter opened on whichever page came next, fancyhdr's E and O fields and KOMA-Script's inner and outer ones collapsed onto one sequence, and the command clearing to a recto was unknown"
+    pins := [check% Tests.Chapters.twosideChecks]
+    accept := ["lualatex 1.24 on invented probes: an a4 book's recto text block 0.4 of the free width from its left edge and a verso's 0.6, a verso head of the folio and CHAPTER 1. ALPHA in slanted capitals, a recto head of 1.1. BETA and the folio, a chapter's opening page plain with the folio centred in its foot, a short chapter followed by a blank verso before the next; a one-sided book heads every page with the chapter's mark and the folio; a two-sided article heads a verso with 1 ALPHA, a recto with 1.1 Beta; fancyhdr's [LE,RO] folio outside; scrbook's recto margins 1:2; a book's front matter on i and a blank ii before its main matter's 1; a cleardoublepage on two-sided pages leaving a blank verso; this tree sets the same within its own measure",
+      "main's binary at 730c0b54 on the same probes: one margin on every page, no head, the folio in every foot, chapters on consecutive pages; the guards fail there",
+      "the corpus built by main's binary at 6714141d and by this tree's: every PDF and web page byte-identical and every diagnostic, notes included, the same, no corpus document being two-sided"]
+    state := .guarded "730c0b54" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

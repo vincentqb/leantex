@@ -1020,10 +1020,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat fancyhf clears the gathered fields"
     ((elabStr (pre "\\lhead{A}\\cfoot{B}\\fancyhf{}")).1.head == none &&
      (elabStr (pre "\\lhead{A}\\cfoot{B}\\fancyhf{}")).1.foot == none)
-  t "compat fancyhead even-odd places collapse with a note"
-    (let (doc, ds) := elabStr (pre "\\fancyhead[LE,RO]{A}")
-     doc.head.isSome && ds.any (fun d => d.code == "N0102") &&
-       ds.all (·.severity == .note))
+  t "compat fancyhead even-odd places set a verso's head apart"
+    (let (doc, ds) := elabStr ("\\documentclass[twoside]{article}\n\\fancyhead[LE,RO]{A}\n" ++
+       "\\begin{document}\nx\n\\end{document}\n")
+     doc.head.isSome && doc.headEven.isSome && doc.head != doc.headEven &&
+       ds.all (·.severity == .note) &&
+       (elabStr (pre "\\fancyhead[LE,RO]{A}")).1.headEven.isNone)
   t "compat pagestyle fancy is agreement, not a missing model"
     ((elabStr (pre "\\fancyhead[L]{A}\\pagestyle{fancy}")).2.all (·.severity == .note))
   t "compat pagestyle empty clears the furniture"
@@ -1039,8 +1041,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
        ds.all (·.severity == .note))
   t "the gate only defers: a declaration's own later from stands"
     ((elabStr (pre "\\runningfoot[from = 3]{note}\\thispagestyle{empty}")).1.footFrom == 3)
-  t "compat pagestyle headings keeps the honest warning"
-    (warnCodes (pre "\\pagestyle{headings}") == ["W0104"])
+  t "compat pagestyle headings sets the headings' marks in the head"
+    (warnCodes (pre "\\pagestyle{headings}") == [] &&
+      (elabStr (pre "\\pagestyle{headings}")).1.page.markHeads)
   -- `\par` ends a paragraph inside a scope group, carrying its declarations on; a command's argument group is no scope.
   t "par in a scope group ends the paragraph"
     ((elabStr "{\\Huge a \\par} b").1.body ==
@@ -1327,7 +1330,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "a\\raggedright b").1.body ==
       #[.para #[.text "a"], .ragged .left #[.para #[.text "b"]]])
   t "compat pagestyle names its loss and eats its argument"
-    (let (doc, ds) := elabStr "\\pagestyle{headings}a"
+    (let (doc, ds) := elabStr "\\pagestyle{myheadings}a"
      ds.any (·.code == "W0104") && doc.body == #[.para #[.text "a"]])
   -- Beamer configuration belongs to the deck class; under article the install adds W0355.
   let beamerPre := "\\documentclass{slides}\n" ++
@@ -1566,9 +1569,11 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (classDoc "{book}" "" titled)).1.body != (elabStr (classDoc "[oneside]{book}" "" titled)).1.body &&
       (elabStr ("\\PassOptionsToClass{oneside}{book}" ++ classDoc "{book}" "" titled)).1.body ==
         (elabStr (classDoc "[oneside]{book}" "" titled)).1.body)
-  t "a two-sided class's oneside is noted as the engine's one-sided page"
-    ((elabStr (classDoc "[oneside]{scrbook}" "" "x")).2.any fun d =>
-      d.code == "N0100" && d.subject == some "param:documentclass:oneside")
+  t "a two-sided class's oneside sets one-sided pages"
+    (!(elabStr (classDoc "[oneside]{scrbook}" "" "x")).1.page.twoside &&
+      (elabStr (classDoc "{scrbook}" "" "x")).1.page.twoside &&
+      !(elabStr (classDoc "[oneside]{book}" "" "x")).1.page.twoside &&
+      (elabStr (classDoc "{book}" "" "x")).1.page.twoside)
   t "class landscape turns a declared paper, as geometry does"
     (let p := (elabStr (classDoc "[landscape]{article}" "\\usepackage[letterpaper]{geometry}" "x")).1.page
      p.width == Dim.bp 792 && p.height == Dim.bp 612)

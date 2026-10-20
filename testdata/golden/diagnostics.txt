@@ -88,7 +88,7 @@
 ── E0322 (dropped) unknown key in a declaration block
 ✖ [E0322] - \page
   '\page' has no key 'zoom'
-  suggestion: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap
+  suggestion: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings
 ── E0323 (dropped) declaration key value has the wrong type
 ✖ [E0323] - \page
   'vmargin' in '\page' expects a dimension, got a string
@@ -408,9 +408,6 @@
   suggestion: \allow{W0104} accepts the skip
 ⚠ [W0104] - \sloppy
   '\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own and an overfull line warns by itself
-⚠ [W0104] - \pagestyle
-  '\pagestyle{headings}' names running furniture the engine does not model; ignored
-  suggestion: plain, empty, and fancy are modelled; \runninghead / \runningfoot declare the furniture directly
 ⚠ [W0104] - \ifx
   TeX conditional ('\ifx' … '\fi') is not supported; skipped whole
 ⚠ [W0104] - \usecolortheme
