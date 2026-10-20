@@ -172,9 +172,8 @@ a comma, which a list's names cannot. -/
 private def listable (found : Array LeanFactsFile.BibFile) (span : Span) :
     Array LeanFactsFile.BibFile × Array Diag :=
   let (bad, good) := found.partition (·.name.contains ',')
-  (good, bad.map fun f => Diag.of .W0110 s!"the bibliography '{f.name}' a module docstring declares \
-holds a comma in its name or folder, which a reference list's file names cannot hold; its entries \
-are not read" (some span)
+  (good, bad.map fun f => Diag.of .W0110 (Diag.say .W0110 .bibliography f.name) (some span)
+    (detail := some "a comma in its name or folder, which a reference list's file names cannot hold")
     (help := "rename the file or its folder without a comma")
     (subject := some "code:bibliography-comma"))
 

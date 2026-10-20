@@ -85,7 +85,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lowered := listed "" "\\pagestyle{zzstyle}" "\\gdef\\pagestyle{\\setlength{\\itemsep}{9pt}}"
   t "dispatch order: a lowered control used before a later definition keeps its meaning"
     (lowered.any (fun d => d.kind == .W0104 &&
-        (d.message.splitOn "pagestyle{zzstyle}").length > 1) &&
+        d.message == "ignored page style zzstyle") &&
       !settled lowered)
   let earlier := listed "\\renewcommand{\\ensuremath}{\\setlength{\\itemsep}{9pt}}"
     "\\ensuremath{x^2}" ""
@@ -256,7 +256,7 @@ def ctrlGateChecks (ref : IO.Ref (List String)) : IO Unit := do
           ((Ir.blocksText doc.body).splitOn "omega").length == 2)
       t s!"control gate: a body \\{row.name} is named in the one wording"
         (ds.any fun d => d.kind == .W0340 && d.subject == some ("ctrl:" ++ row.name) &&
-          d.message == s!"'\\{row.name}' is a declaration; in the body it is ignored" &&
+          d.message == Diag.bodyDeclaration row.name &&
           d.help == some help)
       let (_, early) := Elab.run file ("\\documentclass{article}" ++ loads ++ "\\" ++ row.name ++
         operandText row.sig ++ "\\begin{document}alpha omega\\end{document}")

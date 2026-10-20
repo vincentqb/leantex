@@ -376,7 +376,7 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     "\\documentclass{" ++ cls ++ "}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
   t "an empty skip is refused as a block entry with no value"
     ((dvE (doc "article" "" "Before.\n\\vspace{}\nAfter.")).any fun d =>
-      d.code == "E0320" && hasStr d.message "has no value")
+      d.code == "E0320" && d.detail == some "it has no value")
   t "an empty section skip is refused as an invalid style entry"
     ((dvE (doc "scrartcl" "\\RedeclareSectionCommand[beforeskip=, afterskip=1ex]{section}"
       "\\section{One}\nWords.")).any fun d => d.code == "E0320" && hasStr d.message "invalid entry")

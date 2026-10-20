@@ -330,7 +330,7 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
   t "only the unsupported tcolorbox package declaration is allowlisted"
     (skipped.size == 1 && skipped.all fun d =>
       d.triggerText == some "\\usepackage" &&
-        d.message == "package 'tcolorbox' is not supported; skipped")
+        d.message == "unsupported package tcolorbox")
   t "only the four requested box decoration keys are named, one each"
     (decoration.size == 4 && decoration.all fun d => d.triggerText == some "\\begin" &&
       ["enhanced", "arc", "colback", "colframe"].any fun k =>

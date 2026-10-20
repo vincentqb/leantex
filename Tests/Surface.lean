@@ -498,7 +498,7 @@ def columnFormChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{column}{0.5\\textwidth}b\\end{column}\\end{columns}")).map (·.size) == some 2)
   t "a \\column outside {columns} is named, its argument consumed"
     (let ds := (elabStr (deck169Frame "\\column{0.5\\textwidth}\nx")).2
-     (ds.any fun d => d.code == "W0104" && hasStr d.message "top level") &&
+     (ds.any fun d => d.code == "W0104" && hasStr (d.help.getD "") "\\begin{columns}") &&
        !ds.any (·.code == "W0301") && !ds.any (·.code == "E0313"))
 /-- Listings apparatus and siunitx: `\lstset` precedence, listing numbering, minted's language
 argument, and number and unit texts under each locale. -/
@@ -627,14 +627,14 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\wd0\\relax]{geometry}")).2
   t "compat geometry drops an unreadable dimexpr value named with its spelling"
     ((dimexprDs.any fun d => d.code == "W0101" &&
-        hasStr d.message "footskip = \\dimexpr 0.3in" &&
-        hasStr d.message "\\wd" &&
+        hasStr (saidText d) "footskip = \\dimexpr 0.3in" &&
+        hasStr (saidText d) "\\wd" &&
         (d.help.map (hasStr · "literal")).getD false) &&
       dimexprDs.all (·.severity != .error))
   -- Dropped geometry keys change the page, so they warn.
   t "compat geometry names what it dropped as a warning"
     ((elabStr (pre "\\usepackage[voffset=1in]{geometry}")).2.any fun d =>
-      d.code == "W0104" && d.severity == .warning && hasStr d.message "'voffset'")
+      d.code == "W0104" && d.severity == .warning && hasStr (saidText d) "key voffset")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
      warnCodes (pre "\\usepackage{nosuchpkg}") == ["W0103"])
@@ -662,7 +662,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dmDoc.info.pdfVersion == some "1.7")
   t "compat DocumentMetadata names the writer keys it drops"
     (dmDs.any fun d => d.code == "W0101" &&
-      !hasStr d.message "pdfversion" && hasStr d.message "uncompress")
+      !hasStr d.message "pdfversion" && hasStr (saidText d) "uncompress")
   let (hookDoc, hookDs) := elabStr ("\\documentclass{article}\n" ++
     "\\AddToHook{shipout/background}[me]{\\put(0,0){leak}}\n" ++
     "\\begin{document}\nx\n\\end{document}")
@@ -746,7 +746,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      (fontsOf "\\usepackage[sfdefault]{carlito}").body == some "Carlito")
   t "compat helvet names its dropped scale option"
     ((elabStr (pre "\\usepackage[scaled=0.9]{helvet}")).2.any fun d =>
-      d.code == "W0104" && hasStr d.message "scaled")
+      d.code == "W0104" && hasStr (saidText d) "scaled")
   -- `\xspace` is a space unless punctuation follows; the lexer already ate the typed space after it.
   let paraText (body : String) : String :=
     match (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++ body ++
@@ -1325,7 +1325,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat noindent is agreement, never the guard's W0387"
     (let ds := (elabStr (dvDoc "" "\\noindent x")).2
      ds.all (·.code != "W0387") &&
-     ds.any (fun d => d.code == "N0100" && hasStr d.message "noindent"))
+     ds.any (fun d => d.code == "N0100" && hasStr (saidText d) "noindent"))
   t "compat raggedright maps mid-flow instead of naming a loss"
     ((elabStr "a\\raggedright b").1.body ==
       #[.para #[.text "a"], .ragged .left #[.para #[.text "b"]]])
@@ -1387,7 +1387,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "list instance options are consumed and named, never E0310"
     (let src := "\\documentclass{article}\\begin{document}\\begin{itemize}[align=left]" ++
       "\\item a\\end{itemize}\\end{document}"
-     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "W0104" && hasStr d.message "align"))
+     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "W0104" && hasStr (saidText d) "align"))
   t "item marker override is read as the item's label"
     (let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
       "\\item[--] a\\end{itemize}\\end{document}")
@@ -2675,16 +2675,16 @@ def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- An `\end` an enclosing environment answers closes what is open inside it, each named once.
   let doc := "\\begin{document}\n{a\n\\end{document}"
   t s!"parse: an open group an enclosing end closes is one loss ({(praw doc).2.map (·.message)})"
-    (((praw doc).2.map (·.message)) == #["unclosed: expected '}'"] &&
+    (((praw doc).2.map (·.message)) == #["unclosed group {"] &&
       ((praw doc).1.map fun r => match r with
         | .env n _ _ => n
         | _ => "?") == #["document"])
   let list := "\\begin{document}\n\\begin{itemize}\n\\item a\n\\end{document}"
   t s!"parse: an open list an enclosing end closes is one loss ({(praw list).2.map (·.message)})"
-    (((praw list).2.map (·.message)) == #["'\\end{document}' closes '\\begin{itemize}'"])
+    (((praw list).2.map (·.message)) == #["invalid environment document"])
   let nameless := "\\begin{document}\n\\begin{ x\n\\end{document}"
   t s!"parse: a begin naming nothing opens nothing ({(praw nameless).2.map (·.message)})"
-    (((praw nameless).2.map (·.message)) == #["expected an environment name"])
+    (((praw nameless).2.map (·.message)) == #["invalid environment name"])
   let defined := "\\begin{document}\nA \\newcommand{\\fin}{\\end{document}} Kqzv.\n\\end{document}"
   let optioned := "\\begin{document}\nA \\newcommand{\\fin}[2][default text with many words in it]" ++
     "{#1 \\end{document}} Kqzv.\n\\end{document}"
@@ -3322,8 +3322,7 @@ def declChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "assert fonts fails"
     ((Check.one { shipped with fontsEmbedded := false } (mkAssert .fontsAllEmbedded)).isSome)
   t "assert failure names the actual"
-    (((Check.one shipped (mkAssert (.pages .eq 1))).map (·.message)).any
-      fun m => (m.splitOn "actual: 2").length == 2)
+    ((Check.one shipped (mkAssert (.pages .eq 1))).any fun d => d.detail == some "actual: 2")
   t "assert all reports every failure"
     ((Check.all shipped #[mkAssert (.pages .eq 1), mkAssert (.pages .eq 2),
       mkAssert (.pages .lt 1)]).size == 2)
@@ -3475,7 +3474,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
         (·.shapes.size) == some 1)
   t "an unknown colour is E0333 naming the spelling"
     ((elabStr (wrap "\\fill[nosuch!30] (0,0) rectangle (1,1);")).2.any fun d =>
-      d.code == "E0333" && hasStr d.message "nosuch!30")
+      d.code == "E0333" && hasStr (saidText d) "nosuch!30")
   t "an unknown macro is E0333"
     (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
   t "an unsupported node option loses only the option"
@@ -3560,7 +3559,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | none => false) == some true)
   t "a path operation outside the subset loses the edge by name"
     ((elabStr (wrap "\\draw (0,0) parabola (1,1);")).2.any fun d =>
-      d.code == "W0334" && hasStr d.message "'parabola'")
+      d.code == "W0334" && hasStr (saidText d) "'parabola'")
   -- `to[out=,in=]` sets its control points 0.3915·‖d‖ along the declared tangents (pgf To-Path library).
   t "a to[out,in] edge ships a cubic segment"
     ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (2,2);")).map (fun p =>
@@ -4421,7 +4420,7 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
      splicedA.toList.map (·.1) == ["venuea.sty"])
   t "parity a: N0020 quotes the counts and names the file that asked"
     (dsA.any fun d => d.code == "N0020" &&
-      (d.message.splitOn "honoured: 1, named: 0, TeX internals refused: 0").length == 2 &&
+      ((saidText d).splitOn "honoured: 1, named: 0, TeX internals refused: 0").length == 2 &&
       d.span.any (·.file.endsWith "inputpre-preamble.tex"))
   let (docB, dsB, splicedB) ← run "requirechain"
   t "parity b: a nested RequirePackage reads the .sty beside the document"
@@ -4456,7 +4455,7 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
       (d.message.splitOn "VenueSetup").length == 2)
   t "sty collapse: N0020 quotes all three counts"
     (dsI.any fun d => d.code == "N0020" &&
-      (d.message.splitOn "TeX internals refused: 4").length == 2 &&
+      ((saidText d).splitOn "TeX internals refused: 4").length == 2 &&
       Compat.styCounts "venuei.sty" dsI == (0, 1, 4))
   t "sty collapse: the same internals in the document's own preamble stay warnings"
     (let ds := (Elab.run "doc.tex"
@@ -4504,7 +4503,7 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "neither side is silent: N0020 names the file and the bundle it overrides"
     (dsS.any fun d => d.code == "N0020" &&
       (d.message.splitOn "beamerthememoloch.sty").length == 2 &&
-      (d.message.splitOn "moloch bundle").length == 2)
+      ((saidText d).splitOn "moloch bundle").length == 2)
   -- A theme's title-page redefinition is refused, its declarative appearance still read.
   let (_, dsT, splicedT) ← run "themetitleread"
   t "a theme's title-page redefinition is refused, never an error"
@@ -4520,7 +4519,7 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dsH.all (·.code != "W0319") &&
      Compat.styCounts "beamerthemehollow.sty" dsH == (0, 2, 0) &&
      dsH.any fun d => d.code == "N0020" &&
-      (d.message.splitOn "honoured: 0").length == 2)
+      ((saidText d).splitOn "honoured: 0").length == 2)
   t "the default bundle floors a theme the engine could not absorb"
     ((docH.palette.find? "fg").isSome && dsH.all (·.code != "W0304"))
   t "an unknown theme with no file beside the document still warns"
@@ -4794,7 +4793,7 @@ def titleTemplateTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let (_, nds) := elabStr bare
   t s!"title template with no document: named unread once, on no page ({nds.map (·.code)})"
     ((nds.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:title page" &&
-      hasStr d.message "begin{document}").size == 1 && occurs (page bare) "Invented Series" == 0)
+      hasStr (saidText d) "begin{document}").size == 1 && occurs (page bare) "Invented Series" == 0)
 
 /-- A deck whose theme redefined the title page still ships it with the document's declared
 metadata. -/
@@ -4891,7 +4890,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       let losses := ds.filter fun d => d.code == "W0104" || d.code == "W0110"
       t s!"a custom font's {label} is named once when selected in the {site}"
         (losses.size == 1 && losses.any (fun d =>
-          d.code == code && d.subject == some subject && hasStr d.message note) &&
+          d.code == code && d.subject == some subject && hasStr (saidText d) note) &&
          ds.all fun d => d.severity != .error && d.code != "W0361" && d.code != "W0363")
       let c := censusOf (coveredColorsOf doc) out
       t s!"a custom font's {label} keeps the title's ink in the {site}"
@@ -5528,20 +5527,20 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabData srcs (pre ++ s)).2.filter (·.severity == .warning)
   t "data: an absent field is W0364 naming the entry's own fields"
     ((dataWarns "\\begin{foreach}{j}{job}\\val{j.end}\\end{foreach}").any fun d =>
-      d.code == "W0364" && hasStr d.message "'end' is absent in a '@job' record" &&
+      d.code == "W0364" && d.message == "undefined field end for record @job" &&
         d.detail.any (hasStr · "job[1] carries: role, start"))
   t "data: \\ifdata on the same absent field stays silent"
     ((dataWarns "\\begin{foreach}{j}{job}\\ifdata{j.end}{x}\\end{foreach}").isEmpty)
   t "data: an unbound variable is W0364"
     ((dataWarns "\\val{k.role}").any fun d =>
-      d.code == "W0364" && hasStr d.message "'k' is not bound")
+      d.code == "W0364" && d.message == "undefined variable k")
   t "data: a kind with no records is W0364 naming what the data carries"
     ((dataWarns "\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}").any fun d =>
       d.code == "W0364" && d.detail.any (hasStr · "@job"))
   t "data: a forward reference is W0364 — data precedes use"
     (((elabData #[] ("\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}" ++
         "\\data{ @job{a, role = {X}} }")).2.filter (·.severity == .warning)).any fun d =>
-      d.code == "W0364" && hasStr d.message "no data records are declared")
+      d.code == "W0364" && d.detail == some "no data records before this point")
   t "data: a malformed inline entry is W0352 and the rest is kept"
     (let (doc, ds) := elabData #[]
       ("\\data{ @job{bad, role = ?} @job{ok, role = {Kept Role}} }" ++
@@ -5819,10 +5818,10 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (closedDs.any (·.code == "W0334") && closedDs.all (·.code != "W0379") &&
      closedDoc.pictureSrcs.isEmpty && closedDoc.pictureTool.isNone)
   t "tool = none names the boundary's set lines and the picture load as losses"
-    (closedDs.any (fun d => d.code == "W0301" && hasStr d.message "pgfplotsset") &&
+    (closedDs.any (fun d => d.code == "W0301" && hasStr (saidText d) "pgfplotsset") &&
      closedDs.any (·.code == "W0103"))
   t "tool = none leaves a library load the engine's own"
-    (closedDs.all fun d => !(d.code == "W0301" && hasStr d.message "usetikzlibrary"))
+    (closedDs.all fun d => !(d.code == "W0301" && hasStr (saidText d) "usetikzlibrary"))
   -- The driver executes the named binary, so a tool outside the engine's own list is refused.
   let (badDoc, badDs) := elabStr (dvDoc "\\pictures{ tool = rm }\n" pic)
   t "an unpinned tool is refused by name and the default stands"
@@ -5889,9 +5888,9 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let (_, refusedDs) := elabStr (dvDoc "\\pictures{ tool = none }\n"
     (sets ++ "\\pgfplotsset{compat=1.18}\n" ++ outside))
   t "tool = none makes a body-level boundary set line an unknown command"
-    (refusedDs.any fun d => d.code == "W0301" && hasStr d.message "pgfplotsset")
+    (refusedDs.any fun d => d.code == "W0301" && hasStr (saidText d) "pgfplotsset")
   t "tool = none keeps a body-level library load the engine's own"
-    (refusedDs.all fun d => !(d.code == "W0301" && hasStr d.message "usetikzlibrary"))
+    (refusedDs.all fun d => !(d.code == "W0301" && hasStr (saidText d) "usetikzlibrary"))
   -- With no tool a partly drawn picture's request is withdrawn and the subset's drawing ships (`Boundary.fold`).
   let partly := "\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
     "\\pattern (0,0) rectangle (1,1);\\end{tikzpicture}"
@@ -5964,7 +5963,7 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     t s!"withdrawn, the driver names the picture once: {name}"
       ((pictureDiags folded).isEmpty && lines.size == 1 && lines.all fun l =>
         l.severity == .warning && l.subject == some src &&
-        (refusals closedDs).all fun (_, m) => hasStr l.message m)
+        (refusals closedDs).all fun (_, m) => hasStr (saidText l) m)
     let (_, _, closedRs) := firstPass (pic "\\pictures{ tool = none }\n" body)
     t s!"declined, the picture is recorded for the fold: {name}"
       (closedRs.declined == #[id] && closedRs.fallbacks.isEmpty &&
@@ -6040,15 +6039,15 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      folded[0]? == some before && folded[2]? == some note && folded[4]? == some elsewhere)
   t "the first line names every refusal and the tool's words; repeats demote"
     ((folded[1]?.any fun d => d.subject == some a && d.severity == .warning &&
-      d.span == some here && hasStr d.message "'\\shade'" && hasStr d.message "'mod'" &&
+      d.span == some here && hasStr (saidText d) "'\\shade'" && hasStr (saidText d) "'mod'" &&
       hasStr (d.help.getD "") "an invented failure") &&
      (folded[3]?.any fun d => d.subject == some a && d.severity == .note &&
-      d.span == some again && hasStr d.message "'mod'"))
+      d.span == some again && hasStr (saidText d) "'mod'"))
   -- A refusal the document accepts stays the elaborator's, so its `\allow` entry fires as written.
   let accepted := Boundary.fold #["W0334"] false "lualatex" w2 #[shade, unread]
   t "an accepted refusal is not folded, and the line names only the rest"
     (accepted.map (·.code) == #["W0334", "W0419"] &&
-     (accepted[1]?.any fun d => hasStr d.message "'mod'" && !hasStr d.message "'\\shade'"))
+     (accepted[1]?.any fun d => hasStr (saidText d) "'mod'" && !hasStr d.message "'\\shade'"))
   let everyOne := Boundary.fold #[] true "lualatex" w2 #[shade, unread]
   let bothNamed := Boundary.fold #["W0334", "E0333"] false "lualatex" w2 #[shade, unread]
   t "with every refusal accepted nothing folds; the first quotes the tool"
@@ -6223,7 +6222,7 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      ((bwd[0]?.map (·.images == 0)).getD false))
   let (_, unknownDs) := elabStr (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
   t "a reference to a name no node carries is refused by that name"
-    (unknownDs.any fun d => d.code == "E0333" && hasStr d.message "zz")
+    (unknownDs.any fun d => d.code == "E0333" && hasStr (saidText d) "zz")
   let cu := censusSrc (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
   t "the refused node costs itself, not the picture"
     (pageHas cu 0 "Pear" && ((cu[0]?.map (·.images == 0)).getD false))
@@ -6256,7 +6255,7 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "an unreadable macro in a node body keeps the body's word"
     ((labels c1).any fun (s, _, _) => s == "Quince")
   t "the unreadable macro is still named at the node"
-    (ds1.any fun d => d.code == "W0334" && hasStr d.message "wobble")
+    (ds1.any fun d => d.code == "W0334" && hasStr (saidText d) "wobble")
   t "the salvaged label ships no markup"
     (!(labels c1).any fun (s, _, _) =>
       hasStr s "\\" || hasStr s "{" || hasStr s "}")
@@ -6299,10 +6298,10 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      | _, _, _, _ => false)
   let (_, ds6) := run "\\node (a) {Pear \\footnotesize Fig};\n"
   t "a size switch inside a label line is named instead"
-    (ds6.any fun d => d.code == "W0334" && hasStr d.message "footnotesize")
+    (ds6.any fun d => d.code == "W0334" && hasStr (saidText d) "footnotesize")
   let (_, ds6b) := run "\\node (a) {{\\footnotesize Fig}};\n"
   t "a size switch inside a group is named, never silently lost"
-    (ds6b.any fun d => d.code == "W0334" && hasStr d.message "footnotesize")
+    (ds6b.any fun d => d.code == "W0334" && hasStr (saidText d) "footnotesize")
   -- A shipped colour is visible only on the covered census channel.
   let (c7, ds7) := run "\\node (a) {\\textcolor{rose}{Sloe}};\n"
   t "a coloured node label elaborates with nothing refused"
@@ -6311,7 +6310,7 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((labels c7).any fun (s, _, _) => s == "Sloe")
   t "a colour role the palette does not carry is named, and the word stays"
     (let (c8, ds8) := run "\\node (a) {\\textcolor{nosuch}{Sloe}};\n"
-     ds8.any (fun d => d.code == "W0334" && hasStr d.message "nosuch") &&
+     ds8.any (fun d => d.code == "W0334" && hasStr (saidText d) "nosuch") &&
        (labels c8).any fun (s, _, _) => s == "Sloe")
   -- A phantom's argument is sizing, not content: no ink and no loss.
   let (c9, ds9) := run "\\node (a) {\\vphantom{p}Damson};\n"
@@ -6852,8 +6851,8 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
          "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
   let (_, opaqueDs) := elabStr opaqueSrc
   t "a test the walk cannot compute is named, and says which branch drew"
-    (opaqueDs.any fun d => d.code == "W0334" && hasStr d.message "notamacro" &&
-      hasStr d.message "draws")
+    (opaqueDs.any fun d => d.code == "W0334" && hasStr (saidText d) "notamacro" &&
+      hasStr (saidText d) "draws")
   let guarded := censusSrc opaqueSrc
   t "an unreadable test still ships a branch, and only one"
     (pageHas guarded 0 "Pear" && !pageHas guarded 0 "Fig" &&
@@ -6863,7 +6862,7 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ("\\ifvoid0\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
   let (_, voidDs) := elabStr voidSrc
   t "an opener the subset cannot compute is named by its own spelling"
-    (voidDs.any fun d => d.code == "W0334" && hasStr d.message "ifvoid")
+    (voidDs.any fun d => d.code == "W0334" && hasStr (saidText d) "ifvoid")
   -- pgf sets a picture in a horizontal box, so `\ifhmode` and `\ifinner` hold and `\ifmmode` and `\ifvmode` fail, as lualatex draws.
   let modeOf (h : String) : Array CensusPage := censusSrc (pic
     ("\\" ++ h ++ "\n" ++ nodes "Pear" "Plum" ++ "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n"))
@@ -6897,15 +6896,15 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      "\\draw (hidden) -- (zz);\n")
   let (_, cascadeDs) := elabStr cascadeSrc
   t "a name declared in an untaken branch is refused at warning strength"
-    (cascadeDs.any fun d => d.code == "W0334" && hasStr d.message "hidden")
+    (cascadeDs.any fun d => d.code == "W0334" && hasStr (saidText d) "hidden")
   t "and not as a name nothing declared"
-    (!cascadeDs.any fun d => d.code == "E0333" && hasStr d.message "hidden")
+    (!cascadeDs.any fun d => d.code == "E0333" && hasStr (saidText d) "hidden")
   -- With no gap an undeclared name stays an error, or the demotion would pass under an always-firing gate.
   let (_, plainDs) := elabStr (pic
     ("\\node (zz) [draw, minimum size=8mm] at (6,0) {Keep};\n" ++
      "\\draw (nowhere) -- (zz);\n"))
   t "with no gap in the picture, a name nothing declared stays an error"
-    (plainDs.any fun d => d.code == "E0333" && hasStr d.message "nowhere")
+    (plainDs.any fun d => d.code == "E0333" && hasStr (saidText d) "nowhere")
   -- An unbalanced conditional's collected statements drain at the end of the body.
   let unclosed := censusSrc (pic
     ("\\ifnum\\notamacro=1\n" ++ nodes "Pear" "Plum"))
@@ -7030,10 +7029,10 @@ def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- An anchor with no measurement is named and costs its own edge: `mid` needs the face's ex.
   let (_, midDs) := elabStr (pic (two "aa.mid" "bb.mid"))
   t "an anchor outside the subset is named by its own spelling"
-    (midDs.any fun d => d.code == "W0334" && hasStr d.message "mid")
+    (midDs.any fun d => d.code == "W0334" && hasStr (saidText d) "mid")
   let (_, gone) := elabStr (pic (two "aa.east" "zz.west"))
   t "an anchor on a name no node carries is refused by that name"
-    (gone.any fun d => d.code == "E0333" && hasStr d.message "zz" &&
+    (gone.any fun d => d.code == "E0333" && hasStr (saidText d) "zz" &&
       !hasStr d.message "zz.west")
 
 /-- A node's label sets in the face the body sets in (`Picture.labelFace_agree`), stated as an
@@ -7094,7 +7093,7 @@ def pictureAutoLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "an 'auto' edge label elaborates with nothing refused"
     (ds.all (·.severity == .note))
   t "'auto' is not named as a dropped key"
-    (!ds.any fun d => d.code == DiagCode.W0334.code && hasStr d.message "auto")
+    (!ds.any fun d => d.code == DiagCode.W0334.code && hasStr (saidText d) "auto")
   t "on the line, above it and below it are three different placements"
     (above.isSome && above != below && above != onLine && below != onLine)
   t "a label with no placement and no 'auto' is centred on the line"
@@ -7231,7 +7230,7 @@ def pictureMacroReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (!pageHas c 0 Picture.nodeFloorPlaceholder)
   t "no macro in a node body is named as unknown"
     (!ds.any fun d => d.code == DiagCode.W0334.code &&
-      hasStr d.message "unknown macro")
+      hasStr (saidText d) "unknown macro")
   t "the macro-reach document elaborates with nothing refused"
     (ds.all (·.severity == .note))
   t "no boundary box stands where the macro picture is"
@@ -7293,7 +7292,7 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let inlineC := censusOf (coveredColorsOf inlineDoc) inlineOut
   let keyNames : List String :=
     ((ds.filter fun d => d.code == DiagCode.W0334.code &&
-      hasStr d.message "picture key").map fun d =>
+      hasStr (saidText d) "picture key").map fun d =>
         (d.message.splitOn "'").getD 1 "").toList
   t "a hyphenated style definition is not named as a dropped key"
     (keyNames == [])
@@ -7331,13 +7330,13 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (fun s => s.dash == #[Dim.pt 3, Dim.pt 3] && paintColor? s.paint == some { r := 0, g := 255, b := 0 })
       == some true)
   t "a bundle on an edge operation is not named as a dropped option"
-    (!opDs.any fun d => d.code == DiagCode.W0334.code && hasStr d.message "edge-muted")
+    (!opDs.any fun d => d.code == DiagCode.W0334.code && hasStr (saidText d) "edge-muted")
   -- A dropped key is named by its whole name, not its first token.
   let namesOf (s : String) : List String :=
     ((elabStr (s ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
       "\\draw (0, 0) -- (3, 0);\n\\end{tikzpicture}\n\\end{document}")).2.filter
         fun d => d.code == DiagCode.W0334.code &&
-          hasStr d.message "picture key").toList.map fun d =>
+          hasStr (saidText d) "picture key").toList.map fun d =>
         (d.message.splitOn "'").getD 1 ""
   t "a two-word key with no loop is named by both its words"
     (namesOf "\\tikzset{every label/.style={draw}}\n" == ["every label"])
@@ -7360,7 +7359,7 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let refusedSrc := dvDoc ("\\pictures{ tool = none }\n" ++ keys) body
   let keyNames (ds : Array Diag) : List String :=
     ((ds.filter fun d => d.code == DiagCode.W0334.code &&
-      hasStr d.message "picture key").map fun d =>
+      hasStr (saidText d) "picture key").map fun d =>
         (d.message.splitOn "'").getD 1 "").toList
   let (openDoc, openDs) := elabStr openSrc
   let (refusedDoc, refusedDs) := elabStr refusedSrc
@@ -7418,7 +7417,7 @@ def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
   t "a tip kind the subset cannot draw is still named as dropped"
     (otherTip.2.any fun d => d.code == DiagCode.W0334.code &&
-      hasStr d.message "picture key")
+      hasStr (saidText d) "picture key")
   let ladder := censusSrc (box ++ "\\tikzset{draw=blue}\n" ++
     "\\tikzset{wire/.style={draw=green}}\n" ++
     "\\begin{document}\n" ++
@@ -7466,7 +7465,7 @@ def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mixedKeys (s : String) : List String :=
     ((elabStr (box ++ s ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
       "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")).2.filter fun d =>
-        d.code == DiagCode.W0334.code && hasStr d.message "picture key").toList.map
+        d.code == DiagCode.W0334.code && hasStr (saidText d) "picture key").toList.map
       fun d => (d.message.splitOn "'").getD 1 ""
   t "a document key the subset reads is not named as dropped"
     (mixedKeys "\\tikzset{->, overlay}\n" == ["overlay"])
@@ -7486,7 +7485,7 @@ def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((elabStr (box ++ "\\tikzset{ghost/.style={overlay}}\n" ++
       "\\begin{document}\n\\begin{tikzpicture}[ghost]\n" ++ pair ++
       "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")).2.any fun d =>
-        d.code == DiagCode.W0334.code && hasStr d.message "overlay")
+        d.code == DiagCode.W0334.code && hasStr (saidText d) "overlay")
 
 /-- The poster-chrome compat arms: `\setbeamercolor` onto palette roles, `\footercontent` as the
 running foot, and `\usecolortheme{n}` reading `beamercolorthemen.sty`. -/
@@ -7910,10 +7909,10 @@ def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       ((warnCodes src).contains "W0104" == axes.width)
     t s!"phantomCtrl row '{n}' speaks of height and depth only if it props them"
       (((dvE src).any fun d =>
-        d.code == "N0100" && hasStr d.message "height and depth") == axes.extent)
+        d.code == "N0100" && hasStr (saidText d) "height and depth") == axes.extent)
   -- `\hphantom` props nothing vertically, so the inertness note is not its to carry.
   t "an hphantom claims no height it does not reserve"
-    ((dvE h).all fun d => !(d.code == "N0100" && hasStr d.message "height and depth"))
+    ((dvE h).all fun d => !(d.code == "N0100" && hasStr (saidText d) "height and depth"))
   -- An argument in another face or size is a triple the line cannot carry, so its prop goes unreserved, named.
   let big := "A\\vphantom{\\Large y}B"
   t "an argument in another size is a named loss, never a silent one"

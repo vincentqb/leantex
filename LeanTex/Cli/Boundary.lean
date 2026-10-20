@@ -170,7 +170,8 @@ public def lineOf (accepted : String → Bool) (help id : String) (ds : Array Di
     (·.message)).foldl (fun acc m => if acc.contains m then acc else acc.push m) #[]
   { first with
     kind := .W0419
-    message := "the rendered subset draws this picture in part: " ++ " · ".intercalate here.toList
+    message := Diag.say .W0419 .picture
+    detail := some (" · ".intercalate here.toList)
     help := first.help.map fun _ => help
     subject := some (Ir.picSrcPrefix ++ id)
     refused := none

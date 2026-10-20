@@ -10,6 +10,6 @@ para
 para
   text "Failing branch ships."
 -- diagnostics
-info[N0114] 9:1 '\ifnum\probelevel>2' reads 3 > 2, which holds, so the branch before '\else' is kept
-info[N0114] 11:1 '\ifnum\probelevel<2' reads 3 < 2, which fails, so only the '\else' branch is kept
+info[N0114] 9:1 resolved conditional \ifnum\probelevel>2 | detail: reads 3 > 2, which holds
+info[N0114] 11:1 resolved conditional \ifnum\probelevel<2 | detail: reads 3 < 2, which fails
 info[N0100] 6:1 translated command \newcommand{\probelevel} | detail: \define \probelevel() {...}

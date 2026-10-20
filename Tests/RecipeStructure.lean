@@ -506,7 +506,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   let bareDs := (elabStr (dvDoc "\\usepackage{ulem}\n" "\\emph{x}")).2
   t "bare ulem keeps one emphasis diagnostic, no unknown-command"
     ((bareDs.filter (·.code == "W0103")).size == 1 &&
-      bareDs.any (fun d => hasStr d.message "emph") &&
+      bareDs.any (fun d => hasStr (saidText d) "emph") &&
       !bareDs.any (·.code == "W0301"))
   let normalEm := (elabStr (dvDoc load "\\emph{x}")).1.body
   let plainEm := (elabStr (dvDoc "" "\\emph{x}")).1.body

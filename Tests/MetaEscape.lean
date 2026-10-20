@@ -275,7 +275,7 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let refDiags := (elabStr (dvDoc "\\usepackage{hyperref}\n\\hypersetup{pdftitle={See \\ref{sec:a}}}\n"
     "\\section{Alpha}\\label{sec:a}Words.")).2
   t "hyperref: a reference in a value, which metadata reads before the page numbers it, is named"
-    (refDiags.any fun d => d.code == "W0349" && hasStr d.message "pdftitle")
+    (refDiags.any fun d => d.code == "W0349" && hasStr (saidText d) "pdftitle")
   t "hyperref: the carrier's mark holds a character no control word holds"
     (Compat.metaTextMark.any (!Lex.nameChar ·))
   let colourSrc := dvDoc ("\\usepackage{xcolor}\n\\definecolor{ink, accent = HTML(FF0000), x}{HTML}{112233}\n" ++
@@ -290,7 +290,7 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let linkDiags := (surface ("\\usepackage{hyperref}\n" ++
     "\\hypersetup{colorlinks, linkcolor={blue, font = \\bfseries}}\n")).2
   t "hyperref: a link colour no palette entry reads is named, not spliced"
-    (linkDiags.any fun d => d.code == "W0102" && hasStr d.message "linkcolor")
+    (linkDiags.any fun d => d.code == "W0102" && hasStr (saidText d) "linkcolor")
   let fontDoc := (surface "\\usepackage{fontspec}\n\\setmainfont{Foo\", mono = \"Evil}\n").1
   let css := ((HtmlDoc.emitTree {} fontDoc).1.filterMap fun n => match n with
     | .style s => some s

@@ -189,7 +189,7 @@ def figureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "quoted trapping and channel counts read as written, and a wrong type names the values it takes"
     (strings.info.trapped == some true && (strings.info.intent.bind (·.components)) == some 4 &&
       codes stringDs .E0323 == 0 &&
-      wrongDs.any fun d => d.code == DiagCode.E0323.code && hasStr d.message "true, false or unknown")
+      wrongDs.any fun d => d.code == DiagCode.E0323.code && hasStr (saidText d) "true, false or unknown")
   let (_, febDs) := elabStr ("\\documentclass{article}\n\\pdfmeta{ created = \"2026-02-31\" }\n" ++
     "\\begin{document}\nx\n\\end{document}")
   t "a date the calendar does not have is refused" (codes febDs .E0323 == 1)
@@ -368,7 +368,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
       bytesContain (pdfText wordPdf) "<xmp:CreateDate>2026-01-31T09:00:00+01:00</xmp:CreateDate>" &&
       bytesContain (pdfText wordPdf) "/ModDate (D:20260201)" && bytesContain (pdfText wordPdf) "/Trapped /False")
   t "one note names what the setup lowers, its title, dates and trapping in one declaration"
-    (notes.size == 1 && notes.all fun d => hasStr d.message ("\\pdfmeta{ title = \"O’Brien’s card\", " ++
+    (notes.size == 1 && notes.all fun d => hasStr (saidText d) ("\\pdfmeta{ title = \"O’Brien’s card\", " ++
       "created = \"D:20260131090000+01'00'\", modified = \"2026-02-01\", trapped = \"false\" }"))
   for setup in ["\\hypersetup{pdftitle={T}, pdftrapped=True}", "\\hypersetup{pdftrapped=True}",
       "\\ExplSyntaxOn\\prop_const_from_keyval:cn{c__pdfmeta_colorprofile_probe.icc}{Info={x}}\\ExplSyntaxOff"] do
@@ -387,15 +387,15 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     "\\hypersetup{pdfmoddate={soon}, linkcolor={blue, font = x}}\n\\begin{document}\nx\n\\end{document}")
   t "an unread date and an unread link colour are each named under their own code"
     (codes bothDs .W0101 == 1 && codes bothDs .W0102 == 1 &&
-      bothDs.any fun d => d.code == DiagCode.W0101.code && hasStr d.message "pdfmoddate")
+      bothDs.any fun d => d.code == DiagCode.W0101.code && hasStr (saidText d) "pdfmoddate")
   let (_, misDs) := elabStr ("\\documentclass{article}\n\\usepackage{hyperref}\n" ++
     "\\hypersetup{pdfmoddate=soon, pdfsubject=(a,b)}\n\\hypersetup{pdfcreationdate=bogus}\n" ++
     "\\begin{document}\nx\n\\end{document}")
   let misAt (line : Nat) := misDs.filter fun d => d.span.any (·.pos.line == line)
   t "a setup's dropped entries are named in one warning, and a setup whose every entry dropped has no note"
     (((misAt 3).filter (·.code == DiagCode.W0101.code)).size == 1 &&
-      (misAt 3).any (fun d => d.code == DiagCode.W0101.code && hasStr d.message "'pdfmoddate=soon'" &&
-        hasStr d.message "'b)'") &&
+      (misAt 3).any (fun d => d.code == DiagCode.W0101.code && hasStr (saidText d) "'pdfmoddate=soon'" &&
+        hasStr (saidText d) "'b)'") &&
       (misAt 4).size == 1 && (misAt 4).all (·.code == DiagCode.W0101.code))
   let (hostileDoc, _) := elabStr ("\\DocumentMetadata{pdfstandard=X-4, " ++
     "colorprofiles={X={probe\", title = \"Injected.icc}}}\n\\documentclass{article}\n" ++

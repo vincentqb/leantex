@@ -105,16 +105,16 @@ def resolveVar (env : List Binding) (path : String) :
     let v := v.trimAscii.toString
     let f := f.trimAscii.toString.toLower
     if v.isEmpty || f.isEmpty then
-      .error (s!"'{path}' is not a data path",
+      .error (Diag.say .W0364 .path (Diag.Name.value path),
         some "a path is variable.field, as in '\\val{job.role}'", none)
     else
       match env.find? (·.var == v) with
       | none =>
-        .error (s!"'{v}' is not bound here",
+        .error (Diag.say .W0364 .variable v,
           some s!"'\\begin\{foreach}\{{v}}\{kind}' binds it over the '@kind' records", none)
       | some b => .ok (b, f)
   | _ =>
-    .error (s!"'{path}' is not a data path",
+    .error (Diag.say .W0364 .path (Diag.Name.value path),
       some "a path is variable.field, as in '\\val{job.role}'", none)
 
 /-- Resolve `var.field`: the field's raw text and source name, or the W0364 message and help. -/
@@ -127,7 +127,7 @@ def resolvePath (env : List Binding) (path : String) :
     | some txt => .ok (b.src, txt)
     | none =>
       let carried := String.intercalate ", " (b.entry.fields.toList.map (·.1))
-      .error (s!"'{f}' is absent in a '@{b.entry.kind}' record",
+      .error (Diag.say .W0364 .field f (some (some .record, Diag.Name.of s!"@{b.entry.kind}")),
         some s!"'\\ifdata\{{path}}\{…}' renders content only when the field is present",
         some s!"{b.entry.kind}[{b.index}] carries: {carried}")
 
@@ -204,8 +204,8 @@ private def install (src text : String) : M Unit := do
   let parsed := Bib.parse text
   modify fun st => { st with
     diags := parsed.errors.foldl (fun ds (pos, msg) =>
-      ds.push (Diag.of .W0352 s!"malformed .bib entry: {msg}; \
-        the entry is skipped and the rest of '{src}' is kept" (some ⟨src, pos⟩))) st.diags
+      ds.push (Diag.of .W0352 (Diag.say .W0352 .entry (obj := some (some .file, Diag.Name.of src)))
+        (some ⟨src, pos⟩) (detail := some msg))) st.diags
     store := ⟨parsed.entries.foldl (fun es e => es.push (src, e)) st.store.entries⟩ }
 
 private def onData (pos : Pos) (body : Array Raw) : M Unit := do
@@ -216,17 +216,18 @@ private def onData (pos : Pos) (body : Array Raw) : M Unit := do
     | none => pure ()  -- the driver's missing-file diagnostic already fired
   | some (.inr text) => install (← get).file text
   | none =>
-    say .E0320 "'\\data' takes file = \"name\" or inline '@kind{…}' records" pos
+    say .E0320 (Diag.say .E0320 .entry (obj := some (none, Diag.Name.of "\\data"))) pos
+      (detail := some "\\data takes file = \"name\" or inline @kind{…} records")
 
 /-- The W0364 a `foreach` over an empty selection earns: an unknown kind
 names what the store carries, an empty store says how to fill it. -/
 private def sayNoRecords (kind : String) (pos : Pos) : M Unit := do
   let ks := (← get).store.kinds
   if ks.isEmpty then
-    say .W0364 s!"no data records are declared before this point" pos
+    say .W0364 (Diag.say .W0364 .record) pos (detail := some "no data records before this point")
       (help := "'\\data{ file = \"records.bib\" }' declares them")
   else
-    say .W0364 s!"no '@{kind}' records in the data" pos
+    say .W0364 (Diag.say .W0364 .record s!"@{kind}") pos
       (detail := some s!"it carries: {String.intercalate ", " (ks.toList.map ("@" ++ ·))}")
 
 mutual
@@ -241,7 +242,7 @@ private def expandList (env : List Binding) (out : Array Raw) :
     onData pos body
     expandList env out rest
   | .ctrl "data" pos :: rest => do
-    say .E0304 "'\\data' needs a {…} group" pos
+    say .E0304 (Diag.say .E0304 .argument (obj := some (none, Diag.Name.of "\\data"))) pos
       (help := "'\\data{ file = \"records.bib\" }' or inline '\\data{ @kind{…} }'")
     expandList env out rest
   | .ctrl "val" pos :: .group body _ :: rest
@@ -255,7 +256,7 @@ private def expandList (env : List Binding) (out : Array Raw) :
       say .W0364 msg pos help detail
       expandList env out rest
   | .ctrl "val" pos :: rest => do
-    say .E0304 "'\\val' needs {variable.field}" pos
+    say .E0304 (Diag.say .E0304 .argument (obj := some (none, Diag.Name.of "\\val"))) pos
     expandList env out rest
   | .ctrl "ifdata" pos :: .group cond _ :: .group thenB _ :: rest
   | .ctrl "ifdata" pos :: .group cond _ :: .space :: .group thenB _ :: rest => do
@@ -270,7 +271,7 @@ private def expandList (env : List Binding) (out : Array Raw) :
       else expandList env out s.1
     expandList env out s.2
   | .ctrl "ifdata" pos :: rest => do
-    say .E0304 "'\\ifdata' needs {variable.field} and {content}" pos
+    say .E0304 (Diag.say .E0304 .argument (obj := some (none, Diag.Name.of "\\ifdata"))) pos
     expandList env out rest
   | .env "foreach" body pos :: rest => do
     match _hargs : foreachArgs body.toList with
@@ -284,7 +285,7 @@ private def expandList (env : List Binding) (out : Array Raw) :
       let out ← expandEach env s.2 sep out true bound
       expandList env out rest
     | none => do
-      say .E0304 "'\\begin{foreach}' needs {variable} and {kind}" pos
+      say .E0304 (Diag.say .E0304 .argument (obj := some (some .environment, Diag.Name.of "foreach"))) pos
       expandList env out rest
   | .group body p :: rest => do
     let inner ← expandList env #[] body.toList

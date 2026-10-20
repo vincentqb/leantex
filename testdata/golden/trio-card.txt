@@ -44,4 +44,4 @@ frame
       color quiet #6B7280
         text "Editions of 64 or fewer, numbered by hand."
 -- diagnostics
-warning[W0449] 26:1 this styles itemize lists, and the document sets none | help: delete what it declares for them, or \allow{W0449} keeps it
+warning[W0449] 26:1 unused style itemize | detail: the document sets no itemize lists | help: delete what it declares for them, or \allow{W0449} keeps it

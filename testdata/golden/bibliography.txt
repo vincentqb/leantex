@@ -85,6 +85,6 @@ bibliography "refs" style "unsrtnat"
     text "Casey Ray. Measurements of nothing. Technical Report 42, Example Labs, 2017."
 -- diagnostics
 info[N0100] 5:1 translated package natbib | detail: natbib's citation punctuation, read at \begin{document}
-warning[W0340] 15:1 '\allow' is a declaration; in the body it is ignored | help: declare it in the preamble, before '\begin{document}'
+warning[W0340] 15:1 ignored declaration \allow | help: declare it before \begin{document}
 warning[W0352] 3:1 malformed .bib entry: '@string' opens with no '{' or '('; the entry is skipped and the rest of 'refs.bib' is kept
 warning[W0351] - citation 'ghost' has no entry in the bibliography; it shows as '?' | help: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite

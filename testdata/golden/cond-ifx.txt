@@ -10,8 +10,8 @@ para
 para
   text "Unequal branch ships."
 -- diagnostics
-info[N0114] 11:1 '\ifx\probeone\probetwo' compares two equal definitions, so the branch before '\else' is kept
-info[N0114] 13:1 '\ifx\probeone\probethree' compares two different definitions, so only the '\else' branch is kept
+info[N0114] 11:1 resolved conditional \ifx\probeone\probetwo | detail: compares two equal definitions
+info[N0114] 13:1 resolved conditional \ifx\probeone\probethree | detail: compares two different definitions
 info[N0100] 6:1 translated command \newcommand{\probeone} | detail: \define \probeone() {...}
 info[N0100] 7:1 translated command \newcommand{\probetwo} | detail: \define \probetwo() {...}
 info[N0100] 8:1 translated command \newcommand{\probethree} | detail: \define \probethree() {...}

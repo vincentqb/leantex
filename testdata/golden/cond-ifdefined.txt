@@ -10,6 +10,6 @@ para
 para
   text "Absent branch ships."
 -- diagnostics
-info[N0114] 9:1 '\ifdefined\probedefined': '\probedefined' is defined, so the branch before '\else' is kept
-info[N0114] 11:1 '\ifdefined\probeabsent': '\probeabsent' is not defined, so only the '\else' branch is kept
+info[N0114] 9:1 resolved conditional \ifdefined\probedefined | detail: \probedefined is defined
+info[N0114] 11:1 resolved conditional \ifdefined\probeabsent | detail: \probeabsent is undefined
 info[N0100] 6:1 translated command \newcommand{\probedefined} | detail: \define \probedefined() {...}

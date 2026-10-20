@@ -463,7 +463,7 @@ def environChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         "Inline Lead words  Middle words  Tail words after.")
   let boxed := doc "\\NewEnviron{placeholder}{\\fbox{\\BODY}}\n" use
   t "a body placed inside a group is refused in place, nothing leaking"
-    ((dvE boxed).any (fun d => d.code == "W0104" && hasStr d.message "inside a group") &&
+    ((dvE boxed).any (fun d => d.code == "W0104" && hasStr (saidText d) "inside a group") &&
       !hasStr (pageTextOf fonts boxed) "BODY" && hasStr (pageTextOf fonts boxed) "Middle words")
   let hidden := doc "\\NewEnviron{placeholder}{}\n" use
   t "a code with no BODY discards the body, and says nothing of it"
@@ -543,7 +543,7 @@ def abstractSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     (ignored == abstractSkipsOwed)
   check ref "the refusal names the engine-placed skips exactly while owed"
     (((dvE (venue "1ex")).any fun d =>
-      d.code == "W0303" && hasStr d.message "vertical skips") == abstractSkipsOwed)
+      d.code == "W0303" && hasStr (saidText d) "vertical skips") == abstractSkipsOwed)
 
 
 /-- A seam sets the spaces TeX sets there: two space tokens from two sources set two interword

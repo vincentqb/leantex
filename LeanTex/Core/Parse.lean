@@ -273,13 +273,26 @@ inductive Stop where
   | env (name : String)
   deriving Repr, BEq, Inhabited
 
-def Stop.name : Stop → String
-  | .brace => "'}'"
-  | .math => "closing '$'"
-  | .dollarDisplay => "closing '$$'"
-  | .parenMath => "'\\)'"
-  | .displayMath => "'\\]'"
-  | .env n => s!"'\\end\{{n}}'"
+/-- What a frame opens, as a message names it. -/
+def Stop.opened : Stop → Diag.Noun × String
+  | .brace => (.group, "{")
+  | .math => (.math, "$")
+  | .dollarDisplay => (.math, "$$")
+  | .parenMath => (.math, "\\(")
+  | .displayMath => (.math, "\\[")
+  | .env n => (.environment, n)
+
+/-- The token that closes a frame, as a message names it. -/
+def Stop.closer : Stop → Diag.Noun × String
+  | .brace => (.character, "}")
+  | .math => (.character, "$")
+  | .dollarDisplay => (.character, "$$")
+  | .parenMath => (.command, "\\)")
+  | .displayMath => (.command, "\\]")
+  | .env n => (.command, s!"\\end\{{n}}")
+
+/-- E0201's words for a frame left open. -/
+def Stop.unclosed (s : Stop) : String := Diag.say .E0201 s.opened.1 (Diag.Name.of s.opened.2)
 
 /-- An open delimiter with the items collected before it; `body` marks one of an
 environment definer's two bodies. -/
@@ -366,10 +379,11 @@ def halfStop (name : String) : Stop :=
 
 /-- The diagnostic an unclosed frame raises at a brace. -/
 def unclosedAtBrace (file : String) (stop : Stop) (pos : Pos) : Diag :=
-  Diag.of .E0201 s!"unclosed: expected {stop.name} before the group's '}'" (some ⟨file, pos⟩)
+  Diag.of .E0201 stop.unclosed (some ⟨file, pos⟩) (detail := some "before the group's }")
 
 def unmatchedEnd (file name : String) (pos : Pos) : Diag :=
-  Diag.of .E0205 s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" (some ⟨file, pos⟩)
+  Diag.of .E0205 (Diag.say .E0205 .environment name) (some ⟨file, pos⟩)
+    (detail := some s!"\\end\{{name}} without \\begin\{{name}}")
 
 /-- The index past the last item before `j` that is not a space. -/
 private def backSkip (acc : Array Raw) (j : Nat) : Nat := Id.run do
@@ -449,8 +463,9 @@ private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
   | .displayMath => f.outer.push (.math true body f.openPos)
   | .env n => f.outer.push (.env n body f.openPos)
 
-private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : Diag :=
-  Diag.of code msg (some ⟨file, pos⟩)
+private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos)
+    (detail : Option String := none) : Diag :=
+  Diag.of code msg (some ⟨file, pos⟩) (detail := detail)
 
 /-- An open half settled to what a plain parse makes of it,
 with that parse's diagnostic. -/
@@ -462,7 +477,7 @@ public def settleOpenHalf (file name : String) (body : Array Raw) (pos : Pos) : 
 public def closeHalfDiag (file name : String) (pos : Pos) : Diag :=
   match halfStop name with
   | .env n => unmatchedEnd file n pos
-  | s => err file .E0202 s!"unexpected {s.name}" pos
+  | s => err file .E0202 (Diag.say .E0202 s.closer.1 (Diag.Name.of s.closer.2)) pos
 
 /-- `{name}` after `\begin` or `\end`: the name and the next index. -/
 private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
@@ -470,10 +485,12 @@ private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
   match toks[i]?, toks[i + 1]?, toks[i + 2]? with
   | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, some ⟨.rbrace, _⟩ => (n, i + 3, #[])
   | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, _ =>
-    (n, i + 2, #[err file .E0205 "expected '}' after the environment name" pos])
+    (n, i + 2, #[err file .E0205 (Diag.say .E0205 .environmentName n) pos
+      (detail := some "a } closes the name")])
   | some ⟨.lbrace, _⟩, _, _ =>
-    ("", i + 1, #[err file .E0205 "expected an environment name" pos])
-  | _, _, _ => ("", i, #[err file .E0205 "expected '{name}' here" pos])
+    ("", i + 1, #[err file .E0205 (Diag.say .E0205 .environmentName) pos])
+  | _, _, _ => ("", i, #[err file .E0205 (Diag.say .E0205 .environmentName) pos
+      (detail := some "a {name} follows \\begin and \\end")])
 
 /-- `\ifmmode`'s reading: its math branch as a formula first, then its text branch, each read in
 its mode, unforgeable because its name holds a space. -/
@@ -712,7 +729,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
             acc := ({ f with openPos := { f.openPos with closeEol := pos.closeEol } } : Frame).close acc
           | none => pure ()
         else
-          diags := diags.push (err file .E0202 "unexpected '}'" pos)
+          diags := diags.push (err file .E0202 (Diag.say .E0202 .character "}") pos)
       | .math =>
         match frames.back? with
         | some f =>
@@ -721,7 +738,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
               if toks[i]?.any (·.tok == .math) then i := i + 1
               else
                 diags := diags.push
-                  (err file .E0202 "expected a second '$' to close display math" pos)
+                  (err file .E0202 (Diag.say .E0202 .character "$") pos
+                    (detail := some "a second $ closes display math"))
             frames := frames.pop
             acc := f.close acc
             continue
@@ -744,9 +762,9 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           else if f.body then
             acc := acc.push (.env (splitClose Stop.parenMath.halfName) #[] pos)
           else
-            diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
+            diags := diags.push (err file .E0202 (Diag.say .E0202 .command "\\)") pos)
         | none =>
-          diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
+          diags := diags.push (err file .E0202 (Diag.say .E0202 .command "\\)") pos)
       | .ctrl "[" =>
         frames := frames.push (Frame.atop frames .displayMath pos acc false false)
         acc := #[]
@@ -759,9 +777,9 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           else if f.body then
             acc := acc.push (.env (splitClose Stop.displayMath.halfName) #[] pos)
           else
-            diags := diags.push (err file .E0202 "unexpected '\\]'" pos)
+            diags := diags.push (err file .E0202 (Diag.say .E0202 .command "\\]") pos)
         | none =>
-          diags := diags.push (err file .E0202 "unexpected '\\]'" pos)
+          diags := diags.push (err file .E0202 (Diag.say .E0202 .command "\\]") pos)
       | .ctrl "begin" =>
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
@@ -811,8 +829,9 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
                 acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
                 continue
               diags := diags.push (match f.stop with
-                | .env inner => err file .E0205 s!"'\\end\{{name}}' closes '\\begin\{{inner}}'" pos
-                | _ => err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
+                | .env inner => err file .E0205 (Diag.say .E0205 .environment name) pos
+                    (detail := some s!"\\end\{{name}} closes \\begin\{{inner}}")
+                | _ => err file .E0201 f.stop.unclosed f.openPos)
               acc := f.close acc
             | none => break
           match frames.back? with
@@ -832,7 +851,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           | .env expected =>
             if name != expected then
               diags := diags.push
-                (err file .E0205 s!"'\\end\{{name}}' closes '\\begin\{{expected}}'" pos)
+                (err file .E0205 (Diag.say .E0205 .environment name) pos
+                  (detail := some s!"\\end\{{name}} closes \\begin\{{expected}}"))
             frames := frames.pop
             acc := f.close acc
           | .brace =>
@@ -869,7 +889,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
       if f.cmd then acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
       else
         diags := diags.push
-          (err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
+          (err file .E0201 f.stop.unclosed f.openPos)
         acc := f.close acc
     | none => pure ()
   return (modeChoices acc, diags)

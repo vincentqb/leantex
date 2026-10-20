@@ -2503,7 +2503,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let (doc, ds) := elabStr s
     t s!"strut: geometry's '{value}' is named with its spelling and the page ships"
       (ds.all (·.severity != .error) && (layoutOf oneFace doc).pages.size == 1 &&
-        ds.any fun d => d.code == "W0101" && hasStr d.message "\\dimexpr")
+        ds.any fun d => d.code == "W0101" && hasStr (saidText d) "\\dimexpr")
 
 /-- A chrome slot's box depends only on the declared layout and the geometry, priorities decide who
 yields, and a yield stays in place and is named. -/
@@ -2530,7 +2530,7 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     (·.code != "W0333"))
   t "band: the yield is named with both slots"
     (noteOut.diags.any fun d => d.code == "W0333" && d.severity == .warning &&
-      hasStr d.message "framenumber" && hasStr d.message "framefoot note")
+      hasStr (saidText d) "framenumber" && hasStr (saidText d) "framefoot note")
   t "band: the yielding number is painted first, under the note"
     ((noteC[1]?.map fun p =>
       match p.lines.findIdx? (·.text == "1"),
@@ -2540,7 +2540,7 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let (secCollideOut, secCollideC) := run s!"\\section\{{longTok}}\n"
   t "band: the number yields to the section title by declared priority"
     (secCollideOut.diags.any fun d => d.code == "W0333" &&
-      hasStr d.message "framenumber yields" && hasStr d.message "sectiontitle")
+      hasStr (saidText d) "framenumber yields" && hasStr (saidText d) "sectiontitle")
   t "band: and holds the right margin while yielding"
     (numBox secCollideC 2 == numBox emptyC 1)
 
@@ -2688,7 +2688,7 @@ After text keeps it: flow scope, no brace revert.")
 \\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #888888 }\n\n\
 \\textcolor{q}{loud after} is judged.\n\\end{document}")
   t "a plain body redeclaration removes the decorative exemption from here on"
-    (dsRedecl.any fun d => d.code == "W0315" && hasStr d.message "'q'")
+    (dsRedecl.any fun d => d.code == "W0315" && hasStr (saidText d) "'q'")
   let deckDoc (mid tail : String) : String :=
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{A}\none\n\\end{frame}\n\n" ++ mid ++
@@ -2696,7 +2696,7 @@ After text keeps it: flow scope, no brace revert.")
   t "a bad frame-title pair declared before a frame is judged for it"
     ((codesOf (deckDoc "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n"
       "")).any
-      fun d => d.code == "W0345" && hasStr d.message "the frame-title bar")
+      fun d => d.code == "W0345" && hasStr (saidText d) "the frame-title bar")
   t "a bad frame-title pair declared after the last frame styles nothing"
     ((codesOf (deckDoc "" "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n")).all
       fun d => d.code != "W0345")
@@ -2705,7 +2705,7 @@ After text keeps it: flow scope, no brace revert.")
 \\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
   t "an accent inside the frame title is judged on the bar, and warns there"
     ((codesOf (deckAlert "An \\alert{urgent} word" "plain body")).any
-      fun d => d.code == "W0315" && hasStr d.message "the frame-title bar")
+      fun d => d.code == "W0315" && hasStr (saidText d) "the frame-title bar")
   t "the same accent in the body is judged on the page, and passes there"
     ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
       fun d => d.code != "W0315")
@@ -2713,7 +2713,7 @@ After text keeps it: flow scope, no brace revert.")
     ((codesOf ("\\documentclass{slides}\\theme{moloch}\\palette{ alert = #AF5C00 }\
 \\begin{document}\n\
 \\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
-      fun d => d.code == "W0315" && hasStr d.message "the standout frame")
+      fun d => d.code == "W0315" && hasStr (saidText d) "the standout frame")
 
 /-- Tables and floats: the too-wide diagnostic, the caption's source side, and the rule extents on
 the shipped page. -/
@@ -3312,7 +3312,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "an unbreakable run past the safe margin fails text.in_area"
     ((judge (card "" ("W" ++ "".pushn 'm' 60))).any fun d =>
       (d.message.splitOn "text.in_area").length == 2 &&
-      (d.message.splitOn "right margin").length == 2)
+      ((saidText d).splitOn "right margin").length == 2)
   t "tiny type fails the legibility floor"
     ((judge (card "" "{\\tiny Pat Placeholder}")).any fun d =>
       (d.message.splitOn "text.xheight").length == 2)
@@ -4388,7 +4388,7 @@ def listMarginChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (place bodySet "Alpha" == some (Dim.pt 30) && place bodySet "Bravo" == some (Dim.pt 70) &&
       hasStr (html bodySet) "--leftmargini: 3rem" && !hasStr (html bodySet) "--leftmargini: 3em")
   t "a body leftmargin both artifacts honour is not named as a loss"
-    ((elabStr bodySet).2.all fun d => !(d.code == "W0104" && hasStr d.message "leftmargin"))
+    ((elabStr bodySet).2.all fun d => !(d.code == "W0104" && hasStr (saidText d) "leftmargin"))
   let native := doc "" ("\\tokens{ leftmargini = 3em, leftmarginii = 4ex }\n" ++
     "\\begin{itemize}\n\\item Alpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
     "\\end{itemize}\n\\end{itemize}")
@@ -4424,7 +4424,7 @@ def listMarginChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let deep := (elabStr (doc "\\makeatletter\n\\def\\@listv{\\leftmargin 10pt \\topsep 3pt}\n\\makeatother\n"
     "Words.")).2
   t "a fifth level macro's spacing is named as no list five deep reads it"
-    (deep.any fun d => d.code == "W0104" && hasStr d.message "topsep")
+    (deep.any fun d => d.code == "W0104" && hasStr (saidText d) "topsep")
 
 /-- The abstract sets in its class's form (`Ir.AbstractForm`): article's quotation, a title page's
 full measure, beamer's inset beside its own paragraphs alone, and a redefinition's quote. -/
@@ -4496,7 +4496,7 @@ def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "a report's abstract redefined on a quote keeps the quote's margins, as its refusal names"
     (place redefined "Alpha" == some (Dim.pt 25) &&
       ((short redefined "Alpha").map (decide <| Dim.pt 25 ≤ ·)).getD false &&
-      (elabStr redefined).2.any fun d => d.code == "W0303" && hasStr d.message "quotation margins")
+      (elabStr redefined).2.any fun d => d.code == "W0303" && hasStr (saidText d) "quotation margins")
 
 /-- A list right after a heading opens no `\topsep`: its first item stands where a paragraph after
 the heading stands. -/

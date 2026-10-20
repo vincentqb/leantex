@@ -1299,7 +1299,7 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     let (_, diags) := Elab.run s!"block-template-{name}.tex" src
     check ref s!"block template {name}: the template and its registers are read, not skipped"
       (diags.all fun d => d.code != "W0301" && d.code != "W0110" &&
-        !(d.code == "W0104" && hasStr d.message "probe edge"))
+        !(d.code == "W0104" && hasStr (saidText d) "probe edge"))
   let boxed := hanging.replace "\\defbeamertemplate*{block begin}{probe}{\\probe@open{}}"
     "\\defbeamertemplate*{block begin}{probe}{\\begin{beamercolorbox}{block title}\\insertblocktitle\\end{beamercolorbox}}"
   check ref "block template: the unread probe differs from the probe" (boxed != hanging)
@@ -1314,7 +1314,7 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       "{ title = plain, untitled = {} } }\n\\begin{document}\n\\end{document}\n")
   check ref "block template: a document's shape key sets no shape and is named as no key"
     (((doc.styles.find? "block").bind (·.shape)).isNone &&
-      ds.any fun d => d.code == "E0322" && hasStr d.message "'shape'")
+      ds.any fun d => d.code == "E0322" && hasStr (saidText d) "key shape")
 
 /-- Rules the reading does not hold beside the title's lines are named once, their blocks keeping
 beamer's default pair. -/
@@ -1345,7 +1345,7 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
     let named := diags.filter fun d =>
       d.code == "W0110" && d.subject == some s!"beamer:template:{element}"
     check ref s!"capitals {name}: the template is named once, for its reading ({named.map (·.message)})"
-      (named.size == 1 && named.all (hasStr ·.message why))
+      (named.size == 1 && named.all (fun d => hasStr (saidText d) why))
     check ref s!"capitals {name}: its blocks keep the default pair"
       (((doc.styles.find? style).bind (·.shape)).isNone)
   let (doc, _) := Elab.run "block-template-capitals.tex" capitalsSource
@@ -1362,12 +1362,12 @@ private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "capitals register: the probe using its register differs from the probe" (used != capitalsSource)
   let (_, diags) := Elab.run "block-template-capitals-register.tex" used
   check ref s!"capitals register: the document's read of the template's register is refused by name ({diags.filter (·.severity == .error) |>.map (·.message)})"
-    (diags.any fun d => d.severity == .error && hasStr d.message "probe@down")
+    (diags.any fun d => d.severity == .error && hasStr (saidText d) "probe@down")
   let set := used.replace "\\makeatother\n" "\\setlength{\\probe@down}{3pt}\n\\makeatother\n"
   check ref "capitals register: the probe setting its register differs from the probe" (set != used)
   let (_, sd) := Elab.run "block-template-capitals-register-set.tex" set
   check ref s!"capitals register: a register set as a length is still refused where the document reads it ({sd.filter (·.severity == .error) |>.map (·.message)})"
-    (sd.any fun d => d.severity == .error && hasStr d.message "probe@down")
+    (sd.any fun d => d.severity == .error && hasStr (saidText d) "probe@down")
   let (_, clean) := Elab.run "block-template-capitals.tex" capitalsSource
   check ref "capitals register: the probe alone raises nothing"
     (clean.all fun d => d.severity == .note || reportedContrast d)
@@ -1389,7 +1389,7 @@ private def familyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, diags) := Elab.run "block-template-family.tex" familySource
   check ref "block title family: the family and its command are read, not skipped"
     (diags.all fun d => d.code != "W0301" &&
-      !(d.code == "W0104" && hasStr d.message "block title"))
+      !(d.code == "W0104" && hasStr (saidText d) "block title"))
   check ref "block title family: the family is declared beside the three slots"
     (doc.fonts.families == #[("probetitle", "Source Serif Pro Bold")])
   let scanned ← FontDiscovery.scanRootsIn none [testFonts]
@@ -1807,7 +1807,7 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, diags) := Elab.run "block-title-starred.tex"
     (head ++ "\\setbeamerfont*{block title}{size=\\small}\n" ++ blocks)
   check ref "block title starred: the note names the declaration with its star"
-    (diags.any fun d => d.code == "N0100" && hasStr d.message "'\\setbeamerfont*{block title}'")
+    (diags.any fun d => d.code == "N0100" && hasStr (saidText d) "'\\setbeamerfont*{block title}'")
 
 /-- fontspec's provide forms define the command only where it is undefined
 (`\ProvideDocumentCommand`): a family command already declared keeps its
@@ -1877,7 +1877,7 @@ private def bodyFamilyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let w0340 := diags.filter (·.code == "W0340")
   check ref s!"body family: the declaration is named as the author's command ({w0340.map (·.message)})"
     (w0340.size == 1 && w0340.all fun d => d.subject == some "ctrl:newfontfamily" &&
-      hasStr d.message "\\newfontfamily" && !hasStr d.message "\\fonts")
+      hasStr (saidText d) "\\newfontfamily" && !hasStr (saidText d) "\\fonts")
   check ref "body family: no family is declared" doc.fonts.families.isEmpty
   check ref "body family: the HTML selects no undeclared family"
     (!hasStr (HtmlDoc.emit {} doc).1 s!"var(--font-{Ir.familySlotBase})")
@@ -2275,7 +2275,7 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
     let named := diags.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:block begin"
     check ref s!"whole bar {name}: the template is named once, for its reading ({named.map (·.message)})"
-      (named.size == 1 && named.all (hasStr ·.message why))
+      (named.size == 1 && named.all (fun d => hasStr (saidText d) why))
     check ref s!"whole bar {name}: its blocks keep the default pair"
       (((doc.styles.find? "block").bind (·.shape)).isNone)
   let (plain, _) := Elab.run "block-template-wholebar.tex" src
@@ -2320,7 +2320,7 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (ddoc, dd) := Elab.run "block-template-wholebar-drift.tex" drifted
   let named := dd.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:block begin"
   check ref s!"whole bar: a flag the body changes before a block is named ({named.map (·.message)})"
-    (drifted != gapped && named.size == 1 && named.all (hasStr ·.message "changes \\ifprobe@gap"))
+    (drifted != gapped && named.size == 1 && named.all (fun d => hasStr (saidText d) "changes \\ifprobe@gap"))
   check ref "whole bar: the blocks the body's flag changes keep the default pair"
     (((ddoc.styles.find? "block").bind (·.shape)).isNone)
 
@@ -2333,7 +2333,7 @@ private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "template code: the probe using a template macro differs from the probe" (used != wholeBarSource)
   let (_, ud) := Elab.run "block-template-wholebar-used.tex" used
   check ref s!"template code: a template macro the text uses names its loss there ({ud.filter (·.severity != .note) |>.map (·.message)})"
-    (ud.any fun d => d.code == "W0104" && hasStr d.message "probe@peel")
+    (ud.any fun d => d.code == "W0104" && hasStr (saidText d) "probe@peel")
   let elsewhere := wholeBarSource.replace "\\makeatother\n"
     "\\newcommand{\\probe@other}{\\probe@peel}\n\\makeatother\n"
   check ref "template code: the probe naming a template macro elsewhere differs from the probe"
@@ -2345,7 +2345,7 @@ private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (·.2 + 1)).getD 0
   let atDefinition (d : Diag) : Bool := d.span.any fun sp => first ≤ sp.pos.line && sp.pos.line < past
   check ref s!"template code: a template macro the preamble names elsewhere names its definition's loss ({ed.filter (·.severity != .note) |>.map fun d => (d.message, d.span.map (·.pos.line))})"
-    (ed.any fun d => d.code == "W0104" && hasStr d.message "probe@peel" && atDefinition d)
+    (ed.any fun d => d.code == "W0104" && hasStr (saidText d) "probe@peel" && atDefinition d)
   let srcLines := (wholeBarSource.splitOn "\n").zipIdx
   let opens := ((srcLines.find? fun (l, _) => l.startsWith "\\newcommand{\\probe@open}").map (·.2 + 1)).getD 0
   let ends := ((srcLines.find? fun (l, _) => l.startsWith "\\defbeamertemplate").map (·.2 + 1)).getD 0
@@ -2418,9 +2418,9 @@ private def unreadTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.Font
     let named := diags.filter fun d =>
       d.code == "W0110" && d.subject == some "beamer:template:block begin"
     check ref s!"unread template {name}: named once, for its reading ({diags.map (·.code)})"
-      (named.size == 1 && named.all (hasStr ·.message why) &&
+      (named.size == 1 && named.all (fun d => hasStr (saidText d) why) &&
         diags.all fun d => d.code != "W0101" && d.code != "E0326" &&
-          !(d.code == "N0100" && hasStr d.message "the shape of each 'block'"))
+          !(d.code == "N0100" && hasStr (saidText d) "the shape of each 'block'"))
     unless name == "bare" do
       let a := bodyAt s!"unread-{name}" src
       let b := bodyAt s!"unread-{name}-default" (untemplated src)

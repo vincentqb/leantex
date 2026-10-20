@@ -89,7 +89,8 @@ public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     minXHeight := minX }
 
 private def failure (a : Assertion) (actual : String) : Diag :=
-  Diag.of .E0330 s!"assertion failed: {a.kind.source} (actual: {actual})" a.span
+  Diag.of .E0330 (Diag.say .E0330 .assertion (Diag.Name.value a.kind.source)) a.span
+    (detail := some s!"actual: {actual}")
     (help := some (a.help.getD
       "the document shipped this; change the source or the \\assert")) (subject := a.subject)
 

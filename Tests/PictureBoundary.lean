@@ -219,7 +219,8 @@ def pictureShipChecks (ref : IO.Ref (List String))
         if code == "W0419" then
           t s!"{art}: the line carries every construct left out"
             (warnings.all fun j =>
-              let msg := (j.getObjValAs? String "message").toOption.getD ""
+              let msg := (j.getObjValAs? String "message").toOption.getD "" ++
+                (j.getObjValAs? String "detail").toOption.getD ""
               hasStr msg "\\pattern" && (copies > 1 || hasStr msg "'mod'"))
         if ext == "html" then
           let html ← if ← output.pathExists then IO.FS.readFile output else pure ""

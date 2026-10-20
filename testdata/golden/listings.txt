@@ -18,8 +18,8 @@ para
 info[N0100] 2:1 translated package listings | detail: nothing: the engine does this itself
 info[N0100] 3:1 translated package minted | detail: nothing: the engine does this itself
 info[N0100] 4:1 translated package siunitx | detail: nothing: the engine does this itself
-info[N0100] 20:45 '\SI' spells its text natively: locale digits and unit symbols (siunitx)
-info[N0100] 21:10 '\si' spells its text natively: locale digits and unit symbols (siunitx)
-info[N0100] 21:40 '\ang' spells its text natively: locale digits and unit symbols (siunitx)
-info[N0100] 21:56 '\num' spells its text natively: locale digits and unit symbols (siunitx)
-info[N0100] 22:10 '\numrange' spells its text natively: locale digits and unit symbols (siunitx)
+info[N0100] 20:45 translated command \SI | detail: locale digits and unit symbols
+info[N0100] 21:10 translated command \si | detail: locale digits and unit symbols
+info[N0100] 21:40 translated command \ang | detail: locale digits and unit symbols
+info[N0100] 21:56 translated command \num | detail: locale digits and unit symbols
+info[N0100] 22:10 translated command \numrange | detail: locale digits and unit symbols

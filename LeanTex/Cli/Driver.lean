@@ -588,16 +588,15 @@ def pdfxDeclLosses (x : String) (info : Ir.Meta) : Array Diag :=
   let version := match info.pdfVersion with
     | some v =>
       if v == "1.6" then #[] else #[Diag.of .W0447
-        "the declared PDF version is one the declared PDF standard does not admit; the standard's \
-version is written" info.versionSpan
+        (Diag.say .W0447 .version (Diag.Name.value "1.6") (some (none, Diag.Name.value v))) info.versionSpan
         (help := some "declare the version the standard is written on: \\DocumentMetadata{ pdfversion = 1.6 } or \\pdfmeta{ version = \"1.6\" }")
         (subject := some "pdfx:version") (output := some .pdf)
         (detail := some s!"the PDF/{x} standard is written on PDF 1.6; PDF {v} is declared, and 1.6 written")]
     | none => #[]
   let trapped := match info.trappedUnknownAt with
     | some site =>
-      #[Diag.of .W0447 "the declared trapping is unknown, which the declared PDF standard does not \
-admit; the file states False, as it is untrapped" (some site)
+      #[Diag.of .W0447 (Diag.say .W0447 .value "False" (some (some .key, Diag.Name.of "pdftrapped")))
+        (some site)
         (help := some "state the trapping: \\hypersetup{ pdftrapped = False }")
         (subject := some "pdfx:trapped") (output := some .pdf)
         (detail := some s!"PDF/{x} asks the trapping True or False")]
@@ -1177,9 +1176,8 @@ in the HTML" (← since t)
       -- An assertion about bytes this run does not emit fails rather than passing vacuously.
       let failures := failures ++ doc.asserts.filterMap fun a =>
         if a.kind.reads.isEmpty || emit.any (fun e => a.kind.reads.contains e.ext) then none
-        else some (Diag.of .E0330
-          s!"assertion failed: {a.kind.source} (actual: no emitted artifact carries this measurement)"
-          a.span (help := some (a.help.getD "add pdf or html to '\\output{ formats = ... }'")))
+        else some (Diag.of .E0330 (Diag.say .E0330 .assertion (Diag.Name.value a.kind.source))
+          a.span (detail := some "no emitted artifact carries this measurement") (help := some (a.help.getD "add pdf or html to '\\output{ formats = ... }'")))
       unless doc.asserts.isEmpty do
         ui.phase "assert"
           s!"{doc.asserts.size - failures.size}/{doc.asserts.size} held" (← since t)
@@ -1227,7 +1225,7 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
     let contents ← try
       pure (some (← IO.FS.readFile path))
     catch e =>
-      ui.diag (Diag.of .E0001 s!"cannot read '{path}': {e}")
+      ui.diag (DriverDiag.unreadableInput path (toString e))
       pure none
     let some contents := contents | return 1
     all := all ++ (contents.splitOn "\n").filterMap fun line =>

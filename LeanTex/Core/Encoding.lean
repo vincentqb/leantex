@@ -486,8 +486,9 @@ private def nulAdvice : String := "remove the U+0000 characters: no encoding rea
 each standing as one U+FFFD; positioned at the first. -/
 private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs : Array Run)
     (pos : Pos) : Diag :=
-  let message := if runs.all (·.nul) then s!"'{file}' holds U+0000, which is not text"
-    else s!"'{file}' holds bytes that are not text in {encoding}"
+  let message := if runs.all (·.nul) then
+      Diag.say .W0002 .character "U+0000" (some (some .file, Diag.Name.of file))
+    else Diag.say .W0002 .encoding (Diag.Name.of encoding) (some (some .file, Diag.Name.of file))
   let detail := match runs.toList with
     | [r] =>
       if r.nul then s!"U+0000 at offset {r.offset}"
@@ -568,12 +569,11 @@ private def strayDiag (file : String) (e : Legacy) (bytes : ByteArray) (c : Chos
   match c.minority[0]? with
   | none => #[]
   | some (first, _) =>
-    let rest := if c.byMark then "which its byte-order mark calls UTF-8"
-      else "otherwise UTF-8"
-    let message := s!"bytes are read as {e.name}, as declared, in '{file}', {rest}"
-    let detail := match c.minority.toList with
+    let message := Diag.say .W0004 .encoding (Diag.Name.of e.name) (some (some .file, Diag.Name.of file))
+    let at_ := match c.minority.toList with
       | [(o, _)] => s!"byte {hexByte (bytes[o]?.getD 0)} at offset {o}"
       | _ => s!"{c.minority.size} bytes, at offsets {runList bytes c.minority true}"
+    let detail := if c.byMark then at_ ++ "; its byte-order mark calls the file UTF-8" else at_
     #[{ Diag.of .W0004 message (some ⟨file, posAfter (prefixText first)⟩)
           (help := some "retype the characters at those offsets in UTF-8: the rest of the \
 file is UTF-8")
@@ -760,7 +760,7 @@ private def alikeHelp : String := "delete the declaration: every file it governs
 
 /-- The note under a legacy declaration: each file as it read, and a help
 that saves the files that need the declaration before deleting it. -/
-private def legacyNote (d : Declared) (e : Legacy) (reads : Array Read) :
+private def legacyNote (e : Legacy) (reads : Array Read) :
     String × String :=
   let files (p : Read → Bool) : Array String := (reads.filter p).map (·.file)
   let isLegacy (r : Read) : Bool := match r.reading with | .legacy _ => true | _ => false
@@ -795,9 +795,9 @@ applied to {agree utf8Files "it" "them"}"]) ++
   let help := if actions.isEmpty then alikeHelp
     else check ++ ", and ".intercalate actions ++ ", then delete the declaration"
   if parts.isEmpty then
-    (s!"{d.spelling} changes nothing: {names asciiFiles} {agree asciiFiles "is" "are"} ASCII, \
+    (s!"{names asciiFiles} {agree asciiFiles "is" "are"} ASCII, \
 which reads alike in {e.name} and UTF-8", alikeHelp)
-  else (s!"{d.spelling}: " ++ "; ".intercalate parts, help)
+  else ("; ".intercalate parts, help)
 
 /-- The note under a declaration the engine has no table for: each file as
 it read, and a help that converts the files in it before deleting it. -/
@@ -820,7 +820,7 @@ private def unreadNote (d : Declared) (reads : Array Read) : String × String :=
       then [] else
       [s!"{names asciiFiles} {agree asciiFiles "is" "are"} ASCII, which reads alike in it and \
 UTF-8"])
-  (s!"{d.spelling} names an encoding this engine does not read: " ++ "; ".intercalate parts,
+  ("an encoding the engine does not read: " ++ "; ".intercalate parts,
     if replacedFiles.isEmpty then alikeHelp else
       s!"save {names replacedFiles} as UTF-8 (`iconv -f {d.option} -t UTF-8`), then delete the \
 declaration")
@@ -832,11 +832,12 @@ public def Ledger.notes (l : Ledger) : Array Diag :=
   | some d =>
     let reads := l.reads
     let note (mh : String × String) : Array Diag :=
-      #[Diag.of .N0025 mh.1 (some d.span) (help := some mh.2)
+      #[Diag.of .N0025 (Diag.say .N0025 .option d.option (some (some .package, Diag.Name.of "inputenc")))
+        (some d.span) (help := some mh.2) (detail := some mh.1)
         (subject := some ("usepackage:inputenc:" ++ d.option))]
     match d.choice with
     | .utf8 => #[]
-    | .legacy e => note (legacyNote d e reads)
+    | .legacy e => note (legacyNote e reads)
     | .unread => note (unreadNote d reads)
 
 end LeanTex.Core.Encoding

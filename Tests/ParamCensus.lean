@@ -169,7 +169,7 @@ def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
 
 /-- Whether a diagnostic is the note an inert row gives a setting, keyed by it. -/
 def notesInert (key : String) (d : Diag) : Bool :=
-  d.code == "N0100" && (d.detail.any (·.startsWith "nothing:") || hasStr d.message "→ nothing:") &&
+  d.code == "N0100" && (d.detail.any (·.startsWith "nothing:") || hasStr (saidText d) "→ nothing:") &&
     d.subject.any (keyedBy key)
 
 /-- One reader's vocabulary: each setting as the document writes it, the documents it is tried in
@@ -769,14 +769,14 @@ nothing reads"
   let body := plain "" "" |>.replace "Probe words." "Words. \\setlength{\\textheight}{500pt} More."
   let geoKeys (o : String) : String := plain "" s!"\\usepackage[{o}]\{geometry}"
   let pageNamed (src : String) : Bool := (elabStr src).2.any fun d =>
-    (d.code == "W0340" || d.code == "W0343") && hasStr d.message "\\page"
+    (d.code == "W0340" || d.code == "W0343") && hasStr (saidText d) "\\page"
   t "messages name what the author wrote, and geometry's later key wins"
     (!pageNamed body && !pageNamed (geoKeys "nofoot,footskip=1cm") &&
       !pageNamed (geoKeys "footskip=1cm,nofoot") && !pageNamed (geoKeys "nohead,headsep=1cm"))
   let overlay := deck "" "" |>.replace "\\begin{itemize}\\item<2-> one"
     "\\begin{itemize}[<+->]\\item one"
   t "a list's default overlay specification is named as one, its help no \\setlist"
-    ((elabStr overlay).2.any fun d => d.code == "W0104" && hasStr d.message "overlay" &&
+    ((elabStr overlay).2.any fun d => d.code == "W0104" && hasStr (saidText d) "overlay" &&
       !(d.help.any (hasStr · "setlist")))
   t "an unknown class or theme accounts for its options"
     (!((elabStr (cls "nosuchclass" "draft,twocolumn" "")).2.any
@@ -962,7 +962,7 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
       named (art "\\page{ tmargin = 1in, bmargin = 3in, textheight-under = 400pt }") "bmargin")
   t "text block: a kernel height leaving no text block is named as a text height"
     ((elabStr (art "\\usepackage{geometry}\n\\setlength{\\textheight}{30in}")).2.any fun d =>
-      d.code == "W0104" && hasStr d.message "declared text height leaves the page no text block")
+      d.code == "W0104" && hasStr (saidText d) "declared text height leaves the page no text block")
   t "text block: a key an earlier call spelled is not named again, nor geometry's own default"
     (quiet (calls "textheight=500pt,vmarginratio=1:1" "\\geometry{top=1in}") &&
       quiet (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}") &&
@@ -1022,7 +1022,7 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
       (let p := page (native "textheight = 500pt, vmarginratio = 1:1")
        p.vmargin == (p.height - Dim.pt 500) / 2 && p.bottomMargin == p.vmargin))
   t "text block: a malformed ratio says what the key takes"
-    ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr d.message "a ratio such as 2:3")
+    ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr (saidText d) "a ratio such as 2:3")
   t "text block: a height past the page is named and the margins stand"
     (named (native "tmargin = 1in, textheight = 900pt") "textheight" &&
       held (native "tmargin = 1in, textheight = 900pt") (page (native "")).vmargin

@@ -487,8 +487,8 @@ verbatim package spells it"))
                 pos := posOver cs i stop pos
                 i := stop
               | none =>
-                diags := diags.push (Diag.of .E0102
-                  s!"unclosed \{{written}}: expected '\\end\{{written}}'" (some ⟨file, here⟩))
+                diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .environment written)
+                  (some ⟨file, here⟩))
                 toks := toks.push ⟨.verb env (strFrom cs start cs.size), here⟩
                 pos := posOver cs i cs.size pos
                 i := cs.size
@@ -503,9 +503,8 @@ verbatim package spells it"))
               let body := if d == '\n' || d == '\r' then "" else strFrom cs (k + 1) e
               let shown := if star then body.map (fun c => if c == ' ' then '␣' else c) else body
               unless closed do
-                diags := diags.push (Diag.of .E0102
-                  "unclosed \\verb: its delimiter's second copy must end the code on the same line"
-                  (some ⟨file, here⟩))
+                diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .command "\\verb")
+                  (some ⟨file, here⟩) (detail := some "its delimiter's second copy ends it on its line"))
               toks := toks.push ⟨.verb "verb" shown, here⟩
               let stop := if closed then e + 1 else e
               pos := posOver cs i stop pos
@@ -520,11 +519,11 @@ verbatim package spells it"))
               -- minted's, listings' and url.sty's inline commands read their argument raw, as
               -- `\verb` does.
               unless closed do
-                diags := diags.push (Diag.of .E0102
-                  (if urlCommands.contains name then
-                    s!"unclosed \\{name}: its delimiter's second copy must end the argument on its line"
-                  else s!"unclosed \\{name}: its code's closing delimiter must come before a blank line")
-                  (some ⟨file, here⟩))
+                diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .command s!"\\{name}")
+                  (some ⟨file, here⟩)
+                  (detail := some (if urlCommands.contains name then
+                    "its delimiter's second copy ends it on its line"
+                  else "its closing delimiter comes before a blank line")))
               toks := toks.push ⟨.verb name call, here⟩
               pos := posOver cs i stop pos
               i := stop
@@ -553,8 +552,8 @@ verbatim package spells it"))
             pos := posOver cs i (i + 2) pos
             i := i + 2
         else
-          diags := diags.push (Diag.of .E0101
-            "lone backslash at end of input" (some ⟨file, here⟩))
+          diags := diags.push (Diag.of .E0101 (Diag.say .E0101 .character "\\")
+            (some ⟨file, here⟩) (detail := some "at the end of input"))
           i := i + 1
       else if c == '{' then
         toks := toks.push ⟨.lbrace, here⟩

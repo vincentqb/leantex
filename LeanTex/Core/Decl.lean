@@ -1275,11 +1275,13 @@ public def parseBlock (file : String) (block : Array (String × String × String
     -- Keys admit `-`; in values it is subtraction.
     if key.isEmpty || !key.toList.all (fun c => isIdentChar c || c == '-') then
       diags := diags.push (Diag.of .E0320
-        s!"invalid key in '\\{what}': {entry.quote}" (some ⟨file, pos⟩)
+        (Diag.say .E0320 .entry (Diag.Name.value entry) (some (none, Diag.Name.of s!"\\{what}")))
+        (some ⟨file, pos⟩)
         (help := "entries look like: key = value"))
     else if valueSrc.isEmpty then
       diags := diags.push (Diag.of .E0320
-        s!"'{key}' in '\\{what}' has no value" (some ⟨file, pos⟩)
+        (Diag.say .E0320 .entry key (some (none, Diag.Name.of s!"\\{what}"))) (some ⟨file, pos⟩)
+        (detail := some "it has no value")
         (help := "entries look like: key = value"))
     else
       match parseValue valueSrc tokens with
@@ -1287,12 +1289,12 @@ public def parseBlock (file : String) (block : Array (String × String × String
       | none =>
         let detail := if looksLikeExpr valueSrc then
             match parseLengthExpr tokens valueSrc with
-            | .error e => s!": {e}"
-            | .ok _ => ""
-          else ""
+            | .error e => some e
+            | .ok _ => none
+          else none
         diags := diags.push (Diag.of .E0321
-          s!"cannot read value for '{key}' in '\\{what}': {valueSrc.quote}{detail}"
-          (some ⟨file, pos⟩) (help :=
+          (Diag.say .E0321 .value (Diag.Name.value valueSrc) (some (some .key, Diag.Name.of key)))
+          (some ⟨file, pos⟩) (detail := detail) (help :=
             "values are \"strings\", dimensions (10pt, 0.5in), length expressions \
 (a + 2b), numbers, names, or #RRGGBB colors"))
   return (entries, diags)
@@ -1304,13 +1306,13 @@ public def splitEntry (entry : String) : Option (String × String) :=
 /-- Rejects keys the declaration does not define, naming the ones it does. -/
 public def unknownKey (file : String) (what key : String) (known : List String)
     (pos : Pos) : Diag :=
-  Diag.of .E0322 s!"'\\{what}' has no key '{key}'" (some ⟨file, pos⟩)
+  Diag.of .E0322 (Diag.say .E0322 .key key (some (none, Diag.Name.of s!"\\{what}"))) (some ⟨file, pos⟩)
     (help := s!"known keys: {String.intercalate ", " known}")
     (subject := some s!"param:\\{what}:{key}")
 
 public def wrongType (file : String) (what key expected : String) (got : Value)
     (pos : Pos) : Diag :=
-  Diag.of .E0323 s!"'{key}' in '\\{what}' expects {expected}, got a {got.kindName}"
-    (some ⟨file, pos⟩)
+  Diag.of .E0323 (Diag.say .E0323 .value (obj := some (some .key, Diag.Name.of key)))
+    (some ⟨file, pos⟩) (detail := some s!"\\{what} expects {expected}, got a {got.kindName}")
 
 end LeanTex.Core.Decl

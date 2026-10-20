@@ -206,62 +206,57 @@ public def unusedHelp (what : String) : String := s!"delete {what}, or \\allow\{
 /-- The words and subject of listing defaults no listing after them reads, by the command that
 declares them and its lexer layer. -/
 public def listingWords (reader : String) (lang : Option String) : String × String :=
-  let (what, which) := match reader, lang with
-    | "lstset", _ => ("listing defaults", "no listing")
-    | "setminted", none => ("minted defaults", "no minted listing")
-    | "setminted", some l => (s!"minted defaults for '{l}'", s!"no minted '{l}' listing")
-    | _, none => ("inline-code defaults", "no inline code")
-    | _, some l => (s!"inline-code defaults for '{l}'", s!"no inline '{l}' code")
-  (s!"{what} are declared here, and {which} after them reads them",
+  (Diag.say .W0449 .listing (lang.map Diag.Name.of) (some (none, Diag.Name.of s!"\\{reader}")),
    s!"unused:listing:{reader}" ++ (lang.map (":" ++ ·)).getD "")
 
 /-- The loss of a face the document declares that no text is set in, at its entry in the declaring
 command. -/
 public def faceDiag (key : String) (span : Span) : Diag :=
   if key == "math" then
-    Diag.of .W0449 "the 'math' face is declared here, and the document sets no mathematics"
+    Diag.of .W0449 (Diag.say .W0449 .face "math") (detail := some "the document sets no mathematics")
       (span := some span) (subject := some "unused:face:math") (trigger := span.pos.command)
       (help := some (unusedHelp "the 'math' face's entry"))
   else if key.startsWith "family." then
     let cmd := s!"'\\{(key.drop "family.".length).toString}'"
-    Diag.of .W0449 s!"{cmd} declares a face here, and no text the document sets is set in it"
+    Diag.of .W0449 (Diag.say .W0449 .face (obj := some (none,
+        Diag.Name.of s!"\\{(key.drop "family.".length).toString}")))
       (span := some span) (subject := some s!"unused:face:{key}") (trigger := span.pos.command)
       (help := some (unusedHelp s!"{cmd}'s declaration"))
   else
-    Diag.of .W0449 s!"the '{key}' face is declared here, and no text the document sets is set in it"
+    Diag.of .W0449 (Diag.say .W0449 .face key)
       (span := some span) (subject := some s!"unused:face:{key}") (trigger := span.pos.command)
       (help := some (unusedHelp s!"the '{key}' face's entry"))
 
 /-- The loss of a markdown metadata key only a citation reads, in a document citing nothing. -/
 public def metaDiag (file key : String) (pos : Pos) : Diag :=
-  Diag.of .W0449 s!"the metadata key '{key}' is declared here, and the document cites nothing"
+  Diag.of .W0449 (Diag.say .W0449 .key key) (detail := some "the document cites nothing")
     (span := some ⟨file, pos⟩) (subject := some s!"unused:meta:{key}")
     (help := some "cite an entry, as '[@key]' does, or delete the key")
 
 /-- The loss of a Lean page's directive key only a citation reads, on a page whose documentation
 cites nothing. -/
 public def directiveDiag (file key : String) (pos : Pos) : Diag :=
-  Diag.of .W0449 s!"the directive key '{key}' is declared here, and the page's documentation \
-cites nothing"
+  Diag.of .W0449 (Diag.say .W0449 .key key) (detail := some "the page's documentation cites nothing")
     (span := some ⟨file, pos⟩) (subject := some s!"unused:directive:{key}")
     (help := some "cite an entry, as `[Key]` does, or delete the key")
 
 /-- The loss of a code page's bibliography line, on a page whose documentation cites nothing. -/
 public def bibLineDiag (file : String) (pos : Pos) : Diag :=
-  Diag.of .W0449 "the documentation declares a bibliography here, and the page's documentation \
-cites nothing"
+  Diag.of .W0449 (Diag.say .W0449 .bibliography)
+    (detail := some "the page's documentation cites nothing")
     (span := some ⟨file, pos⟩) (subject := some "unused:docstring:bibliography")
     (help := some "cite an entry, as `[Key]` does, or delete the line")
 
 /-- The loss of an author colour nothing paints with. -/
 private def colorDiag (name : String) (span : Span) : Diag :=
-  Diag.of .W0449 s!"the colour '{name}' is declared here, and nothing the document sets paints with it"
+  Diag.of .W0449 (Diag.say .W0449 .colour name)
     (span := some span) (subject := some s!"unused:color:{name}")
     (help := some (unusedHelp s!"the declaration of '{name}'"))
 
 /-- The loss of a site's styles for elements the document never sets. -/
 private def styleDiag (elements : Array String) (span : Span) : Diag :=
-  Diag.of .W0449 s!"this styles {nounsOf elements}, and the document sets none"
+  Diag.of .W0449 (Diag.say .W0449 .style (Diag.Name.of (", ".intercalate elements.toList)))
+    (detail := some s!"the document sets no {nounsOf elements}")
     (span := some span) (subject := some s!"unused:style:{",".intercalate elements.toList}")
     (help := some (unusedHelp "what it declares for them"))
 

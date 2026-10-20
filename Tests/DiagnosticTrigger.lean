@@ -142,8 +142,7 @@ def diagnosticTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let file := "trigger.tex"
   let lua := triggerDiags file "\n  \\directlua{unread Lua}"
-  let original := Diag.of .W0104
-    "'\\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped"
+  let original := Diag.of .W0104 "ignored command \\directlua"
     (some ⟨file, { line := 2, col := 3 }⟩)
     (help := "\\allow{W0104} accepts the skip") (subject := "ctrl:directlua")
   t "diagnostic trigger: directlua names the source command"
@@ -159,7 +158,7 @@ def diagnosticTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
       (triggerAt ds .W0103 file 1 1 ("\\" ++ name))
     t s!"diagnostic trigger: {name} preserves its name refusal"
       (refused.map (fun d => { d with trigger := none }) ==
-        #[Diag.of .W0103 "package 'triggerunknown' is not supported; skipped"
+        #[Diag.of .W0103 "unsupported package triggerunknown"
           (some ⟨file, { line := 1, col := 1 }⟩) (refused := "triggerunknown")])
   let nested := triggerDiags file
     "\n{\\directlua{}}\n\\RequirePackage{triggeroutside}"

@@ -790,7 +790,9 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
 public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text)
 
 /-- The wording of a declared setting the engine skips, whatever surface declares it. -/
-public def Diag.notHonoured (what : String) : String := s!"{what} is not honoured; skipped"
+public def Diag.notHonoured (noun : Diag.Noun) (name : Diag.Name)
+    (obj : Option (Option Diag.Noun × Diag.Name) := none) : String :=
+  Diag.say .W0104 noun name obj
 
 /-- Names joined for prose, the last after `word`: `a, b or c`. -/
 public def Diag.prose (word : String) (names : List String) : String :=
@@ -801,10 +803,10 @@ public def Diag.prose (word : String) (names : List String) : String :=
 
 /-- The one wording of a declaration the document body ignores. -/
 public def Diag.bodyDeclaration (name : String) : String :=
-  s!"'\\{name}' is a declaration; in the body it is ignored"
+  Diag.say .W0340 .declaration (Diag.Name.of ("\\" ++ name))
 
 /-- The help of a declaration standing where it is not read. -/
-public def Diag.declareInPreamble : String := "declare it in the preamble, before '\\begin{document}'"
+public def Diag.declareInPreamble : String := "declare it before \\begin{document}"
 
 public theorem Diag.of_record_exact (c : DiagCode) (message : String)
     (span : Option Span) (help subject refused trigger : Option String)

@@ -3213,7 +3213,7 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((w0701 d12.output.contract Pdf.profile).size == 2)
   t "contract: an unknown alternatives value is E0321"
     ((out "alternatives = maybe").2.any fun d =>
-      d.code == "E0321" && hasStr d.message "maybe")
+      d.code == "E0321" && hasStr (saidText d) "maybe")
   t "contract: an unknown colour intent is E0321"
     ((out "color = cmyk").2.any (·.code == "E0321"))
   t "contract: an unknown font policy is E0321"
@@ -3291,7 +3291,7 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"driver: html-only pages == 3 holds on a three-page layout: {log}" (code == 0)
       let (code, log, _) ← run "one" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" one
       t "driver: html-only pages == 3 fails on one page with the layout's actual"
-        (code != 0 && hasStr log "E0330" && hasStr log "(actual: 1)")
+        (code != 0 && hasStr log "E0330" && hasStr log "actual: 1")
       let (code, log, _) ← run "resume" "resume" "\\output{ formats = html }\n" one
       t s!"driver: an html-only résumé builds clean under its implied assertions: {log}" (code == 0)
       let (code, log, outDir) ← run "md" "article" "\\output{ formats = md }\n\\assert{ fonts.all_embedded }\n" one
@@ -3711,7 +3711,7 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (d2b.output.profiles == #["pdf/a-4", "pdf/ua-2"] && profileAsserts d2b == #["pdf/a-4", "pdf/ua-2"])
   let (dz, dsz) := out "formats = pdf, profiles = pdf/z"
   t "profiles: an unknown name is E0321 listing the registered names"
-    (dsz.any fun d => d.code == "E0321" && hasStr d.message "pdf/z" &&
+    (dsz.any fun d => d.code == "E0321" && hasStr (saidText d) "pdf/z" &&
       hasStr (d.help.getD "") "pdf/a-4" && hasStr (d.help.getD "") "pdf/ua-2" &&
       hasStr (d.help.getD "") "pdf/x-6")
   t "profiles: an unknown name never enters the set" (dz.output.profiles.isEmpty && (profileAsserts dz).isEmpty)

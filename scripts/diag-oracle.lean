@@ -165,6 +165,7 @@ structure LDiag where
   code : String
   line : Nat
   message : String
+  detail : String := ""
   deriving Repr, BEq
 
 inductive Obs (α : Type) where
@@ -209,15 +210,15 @@ def parseLog (exit : UInt32) (log : String) : TRun := Id.run do
   let recovery := ls.find? fun l => recoveryMarks.any (contains l ·)
   return { exit, error, errLine, opener, recovery }
 
-/-- A cascade naming a construct present in the source, as `expected '\end{document}'` when it is
-there. -/
+/-- A cascade naming a construct present in the source: an environment called unclosed whose
+`\end` is there, or an `\end` said to have no `\begin` that is there. -/
 def spurious (src : String) (d : LDiag) : Bool :=
-  ["expected '", "without matching '"].any fun lead =>
-    match d.message.splitOn lead with
-    | _ :: rest :: _ =>
-      let named := (rest.splitOn "'").headD ""
-      named.startsWith "\\" && contains src named
-    | _ => false
+  let named : Option String := match d.message.splitOn " " with
+    | ["unclosed", "environment", n] => some s!"\\end\{{n}}"
+    | _ => match d.detail.splitOn " without " with
+      | [_, w] => some w
+      | _ => none
+  named.any fun n => n.startsWith "\\" && contains src n
 
 structure Env where
   root : System.FilePath
@@ -262,7 +263,8 @@ def parsePorcelain (out : String) : Option (Array LDiag) := Id.run do
         let code := (j.getObjValAs? String "code").toOption.getD ""
         let line := (j.getObjValAs? Nat "line").toOption.getD 0
         let message := (j.getObjValAs? String "message").toOption.getD ""
-        ds := ds.push { code, line, message }
+        let detail := (j.getObjValAs? String "detail").toOption.getD ""
+        ds := ds.push { code, line, message, detail }
       | .ok "summary" => summary := true
       | _ => pure ()
   return if summary then some ds else none
@@ -553,9 +555,9 @@ def selftest (repo : System.FilePath) (lualatex? : Option String) : IO UInt32 :=
       (parseLog 0 "(\\end occurred inside a group at level 1)\n").recovery.isSome),
     ("log: a clean log accepts", (parseLog 0 "Output written on t.pdf\n").accepted),
     ("spurious: a named construct present", spurious "\\end{document}"
-      { code := "E0201", line := 2, message := "unclosed: expected '\\end{document}'" }),
+      { code := "E0201", line := 2, message := "unclosed environment document" }),
     ("spurious: a brace is never a construct", !spurious "}"
-      { code := "E0201", line := 3, message := "unclosed: expected '}'" }),
+      { code := "E0201", line := 3, message := "unclosed group {" }),
     ("cache: a run round-trips", decodeT (encodeT { exit := 0, text := some "a\nb" }) ==
       some { exit := 0, text := some "a\nb" }),
     ("a native spelling is a whole control word",

@@ -45,19 +45,19 @@ def keyValChecks (ref : IO.Ref (List String)) : IO Unit := do
   let titled := elabStr (dvDoc "\\hypersetup{pdftitle=Results (part 1, draft)}\n" "Words.")
   t "keyval: a comma inside parentheses ends a value, and the piece after it is named"
     (titled.1.info.title == some "Results (part 1" &&
-      titled.2.any fun d => d.code == "W0101" && hasStr d.message "'draft)'")
+      titled.2.any fun d => d.code == "W0101" && hasStr (saidText d) "'draft)'")
   t "keyval: a braced or uncut value with a lone delimiter is named nowhere"
     ((elabStr (dvDoc "\\hypersetup{pdfcreator={Notes :-)}, pdfproducer=Tool (beta}\n"
       "Words.")).2.all (·.code != "W0101"))
   let listed := elabStr (dvDoc "\\usepackage{enumitem}\n\\setlist[itemize]{itemsep=9pt, label=(\\alph*, x)}\n" "Words.")
   t "keyval: a list key cut inside parentheses names its piece"
-    (listed.2.any fun d => d.code == "W0104" && hasStr d.message "x)")
+    (listed.2.any fun d => d.code == "W0104" && hasStr (saidText d) "x)")
   t "keyval: a blank icon label keeps the icon's own name"
     ((elabStr (dvDoc "\\usepackage{fontawesome5}\n" "\\faIcon[label={}]{star}")).2.any
-      fun d => d.code == "W0110" && hasStr d.message "blank")
+      fun d => d.code == "W0110" && hasStr (saidText d) "blank")
   let metadata := elabStr ("\\DocumentMetadata{=x, lang=fr}\n" ++ dvDoc "" "Words.")
   t "keyval: a metadata entry with an empty key is named whole"
-    (metadata.2.any fun d => d.code == "W0101" && hasStr d.message "=x")
+    (metadata.2.any fun d => d.code == "W0101" && hasStr (saidText d) "=x")
   t "keyval: a spaced frame option is the tight one"
     ((elabStr (dvDeck "" "\\begin{frame}[fragile = true]Words.\\end{frame}")).2.all
       fun d => !hasStr d.message "fragile")

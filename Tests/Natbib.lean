@@ -277,7 +277,7 @@ def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t s!"cite setup: '\\setcitestyle' sets no option, style, scheme, flag, door or language ({forged})"
     (forged == plain && forged.contains "L1 (Alpha et al., 2019; Delta, 2021) end.")
   t "cite setup: and names each item it drops"
-    (fds.any fun d => d.code == "W0101" && items.all fun i => hasStr d.message s!"'{i}'")
+    (fds.any fun d => d.code == "W0101" && items.all fun i => hasStr (saidText d) s!"'{i}'")
   let tex := (dvE (dvDoc "\\usepackage[super]{natbib}\n" "Text.")).filter (·.code == "W0104")
   let front := "---\nbibliography: works.bib\nnatbiboptions: super\n---\n\n"
   let (_, md) := mdBibBuild (front ++ "Text [@a].\n") #[("works.bib", worksBib)]

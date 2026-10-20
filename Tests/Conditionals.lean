@@ -456,7 +456,7 @@ def settleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a flag's branch in a text the engine reads at the preamble's end is kept, not taken out"
     (styled keptDoc)
   t "that decision is a keyed note"
-    (keptDs.any fun d => d.code == "N0114" && d.subject.isSome && hasStr d.message "preamble")
+    (keptDs.any fun d => d.code == "N0114" && d.subject.isSome && hasStr (saidText d) "preamble")
   let (lateDoc, _) := elabStr (venue "\\probeanontrue")
   t "it reads the state at the preamble's end, not where the definition was made"
     (!styled lateDoc)
@@ -467,5 +467,5 @@ def settleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\ifprobeon On\\else Off\\fi\\end{document}")
   t "a flag a settled text declares or sets is neither declared nor set by the settling"
     (declDs.all fun d => !(d.code == "N0114" &&
-      (hasStr d.message "ifprobelate" || hasStr d.message "probeontrue" ||
-        hasStr d.message "is true here")))
+      (hasStr (saidText d) "ifprobelate" || hasStr (saidText d) "probeontrue" ||
+        hasStr (saidText d) "is true here")))
