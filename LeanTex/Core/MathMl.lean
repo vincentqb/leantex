@@ -324,30 +324,25 @@ def zeroCore (key : String) : Html.Node → Html.Node
   | .elem t attrs ⟨b :: rest⟩ =>
     if embellishing.contains t then .elem t attrs ⟨zeroMo key b :: rest⟩
     else zeroMo key (.elem t attrs ⟨b :: rest⟩)
-  | .elem t attrs ⟨[]⟩ => zeroMo key (.elem t attrs ⟨[]⟩)
-  | .text s => .text s
-  | .style s => .style s
-  | .script a j => .script a j
+  | n => zeroMo key n
 
-def mapHead (f : Html.Node → Html.Node) : List Html.Node → List Html.Node
-  | [] => []
-  | n :: rest => f n :: rest
-
-def mapLast (f : Html.Node → Html.Node) : List Html.Node → List Html.Node
-  | [] => []
-  | [n] => [f n]
-  | n :: rest => n :: mapLast f rest
+/-- An edge operator's spacing zeroed on `key`'s side, and on both sides when it is a binary
+operator, which TeX sets as an ordinary atom at a list's edge. -/
+def zeroEdge (key : String) (bin : Bool) (n : Html.Node) : Html.Node :=
+  if bin then zeroCore "lspace" (zeroCore "rspace" n) else zeroCore key n
 
 /-- A struck operand as cancel.sty sets it, its own list: no space before its first atom or after
 its last. -/
-def edgeSpaced (ns : Array Html.Node) : Array Html.Node :=
-  (mapLast (zeroCore "rspace") (mapHead (zeroCore "lspace") ns.toList)).toArray
+def edgeSpaced (lead trail : Bool) (ns : Array Html.Node) : Array Html.Node :=
+  let ns := ns.modify 0 (zeroEdge "lspace" lead)
+  ns.modify (ns.size - 1) (zeroEdge "rspace" trail)
 
 /-- Measured cancellation: the strike as one SVG at its own size, its margins standing it at the
 mark's origin with no advance and its depth below the baseline, then the struck MathML and the value at their measured
 places. -/
 def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
-    (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
+    (spec : CancelSpec) (edges : Bool × Bool) (struck vals : Array Html.Node) (shown : Bool) :
+    Html.Node :=
   let em := metric.em
   let i := metric.input
   let g := Math.cancelGeom mark spec.room i
@@ -366,7 +361,7 @@ def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
 margin-left: {measuredEm reach.left em}; margin-right: {measuredEm (-(reach.left + sw)) em}; \
 margin-bottom: {measuredEm reach.bot em}; vertical-align: baseline; overflow: visible; pointer-events: none")]
     (g.polys.map (cancelPolygon ink))
-  let body := cancelAt em g.shift 0 i.w (.elem "mrow" #[] (edgeSpaced struck))
+  let body := cancelAt em g.shift 0 i.w (.elem "mrow" #[] (edgeSpaced edges.1 edges.2 struck))
   let value := cancelAt em (g.valueX - g.shift - i.w) g.valueY i.vw
     (paint (spec.color.map fun (c, n) => inkCss mk.literal c n)
       (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals))
@@ -379,9 +374,10 @@ margin-bottom: {measuredEm reach.bot em}; vertical-align: baseline; overflow: vi
 /-- Measured cancellation when the provider gives a positive em, else the unmeasured fallback. -/
 def cancelWithMetric (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
     (body value : MList) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
+  let edges := (body.classes.head? == some .bin, body.classes.getLast? == some .bin)
   match mk.metric mk.style spec body value with
   | some metric =>
-    if 0 < metric.em then measuredCancelNode mk metric mark spec struck vals shown
+    if 0 < metric.em then measuredCancelNode mk metric mark spec edges struck vals shown
     else cancelNode mk disp mark spec struck vals shown
   | none => cancelNode mk disp mark spec struck vals shown
 
@@ -839,29 +835,28 @@ theorem zeroCore_chars (key : String) (n : Html.Node) (c : Array Char) :
     · simp [nodeChars, nodeListChars, mo]
     · exact mo _ _
   · exact mo _ _
-  all_goals rfl
 
-theorem edgeSpaced_chars (ns : Array Html.Node) (c : Array Char) :
-    nodeListChars c (edgeSpaced ns).toList = nodeListChars c ns.toList := by
-  have last : ∀ (l : List Html.Node) (c : Array Char),
-      nodeListChars c (mapLast (zeroCore "rspace") l) = nodeListChars c l := by
-    intro l
-    induction l with
-    | nil => intro c; rfl
-    | cons n rest ih =>
-      intro c
-      cases rest with
-      | nil => simp [mapLast, nodeListChars, zeroCore_chars]
-      | cons m more => simp only [mapLast, nodeListChars]; exact ih _
-  simp only [edgeSpaced, List.toList_toArray, last]
-  cases ns.toList with
-  | nil => rfl
-  | cons n rest => simp [mapHead, nodeListChars, zeroCore_chars]
+theorem modify_chars (f : Html.Node → Html.Node)
+    (hf : ∀ (c : Array Char) (n : Html.Node), nodeChars c (f n) = nodeChars c n) :
+    ∀ (l : List Html.Node) (i : Nat) (c : Array Char),
+      nodeListChars c (l.modify i f) = nodeListChars c l
+  | [], _, _ => by simp
+  | _ :: _, 0, _ => by simp [nodeListChars, hf]
+  | _ :: l, i + 1, _ => by simp only [List.modify_succ_cons, nodeListChars]; exact modify_chars f hf l i _
+
+theorem edgeSpaced_chars (lead trail : Bool) (ns : Array Html.Node) (c : Array Char) :
+    nodeListChars c (edgeSpaced lead trail ns).toList = nodeListChars c ns.toList := by
+  have edge : ∀ key bin (c : Array Char) (n : Html.Node),
+      nodeChars c (zeroEdge key bin n) = nodeChars c n := by
+    intro key bin c n
+    unfold zeroEdge
+    split <;> simp [zeroCore_chars]
+  simp only [edgeSpaced, Array.toList_modify, modify_chars _ (edge _ _)]
 
 theorem measuredCancelNode_chars (mk : Marks) (metric : CancelMetric)
-    (mark : CancelMark) (spec : CancelSpec) (struck vals : Array Html.Node)
+    (mark : CancelMark) (spec : CancelSpec) (edges : Bool × Bool) (struck vals : Array Html.Node)
     (shown : Bool) (c : Array Char) :
-    nodeChars c (measuredCancelNode mk metric mark spec struck vals shown) =
+    nodeChars c (measuredCancelNode mk metric mark spec edges struck vals shown) =
       if mark == .to || shown then nodeListChars (nodeListChars c struck.toList) vals.toList
       else nodeListChars c struck.toList := by
   cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
@@ -1377,26 +1372,22 @@ theorem zeroCore_tagFree (p : String → Bool) (key : String) (n : Html.Node) :
     · simp [tagFree, tagFreeList, mo]
     · exact mo _
   · exact mo _
-  all_goals rfl
 
-theorem edgeSpaced_tagFree (p : String → Bool) (ns : Array Html.Node) :
-    tagFreeList p (edgeSpaced ns).toList = tagFreeList p ns.toList := by
-  have last : ∀ l : List Html.Node,
-      tagFreeList p (mapLast (zeroCore "rspace") l) = tagFreeList p l := by
-    intro l
-    induction l with
-    | nil => rfl
-    | cons n rest ih =>
-      cases rest with
-      | nil => simp only [mapLast, tagFreeList]; rw [zeroCore_tagFree p]
-      | cons m more =>
-        rw [show mapLast (zeroCore "rspace") (n :: m :: more) =
-          n :: mapLast (zeroCore "rspace") (m :: more) from rfl, tagFreeList, ih]
-        rfl
-  simp only [edgeSpaced, List.toList_toArray, last]
-  cases ns.toList with
-  | nil => rfl
-  | cons n rest => simp only [mapHead, tagFreeList]; rw [zeroCore_tagFree p]
+theorem modify_tagFree (p : String → Bool) (f : Html.Node → Html.Node)
+    (hf : ∀ n, tagFree p (f n) = tagFree p n) :
+    ∀ (l : List Html.Node) (i : Nat), tagFreeList p (l.modify i f) = tagFreeList p l
+  | [], _ => by simp
+  | _ :: _, 0 => by simp [tagFreeList, hf]
+  | _ :: l, i + 1 => by
+    simp only [List.modify_succ_cons, tagFreeList]; rw [modify_tagFree p f hf l i]
+
+theorem edgeSpaced_tagFree (p : String → Bool) (lead trail : Bool) (ns : Array Html.Node) :
+    tagFreeList p (edgeSpaced lead trail ns).toList = tagFreeList p ns.toList := by
+  have edge : ∀ key bin (n : Html.Node), tagFree p (zeroEdge key bin n) = tagFree p n := by
+    intro key bin n
+    unfold zeroEdge
+    split <;> simp [zeroCore_tagFree]
+  simp only [edgeSpaced, Array.toList_modify, modify_tagFree p _ (edge _ _)]
 
 section
 variable (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
@@ -1453,9 +1444,9 @@ theorem cancelPolygons_tagFree (ink : String) (ps : List (Array (Int × Int))) :
   | cons q ps ih => simp [cancelPolygon, tagFree, tagFreeList, ih, contentTags_false hp]
 
 theorem measuredCancelNode_tagFree (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
-    (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool)
+    (spec : CancelSpec) (edges : Bool × Bool) (struck vals : Array Html.Node) (shown : Bool)
     (hs : tagFreeList p struck.toList = true) (hv : tagFreeList p vals.toList = true) :
-    tagFree p (measuredCancelNode mk metric mark spec struck vals shown) = true := by
+    tagFree p (measuredCancelNode mk metric mark spec edges struck vals shown) = true := by
   cases hm : mark == .to <;> cases shown <;>
     simp [measuredCancelNode, hm, cancelAt, tagFree, tagFreeList, tagFree_paint,
       Array.toList_map, cancelPolygons_tagFree p hp, edgeSpaced_tagFree p, hs, hv,
@@ -1468,7 +1459,7 @@ theorem cancelWithMetric_tagFree (mk : Marks) (disp : Bool) (mark : CancelMark)
   unfold cancelWithMetric
   split
   · split
-    · exact measuredCancelNode_tagFree p hp _ _ _ _ _ _ _ hs hv
+    · exact measuredCancelNode_tagFree p hp _ _ _ _ _ _ _ _ hs hv
     · exact cancelNode_tagFree p hp _ _ _ _ _ _ _ hs hv
   · exact cancelNode_tagFree p hp _ _ _ _ _ _ _ hs hv
 
@@ -1862,31 +1853,29 @@ theorem zeroCore_held (key : String) (hk : key ≠ "style") (n : Html.Node) :
     · simp [linesHeld, linesHeldList, mo]
     · exact mo _
   · exact mo _
-  all_goals rfl
 
-theorem edgeSpaced_held (ns : Array Html.Node) :
-    linesHeldList (edgeSpaced ns).toList = linesHeldList ns.toList := by
-  have last : ∀ l : List Html.Node,
-      linesHeldList (mapLast (zeroCore "rspace") l) = linesHeldList l := by
-    intro l
-    induction l with
-    | nil => rfl
-    | cons n rest ih =>
-      cases rest with
-      | nil => simp only [mapLast, linesHeldList]; rw [zeroCore_held "rspace" (by decide)]
-      | cons m more =>
-        rw [show mapLast (zeroCore "rspace") (n :: m :: more) =
-          n :: mapLast (zeroCore "rspace") (m :: more) from rfl, linesHeldList, ih]
-        rfl
-  simp only [edgeSpaced, List.toList_toArray, last]
-  cases ns.toList with
-  | nil => rfl
-  | cons n rest => simp only [mapHead, linesHeldList]; rw [zeroCore_held "lspace" (by decide)]
+theorem modify_held (f : Html.Node → Html.Node) (hf : ∀ n, linesHeld (f n) = linesHeld n) :
+    ∀ (l : List Html.Node) (i : Nat), linesHeldList (l.modify i f) = linesHeldList l
+  | [], _ => by simp
+  | _ :: _, 0 => by simp [linesHeldList, hf]
+  | _ :: l, i + 1 => by
+    simp only [List.modify_succ_cons, linesHeldList]; rw [modify_held f hf l i]
+
+theorem edgeSpaced_held (lead trail : Bool) (ns : Array Html.Node) :
+    linesHeldList (edgeSpaced lead trail ns).toList = linesHeldList ns.toList := by
+  have edge : ∀ key bin (n : Html.Node), key ≠ "style" →
+      linesHeld (zeroEdge key bin n) = linesHeld n := by
+    intro key bin n hk
+    unfold zeroEdge
+    split <;> simp [zeroCore_held _ hk, zeroCore_held "lspace" (by decide),
+      zeroCore_held "rspace" (by decide)]
+  simp only [edgeSpaced, Array.toList_modify, modify_held _ (edge "lspace" _ · (by decide)),
+    modify_held _ (edge "rspace" _ · (by decide))]
 
 theorem measuredCancelNode_held (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
-    (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool)
+    (spec : CancelSpec) (edges : Bool × Bool) (struck vals : Array Html.Node) (shown : Bool)
     (hs : linesHeldList struck.toList = true) (hv : linesHeldList vals.toList = true) :
-    linesHeld (measuredCancelNode mk metric mark spec struck vals shown) = true := by
+    linesHeld (measuredCancelNode mk metric mark spec edges struck vals shown) = true := by
   have hp : ∀ ink : Option String, linesHeld (paint ink
       (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals)) = true :=
     fun ink => paint_held ink _ (by simp [linesHeld, hv])
@@ -1901,7 +1890,7 @@ theorem cancelWithMetric_held (mk : Marks) (disp : Bool) (mark : CancelMark)
   unfold cancelWithMetric
   split
   · split
-    · exact measuredCancelNode_held _ _ _ _ _ _ _ hs hv
+    · exact measuredCancelNode_held _ _ _ _ _ _ _ _ hs hv
     · exact cancelNode_held _ _ _ _ _ _ _ hs hv
   · exact cancelNode_held _ _ _ _ _ _ _ hs hv
 

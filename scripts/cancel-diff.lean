@@ -38,7 +38,7 @@ def ppmBoxes (bytes : ByteArray) : Except String (Option Ink × Option Ink × Op
   let mut toks : Array String := #[]
   let mut cur := ""
   while toks.size < 4 && i < bytes.size do
-    let c := Char.ofNat bytes[i]!.toNat
+    let c := Char.ofNat (bytes[i]?.getD 0).toNat
     i := i + 1
     if c.isWhitespace then
       if !cur.isEmpty then
@@ -55,7 +55,8 @@ def ppmBoxes (bytes : ByteArray) : Except String (Option Ink × Option Ink × Op
   for y in [0:h] do
     for x in [0:w] do
       let o := i + 3 * (y * w + x)
-      match classify bytes[o]!.toNat bytes[o+1]!.toNat bytes[o+2]!.toNat with
+      let at_ (k : Nat) := (bytes[k]?.getD 0).toNat
+      match classify (at_ o) (at_ (o + 1)) (at_ (o + 2)) with
       | .mark => mark := grow mark x y
       | .value => value := grow value x y
       | .operand => operand := grow operand x y
@@ -70,7 +71,7 @@ const pw = require(process.env.PW_MODULE);
 (async () => {
   const b = await pw.chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
   const p = await b.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 4 });
-  await p.goto('file://' + process.argv[2], { waitUntil: 'load' });
+  await p.goto('file://' + process.argv[2], { waitUntil: 'domcontentloaded' });
   await p.evaluate(() => document.fonts.ready);
   const maths = await p.$$('math');
   for (const [i, m] of maths.entries()) {
@@ -211,9 +212,9 @@ def main (args : List String) : IO UInt32 := do
         IO.eprintln s!"cancel-diff: {tag}: {lua.size}, {pdf.size} and {web.size} cases measured, \
 {pages} expected"
         return 1
-      for (c, k) in cases.zipIdx do
+      for ((c, l), (p, h)) in (cases.toArray.zip lua).zip (pdf.zip web) do
         let label := s!"{c.label}-{tag}"
-        for (engine, b) in [("lualatex", lua[k]!), ("pdf", pdf[k]!), ("html", web[k]!)] do
+        for (engine, b) in [("lualatex", l), ("pdf", p), ("html", h)] do
           rows := rows.push (renderRow label engine b.anchors)
     | .error e, _ | _, .error e => IO.eprintln s!"cancel-diff: {e}"; return 1
   let parsed := rows.filterMap parseRow

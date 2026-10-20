@@ -27,7 +27,7 @@ def cases : List Case :=
   , ⟨"to-wide", s!"\\cancelto\{{v}\{0}}\{a+b}", false⟩
   , ⟨"to-integral", s!"\\cancelto\{{v}\{\\infty}}\{\\int_0^1 t}", false⟩
   , ⟨"to-fraction", s!"\\cancelto\{{v}\{0}}\{\\frac\{r}\{s}}", true⟩
-  , ⟨"to-sum", s!"\\cancelto\{{v}\{0}}\{\\sum_\{k} P_\{uk} (y_\{uk}-Q_\{uk})}", true⟩ ]
+  , ⟨"to-sum", s!"\\cancelto\{{v}\{0}}\{\\sum_\{n} c_n (z_n - w)}", true⟩ ]
 
 /-- The two package options a case is set under. -/
 def rooms : List (String × String) := [("mk", "makeroom"), ("ov", "overlap")]

@@ -3848,10 +3848,12 @@ private def cancelInput (e : MathEnv)
   let text := e.sizeAt (.text false)
   let (top, bot) := mathItemsExtent e.fs body
   let ink := (mathItemsInk e.fs value).getD {}
+  let (_, vbot) := mathItemsExtent e.fs value
   { rule := Math.cancelRule spec.thick
     w := (mathItemsWidth body).units, top := top.units, bot := bot.units
     vw := (mathItemsWidth value).units
     vtop := ink.top, vbot := ink.bottom, vleft := ink.left, vright := ink.right
+    vdepth := -vbot.units
     axis := (e.constAt text e.consts.axisHeight).units
     supDrop := (e.constAt text e.consts.superscriptBaselineDropMax).units
     supUp := (e.constAt text e.consts.superscriptShiftUp).units }

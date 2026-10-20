@@ -2461,7 +2461,7 @@ def reports : List Report := [
       thm% Math.cancelGeom_slash_centre_between, thm% Math.cancelto_anchor_exact]
     accept := ["the cancel tier, its oracle measuring leantex's PDF and its page in Chromium against lualatex 1.24 on an invented probe of every slope class",
       "main's binary at 1e648c76 on the cancel probe: 4 of 20 cases within a tenth of an em of lualatex in the PDF and 4 in Chromium; this tree's: 18 and 16, the integral with both limits apart in each (its scripts stand closer in leantex's layout and lower in the browser's)",
-      "a private deck's two cancellation frames re-rendered: the arrow at the cancel package's quarter slope from under the limit to past the closing parenthesis, as lualatex sets it, in the PDF and the web page",
+      "a private deck's two cancellation frames re-rendered: each arrow at the cancel package's slope, placed as lualatex places it, in the PDF and the web page",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact byte-identical but the cancellation fixture, whose strokes and arrows now stand at the cancel package's slopes"]
     state := .guarded "1e648c76" .before .author }
 ]

@@ -149,9 +149,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
     | .ok w =>
       let polys := ShippedInk.polygonsAt line
       t "cancel target stands cancel.sty's kern past the tip" w.kernedFromTip
-      -- The descender may dip to the head's hull as cancel.sty's superscript lets it.
-      t "cancel target's digit clears the full shaft and head wings"
-        ((CancelAlignment.measure a.fonts one "0").toOption.any (·.clearsMarks polys))
+      t "cancel target clears the full shaft and head wings" (w.clearsMarks polys)
       let glyphs := shippedBodyGlyphs one
       t "cancellation reserves room between its unchanged neighbors"
         (match ShippedInk.targetInk a.fonts (glyphs.filter (·.scalar == '𝑢')),

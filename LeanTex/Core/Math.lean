@@ -1002,6 +1002,7 @@ public structure CancelIn where
   vright : Int := 0
   vtop : Int := 0
   vbot : Int := 0
+  vdepth : Int := 0
   axis : Int := 0
   supDrop : Int := 0
   supUp : Int := 0
@@ -1034,10 +1035,11 @@ public def cancelTenths (n : Int) : Int := n * cancelPt / 10
 /-- cancel.sty's stroke widths, `\thinlines` and `\thicklines`. -/
 public def cancelRule (thick : Bool) : Int := cancelTenths (if thick then 8 else 4)
 
-/-- The line10 arrowhead: depth from tip to back and half the back's width. -/
-public def cancelHeadDepth : Int := 397 * cancelPt / 100
+/-- The arrowhead `\vector` draws, depth from tip to back and half the back's width: line10's
+under `\thinlines`, linew10's heavier one under `\thicklines`. -/
+public def cancelHeadDepth (thick : Bool) : Int := (if thick then 597 else 397) * cancelPt / 100
 
-public def cancelHeadHalf : Int := 149 * cancelPt / 100
+public def cancelHeadHalf (thick : Bool) : Int := (if thick then 220 else 149) * cancelPt / 100
 
 /-- A `\cancel` stroke as cancel.sty v2.2's `\@can@slash` draws it: slope as run and rise, and
 its horizontal extent, picked by the struck box's aspect. -/
@@ -1136,22 +1138,22 @@ public def cancelBand (p q : Int × Int) (rule : Int) : Array (Int × Int) :=
   #[(p.1 + nx, p.2 + ny), (q.1 + nx, q.2 + ny), (q.1 - nx, q.2 - ny), (p.1 - nx, p.2 - ny)]
 
 /-- An arrowhead at `q` pointing away from `p`, line10's depth and back. -/
-public def cancelHead (p q : Int × Int) : Array (Int × Int) :=
+public def cancelHead (thick : Bool) (p q : Int × Int) : Array (Int × Int) :=
   let dx := q.1 - p.1
   let dy := q.2 - p.2
   let l := max 1 (cancelLength dx dy)
-  let bx := q.1 - dx * cancelHeadDepth / l
-  let by_ := q.2 - dy * cancelHeadDepth / l
-  #[q, (bx + dy * cancelHeadHalf / l, by_ - dx * cancelHeadHalf / l),
-    (bx - dy * cancelHeadHalf / l, by_ + dx * cancelHeadHalf / l)]
+  let bx := q.1 - dx * cancelHeadDepth thick / l
+  let by_ := q.2 - dy * cancelHeadDepth thick / l
+  let hw := cancelHeadHalf thick
+  #[q, (bx + dy * hw / l, by_ - dx * hw / l), (bx - dy * hw / l, by_ + dx * hw / l)]
 
 /-- The shaft's end: the head's back, or the tail where the head is the whole arrow. -/
-public def cancelHeadBack (p q : Int × Int) : Int × Int :=
+public def cancelHeadBack (thick : Bool) (p q : Int × Int) : Int × Int :=
   let dx := q.1 - p.1
   let dy := q.2 - p.2
   let l := max 1 (cancelLength dx dy)
-  if l ≤ cancelHeadDepth then p
-  else (q.1 - dx * cancelHeadDepth / l, q.2 - dy * cancelHeadDepth / l)
+  if l ≤ cancelHeadDepth thick then p
+  else (q.1 - dx * cancelHeadDepth thick / l, q.2 - dy * cancelHeadDepth thick / l)
 
 /-- Where a cancel mark's parts stand from the construct's origin on the baseline: the struck
 box's shift, each stroke's centre line, the polygons painting them, the value's origin and the
@@ -1208,10 +1210,14 @@ public def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelG
     let drop := i.supDrop
     let up := max (i.axis + h - h / 2 - drop) i.supUp
     { shift, strokes := #[(start, tip)]
-      polys := if cancelHeadBack start tip == start then #[cancelHead start tip]
-        else #[cancelBand start (cancelHeadBack start tip) i.rule, cancelHead start tip]
+      polys :=
+        let thick := cancelRule false < i.rule
+        let back := cancelHeadBack thick start tip
+        if back == start then #[cancelHead thick start tip]
+        else #[cancelBand start back i.rule, cancelHead thick start tip]
       valueX := tip.1 + v.kern
-      valueY := yb + h / 2 - i.axis + up + v.lift
+      -- The value's `\boxmaxdepth` of half a point raises a deeper one.
+      valueY := yb + h / 2 - i.axis + up + v.lift + max 0 (i.vdepth - cancelTenths 5)
       advance }
 
 public theorem cancelGeom_slash_centre_between (mark : CancelMark) (room : Bool) (i : CancelIn)

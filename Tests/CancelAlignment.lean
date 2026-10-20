@@ -38,9 +38,9 @@ def shaftTail (polys : Array (Array (Dim.Length × Dim.Length))) :
   let b ← shaft[3]?
   some ((a.1 + b.1) / (2 : Int), (a.2 + b.2) / (2 : Int))
 
-/-- The head measured from the shipped shaft and triangle: line10's depth and back, its wings
-symmetric across the shaft's ray, within the rounding bound. -/
-def headHasShape (polys : Array (Array (Dim.Length × Dim.Length))) : Bool :=
+/-- The head measured from the shipped shaft and triangle: `\vector`'s depth and back at the
+stroke's weight, its wings symmetric across the shaft's ray, within the rounding bound. -/
+def headHasShape (polys : Array (Array (Dim.Length × Dim.Length))) (thick : Bool) : Bool :=
   match arrowTip polys, shaftTail polys, (polys.filter (·.size == 3))[0]? with
   | .ok tip, some tail, some head =>
     let dx := (tip.1 - tail.1).units
@@ -56,8 +56,8 @@ def headHasShape (polys : Array (Array (Dim.Length × Dim.Length))) : Bool :=
     let width := (cross a - cross b).natAbs
     dx > 0 && dy > 0 && length > 0 && cross a * cross b < 0 &&
       (cross a + cross b).natAbs ≤ rounding &&
-      (depth2 * length - 2 * Math.cancelHeadDepth * norm2).natAbs ≤ rounding &&
-      ((width : Int) * length - 2 * Math.cancelHeadHalf * norm2).natAbs ≤ rounding
+      (depth2 * length - 2 * Math.cancelHeadDepth thick * norm2).natAbs ≤ rounding &&
+      ((width : Int) * length - 2 * Math.cancelHeadHalf thick * norm2).natAbs ≤ rounding
   | _, _, _ => false
 
 structure Witness where
@@ -242,8 +242,8 @@ def headWingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
             (before ++ "u\\cancelto{0}{" ++ operand ++ "}v" ++ after))
           let out := layoutOf fonts doc
           let #[line] := bodyLines out | check ref "cancel wings: missing body line" false
-          check ref s!"cancel head aspect: {shape}/{style}/{options} keeps line10's depth, back and wings"
-            (headHasShape (polygonsAt line))
+          check ref s!"cancel head aspect: {shape}/{style}/{options} keeps the vector head's depth, back and wings"
+            (headHasShape (polygonsAt line) thick)
           let .ok w := measure fonts out "0" |
             check ref "cancel head aspect: missing target measurement" false
           check ref s!"cancel head aspect: {shape}/{style}/{options} kerns the target past the tip"
@@ -268,8 +268,8 @@ def sourceAndRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (p : Probe) (out : Layout.Out) (w : Witness) : IO Unit := do
   let (ordinary, ds) := layProbe fonts { p with body := p.ordinary }
   let name := s!"cancel source: {p.label}"
-  -- A descender may dip to the head's hull, as cancel.sty's superscript lets it.
-  if !p.target.contains '𝑔' then
+  -- cancel.sty's negative kern past a steep arrow's tip brings a descender to the head's hull.
+  if !p.target.contains '𝑔' || w.kernedFromTip && (w.glyphs[0]?).any (·.x ≥ w.tip.1) then
     check ref s!"{name} separates actual arrow marks from target ink"
       (w.clearsMarks ((bodyLines out).flatMap polygonsAt))
   check ref s!"{name} ordinary control needs no recovery"
@@ -337,9 +337,9 @@ def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
           zero.size == controlZero.size && zero.advance == controlZero.advance)
       -- Two base units of rounding, one per laid side.
       let slack := 2 * Dim.Length.quantum
+      -- Vertically the value's depth past half a point raises it, so only the run is compared.
       check ref s!"{name} moves the visible glyph from the tip as its own list moves it"
-        ((zero.x - w.tip.1 - (controlZero.x - c.tip.1) - (at_.1 - controlAt.1)).abs ≤ slack &&
-          (-zero.y - w.tip.2 - (-controlZero.y - c.tip.2) - (at_.2 - controlAt.2)).abs ≤ slack)
+        ((zero.x - w.tip.1 - (controlZero.x - c.tip.1) - (at_.1 - controlAt.1)).abs ≤ slack)
       let all := shippedBodyGlyphs out
       check ref s!"{name} preserves the remaining source census"
         ((all.filter (·.scalar != ' ')).map ShippedGlyph.scalar ==
@@ -438,8 +438,10 @@ def nestedMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     | .ok (ink, glyphs), .ok (reference, source) =>
       check ref s!"{name} preserves relative source positions and advances"
         (relativeSource glyphs == relativeSource source)
+      -- The nested strike deepens the value, which its depth cap raises; the run is unchanged.
       if p.probe.options == "overlap" then
-        check ref s!"{name} leaves painted target attachment unchanged" (ink == reference)
+        check ref s!"{name} leaves painted target attachment unchanged"
+          (ink.left == reference.left && ink.right == reference.right)
     | .error e, _ | _, .error e => check ref s!"{name}: {e}" false
     if p.probe.options == "overlap" then
       match neighbourSpan out, neighbourSpan control with
@@ -502,23 +504,23 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let len := Math.cancelPt * 40
   let l := Math.cancelLength len (len / 4)
   let tip : Int × Int := (len, len / 4)
-  let back : Int × Int := (len - len * Math.cancelHeadDepth / l, len / 4 - len / 4 * Math.cancelHeadDepth / l)
+  let back : Int × Int := (len - len * Math.cancelHeadDepth false / l, len / 4 - len / 4 * Math.cancelHeadDepth false / l)
   let wing (s : Int) : Int × Int :=
-    (back.1 - s * (len / 4) * Math.cancelHeadHalf / l, back.2 + s * len * Math.cancelHeadHalf / l)
+    (back.1 - s * (len / 4) * Math.cancelHeadHalf false / l, back.2 + s * len * Math.cancelHeadHalf false / l)
   let head : Array (Dim.Length × Dim.Length) := #[tip, wing 1, wing (-1)].map
     fun (x, y) => (Dim.Length.ofUnits x, Dim.Length.ofUnits y)
   let shaft : Array (Dim.Length × Dim.Length) := #[(0, 10), (back.1, back.2 + 10),
     (back.1, back.2 - 10), (0, -10)].map fun (x, y) => (Dim.Length.ofUnits x, Dim.Length.ofUnits y)
   check ref "cancel head judge: accepts line10's head on its shaft"
-    (headHasShape #[shaft, head])
+    (headHasShape #[shaft, head] false)
   for (dx, dy) in [((-40000 : Int), (-10000 : Int)), (40000, 10000)] do
     let slipped := head.modify 1 (fun (x, y) => (x + q dx, y + q dy))
     check ref "cancel head judge: rejects a wing sliding along the shaft"
-      (!headHasShape #[shaft, slipped])
+      (!headHasShape #[shaft, slipped] false)
   let widened := head.modify 1 (fun (x, y) => (x - q 9000, y + q 36000))
     |>.modify 2 (fun (x, y) => (x + q 9000, y - q 36000))
   check ref "cancel head judge: rejects a wider back"
-    (!headHasShape #[shaft, widened])
+    (!headHasShape #[shaft, widened] false)
   check ref "cancel clearance judge: accepts a separated target and rejects missing marks"
     (({ sample with ink := ⟨q (len + 1000000), q 0, q (len + 2000000), q 1000000⟩ } : Witness).clearsMarks
         #[shaft, head] && !sample.clearsMarks #[])

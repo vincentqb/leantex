@@ -226,22 +226,27 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
               (polys.size == 1 || polys.size == 2) && (polys.filter (·.size == 3)).size == 1
             else polys.size == (if cmd == "xcancel" then 2 else 1) && strokes.size == polys.size)
           t s!"cancel box: {label}/{cmd} strokes stand at cancel.sty's slopes"
-            (strokes.all fun pts =>
-              let dx := (pts[1]!.1 - pts[0]!.1).units
-              let dy := (pts[1]!.2 - pts[0]!.2).units
-              dx > 0 && dy != 0 && (cmd == "xcancel" || (cmd == "bcancel") == (dy < 0)) &&
-                slopes.any fun (run, rise) =>
-                  (dx * (rise : Int) - dy.natAbs * (run : Int)).natAbs ≤ 64)
+            (strokes.all fun pts => match pts[0]?, pts[1]? with
+              | some a, some b =>
+                let dx := (b.1 - a.1).units
+                let dy := (b.2 - a.2).units
+                dx > 0 && dy != 0 && (cmd == "xcancel" || (cmd == "bcancel") == (dy < 0)) &&
+                  slopes.any fun (run, rise) =>
+                    (dx * (rise : Int) - dy.natAbs * (run : Int)).natAbs ≤ 64
+              | _, _ => false)
           if cmd == "xcancel" then
+            let rise (pts : Array (Dim.Length × Dim.Length)) : Dim.Length :=
+              match pts[0]?, pts[1]? with
+              | some a, some b => b.2 - a.2
+              | _, _ => 0
             t s!"cancel box: {label} crosses a rising and a falling stroke"
-              (strokes.any (fun pts => pts[1]!.2 > pts[0]!.2) &&
-                strokes.any (fun pts => pts[1]!.2 < pts[0]!.2))
+              (strokes.any (rise · > 0) && strokes.any (rise · < 0))
           if cmd == "cancelto{7}" then
             t s!"cancel box: {label} arrow clears its target"
               (arrowClearsTarget line)
           if hasStr opts "makeroom" then
-            -- A band's corner stands half its width off the centre line.
-            let slack := Math.cancelRule true
+            -- A band's corner or a head's barb stands off the centre line, up to half the back.
+            let slack := Math.cancelHeadHalf true
             t s!"cancel box: {label}/{cmd} holds every mark before the next atom"
               (match glyphX line "𝑦" with
                 | some yx => placed.all fun (pen, pts) =>
