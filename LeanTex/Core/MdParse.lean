@@ -12,6 +12,7 @@ import LeanTex.Core.Nfc
 import LeanTex.Core.HtmlEntity
 import Std.Data.HashMap
 public import Std.Data.HashSet
+import LeanTex.Core.DeriveBEq
 
 /-! The markdown reader: strict CommonMark [CommonMark] with GFM tables [GFM] into an md AST.
 
@@ -52,14 +53,16 @@ public inductive Inl where
   | math (display : Bool) (src : String) (pos : Pos)
   /-- A footnote by its label, empty for an inline note `^[…]`, and its paragraphs. -/
   | note (label : String) (body : Array Inl) (pos : Pos)
-  deriving Repr, BEq
+  deriving Repr
 
 /-- One cited work: its key, its mode, and the prefix and suffix written around it. -/
 public inductive CiteItem where
   | mk (key : String) (mode : CiteMode) (pre : Array Inl) (post : Array Inl)
-  deriving Repr, BEq
+  deriving Repr
 
 end
+
+deriving_structural_beq Inl
 
 public instance : Inhabited Inl := ⟨.soft {}⟩
 
@@ -119,7 +122,9 @@ public inductive Blk where
   | refs (pos : Pos)
   /-- A footnote's definition, Pandoc's `[^label]:`: its label and its blocks. -/
   | note (label : String) (body : Array Blk) (pos : Pos)
-  deriving Repr, BEq
+  deriving Repr
+
+deriving_structural_beq Blk
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
 

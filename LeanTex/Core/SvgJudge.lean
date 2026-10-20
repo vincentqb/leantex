@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Xml
 public import LeanTex.Core.Css
+import LeanTex.Core.Split
 
 /-! The resource boundary every SVG passes before anything reads it: nothing an accepted file says
 reaches outside it or runs. -/
@@ -16,8 +17,8 @@ open LeanTex.Core
 /-- XPath 1.0's `normalize-space` (§4.2): leading and trailing white space
 gone, every inner run one space. -/
 public def normalizeSpace (s : String) : String :=
-  " ".intercalate ((s.split fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r').toList.map
-    (·.toString) |>.filter (!·.isEmpty))
+  " ".intercalate ((splitWhere s fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')
+    |>.filter (!·.isEmpty))
 
 /-- A character a local reference's id may hold: `Css.idChar`'s, and the `~` the engine's figure ids hold. -/
 @[expose] public def refIdChar (c : Char) : Bool := Css.idChar c || c == '~'

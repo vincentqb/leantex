@@ -27,6 +27,7 @@ import LeanTex.Core.ContrastSolve
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
 import Std.Data.HashSet
+import LeanTex.Core.DeriveBEq
 
 namespace LeanTex.Core.Ir
 
@@ -3616,7 +3617,9 @@ public inductive Inline where
   /-- `\footnote{...}`: a note set at the foot of the page its mark lands on;
   `num` is the resolved mark number. -/
   | footnote (num : Option Nat) (body : Array Inline)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Inline
 
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
 @[match_pattern, expose] public def Inline.step (n : Nat) (last : Option Nat) (body : Array Inline) : Inline :=
@@ -5602,7 +5605,9 @@ public inductive Block where
   /-- `\tableofcontents`: the headings it lists, standing where the command was written; its
   entries fill once the document's headings are known. -/
   | contents (spec : ContentsSpec) (entries : Array ContentsEntry)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Block
 
 /-- A table cell holding inline content alone: one paragraph, or nothing when empty. -/
 @[expose] public def cellOf (xs : Array Inline) : Array Block :=
@@ -6980,13 +6985,9 @@ public def listingCaption (loc : Locale) (n : Nat) (caption : Array Inline) : Ar
 public def verbatimLines (s : String) : Array String := Id.run do
   let s := if s.startsWith "\n" then (s.drop 1).toString
     else if s.startsWith "\r\n" then (s.drop 2).toString else s
-  let mut lines := ((s.splitOn "\n").map fun l =>
+  let lines := ((s.splitOn "\n").map fun l =>
     if l.endsWith "\r" then (l.dropEnd 1).toString else l).toArray
-  repeat
-    match lines.back? with
-    | some last => if last.trimAscii.isEmpty then lines := lines.pop else break
-    | none => break
-  return lines
+  return lines.popWhile (·.trimAscii.isEmpty)
 
 /-- The listing's classified source lines; a cache that does not match the
 source falls back to plain text. -/

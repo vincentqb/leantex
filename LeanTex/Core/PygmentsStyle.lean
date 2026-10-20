@@ -5,6 +5,7 @@ import LeanTex.Core.CssColor
 public import LeanTex.Core.ListingHighlight
 import LeanTex.Core.PygmentsStyleData
 public import Std.Data.HashMap
+import LeanTex.Core.Split
 
 /-! Pygments' style model over `PygmentsStyleData`: `Resolved`, Pygments' inheritance
 (`style_for_token`, pygments/style.py), and `Look`, what minted's LaTeX formatter ships under
@@ -55,8 +56,7 @@ private def optColor? (s : String) : Option (Option Color) :=
 /-- A declaration's words, in order; `none` for a word the painter does not
 carry, which the generator refuses before it reaches the data. -/
 public def parseDecl? (text : String) : Option Decl :=
-  (text.split Char.isWhitespace).toList.foldlM (init := ({} : Decl)) fun d slice =>
-    let word := slice.toString
+  (splitWhere text Char.isWhitespace).foldlM (init := ({} : Decl)) fun d word =>
     match word with
     | "" => some d
     | "bold" => some { d with bold := some true }

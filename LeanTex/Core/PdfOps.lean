@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Color
 public import LeanTex.Core.Gfx
+import LeanTex.Core.DeriveBEq
 
 /-! The typed operators of a PDF content stream, shared by page assembly and the figure writer. -/
 
@@ -49,7 +50,9 @@ public inductive TextOp where
   | color (c : Ir.Color)
   | show (items : Array TextItem)
   | marked (tag : MarkTag) (body : Array TextOp)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq TextOp
 
 /-- A path's paint: a device colour, or a shading pattern (§8.7.3) with its gradient. -/
 public inductive PdfPaint where
@@ -116,6 +119,8 @@ public inductive ContentOp where
   | outline (fill : Option Gfx.Rule) (stroke : Bool) (segs : Array PathOp)
   /-- An XObject painted under a matrix, `q [cm] [state] /Name Do Q`, with the content it means. -/
   | xobject (m : Option Gfx.Affine) (res : Nat) (kind : XKind) (body : Array ContentOp)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq ContentOp
 
 end LeanTex.Core.Pdf

@@ -7,6 +7,7 @@ import LeanTex.Core.Loop
 import LeanTex.Core.GfxAffine
 import LeanTex.Core.TikzCommands
 import LeanTex.Core.KeyVal
+import LeanTex.Core.DeriveBEq
 
 /-! The rendered `tikzpicture` and `tikzcd` subsets, evaluated at elaboration into concrete shapes:
 statements, pgfmath arithmetic, loops, colours, paths and nodes. -/
@@ -36,7 +37,9 @@ public inductive Tok where
   | math (display : Bool) (body : List Parse.Raw) (site : Option Span)
   /-- Source the subset cannot tokenise, named for its diagnostic. -/
   | other (what : String)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Tok
 
 private def splitWord (acc : Array Tok) (s : String) : Array Tok := Id.run do
   let cs := s.toList.toArray

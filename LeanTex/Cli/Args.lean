@@ -80,100 +80,128 @@ public def inputKinds : String :=
   | [one] => one
   | last :: rest => ", ".intercalate rest.reverse ++ " or " ++ last
 
+/-- What the arguments read so far set. -/
+private structure ArgsRead where
+  cfg : Config
+  cmd : Option Cmd
+  hyphenWords : List String
+  hyphenFile : Option String
+  wantsFile : Option String
+
+/-- Reads one argument `a` before `rest`: a configuration it settles at once, or what the
+arguments set with it and the ones left. -/
+private def readArg (a : String) (rest : List String) (st : ArgsRead) :
+    Except String (Config ⊕ ArgsRead × { l : List String // l.length ≤ rest.length }) := do
+  let mut cfg := st.cfg
+  let mut cmd := st.cmd
+  let mut hyphenWords := st.hyphenWords
+  let mut hyphenFile := st.hyphenFile
+  let mut wantsFile := st.wantsFile
+  let mut left : { l : List String // l.length ≤ rest.length } := ⟨rest, Nat.le_refl _⟩
+  match a with
+  | "-q" | "--quiet" => cfg := { cfg with quiet := true }
+  | "--porcelain" => cfg := { cfg with porcelain := true }
+  | "--watch" => cfg := { cfg with watch := true }
+  | "--best-effort" => cfg := { cfg with bestEffort := true }
+  | "--werror" => cfg := { cfg with werror := true }
+  | "-h" | "--help" => return .inl { cfg with cmd := .help }
+  | "--version" => return .inl { cfg with cmd := .version }
+  | "-o" | "--output" =>
+    match hr : rest with
+    | m :: rest' =>
+      cfg := { cfg with output := some m }
+      left := ⟨rest', by simp [hr]⟩
+    | [] => throw "'-o' needs a file or directory"
+  | "--color" =>
+    match hr : rest with
+    | m :: rest' =>
+      let some c := colorMode m | throw s!"invalid color mode '{m}'"
+      cfg := { cfg with color := c }
+      left := ⟨rest', by simp [hr]⟩
+    | [] => throw "'--color' needs a mode: auto | always | never"
+  | "--emit" =>
+    throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
+  | "--css" =>
+    throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
+  | "--math-boundary" =>
+    match hr : rest with
+    | m :: rest' =>
+      cfg := { cfg with mathBoundary := some m }
+      left := ⟨rest', by simp [hr]⟩
+    | [] => throw "'--math-boundary' needs a math renderer's script file"
+  | "--font-dir" =>
+    match hr : rest with
+    | m :: rest' =>
+      cfg := { cfg with fontDirs := cfg.fontDirs.push m }
+      left := ⟨rest', by simp [hr]⟩
+    | [] => throw "'--font-dir' needs a directory"
+  | "--file" =>
+    match cmd, hr : rest with
+    | some (.hyphenate _ _), f :: rest' =>
+      hyphenFile := some f
+      left := ⟨rest', by simp [hr]⟩
+    | some (.hyphenate _ _), [] => throw "'--file' needs a path"
+    | _, _ => throw "'--file' applies to 'hyphenate'"
+  | _ =>
+    if let some n := vCount a then
+      cfg := { cfg with verbosity := min 3 (cfg.verbosity + n) }
+    else if a.startsWith "--emit=" then
+      throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
+    else if a.startsWith "--css=" then
+      throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
+    else if a.startsWith "--output=" then
+      cfg := { cfg with output := some (a.drop "--output=".length).toString }
+    else if a.startsWith "--font-dir=" then
+      cfg := { cfg with
+        fontDirs := cfg.fontDirs.push (a.drop "--font-dir=".length).toString }
+    else if a.startsWith "--color=" then
+      let m := (a.drop "--color=".length).toString
+      let some c := colorMode m | throw s!"invalid color mode '{m}'"
+      cfg := { cfg with color := c }
+    else if a.startsWith "-" then
+      throw s!"unknown flag '{a}'"
+    else
+      match cmd, wantsFile with
+      | some (.hyphenate _ _), _ => hyphenWords := hyphenWords ++ [a]
+      | some _, _ => throw s!"unexpected argument '{a}'"
+      | none, some k => cmd := some (if k == "build" then .build a else .dump a)
+      | none, none =>
+        match a with
+        | "help" => cmd := some .help
+        | "version" => cmd := some .version
+        | "hyphenate" => cmd := some (.hyphenate [] none)
+        | "fonts" => cmd := some .fonts
+        | "themes" => cmd := some .themes
+        | "build" | "dump" => wantsFile := some a
+        | _ =>
+          if (LeanTex.Core.Ir.Surface.ofInput? a).isSome then
+            cmd := some (.build a)
+          else if a.toList.contains '.' || a.toList.contains '/' then
+            throw s!"'{a}' is not a document leantex reads: {inputKinds}"
+          else
+            throw s!"unknown command '{a}'"
+  return .inr (⟨cfg, cmd, hyphenWords, hyphenFile, wantsFile⟩, left)
+
+private def readArgs (args : List String) (st : ArgsRead) : Except String (Config ⊕ ArgsRead) :=
+  match args with
+  | [] => pure (.inr st)
+  | a :: rest => do
+    match ← readArg a rest st with
+    | .inl cfg => pure (.inl cfg)
+    | .inr (st, ⟨left, h⟩) =>
+      have : left.length < (a :: rest).length := by simp; omega
+      readArgs left st
+termination_by args.length
+
 public def parse (argv : List String) : Except String Config := do
-  let mut cfg : Config := { cmd := .help }
-  let mut cmd : Option Cmd := none
-  let mut hyphenWords : List String := []
-  let mut hyphenFile : Option String := none
-  let mut wantsFile : Option String := none
-  let mut args := argv
-  repeat
-    match args with
-    | [] => break
-    | a :: rest =>
-      args := rest
-      match a with
-      | "-q" | "--quiet" => cfg := { cfg with quiet := true }
-      | "--porcelain" => cfg := { cfg with porcelain := true }
-      | "--watch" => cfg := { cfg with watch := true }
-      | "--best-effort" => cfg := { cfg with bestEffort := true }
-      | "--werror" => cfg := { cfg with werror := true }
-      | "-h" | "--help" => return { cfg with cmd := .help }
-      | "--version" => return { cfg with cmd := .version }
-      | "-o" | "--output" =>
-        match rest with
-        | m :: rest' =>
-          cfg := { cfg with output := some m }
-          args := rest'
-        | [] => throw "'-o' needs a file or directory"
-      | "--color" =>
-        match rest with
-        | m :: rest' =>
-          let some c := colorMode m | throw s!"invalid color mode '{m}'"
-          cfg := { cfg with color := c }
-          args := rest'
-        | [] => throw "'--color' needs a mode: auto | always | never"
-      | "--emit" =>
-        throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
-      | "--css" =>
-        throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
-      | "--math-boundary" =>
-        match rest with
-        | m :: rest' =>
-          cfg := { cfg with mathBoundary := some m }
-          args := rest'
-        | [] => throw "'--math-boundary' needs a math renderer's script file"
-      | "--font-dir" =>
-        match rest with
-        | m :: rest' =>
-          cfg := { cfg with fontDirs := cfg.fontDirs.push m }
-          args := rest'
-        | [] => throw "'--font-dir' needs a directory"
-      | "--file" =>
-        match cmd, rest with
-        | some (.hyphenate _ _), f :: rest' =>
-          hyphenFile := some f
-          args := rest'
-        | some (.hyphenate _ _), [] => throw "'--file' needs a path"
-        | _, _ => throw "'--file' applies to 'hyphenate'"
-      | _ =>
-        if let some n := vCount a then
-          cfg := { cfg with verbosity := min 3 (cfg.verbosity + n) }
-        else if a.startsWith "--emit=" then
-          throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
-        else if a.startsWith "--css=" then
-          throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
-        else if a.startsWith "--output=" then
-          cfg := { cfg with output := some (a.drop "--output=".length).toString }
-        else if a.startsWith "--font-dir=" then
-          cfg := { cfg with
-            fontDirs := cfg.fontDirs.push (a.drop "--font-dir=".length).toString }
-        else if a.startsWith "--color=" then
-          let m := (a.drop "--color=".length).toString
-          let some c := colorMode m | throw s!"invalid color mode '{m}'"
-          cfg := { cfg with color := c }
-        else if a.startsWith "-" then
-          throw s!"unknown flag '{a}'"
-        else
-          match cmd, wantsFile with
-          | some (.hyphenate _ _), _ => hyphenWords := hyphenWords ++ [a]
-          | some _, _ => throw s!"unexpected argument '{a}'"
-          | none, some k => cmd := some (if k == "build" then .build a else .dump a)
-          | none, none =>
-            match a with
-            | "help" => cmd := some .help
-            | "version" => cmd := some .version
-            | "hyphenate" => cmd := some (.hyphenate [] none)
-            | "fonts" => cmd := some .fonts
-            | "themes" => cmd := some .themes
-            | "build" | "dump" => wantsFile := some a
-            | _ =>
-              if (LeanTex.Core.Ir.Surface.ofInput? a).isSome then
-                cmd := some (.build a)
-              else if a.toList.contains '.' || a.toList.contains '/' then
-                throw s!"'{a}' is not a document leantex reads: {inputKinds}"
-              else
-                throw s!"unknown command '{a}'"
+  let st ← match ← readArgs argv ⟨{ cmd := .help }, none, [], none, none⟩ with
+    | .inl cfg => return cfg
+    | .inr st => pure st
+  let cfg := st.cfg
+  let cmd := st.cmd
+  let hyphenWords := st.hyphenWords
+  let hyphenFile := st.hyphenFile
+  let wantsFile := st.wantsFile
   if cfg.quiet && cfg.verbosity > 0 then
     throw "choose one of -q and -v"
   if let some k := wantsFile then

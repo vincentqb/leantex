@@ -7,6 +7,8 @@ public meta import Lean.Elab.PreDefinition.Structural.Eqns
 public meta import Lean.Elab.PreDefinition.WF.Eqns
 meta import Lean.Util.CollectAxioms
 meta import Lean.Util.Path
+public meta import Lean.Compiler.ImplementedByAttr
+public meta import Lean.Compiler.ExternAttr
 
 open Lean Elab Command
 
@@ -363,6 +365,117 @@ meta def threadedParams (names : Array Name) (bodies : Array Expr) :
     for (b, i) in ((dead.find? n).getD #[]).zipIdx do
       if b then out := out.push (n, i, users.getD i .anonymous)
   return out
+
+/-- The library loops the binary may reach, whose own value the scan does not read: the host's
+file-system walks and file reads, which the `toolchain-loops` premise holds to end. -/
+meta def worldLoops : Array Name := #[`IO.FS.createDirAll, `IO.FS.removeDirAll,
+  `IO.FS.Handle.readBinToEndInto.loop]
+
+/-- The library functions the project may call that loop through `WellFounded.extrinsicFix` over
+iterators they build themselves, which the `toolchain-loops` premise holds finite. -/
+meta def iteratorEntries : Array Name := #[`String.foldl,
+  `String.Slice.Pattern.ForwardSliceSearcher.instIteratorLoopIdSearchStep,
+  `String.Slice.Pattern.ToForwardSearcher.DefaultForwardSearcher.instIteratorLoopIdSearchStep,
+  `String.toNat?, `String.toNat!, `String.toInt?,
+  `System.FilePath.parent, `System.FilePath.fileName, `System.FilePath.fileStem,
+  `System.FilePath.extension, `System.FilePath.withExtension, `System.FilePath.components,
+  `System.FilePath.isAbsolute, `System.FilePath.isRelative, `System.FilePath.instDiv,
+  `System.FilePath.instHDivString, `IO.FS.DirEntry.path, `Array.mergeSort]
+
+/-- The project constants that may loop until interrupted: the watch mode, which rebuilds on every
+change, each rebuild a call the scan reads. -/
+meta def unendingLoops : Array Name := #[`LeanTex.Cli.Driver.watch]
+
+/-- Whether a constant is a `partial` definition's opaque stand-in. -/
+meta def isPartialConst (env : Environment) (n : Name) : Bool :=
+  match env.find? n with
+  | some (.opaqueInfo _) => (env.find? (n ++ `_unsafe_rec)).isSome ||
+      (Compiler.getImplementedBy? env n).any (· == n ++ `_unsafe_rec)
+  | _ => false
+
+/-- Whether a constant is the project's: declared in one of its modules, or named in its
+namespace. -/
+meta def projectConst (env : Environment) (n : Name) : Bool :=
+  let inModule := (env.getModuleIdxFor? n).any fun i =>
+    let m := env.header.moduleNames[i.toNat]?.getD .anonymous
+    m.getRoot == `LeanTex || m == `Main
+  inModule || (privateToUserName n).getRoot == `LeanTex
+
+/-- The constants a root's values reach, those of them with no value to read, and each offence:
+the constant at fault, the project constant reaching it and the library function it enters by. -/
+meta def partialReach (env : Environment) (root : Name) :
+    Nat × Nat × Array (Name × Name × Name) := Id.run do
+  let user := privateToUserName
+  let project (n : Name) := n == root || projectConst env n
+  let mut seen : NameSet := {}
+  let mut succ : NameMap (Array Name) := {}
+  let mut stack : Array Name := #[root]
+  let mut found : Array (Name × Name × Name) := #[]
+  let mut prims := 0
+  while h : 0 < stack.size do
+    let n := stack[stack.size - 1]
+    stack := stack.pop
+    if seen.contains n then continue
+    seen := seen.insert n
+    if worldLoops.contains (user n) then continue
+    if project n && ((Compiler.getImplementedBy? env n).isSome || isExtern env n) then
+      found := found.push (n, n, n)
+    let value? := match env.find? n with
+      | some (.defnInfo d) => some d.value
+      | some (.opaqueInfo o) => if isPartialConst env n then none else some o.value
+      | _ => none
+    match env.find? n with
+    | some (.opaqueInfo _) => unless isPartialConst env n do prims := prims + 1
+    | some (.axiomInfo _) => pure ()
+    | _ => if isExtern env n then prims := prims + 1
+    if let some v := value? then
+      let cs := v.getUsedConstants
+      succ := succ.insert n cs
+      for c in cs do
+        unless seen.contains c do stack := stack.push c
+  let mut pred : NameMap (Array Name) := {}
+  for (n, cs) in succ do
+    for c in cs do pred := pred.insert c (((pred.find? c).getD #[]).push n)
+  for p in seen do
+    unless isPartialConst env p && !worldLoops.contains (user p) do continue
+    if project p then
+      let callers := ((pred.find? p).getD #[]).filter project
+      for x in (if callers.isEmpty then #[p] else callers) do found := found.push (p, x, p)
+      continue
+    let mut lib : NameSet := ({} : NameSet).insert p
+    let mut queue : Array Name := #[p]
+    while h : 0 < queue.size do
+      let y := queue[queue.size - 1]
+      queue := queue.pop
+      for x in (pred.find? y).getD #[] do
+        if project x then
+          let looping := unendingLoops.contains (user x) && user p == `repeatM.impl
+          let iterating := user p == `WellFounded.opaqueFix && iteratorEntries.contains (user y)
+          unless looping || iterating do found := found.push (p, x, y)
+        else if !lib.contains x then
+          lib := lib.insert x
+          queue := queue.push x
+  return (seen.size, prims, found)
+
+/-- `#audit_reach r`: no partial constant is reachable from `r`'s definition but through the
+world, iterator and unending loops named above, and no project constant it reaches runs other
+code than its value. -/
+elab "#audit_reach " root:ident : command => do
+  let env ← getEnv
+  let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo root
+  let (count, prims, found) := partialReach env name
+  for (n, near, entry) in found do
+    if isPartialConst env n then
+      let (who, what) := (privateToUserName near, privateToUserName n)
+      let via := if entry == n then m!"" else m!" through {privateToUserName entry}"
+      logError m!"partial reach: {who} reaches {what}{via}, a partial definition; recurse \
+structurally or on a measure instead, and derive a nested or mutual type's equality with \
+`deriving_structural_beq`"
+    else
+      logError m!"partial reach: {privateToUserName n} runs other code than its definition"
+  if found.isEmpty then
+    logInfo m!"partial reach: {count} constants from {privateToUserName name}, none partial, \
+{prims} of them runtime primitives the lean-runtime premise runs"
 
 /-- Audit the compiled declarations of an explicit source manifest, private and unused
 ones included, against the accepted foundation (quotient soundness, classical choice and

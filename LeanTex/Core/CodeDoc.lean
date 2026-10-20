@@ -1292,7 +1292,7 @@ public def cleanLines (raw : Array (Nat × Nat × List Char)) (dedent : Bool := 
     else
       let m := if dedent then margin.getD 0 else 0
       out := out.push (ln, col + min m t.length, t.drop m)
-  while out.back?.any (·.2.2.isEmpty) do out := out.pop
+  out := out.popWhile (·.2.2.isEmpty)
   let first := (out.findIdx? (!·.2.2.isEmpty)).getD out.size
   return out.extract first out.size
 

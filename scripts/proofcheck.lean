@@ -99,6 +99,21 @@ def buildSources (files : Array System.FilePath) : IO (Except UInt32 System.File
     return .error built.exitCode
   return .ok (← sourcePlugin)
 
+/-- The audit of what a root reaches, compiled over the module declaring it. -/
+def reachAudit (dir : System.FilePath) (module root : String) (extra : Array String := #[])
+    (search : Option System.FilePath := none) : IO IO.Process.Output := do
+  let file := dir / s!"Reach{module}.lean"
+  IO.FS.writeFile file s!"import scripts.ProofAudit\nimport {importName module}\n#audit_reach {root}\n"
+  compile file extra search
+
+/-- The binary's entry reaches no partial constant but the world and unending loops the audit
+names. -/
+def partialReachChecks (dir : System.FilePath) : IO IO.Process.Output := do
+  let out ← reachAudit dir "Main" "main"
+  if out.exitCode == 0 && !out.stdout.contains "partial reach: " then
+    return { out with exitCode := 1, stderr := out.stderr ++ "partial reach: the audit gave no receipt\n" }
+  return out
+
 def verify : IO UInt32 := do
   let files ← sources "."
   if files.isEmpty then
@@ -114,16 +129,20 @@ def verify : IO UInt32 := do
     let cost : Sum (Array String) System.FilePath → Nat
       | .inl names => names.foldl (fun n name => n + sizes.getD name 0) 0
       | .inr file => sizes.getD (moduleName file) 0
+    let reach ← IO.asTask (partialReachChecks dir) .dedicated
     let outs ← auditBatch jobs cost fun index job => match job with
       | .inl names => checkGroup dir index names manifest
       | .inr file => checkSource plugin file
+    let reach ← IO.ofExcept reach.get
     let mut passed := true
-    for out in outs do
+    for out in outs.push reach do
       if out.exitCode != 0 then
         IO.eprint (out.stdout ++ out.stderr)
         passed := false
     if passed then
       IO.println s!"proof audit: {files.size} source modules; no unfinished proofs or project axioms"
+      for line in reach.stdout.splitOn "\n" do
+        if line.contains "partial reach: " then IO.println line.trimAscii.toString
     return if passed then 0 else 1
 
 /-- Exercise the compiler and the compiled audit independently: a suppressed warning
@@ -492,6 +511,43 @@ public def perPoint : Int := unitsPerInch / 72
         ((out.exitCode == 0) == okay && (out.stdout ++ out.stderr).contains diagnostic)).run failures
       if (out.exitCode == 0) != okay || !(out.stdout ++ out.stderr).contains diagnostic then
         IO.eprint (out.stdout ++ out.stderr)
+  -- What the entry reaches: a partial definition, a repeat loop, a nested derived equality, a
+  -- second loop beside an exempt one or a generic iterator fails it, while a structural equality,
+  -- a world loop and an unreached partial pass.
+  let spin := "public partial def spin (n : Nat) : Nat := spin n\n"
+  let receipt := "none partial"
+  let tree := "public inductive Tree where\n  | node (kids : Array Tree)\n"
+  let reachCases := #[
+    ("ReachPartial", spin ++ "public def main : IO Unit := IO.println (spin 0)\n", false,
+      "reaches LeanTex.Probe.spin"),
+    ("ReachRepeat", "public def main : IO Unit := do\n  let mut n := 0\n  repeat\n    \
+if n > 3 then break\n    n := n + 1\n  IO.println n\n", false, "reaches repeatM.impl"),
+    ("ReachNested", tree ++ "  deriving BEq\n\
+public def main : IO Unit := IO.println (Tree.node #[] == Tree.node #[])\n", false,
+      "reaches LeanTex.Probe.instBEqTree.beq"),
+    ("ReachImplemented", "public def fast (n : Nat) : Nat := n\n\
+@[implemented_by fast] public def slow (n : Nat) : Nat := n + 0\n\
+public def main : IO Unit := IO.println (slow 1)\n", false, "slow runs other code"),
+    ("ReachExempt", "end LeanTex.Probe\nnamespace LeanTex.Cli.Driver\n\
+public def watch : IO Unit := do\n  repeat\n    IO.sleep 1\n\
+public def again : IO Unit := do\n  repeat\n    IO.sleep 1\nend LeanTex.Cli.Driver\n\
+namespace LeanTex.Probe\npublic def main : IO Unit := do\n  LeanTex.Cli.Driver.watch\n  \
+LeanTex.Cli.Driver.again\n", false, "LeanTex.Cli.Driver.again reaches repeatM.impl"),
+    ("ReachIterator", "public def main : IO Unit := IO.println (\"a b\".split ' ').toList.length\n",
+      false, "reaches WellFounded.opaqueFix through Std.Iter.toList"),
+    ("ReachStructural", tree ++ "deriving_structural_beq Tree\n" ++ spin ++
+      "public def main : IO Unit := do\n  IO.FS.createDirAll \"probe\"\n  \
+IO.println (Tree.node #[] == Tree.node #[])\n", true, receipt)]
+  for (name, body, okay, diagnostic) in reachCases do
+    let header := "module\nimport LeanTex.Core.DeriveBEq\nnamespace LeanTex.Probe\n"
+    let built ← probe name (header ++ body ++ "end LeanTex.Probe\n")
+    (_, failures) ← (expect s!"{name} fixture did not compile" (built.exitCode == 0)).run failures
+    if built.exitCode != 0 then IO.eprint (built.stdout ++ built.stderr)
+    let out ← reachAudit dir name "LeanTex.Probe.main" #["-R", dir.toString] (some dir)
+    let shown := out.stdout ++ out.stderr
+    (_, failures) ← (expect s!"partial reach {name}"
+      ((out.exitCode == 0) == okay && shown.contains diagnostic)).run failures
+    if (out.exitCode == 0) != okay || !shown.contains diagnostic then IO.eprint shown
   -- The audit's imports never become the source's: an interface guard answers the same.
   let isolated := dir / "Isolated.lean"
   IO.FS.writeFile isolated "module

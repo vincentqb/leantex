@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Ir
+import LeanTex.Core.DeriveBEq
 
 /-! The document's structure tree: one backend-neutral projection of the IR that a tagged PDF's
 structure tree and an HTML page's element tree both read; its leaves carry preorder ids. -/
@@ -115,7 +116,9 @@ theorem Kind.outlineEmit_acc (out : Array Ir.HeadingLevel) (kind : Kind) :
 public inductive Node where
   | leaf (id : Nat) (l : Leaf)
   | node (kind : Kind) (children : Array Node)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Node
 
 /-- The tree: a `.document` root over the body's nodes. -/
 public structure Tree where

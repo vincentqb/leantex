@@ -713,8 +713,9 @@ private def blkRaws (file : String) (refs : Array Raw) (dialect : Dialect) :
     (Parse.headingRaws level rs p, ds)
   | .code info text p =>
     -- The info string's first word is the language, crossing as an `Ir.ListingLang`.
-    let word := ((info.split (fun c => c == ' ' || c == '\t')).find? (!·.isEmpty)).map
-      (·.toString)
+    let sep (c : Char) : Bool := c == ' ' || c == '\t'
+    let first := String.ofList ((info.toList.dropWhile sep).takeWhile (!sep ·))
+    let word := if first.isEmpty then none else some first
     match word with
     | none => (#[.verb "verbatim" (.plain ("\n" ++ text)) p], #[])
     | some w =>

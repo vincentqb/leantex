@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Color
 public import LeanTex.Core.Dim
 public import LeanTex.Core.DesignRole
+import LeanTex.Core.DeriveBEq
 
 namespace LeanTex.Core.Math
 
@@ -1529,7 +1530,7 @@ public inductive MNucleus where
   | accent (mark : Char) (stretch : Bool) (body : MList)
   /-- A cancel.sty mark over `body`; `value` is `.nil` unless the mark is `to`. -/
   | cancel (mark : CancelMark) (spec : CancelSpec) (value : MList) (body : MList)
-  deriving Repr, BEq
+  deriving Repr
 
 /-- One item of a math list: an atom with its class, nucleus, scripts and limits flag, a space,
 or a colour switch. -/
@@ -1541,25 +1542,27 @@ public inductive MItem where
   | space (mu : Int)
   /-- A colour switch: the rest of this list inks in `color`; no atom, no class. -/
   | ink (color : Ir.Color) (name : Option Ir.ColorRef)
-  deriving Repr, BEq
+  deriving Repr
 
 public inductive MList where
   | nil
   | cons (head : MItem) (tail : MList)
-  deriving Repr, BEq
+  deriving Repr
 
 /-- One grid row: its cells. -/
 public inductive MRow where
   | nil
   | cons (cell : MList) (tail : MRow)
-  deriving Repr, BEq
+  deriving Repr
 
 public inductive MRows where
   | nil
   | cons (row : MRow) (tail : MRows)
-  deriving Repr, BEq
+  deriving Repr
 
 end
+
+deriving_structural_beq MNucleus
 
 public instance : Inhabited MList := ⟨.nil⟩
 public instance : Inhabited MItem := ⟨.space 0⟩

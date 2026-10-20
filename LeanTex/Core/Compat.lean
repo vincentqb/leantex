@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
 import LeanTex.Core.Marker
+import LeanTex.Core.RawMeasure
 public import LeanTex.Core.Native
 public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
@@ -2548,30 +2549,36 @@ public def boundaryMathPkgs : List String := ["amsmath", "amssymb", "amsfonts", 
 
 /-- Whether the document refused the boundary with a
 `\pictures{ tool = none }` block. -/
-private def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
-  let mut raws := raws0
-  let mut i := 0
-  repeat
-    if h : i < raws.size then
-      match raws[i] with
-      | .env "document" _ _ => break
-      | .env n wrapped _ =>
-        if (Parse.inputEnvFile? n).isSome then
-          raws := raws.extract 0 i ++ wrapped ++ raws.extract (i + 1) raws.size
-        else
-          i := i + 1
-      | .ctrl "pictures" _ =>
-        let (args, k) := takeGroups raws (i + 1) 1
-        let refused := (Entries.read .native (args.getD 0 #[])).any fun e =>
-          match e.pair? with
-          | some ("tool", v) => v.trimAscii.toString == "none"
-          | _ => false
-        if refused then return true
-        i := max k (i + 1)
-      | _ => i := i + 1
-    else
-      break
-  return false
+private def boundaryRefusedFrom (raws : Array Raw) (i : Nat) : Bool :=
+  if h : i < raws.size then
+    match hr : raws[i] with
+    | .env "document" _ _ => false
+    | .env n wrapped _ =>
+      if (Parse.inputEnvFile? n).isSome then
+        have := sliceMeas_envs_unwrap h hr
+        boundaryRefusedFrom (raws.extract 0 i ++ wrapped ++ raws.extract (i + 1) raws.size) i
+      else
+        have := sliceMeas_le Parse.Raw.envs raws (Nat.le_succ i)
+        boundaryRefusedFrom raws (i + 1)
+    | .ctrl "pictures" _ =>
+      let (args, k) := takeGroups raws (i + 1) 1
+      let refused := (Entries.read .native (args.getD 0 #[])).any fun e =>
+        match e.pair? with
+        | some ("tool", v) => v.trimAscii.toString == "none"
+        | _ => false
+      have := sliceMeas_le Parse.Raw.envs raws (show i ≤ max k (i + 1) by omega)
+      refused || boundaryRefusedFrom raws (max k (i + 1))
+    | _ =>
+      have := sliceMeas_le Parse.Raw.envs raws (Nat.le_succ i)
+      boundaryRefusedFrom raws (i + 1)
+  else false
+termination_by (sliceMeas Parse.Raw.envs raws i, raws.size - i)
+decreasing_by
+  all_goals first
+    | exact .left _ _ ‹_›
+    | exact cursor_advance_lex ‹_› (by omega)
+
+private def boundaryRefused (raws : Array Raw) : Bool := boundaryRefusedFrom raws 0
 
 /-- The picture environments whose bodies go to the boundary verbatim. -/
 public def pictureEnvs : List String := ["tikzpicture", "external"]

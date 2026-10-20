@@ -536,7 +536,7 @@ public def referenceLabel (value : String) : String :=
   let shown := if value.toLower.startsWith "data:" then
       (value.takeWhile (· != ',')).toString ++ ",…"
     else value
-  reprStr (if shown.length > 160 then (shown.take 160).toString ++ "…" else shown)
+  (if shown.length > 160 then (shown.take 160).toString ++ "…" else shown).quote
 
 /-- Close a page, or name the first request that does not resolve. -/
 public def close (resources : Array Embedded) (svgChecked : Array ByteArray)

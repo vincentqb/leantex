@@ -1415,16 +1415,39 @@ private def fillColor (st : St) : Option Ir.Color :=
   | .color c => some c
   | .pattern _ _ => none
 
+/-- A colour's device model as a key spells it. -/
+private def modelKey : Option Ir.PdfColor → String
+  | none => "-"
+  | some (.rgb r g b) => s!"rgb {r.quote} {g.quote} {b.quote}"
+  | some (.gray v) => s!"gray {v.quote}"
+  | some (.cmyk c m y k) => s!"cmyk {c.quote} {m.quote} {y.quote} {k.quote}"
+  | some (.separation ink tint) =>
+    s!"separation {ink.name.quote} {ink.c} {ink.m} {ink.y} {ink.k} {tint}"
+
+private def capKey : Gfx.Cap → String
+  | .butt => "butt"
+  | .round => "round"
+  | .square => "square"
+
+private def joinKey : Gfx.Join → String
+  | .miter => "miter"
+  | .round => "round"
+  | .bevel => "bevel"
+
 private def stateKey (gs : GState) : String :=
   let ink : Ink → String
-    | .color c => s!"{c.r} {c.g} {c.b} {reprStr c.pdfModel} {reprStr c.cmyk}"
+    | .color c =>
+      let cmyk := match c.cmyk with
+        | some (c, m, y, k) => s!"{c},{m},{y},{k}"
+        | none => "-"
+      s!"{c.r} {c.g} {c.b} {modelKey c.pdfModel} {cmyk}"
     | .pattern n _ => "/" ++ n
   let fontKey := match gs.font with
     | some (.ref n _, _) => toString n
     | some _ => "direct"
     | none => "-"
-  s!"{ink gs.fill}|{ink gs.stroke}|{reprStr gs.width}|{reprStr gs.cap}|{reprStr gs.join}|{gs.miter}|\
-{reprStr gs.dash}|{reprStr gs.phase}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
+  s!"{ink gs.fill}|{ink gs.stroke}|{gs.width.units}|{capKey gs.cap}|{joinKey gs.join}|{gs.miter}|\
+{",".intercalate (gs.dash.toList.map (toString ·.units))}|{gs.phase.units}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
 {gs.hScale}|{gs.leading}|{gs.rise}|{gs.render}"
 
 /-- The losses a visibility expression's value owes. -/

@@ -82,7 +82,7 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 
 | Stage | Proved | Owed |
 |---|---|---|
-| A result | No declaration is marked partial or unsafe (`bannedWord`, `scripts/ProofAudit.lean`). | owed (U72): `partialReachChecks`; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between` |
+| A result | No declaration is marked partial or unsafe, by a line scan: `bannedWord`; no constant the binary's entry reaches through kernel values is partial but the watch mode's repeat and the loops the toolchain-loops premise names, by a scan of those values: `partialReachChecks`; a call resolves to the latest visible command, and a chain of expansions as the knot's call sites build it is bounded by the environments visible where it starts and the commands each opens: `Elab.lookupUser_latest_exact`, `Elab.expandUser_depth_le` | owed (U77): `Elab.knot_calls_nest` |
 | Ships unless stopped | tested: `machineLossChecks` | owed (U37): `DiagCode.error_iff_fatal`, its writer-stopping causes widened to the output name's and publication's refusals |
 | Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `Code.segmentsOf_source_exact`; by unfolding: `read_tex_exact`; supporting, no text step: `Md.desugar_vocabulary_mem` (the vocabulary a desugaring lowers into), `rewriteCtrl_accounts` (an empty rewrite paid by a diagnostic or a state write) | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
 | Elaboration and IR passes | the model: `Parse.rawText`, `Ir.locatedText` (`Ir.locatedText_erased`), `Diag.piece`, `Text.view` (`Text.view_congr`); the inline knot's plain-text arms (words, spaces, paragraph breaks, symbols with E0311's refusals, groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector): `Elab.elabInlines_plain_text`; an include standing as its own block sequence: `elabBlocks_input_exact`, `markdownInput_blocks_text`; supporting, no text step of the driver's: `Ir.mapInlines_text` and `Ir.mapBlocks_text` (for a leaf keeping `Ir.plainTextOne`), `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` (declaration scope) | owed (U111): the inline knot's other arms, `Elab.elabInlines_ctrl_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`; owed (U111): the block knot, `Elab.elabBlocks_text_accounts` over `Ir.locatedBlocks`; owed (U111): `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
@@ -96,14 +96,19 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 
 Three gaps keep the composition open:
 
-- Termination: every function a run calls returns. The kernel checks each declaration's measure,
-  but do-notation repeat and while loops compile to a partial combinator, and use-time macro lookup
-  (X4) must expand the definition visible where a macro is used while expansion stays within a
-  depth the document bounds, deeper recursion stopping as a named loss as TeX's own limit does.
-  owed (U72): `partialReachChecks`, no partial constant reachable from the binary's entry, read off
-  the compiled closure; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between`.
-  Modules: `scripts/ProofAudit.lean`, `LeanTex/Core/Elab.lean` and the loops' own, most in
-  `LeanTex/Core/Layout.lean`.
+- Termination: every function a run calls returns. No constant the binary's entry reaches through
+  kernel values is partial, a repeat loop or a nested type's derived equality included
+  (`partialReachChecks`), but the watch mode's repeat, which loops until interrupted, and the
+  toolchain's file-system walks and the iterator loops of its string, path and sort functions,
+  which the toolchain-loops premise holds to end; the runtime runs a definition as its meaning by
+  the lean-runtime premise. A call expands the definition visible where it is used, which X4's use-time lookup moves
+  above a later definition it calls (`Elab.lookupUser_latest_exact`); a command calling itself or
+  its caller in its own text sees no definition of its name and stops as the named loss W0301,
+  through an environment's halves it expands again under fewer environments, and a chain of
+  expansions is bounded by the environments visible where it starts and the commands each opens
+  (`Elab.expandUser_depth_le`).
+  owed (U77): `Elab.knot_calls_nest`, that each expansion the knot makes is a step of that chain.
+  Modules: `scripts/ProofAudit.lean`, `LeanTex/Core/Elab.lean`.
 - Elaboration conservation: for each artifact A, through execution, both of Elab's knots and the
   driver's IR passes, Text.view (named dFront A) (irText A) = Text.view (named dFront A) (srcText A
   ex), and execution keeps the decoded source's text slots the same way. The decomposition follows
@@ -159,8 +164,8 @@ Three gaps keep the composition open:
 
 | Area | Guarantee | Proofs |
 |---|---|---|
-| Termination | Owed: elaboration terminates. No declaration is marked partial and both knots recurse on lexicographic measures the kernel checks, but do-notation repeat loops still compile to a partial combinator. | owed (U72): a semantic lint over reachable constants, the repeat loops rewritten |
-| Macro visibility | Owed: a call resolves to the definition visible at that point. | owed (U77): `lookupUser_latest_exact` |
+| Termination | Every definition the binary's entry reaches through its kernel value is total: none is partial, every loop recurses structurally or on a measure, both knots on lexicographic ones, and a nested type's equality is derived structurally; the loops outside are the watch mode's, rebuilding until interrupted, the toolchain's file-system walks and the iterator loops of its string, path and sort functions, which the toolchain-loops premise holds to end, and the code the runtime runs for a definition is its meaning by the lean-runtime premise. A chain of user expansions as the knot's call sites build it, a command under the commands below it and an environment under the environments below it, is no deeper than those counts allow. | `Elab.expandUser_depth_le`; checked over every constant the entry reaches: `partialReachChecks` |
+| Macro visibility | A call resolves to the latest command of its name the visible prefix holds, none where the context keeps its raws. | `Elab.lookupUser_latest_exact` |
 | Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
 | Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike. | `Elab.elabInlines_plain_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_ctrl_text`, `Elab.elabBlocks_text_accounts` |
 | Group scope | A group's end, block or inline, restores the declaration state its start held, with the global assignments logged inside replayed over it; with none logged, a group, an environment holding block content and a braced group of block content with no paragraph end inside each leave the state as they found it. | `texGroup_scope_id`, `elabBlocks_env_scope_id`, `elabBlocks_group_scope_id`; by unfolding: `texGroup_scope_exact`, `inlineGroup_scope_exact` |

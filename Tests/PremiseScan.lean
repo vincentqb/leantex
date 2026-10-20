@@ -1230,7 +1230,8 @@ def mentioned (inp : Inputs) : Std.HashSet String := Id.run do
             word := ""
   return out
 
-/-- The modules a source's header imports, comments, `module` and `prelude` skipped. -/
+/-- The modules a source's header imports for the code it runs, comments, `module`, `prelude` and
+meta imports, which only the compiler runs, skipped. -/
 def headerImports (text : String) : Array String :=
   let read (lines : List String) : Array String × Bool := Id.run do
     let mut out := #[]
@@ -1242,11 +1243,12 @@ def headerImports (text : String) : Array String :=
         depth := depth - min depth ((line.splitOn "-/").length - 1)
         continue
       if line.isEmpty || line.startsWith "--" || line == "module" || line == "prelude" then continue
-      let words := ((line.splitOn " ").filter (!·.isEmpty)).dropWhile
-        fun w => w == "public" || w == "meta" || w == "private"
-      match words with
-      | "import" :: "all" :: m :: _ => out := out.push m
-      | "import" :: m :: _ => out := out.push m
+      let words := (line.splitOn " ").filter (!·.isEmpty)
+      let mods := words.takeWhile fun w => w == "public" || w == "meta" || w == "private"
+      let runs := !mods.contains "meta"
+      match words.drop mods.length with
+      | "import" :: "all" :: m :: _ => if runs then out := out.push m
+      | "import" :: m :: _ => if runs then out := out.push m
       | _ => return (out, true)
     return (out, false)
   -- A header is short: read a prefix, and more only when the header runs past it.
@@ -1407,7 +1409,12 @@ def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
             (hasStr · "Std.ZzIn:2") &&
           (toolchainSpawnFaults #[("Std.ZzHide", "open IO.Process hiding spawn output run\n")]).isEmpty &&
           (toolchainSpawnFaults #[("Std.ZzOther", "open IO.Process (SpawnArgs)\n")]).isEmpty)
-      t "toolchain spawns selftest: the header reader skips comments and reads every import form"
+      t "toolchain spawns selftest: the header reader skips comments and meta imports and reads every other import form"
         (headerImports "/- c -/\nmodule\n\nprelude\n-- x\npublic import A.B\nmeta import C\nimport all D\npublic meta import E\n\nnamespace X\nimport F"
-          == #["A.B", "C", "D", "E"])
+          == #["A.B", "D"])
+      let compileTime := headerImports "module\n\npublic import LeanTex.Cli.RunBounded\npublic meta import Lean.Util.Path\n"
+      t "toolchain spawns selftest: a meta import, which only the compiler runs, adds nothing the engine runs"
+        (match ← toolchainClosure roots compileTime known with
+          | .ok reached => (toolchainSpawnFaults reached).isEmpty && (leanPackage reached).isEmpty
+          | .error _ => false)
       IO.println s!"toolchain spawns: the engine's {seeds.size} toolchain imports reach {closure.size} modules; {(← IO.monoMsNow) - start} ms"

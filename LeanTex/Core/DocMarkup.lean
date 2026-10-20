@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.SurfaceKind
 public import Std.Data.HashSet
 import LeanTex.Core.Hex
+import LeanTex.Core.Split
 
 /-! Documentation comments' markup lowered into markdown by each dialect's documented rules (the
 Rustdoc Book, the JDK's Documentation Comment Specification, Doxygen's manual), each scalar keeping
@@ -784,7 +785,7 @@ private def rustAttrs : List String :=
 
 /-- A rustdoc code block's info string as its language. -/
 private def rustLang (info : String) : String :=
-  let words := (info.split fun c => c == ',' || c == ' ' || c == '\t').toList.map (·.toString.trimAscii.toString)
+  let words := (splitWhere info fun c => c == ',' || c == ' ' || c == '\t').map (·.trimAscii.toString)
   let words := words.filter fun w => !w.startsWith "{" && !w.startsWith "ignore-"
   match words.find? (!rustAttrs.contains ·) with
   | some l => l

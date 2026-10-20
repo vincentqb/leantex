@@ -8,6 +8,8 @@ public import LeanTex.Core.PathData
 public import LeanTex.Core.SvgJudge
 import LeanTex.Core.Image
 public import Std.Data.HashMap
+import LeanTex.Core.DeriveBEq
+import LeanTex.Core.Split
 
 /-! SVG read into the vector figure model: an accepted tree's viewports, shapes, paints, text and
 symbol uses, every meaning it cannot give a keyed loss, and a dropped link a note. -/
@@ -279,7 +281,9 @@ public inductive PaintSpec where
   | color (c : Ir.Color) (alpha : Nat)
   | current
   | url (id : String) (fallback : Option PaintSpec)
-  deriving Repr, Inhabited, BEq
+  deriving Repr, Inhabited
+
+deriving_structural_beq PaintSpec
 
 @[expose] public def black : Ir.Color := { r := 0, g := 0, b := 0, origin := .declared }
 
@@ -463,7 +467,7 @@ public def fontShorthand? (v : String) : Option (Array (String × String)) := Id
 public def subjectOf (name : String) (attrs : Array Xml.Attr) : Css.Subject :=
   { type := name
     classes := ((Xml.Attr.get? attrs "" "class").map fun c =>
-      ((c.split Css.isWs).toList.map (·.toString)).filter (!·.isEmpty) |>.toArray).getD #[]
+      (splitWhere c Css.isWs).filter (!·.isEmpty) |>.toArray).getD #[]
     id := Xml.Attr.get? attrs "" "id" }
 
 /-- What an element declares: its presentation attributes, the sheet rules matching it, and its
@@ -661,7 +665,7 @@ public structure Read where
 
 /-- A `transform-origin` (CSS Transforms 1 §6.1) in user units, against the reference box `(w, h)`. -/
 public def origin? (em w h : Rat) (s : String) : Option (Rat × Rat) :=
-  let toks := ((s.trimAscii.toString.split PathData.isWsp).toList.map (·.toString)).filter
+  let toks := (splitWhere s.trimAscii.toString PathData.isWsp).filter
     (!·.isEmpty)
   let kw (t : String) : Option (Option Bool × Rat) := match t.toLower with
     | "left" => some (some true, 0)

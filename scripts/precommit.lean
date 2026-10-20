@@ -1248,8 +1248,8 @@ def gates : List Gate := [
     flag := bannedWord kwPartial
     what := fun f => s!"new '{kwPartial}' in staged changes to {f}"
     help := s!"  No declaration in the tree is marked '{kwPartial}': every recursion the
-  source spells terminates by a proved measure, though do-notation repeat
-  loops still compile to a {kwPartial} combinator (AGENTS.md § Lean rules).
+  source spells terminates by a proved measure, and nothing the binary reaches is
+  {kwPartial} but premised loops (partialReachChecks; AGENTS.md § Lean rules).
   A map or flatMap over children hides the call behind a lambda the checker
   cannot see, and a list matched against a literal pattern with a catch-all
   variable loses its tail; an index loop bounded by [0:xs.size + 1] is total.

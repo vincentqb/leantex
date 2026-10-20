@@ -15,6 +15,7 @@ import Tests.PresentationInterfaces
 import Tests.Support
 import Tests.BuildGraph
 import Tests.JsonParity
+import Tests.SplitParity
 import Tests.CliFoundationInterface
 import Tests.BoundaryInterface
 import Tests.DriverDiagInterface
@@ -406,6 +407,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   shellReplyChecks ref
   shellHighlightChecks ref
   jsonParityChecks ref
+  splitParityChecks ref
   listingProviderChecks ref
   listingStyleTableChecks ref
   hashCommandChecks ref

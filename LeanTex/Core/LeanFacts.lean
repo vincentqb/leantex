@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.Json
+import LeanTex.Core.DeriveBEq
 
 /-! # What Lean says about a Lean file
 
@@ -38,7 +39,9 @@ public inductive Term where
   | lam (name : String) (binder : Binder) (type body : Term)
   | letE (name : String) (type value body : Term)
   | proj (struct : String) (index : Nat) (e : Term)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Term
 
 /-- The kinds of declaration whose statement a page sets. -/
 public inductive Kind where

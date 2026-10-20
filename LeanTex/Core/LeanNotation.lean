@@ -1,5 +1,6 @@
 module
 
+import LeanTex.Core.DeriveBEq
 /-! # The notation table
 
 The one table a Lean statement's constants show through: arithmetic, relations, logic, existence,
@@ -63,7 +64,9 @@ public inductive Math where
   | arg (body : List Math)
   | sup (body : List Math)
   | sub (body : List Math)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Math
 
 /-- How a notation spells its symbol: a control, a word, a blackboard letter, or the numeral its
 argument is. -/

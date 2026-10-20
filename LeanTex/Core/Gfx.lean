@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Color
 public import LeanTex.Core.Trig
+import LeanTex.Core.DeriveBEq
 
 /-! The vector model pictures, SVG images and PDF figures share: a painter's-algorithm tree in a
 y-up `Length` frame, with exact rational matrices. -/
@@ -394,7 +395,9 @@ public inductive Node (L : Type) where
   | image (raster : Nat) (xf : Affine)
   | label (l : L)
   | words (s : String)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Node
 
 /-- What an importer met and could not give this meaning, keyed by feature. -/
 public inductive Loss where

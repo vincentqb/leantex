@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.PdfLex
+import LeanTex.Core.DeriveBEq
 
 namespace LeanTex.Core.PdfRead
 
@@ -18,7 +19,9 @@ public inductive Obj where
   | arr (xs : Array Obj)
   | dict (es : Array (String × Obj))
   | ref (num : Nat) (gen : Nat)
-  deriving Inhabited, BEq
+  deriving Inhabited
+
+deriving_structural_beq Obj
 
 @[expose] public def Obj.get? (o : Obj) (k : String) : Option Obj :=
   match o with

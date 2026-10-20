@@ -144,30 +144,120 @@ decreasing_by
 /-- The value with no white space, as Lean's `Json.compress` spells it. -/
 public def compress (j : Json) : String := compressOnto "" j
 
+/-- The layouts Lean's `Json.render` builds: text without a line end, a space that breaks, a
+concatenation, an indented layout and a group set on one line where it fits. -/
+inductive Doc where
+  | nil
+  | text (s : String)
+  | line
+  | append (a b : Doc)
+  | nest (n : Nat) (d : Doc)
+  | group (d : Doc)
+
+instance : Append Doc := ⟨Doc.append⟩
+
+/-- `l ++ d ++ r` as one group, indented by `l`'s length, as `Std.Format.bracket` builds it. -/
+def Doc.bracket (l : String) (d : Doc) (r : String) : Doc :=
+  .group (.nest l.length (.text l ++ d ++ .text r))
+
+/-- The layouts joined by `sep`, laid out as `Std.Format.joinSep` joins them. -/
+def Doc.joinSep : List Doc → Doc → Doc
+  | [], _ => .nil
+  | x :: xs, sep => xs.foldl (fun acc d => acc ++ sep ++ d) x
+
 /-- The value as Lean's `Json.render` lays it out. -/
-public def render : Json → Std.Format
-  | .null => "null"
-  | .bool true => "true"
-  | .bool false => "false"
-  | .num n => n.toString
-  | .str s => renderString s
+def renderDoc : Json → Doc
+  | .null => .text "null"
+  | .bool true => .text "true"
+  | .bool false => .text "false"
+  | .num n => .text n.toString
+  | .str s => .text (renderString s)
   | .arr elems =>
-    let elems := Std.Format.joinSep (elems.attach.map fun ⟨e, _⟩ => render e).toList
-      ("," ++ Std.Format.line)
-    Std.Format.bracket "[" elems "]"
+    let elems := Doc.joinSep (elems.attach.map fun ⟨e, _⟩ => renderDoc e).toList (.text "," ++ .line)
+    Doc.bracket "[" elems "]"
   | .obj kvs =>
-    let fields := Std.Format.joinSep ((keptOrder kvs).foldl (fun acc i =>
-      Std.Format.group (renderString kvs[i].1 ++ ":" ++ Std.Format.line ++ render kvs[i].2) :: acc)
-      []) ("," ++ Std.Format.line)
-    Std.Format.bracket "{" fields "}"
+    let fields := Doc.joinSep ((keptOrder kvs).foldl (fun acc i =>
+      .group (.text (renderString kvs[i].1) ++ .text ":" ++ .line ++ renderDoc kvs[i].2) :: acc)
+      []) (.text "," ++ .line)
+    Doc.bracket "{" fields "}"
 termination_by j => sizeOf j
 decreasing_by
   all_goals simp_wf
   · have := Array.sizeOf_lt_of_mem ‹_ ∈ elems›; omega
   · exact sizeOf_member_lt kvs i
 
+/-- What a layout sets before its first line end, and whether it holds one, within `w` columns;
+`Std.Format`'s `spaceUptoLine` over these layouts. -/
+structure Space where
+  foundLine : Bool := false
+  space : Nat := 0
+
+def Space.merge (w : Nat) (r₁ : Space) (r₂ : Nat → Space) : Space :=
+  if r₁.space > w || r₁.foundLine then r₁
+  else
+    let r₂ := r₂ (w - r₁.space)
+    { r₂ with space := r₁.space + r₂.space }
+
+def Doc.spaceUptoLine : Doc → Bool → Nat → Space
+  | .nil, _, _ => {}
+  | .text s, _, _ => { space := s.length }
+  | .line, flatten, _ => if flatten then { space := 1 } else { foundLine := true }
+  | .append a b, flatten, w => Space.merge w (a.spaceUptoLine flatten w) (b.spaceUptoLine flatten)
+  | .nest _ d, flatten, w => d.spaceUptoLine flatten w
+  | .group d, _, w => d.spaceUptoLine true w
+
+/-- A group of the layout pending: whether it is set on one line, and its layouts with their
+indents. -/
+abbrev Pending := List (Bool × List (Doc × Nat))
+
+def Doc.size : Doc → Nat
+  | .nil | .text _ | .line => 1
+  | .append a b => 2 + a.size + b.size
+  | .nest _ d => 1 + d.size
+  | .group d => 2 + d.size
+
+def itemsSize : List (Doc × Nat) → Nat
+  | [] => 0
+  | (d, _) :: is => 1 + d.size + itemsSize is
+
+def pendingSize : Pending → Nat
+  | [] => 0
+  | (_, is) :: gs => 1 + itemsSize is + pendingSize gs
+
+/-- The space the pending groups set up to their first line end. -/
+def spacePending : Pending → Nat → Space
+  | [], _ => {}
+  | (_, []) :: gs, w => spacePending gs w
+  | (f, (d, _) :: is) :: gs, w =>
+    Space.merge w (d.spaceUptoLine f w) (spacePending ((f, is) :: gs))
+termination_by gs => pendingSize gs
+decreasing_by all_goals simp only [pendingSize, itemsSize]; omega
+
+/-- The pending groups laid out after `out`, at column `col`, within `w` columns; a group is set
+on one line where it and what follows up to the next line end fit, as `Std.Format.pretty` sets it. -/
+def layOut (w : Nat) : Pending → String → Nat → String
+  | [], out, _ => out
+  | (_, []) :: gs, out, col => layOut w gs out col
+  | (f, (d, ind) :: is) :: gs, out, col =>
+    match d with
+    | .nil => layOut w ((f, is) :: gs) out col
+    | .text s => layOut w ((f, is) :: gs) (out ++ s) (col + s.length)
+    | .append a b => layOut w ((f, (a, ind) :: (b, ind) :: is) :: gs) out col
+    | .nest n d => layOut w ((f, (d, ind + n) :: is) :: gs) out col
+    | .line =>
+      if f then layOut w ((f, is) :: gs) (out ++ " ") (col + 1)
+      else layOut w ((f, is) :: gs) ((out ++ "\n").pushn ' ' ind) ind
+    | .group d =>
+      if f then layOut w ((f, (d, ind) :: is) :: gs) out col
+      else
+        let r := spacePending [(true, [(d, ind)])] (w - col)
+        let r' := Space.merge (w - col) r (spacePending ((f, is) :: gs))
+        layOut w ((r'.space ≤ w - col, [(d, ind)]) :: (f, is) :: gs) out col
+termination_by gs => pendingSize gs
+decreasing_by all_goals simp only [pendingSize, itemsSize, Doc.size]; omega
+
 /-- The value as Lean's `Json.pretty` lays it out at eighty columns. -/
-public def pretty (j : Json) : String := Std.Format.pretty (render j) 80
+public def pretty (j : Json) : String := layOut 80 [(false, [(renderDoc j, 0)])] "" 0
 
 /-- An object of these members, a later spelling of a key replacing an earlier one. -/
 public def mkObj (members : List (String × Json)) : Json := .obj members.toArray

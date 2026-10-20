@@ -5,6 +5,7 @@ import Std.Data.HashMap
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
 import LeanTex.Core.Marker
+import LeanTex.Core.RawMeasure
 public import LeanTex.Core.Native
 import LeanTex.Core.MathParse
 import LeanTex.Core.TextSymData
@@ -32,6 +33,7 @@ public import LeanTex.Core.BeamerColor
 public import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Definer
 public import LeanTex.Core.Blueprint
+import LeanTex.Core.Split
 
 namespace LeanTex.Core.Elab
 
@@ -1529,6 +1531,60 @@ private theorem lookupUser_lt {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) : k < ctx.limit :=
   latestNamed_lt (lookupUser_latest h)
 
+private theorem latestNamed_exact {α : Type} (nameOf : α → String) (xs : Array α) (want : String)
+    (n k : Nat) (x : α) :
+    latestNamed nameOf xs want n = some (k, x) ↔
+      k < n ∧ xs[k]? = some x ∧ nameOf x = want ∧
+        ∀ j, k < j → j < n → ∀ c, xs[j]? = some c → nameOf c ≠ want := by
+  induction n with
+  | zero => simp [latestNamed]
+  | succ m ih =>
+    constructor
+    · intro h
+      simp only [latestNamed] at h
+      split at h
+      · rename_i hm
+        split at h
+        · rename_i hn
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact ⟨by omega, by simp [hm], by simpa using hn, fun j hj hj' => by omega⟩
+        · rename_i hn
+          obtain ⟨hk, hx, hxn, hnone⟩ := ih.mp h
+          refine ⟨by omega, hx, hxn, fun j hj hj' c hc => ?_⟩
+          rcases Nat.lt_succ_iff_lt_or_eq.mp hj' with hj' | rfl
+          · exact hnone j hj hj' c hc
+          · obtain ⟨_, rfl⟩ := Array.getElem?_eq_some_iff.mp hc
+            simpa using hn
+      · rename_i hm
+        obtain ⟨hk, hx, hxn, hnone⟩ := ih.mp h
+        refine ⟨by omega, hx, hxn, fun j hj hj' c hc => ?_⟩
+        rcases Nat.lt_succ_iff_lt_or_eq.mp hj' with hj' | rfl
+        · exact hnone j hj hj' c hc
+        · simp [Array.getElem?_eq_none (show xs.size ≤ j by omega)] at hc
+    · rintro ⟨hk, hx, hxn, hnone⟩
+      simp only [latestNamed]
+      rcases Nat.lt_succ_iff_lt_or_eq.mp hk with hk | rfl
+      · have hrest := ih.mpr ⟨hk, hx, hxn, fun j hj hj' c hc => hnone j hj (by omega) c hc⟩
+        split
+        · rename_i hm
+          have hn : (nameOf xs[m] == want) = false := by
+            simpa using hnone m hk (by omega) xs[m] (by simp [hm])
+          simp only [hn, Bool.false_eq_true, ite_false]
+          exact hrest
+        · exact hrest
+      · obtain ⟨hm, rfl⟩ := Array.getElem?_eq_some_iff.mp hx
+        simp [hm, hxn]
+
+/-- A call resolves to the latest command of its name the visible prefix holds, unless the
+context keeps its raws. -/
+private theorem lookupUser_latest_exact (ctx : Ctx) (name : String) (k : Nat) (cmd : UserCmd) :
+    lookupUser ctx name = some (k, cmd) ↔
+      ctx.kept = false ∧ k < ctx.limit ∧ ctx.user[k]? = some cmd ∧ cmd.name = name ∧
+        ∀ j, k < j → j < ctx.limit → ∀ c, ctx.user[j]? = some c → c.name ≠ name := by
+  unfold lookupUser
+  cases ctx.kept <;> simp [latestNamed_exact]
+
 private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) :=
   if ctx.kept then none else latestNamed (·.name) ctx.userEnvs name ctx.envLimit
 
@@ -1539,6 +1595,40 @@ private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
   split at h
   · exact absurd h (by simp)
   · exact latestNamed_lt h
+
+/-- A chain of user expansions, each inside the one before, as the knot's call sites make them:
+a command under the commands below it, an environment's halves under the environments below it
+and at most `n` commands. -/
+private inductive NestedCalls (n : Nat) : Ctx → List String → Prop
+  | nil (ctx : Ctx) : NestedCalls n ctx []
+  | cmd {ctx inner : Ctx} {name : String} {k : Nat} {c : UserCmd} {rest : List String} :
+      lookupUser ctx name = some (k, c) → inner.limit = k → inner.envLimit = ctx.envLimit →
+        NestedCalls n inner rest → NestedCalls n ctx (name :: rest)
+  | env {ctx inner : Ctx} {name : String} {k : Nat} {e : UserEnv} {rest : List String} :
+      lookupUserEnv ctx name = some (k, e) → inner.envLimit = k → inner.limit ≤ n →
+        NestedCalls n inner rest → NestedCalls n ctx (name :: rest)
+
+/-- Nested user expansions are no deeper than the environments and commands visible where they
+start allow, each environment opening at most `n` commands. -/
+private theorem expandUser_depth_le {n : Nat} {ctx : Ctx} {names : List String}
+    (h : NestedCalls n ctx names) (hl : ctx.limit ≤ n) :
+    names.length ≤ ctx.envLimit * (n + 1) + ctx.limit := by
+  induction h with
+  | nil => exact Nat.zero_le _
+  | @cmd ctx inner _ k _ _ hl' hk he _ ih =>
+    have := lookupUser_lt hl'
+    have := ih (by omega)
+    simp only [List.length_cons]
+    rw [he] at this
+    omega
+  | @env ctx inner _ k _ _ hl' hk hn _ ih =>
+    have hlt : k < ctx.envLimit := lookupUserEnv_lt hl'
+    have := ih hn
+    have hm : (k + 1) * (n + 1) ≤ ctx.envLimit * (n + 1) := Nat.mul_le_mul_right _ hlt
+    rw [Nat.succ_mul] at hm
+    rw [hk] at this
+    simp only [List.length_cons]
+    omega
 
 /-- Where a raw stands, if it carries a place. -/
 private def rawPos? : Raw → Option Pos
@@ -2274,129 +2364,6 @@ private theorem skipReservedArgs_ge (raws : Array Raw) (i : Nat) (anchor : Pos)
   · have := skipReservedArgsGo_ge raws anchor maxGroups (i + 1); omega
   · exact skipReservedArgsGo_ge raws anchor maxGroups i
 
-/-- The sum of a pointwise measure over a list. -/
-private def measList (μ : α → Nat) : List α → Nat
-  | [] => 0
-  | x :: rest => μ x + measList μ rest
-
-private theorem measList_append (μ : α → Nat) (a b : List α) :
-    measList μ (a ++ b) = measList μ a + measList μ b := by
-  induction a with
-  | nil => simp [measList]
-  | cons x xs ih => simp [measList, ih]; omega
-
-private theorem measList_push (μ : α → Nat) (a : Array α) (x : α) :
-    measList μ (a.push x).toList = measList μ a.toList + μ x := by
-  simp [Array.toList_push, measList_append, measList]
-
-private theorem measList_drop_le (μ : α → Nat) (l : List α) (i : Nat) :
-    measList μ (l.drop i) ≤ measList μ l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp
-    | succ n =>
-      have := ih n
-      simp only [List.drop_succ_cons, measList]
-      omega
-
-private theorem measList_take_le (μ : α → Nat) (l : List α) (i : Nat) :
-    measList μ (l.take i) ≤ measList μ l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp [measList]
-    | succ n =>
-      have := ih n
-      simp only [List.take_succ_cons, measList]
-      omega
-
-private theorem measList_mem_le {μ : α → Nat} {l : List α} {x : α}
-    (h : x ∈ l) : μ x ≤ measList μ l := by
-  induction l with
-  | nil => simp at h
-  | cons y ys ih =>
-    simp only [measList]
-    rcases List.mem_cons.mp h with h | h
-    · subst h; omega
-    · have := ih h; omega
-
-private theorem measList_le_of_le {μ ν : α → Nat} (h : ∀ x, μ x ≤ ν x)
-    (l : List α) : measList μ l ≤ measList ν l := by
-  induction l with
-  | nil => exact Nat.le_refl _
-  | cons x xs ih =>
-    have := h x
-    simp only [measList]
-    omega
-
-private theorem measList_extract_le (μ : α → Nat) (body : Array α) (a b : Nat) :
-    measList μ (body.extract a b).toList ≤ measList μ body.toList := by
-  rw [Array.toList_extract]
-  exact Nat.le_trans (measList_take_le ..) (measList_drop_le ..)
-
-/-- The pointwise measure summed over the slice from `i`. -/
-private def sliceMeas (μ : α → Nat) (raws : Array α) (i : Nat) : Nat :=
-  measList μ (raws.toList.drop i)
-
-private theorem sliceMeas_here (μ : α → Nat) (raws : Array α) {i : Nat}
-    (h : i < raws.size) :
-    sliceMeas μ raws i = μ raws[i] + sliceMeas μ raws (i + 1) := by
-  unfold sliceMeas
-  rw [List.drop_eq_getElem_cons (by simpa using h)]
-  simp [measList]
-
-private theorem sliceMeas_le (μ : α → Nat) (raws : Array α) {i j : Nat}
-    (hij : i ≤ j) : sliceMeas μ raws j ≤ sliceMeas μ raws i := by
-  unfold sliceMeas
-  rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
-    rw [List.drop_drop]; congr 1; omega]
-  exact measList_drop_le ..
-
-private theorem sliceMeas_end (μ : α → Nat) (raws : Array α) {j : Nat}
-    (h : raws.size ≤ j) : sliceMeas μ raws j = 0 := by
-  unfold sliceMeas
-  rw [List.drop_eq_nil_of_le (by simpa using h)]
-  rfl
-
-private theorem sliceMeas_elem_le {μ : α → Nat} {raws : Array α} {j : Nat}
-    {x : α} (h : raws[j]? = some x) {i : Nat} (hij : i ≤ j) :
-    μ x ≤ sliceMeas μ raws i := by
-  obtain ⟨hj, hx⟩ := Array.getElem?_eq_some_iff.mp h
-  have h1 := sliceMeas_here μ raws hj
-  have h2 := sliceMeas_le μ raws hij
-  rw [hx] at h1
-  omega
-
-private theorem sliceMeas_extract_le (μ : α → Nat) (raws : Array α) (a b : Nat) :
-    measList μ (raws.extract a b).toList ≤ sliceMeas μ raws a := by
-  rw [Array.toList_extract]
-  exact measList_take_le ..
-
-private theorem sliceMeas_splice {μ : α → Nat} {raws : Array α} {i : Nat}
-    (h : i < raws.size) (seg : Array α) :
-    sliceMeas μ (raws.extract 0 i ++ seg ++ raws.extract (i + 1) raws.size) i + μ raws[i]
-      ≤ sliceMeas μ raws i + measList μ seg.toList := by
-  have hlen : (raws.extract 0 i).toList.length = i := by
-    simp [Array.length_toList]; omega
-  have hdrop : (raws.extract 0 i ++ seg
-      ++ raws.extract (i + 1) raws.size).toList.drop i
-      = seg.toList ++ (raws.extract (i + 1) raws.size).toList := by
-    simp only [Array.toList_append, List.append_assoc]
-    rw [List.drop_append_of_le_length (by omega)]
-    rw [List.drop_eq_nil_of_le (by omega)]
-    simp
-  have h1 := sliceMeas_here μ raws h
-  have h3 : measList μ (raws.extract (i + 1) raws.size).toList
-      ≤ measList μ (raws.toList.drop (i + 1)) := by
-    rw [Array.toList_extract]
-    exact measList_take_le ..
-  unfold sliceMeas at h1 ⊢
-  rw [hdrop, measList_append]
-  omega
-
 mutual
 -- conserves: none — a termination measure, not a content walk
 private def rawWeight : Raw → Nat
@@ -2721,50 +2688,48 @@ private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBindin
   else
     modify fun st => labelStep st key target
 
+private def stripMathMetaFrom (ctx : Ctx) (body : Array Raw) (i : Nat) (out : Array Raw)
+    (keys : Array String) (nonum : Bool) (tag : Option (Array Raw × Bool)) :
+    EM (Array Raw × Array String × Bool × Option (Array Raw × Bool)) := do
+  if h : i < body.size then
+    let mut out := out
+    let mut keys := keys
+    let mut nonum := nonum
+    let mut tag := tag
+    let mut next := i + 1
+    match body[i] with
+    | .ctrl "label" pos =>
+      let j := skipSpaces body (i + 1)
+      match body[j]? with
+      | some (.group keyRaw _) =>
+        keys := keys.push (argText ctx keyRaw)
+        next := j + 1
+      | _ =>
+        diag ctx .E0304 "'\\label' needs a {key} group" pos
+    | .ctrl "tag" pos =>
+      let j := skipSpaces body (i + 1)
+      let (star, k) := match body[j]? with
+        | some (.word "*" _) => (true, skipSpaces body (j + 1))
+        | _ => (false, j)
+      match body[k]?, tag with
+      | some (.group tagRaw _), none =>
+        tag := some (tagRaw, star)
+        next := k + 1
+      | _, _ =>
+        out := out.push (.ctrl "tag" pos)
+    | .ctrl "nonumber" _ => nonum := true
+    | .ctrl "notag" _ => nonum := true
+    | r => out := out.push r
+    stripMathMetaFrom ctx body (max next (i + 1)) out keys nonum tag
+  else return (out, keys, nonum, tag)
+termination_by body.size - i
+decreasing_by omega
+
 /-- Strips a display body's top-level `\label` keys, `\nonumber`/`\notag`,
 and first `\tag{t}`/`\tag*{t}` before the math parser sees it. -/
 private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
-    EM (Array Raw × Array String × Bool × Option (Array Raw × Bool)) := do
-  let mut out : Array Raw := #[]
-  let mut keys : Array String := #[]
-  let mut nonum := false
-  let mut tag : Option (Array Raw × Bool) := none
-  let mut i : Nat := 0
-  repeat
-    if h : i < body.size then
-      match body[i] with
-      | .ctrl "label" pos =>
-        let j := skipSpaces body (i + 1)
-        match body[j]? with
-        | some (.group keyRaw _) =>
-          keys := keys.push (argText ctx keyRaw)
-          i := j + 1
-        | _ =>
-          diag ctx .E0304 "'\\label' needs a {key} group" pos
-          i := i + 1
-      | .ctrl "tag" pos =>
-        let j := skipSpaces body (i + 1)
-        let (star, k) := match body[j]? with
-          | some (.word "*" _) => (true, skipSpaces body (j + 1))
-          | _ => (false, j)
-        match body[k]?, tag with
-        | some (.group tagRaw _), none =>
-          tag := some (tagRaw, star)
-          i := k + 1
-        | _, _ =>
-          out := out.push (.ctrl "tag" pos)
-          i := i + 1
-      | .ctrl "nonumber" _ =>
-        nonum := true
-        i := i + 1
-      | .ctrl "notag" _ =>
-        nonum := true
-        i := i + 1
-      | r =>
-        out := out.push r
-        i := i + 1
-    else break
-  return (out, keys, nonum, tag)
+    EM (Array Raw × Array String × Bool × Option (Array Raw × Bool)) :=
+  stripMathMetaFrom ctx body 0 #[] #[] false none
 
 /-- A rigid absolute length from source, its measures limited to those
 `admits` allows. -/
@@ -2943,11 +2908,7 @@ private def cmidRange (src : String) : Option (Nat × Nat) :=
 /-- Trims a table cell's edge spaces, as the template's `\ignorespaces` and
 `\unskip` do. -/
 private def trimRawEdges (raws : Array Raw) : Array Raw := Id.run do
-  let mut rs := raws
-  repeat
-    match rs.back? with
-    | some r => if isSpaceOrPar r then rs := rs.pop else break
-    | none => break
+  let rs := raws.popWhile isSpaceOrPar
   let mut k := 0
   for r in rs do
     if isSpaceOrPar r then k := k + 1 else break
@@ -8239,12 +8200,7 @@ private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   return some (paraUnder (← get).scope.lang (Ir.paraAt (← get).scope.blockDecls inlines))
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
-  let mut cur := cur
-  repeat
-    match cur.back? with
-    | some .space => cur := cur.pop
-    | some (.par _) => cur := cur.pop
-    | _ => break
+  let cur := cur.popWhile isSpaceOrPar
   if cur.isEmpty then
     return none
   finishPara (← elabInlines ctx cur)
@@ -9437,15 +9393,6 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
     return ⟨(none, j + 1), by
       refine ⟨show i ≤ j + 1 by omega, ?_⟩
       intro _ h; simp at h⟩
-
-private theorem sliceMeas_extract_split (μ : α → Nat) (raws : Array α) {a b : Nat}
-    (hab : a ≤ b) : measList μ (raws.extract a b).toList + sliceMeas μ raws b = sliceMeas μ raws a := by
-  unfold sliceMeas
-  rw [Array.toList_extract]
-  have hd : raws.toList.drop b = (raws.toList.drop a).drop (b - a) := by
-    rw [List.drop_drop]; congr 1; omega
-  rw [hd, ← measList_append]
-  exact congrArg (measList μ) (List.take_append_drop (b - a) (raws.toList.drop a))
 
 private theorem sliceWeight_extract_split (raws : Array Raw) {a b : Nat} (hab : a ≤ b) :
     rawWeightList (raws.extract a b).toList + sliceWeight raws b = sliceWeight raws a := by
@@ -11192,8 +11139,7 @@ private def navSpecOf (ctx : Ctx) (inner : Array Raw) (pos : Pos) :
     | some ("label", v) =>
       spec := { spec with label := some v }
     | some ("pin", v) =>
-      let words := ((v.split Char.isWhitespace).toList.map
-        (·.toString)).filter (!·.isEmpty)
+      let words := (splitWhere v Char.isWhitespace).filter (!·.isEmpty)
       let vEdge := words.find? (fun w => w == "top" || w == "bottom")
       let hEdge := words.find? (fun w => w == "left" || w == "right")
       match vEdge, hEdge with
@@ -15259,13 +15205,24 @@ private theorem finishPara_note (code : DiagCode) (name text : String)
       (trimParaList true #[] inner.toList).1.toList).1.isEmpty = true <;>
     simp [noteSalvage, finishPara, ht, hi]; rfl
 
+private theorem popWhile_isSpaceOrPar_keep {xs : Array Raw} {r : Raw} (hb : xs.back? = some r)
+    (hr : isSpaceOrPar r = false) : xs.popWhile isSpaceOrPar = xs := by
+  rcases xs with ⟨l⟩
+  simp only [List.popWhile_toArray]
+  have hl : l.reverse.head? = some r := by simpa [List.head?_reverse] using hb
+  cases h : l.reverse with
+  | nil => simp [h] at hl
+  | cons a t =>
+    simp only [h, Option.some.injEq, List.head?_cons] at hl
+    subst hl
+    rw [List.dropWhile_cons, hr]
+    simp only [Bool.false_eq_true, ite_false, ← h, List.reverse_reverse]
+
 private theorem mkPara_group (ctx : Ctx) (body : Array Raw) (gp : Pos) :
     mkPara ctx #[.group body gp] = (do
       let inner ← elabInlines ctx #[.group body gp]
       finishPara inner) := by
-  rw [mkPara]
-  simp only [ForIn.forIn]
-  rw [Lean.Loop.forIn_eq_of_monadTail]
+  rw [mkPara, popWhile_isSpaceOrPar_keep (r := .group body gp) rfl rfl]
   rfl
 
 private theorem mkPara_recovery_group (ctx : Ctx) (name : String)
@@ -15278,12 +15235,8 @@ private theorem mkPara_recovery_group (ctx : Ctx) (name : String)
       let para ← mkPara ctx #[.group body gp]
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
       pure para) := by
-  rw [mkPara]
-  simp only [ForIn.forIn]
-  rw [Lean.Loop.forIn_eq_of_monadTail]
+  rw [mkPara, popWhile_isSpaceOrPar_keep (r := .group body gp) rfl rfl]
   simp only [
-    show (#[Raw.ctrl name p, Raw.group body gp]).back? =
-      some (Raw.group body gp) from rfl, pure_bind,
     show (#[Raw.ctrl name p, Raw.group body gp]).isEmpty = false from rfl,
     Bool.false_eq_true, ↓reduceIte]
   rw [elabInlines_recovery_group ctx name body p gp hm hp hgp hn, mkPara_group]
@@ -15302,12 +15255,7 @@ private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : P
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return some (paraUnder (← get).scope.lang
         (Ir.paraAt (← get).scope.blockDecls #[sourceInline ctx wp (.text w)]))) := by
-  rw [mkPara]
-  simp only [ForIn.forIn]
-  rw [Lean.Loop.forIn_eq_of_monadTail]
-  simp only [
-    show (#[Raw.ctrl name p, Raw.group #[Raw.word w wp] gp]).back? =
-      some (Raw.group #[Raw.word w wp] gp) from rfl, pure_bind]
+  rw [mkPara, popWhile_isSpaceOrPar_keep (r := .group #[.word w wp] gp) rfl rfl]
   simp only [show (#[Raw.ctrl name p, Raw.group #[Raw.word w wp] gp]).isEmpty = false from rfl,
     Bool.false_eq_true, ↓reduceIte]
   rw [elabInlines_recovered_word ctx name w p gp wp hm hp hwp hn hs]
@@ -17172,402 +17120,423 @@ private def entrySites (body : Array Raw) : Array (String × Pos) :=
       | .par p => some p
       | .space => none).map (e.key, ·)
 
+/-- One preamble raw, no `\input` wrapper, read into the declarations: the file in force, whether
+it is owned, the declarations and where the scan resumes. -/
+private def scanDeclStep (preamble : Array Raw) (i : Nat) (h : i < preamble.size)
+    (curFile : String) (curOwned : Bool) (out : Array PDecl) :
+    String × Bool × Array PDecl × Nat := Id.run do
+  let mut curFile := curFile
+  let mut curOwned := curOwned
+  let mut out := out
+  let mut i := i
+  let r := preamble[i]
+  match r with
+  | .space => i := i + 1
+  | .par _ => i := i + 1
+  | .ctrl "documentclass" pos =>
+    i := i + 1
+    let (optRun, j1) := takeOptRun preamble (skipSpaces preamble i)
+    let options : Option String := optRun.map rawSrc
+    let j := skipSpaces preamble j1
+    match preamble[j]? with
+    | some (.group nameRaws _) =>
+      i := j + 1
+      out := out.push (.docclass options
+        (some ((rawSrc nameRaws).trimAscii.toString)) pos)
+    | _ =>
+      out := out.push (.docclass options none pos)
+  | .ctrl "define" pos =>
+    i := i + 1
+    let j := skipSpaces preamble i
+    match preamble[j]? with
+    | some (.ctrl _ _) =>
+      let mut k := j + 1
+      for _ in [k:preamble.size] do
+        match preamble[k]? with
+        | some (.group _ _) =>
+          k := k + 1
+          break
+        | some _ => k := k + 1
+        | none => break
+      out := out.push (.defineCmd (preamble.extract i k) pos)
+      i := k
+    | _ =>
+      out := out.push (.defineCmd (preamble.extract i (j + 1)) pos)
+      i := j + 1
+  | .ctrl "defineenv" pos =>
+    i := i + 1
+    let j := skipSpaces preamble i
+    match preamble[j]? with
+    | some (.group nameRaws npos) =>
+      let envName := (rawSrc nameRaws).trimAscii.toString
+      let mut sigRaws : Array Raw := #[]
+      let mut dflt : Option (Array Raw) := none
+      let mut k := j + 1
+      let mut beginRaws : Option (Array Raw) := none
+      for _ in [k:preamble.size] do
+        match preamble[k]? with
+        | some (.group b _) =>
+          beginRaws := some b
+          k := k + 1
+          break
+        | some (.sym '[' _) =>
+          -- The default an absent optional argument takes stands before the codes.
+          match closeBracketFrom preamble (k + 1) with
+          | some c =>
+            dflt := some (preamble.extract (k + 1) c)
+            k := c + 1
+          | none =>
+            sigRaws := sigRaws.push (.sym '[' pos)
+            k := k + 1
+        | some r' =>
+          sigRaws := sigRaws.push r'
+          k := k + 1
+        | none => break
+      let k2 := skipSpaces preamble k
+      -- environ's `\NewEnviron`: the code before `\BODY` begins, the rest ends.
+      let isMark (r : Raw) : Bool := match r with
+        | .ctrl n _ => n == Marker.name .environBody ""
+        | _ => false
+      let environ := sigRaws.any isMark
+      sigRaws := sigRaws.filter (!isMark ·)
+      match beginRaws, environ with
+      | some code, true =>
+        let fb := skipSpaces preamble k
+        let (final, kf) : Option (Array Raw) × Nat := match preamble[fb]? with
+          | some (.sym '[' _) =>
+            match closeBracketFrom preamble (fb + 1) with
+            | some c => (some (preamble.extract (fb + 1) c), c + 1)
+            | none => (none, k)
+          | _ => (none, k)
+        let (bb, ee) := match Compat.bodySlot? code with
+          | some (bb, ee) => (bb.push (.ctrl (Marker.name .environBody "") pos), ee)
+          | none => (#[], code)
+        i := kf
+        out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
+          (some bb) (some (ee ++ final.getD #[.ctrl "ignorespacesafterend" pos])) pos)
+      | _, _ =>
+        let endRaws : Option (Array Raw) := match preamble[k2]? with
+          | some (.group e _) => some e
+          | _ => none
+        i := if endRaws.isSome then k2 + 1 else k
+        out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
+          beginRaws endRaws pos)
+    | _ =>
+      out := out.push (.defineEnv none "" none none none pos)
+      i := j + 1
+  | .ctrl name pos =>
+    i := i + 1
+    let marker := Marker.read? name
+    if let some (.file, f) := marker then
+      curFile := f
+      curOwned := false
+      out := out.push (.fileMark f false)
+    else if let some (.ownedFile, f) := marker then
+      curFile := f
+      curOwned := true
+      out := out.push (.fileMark f true)
+    else if marker.any fun (k, _) => k == .series || k == .lang then
+      -- premise: compatMarkerChecks — the Doc is the one without it
+      pure ()
+    else if let some (.pageColor, source) := marker then
+      out := out.push (.pageGround (some source) pos)
+    else if marker.any (·.1 == .pageColorReset) then
+      out := out.push (.pageGround none pos)
+    else if let some (.ink, source) := marker then
+      out := out.push (.bodyStart source pos)
+    else if runningCtrl.contains name then
+      let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
+      let j := skipSpaces preamble k
+      match preamble[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        out := out.push (.running name opts (some body) pos)
+      | _ =>
+        out := out.push (.running name opts none pos)
+    else if name == "logo" then
+      let j := skipSpaces preamble i
+      match preamble[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        out := out.push (.logo (some body) pos)
+      | _ =>
+        out := out.push (.logo none pos)
+    else if name == "logoleft" || name == "logoright" then
+      let j := skipSpaces preamble i
+      match preamble[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        out := out.push (.logoSlot (name == "logoleft") (some body) pos)
+      | _ =>
+        out := out.push (.logoSlot (name == "logoleft") none pos)
+    else if name == Compat.titlePageMark then
+      match preamble[i]? with
+      | some (.group #[.word idx _] _) =>
+        i := i + 1
+        if let some index := idx.toNat? then out := out.push (.titlePage index pos)
+      | _ => pure ()
+    else if name == BeamerColor.siteMarker then
+      let j := skipSpaces preamble i
+      let j2 := skipSpaces preamble (j + 1)
+      let j3 := skipSpaces preamble (j2 + 1)
+      match preamble[j]?, preamble[j2]?, preamble[j3]? with
+      | some (.group elems _), some (.group ch _), some (.group key _) =>
+        i := j3 + 1
+        let chain := elems.toList.filterMap fun r => match r with
+          | .group el _ => some (rawSrc el).trimAscii.toString
+          | _ => none
+        out := out.push (.beamerSite chain (rawSrc ch).trimAscii.toString
+          (rawSrc key).trimAscii.toString pos)
+      | _, _, _ => out := out.push (.unknownCmd "usebeamercolor" "" none pos)
+    else if name == BeamerColor.marker || name == BeamerColor.starMarker ||
+        name == BeamerColor.standoutMarker then
+      let j := skipSpaces preamble i
+      let j2 := skipSpaces preamble (j + 1)
+      match preamble[j]?, preamble[j2]? with
+      | some (.group elem _), some (.group body _) =>
+        i := j2 + 1
+        out := out.push (if name == BeamerColor.standoutMarker then
+          .standoutColor (rawSrc elem) (rawSrc body) pos
+          else .beamerColor (rawSrc elem) (name == BeamerColor.starMarker) (rawSrc body) pos)
+      | _, _ => out := out.push (.unknownCmd "setbeamercolor" "" none pos)
+    else if name == "palette" then
+      let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
+      let j := skipSpaces preamble k
+      match preamble[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        out := out.push (.palette opts (some body) pos)
+      | _ =>
+        out := out.push (.palette opts none pos)
+    else if name == "style" then
+      let j := skipSpaces preamble i
+      let j2 := skipSpaces preamble (j + 1)
+      match preamble[j]?, preamble[j2]? with
+      | some (.group elem _), some (.group body _) =>
+        i := j2 + 1
+        out := out.push (.style (some (declSrc elem, body)) pos)
+      | _, _ =>
+        out := out.push (.style none pos)
+    else if name == "allow" then
+      let j := skipSpaces preamble i
+      match preamble[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        out := out.push (.allow (some body) pos)
+      | _ =>
+        out := out.push (.allow none pos)
+    else if name == "tikzexternalize" then
+      let (_, k) := takeOptRun preamble (skipSpaces preamble i)
+      i := k
+      out := out.push (.pictures (some #[.word "tool = lualatex" pos]) pos)
+    else if name == Compat.cancelOptionsMark then
+      match preamble[i]? with
+      | some (.group body _) =>
+        i := i + 1
+        out := out.push (.cancelOpts (rawSrc body) pos)
+      | _ => out := out.push (.cancelOpts "" pos)
+    else if name == Compat.blueprintSiteMark then
+      match preamble[i]?, preamble[i + 1]? with
+      | some (.group key _), some (.group url _) =>
+        i := i + 2
+        if let some k := Blueprint.SiteKey.ofName? (rawSrc key) then
+          out := out.push (.blueprintSite k (rawSrc url) pos)
+      | _, _ => pure ()
+    else if let some (what, links, words, pairs, k) :=
+        (if name == "pdfmeta" then metaTextAt preamble (skipSpaces preamble i) else none) then
+      i := k
+      out := out.push (.pdfmetaText what links words pairs pos)
+    else if declCtrl.contains name then
+      let j := skipSpaces preamble i
+      let body : Option (Array Raw) := match preamble[j]? with
+        | some (.group body _) => some body
+        | _ => none
+      if body.isSome then
+        i := j + 1
+      match name with
+      | "theme" => out := out.push (.theme (body.map declSrc) pos)
+      | "assert" => out := out.push (.assert (body.map declSrc) pos)
+      | "output" => out := out.push (.output body pos)
+      | "tokens" => out := out.push (.tokens body pos)
+      | "chrome" => out := out.push (.chrome body pos)
+      | "page" => out := out.push (.page body pos)
+      | "fonts" => out := out.push (.fonts body pos)
+      | "pictures" => out := out.push (.pictures body pos)
+      | "figures" => out := out.push (.figures body pos)
+      | _ => out := out.push (.pdfmeta body pos)
+    else if name == "urlstyle" then
+      let j := skipSpaces preamble i
+      match preamble[j]? with
+      | some (.group gbody _) =>
+        i := j + 1
+        out := out.push (.urlstyle (some ((rawSrc gbody).trimAscii.toString)) pos)
+      | _ =>
+        out := out.push (.urlstyle none pos)
+    else if name == "captionsetup" then
+      let mut j := i
+      let mut unclosed : Option Pos := none
+      let mut scope : Option String := none
+      match scanBracketArg preamble j pos with
+      | .took j' =>
+        scope := some (bracketSrc preamble j j').trimAscii.toString
+        j := j'
+      | .unclosed bpos => unclosed := some bpos
+      | .content => pure ()
+      j := skipSpaces preamble j
+      match preamble[j]? with
+      | some (.group gbody _) =>
+        i := j + 1
+        out := out.push (.captionsetup scope unclosed (some (rawSrc gbody)) pos)
+      | _ =>
+        out := out.push (.captionsetup scope unclosed none pos)
+    else if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
+        || name == "SetKwFunction" || name == "SetKwData" then
+      let j := skipSpaces preamble i
+      let j2 := skipSpaces preamble (j + 1)
+      match preamble[j]?, preamble[j2]? with
+      | some (.group nm _), some (.group val _) =>
+        i := j2 + 1
+        out := out.push (.algKw name (some (nm, val)) pos)
+      | _, _ =>
+        out := out.push (.algKw name none pos)
+    else if name == "DontPrintSemicolon" || name == "PrintSemicolon"
+        || name == "LinesNumbered" then
+      out := out.push (.algFlag name pos)
+    else if let some k := algA2eSettings.lookup name then
+      let mut j := i
+      for _ in [0:k] do
+        let j2 := skipSpaces preamble j
+        if let some (.group _ _) := preamble[j2]? then
+          j := j2 + 1
+      i := j
+      out := out.push (.algSetting name pos)
+    else if titleCtrls.contains name then
+      let (j, recovered, _, unclosed) := scanOptArg preamble i pos
+      match preamble[j]? with
+      | some (.group b _) =>
+        let short := bracketArgRaws? preamble i pos
+        i := j + 1
+        out := out.push (.titleDecl name unclosed recovered
+          (some (b, short)) pos)
+      | _ =>
+        out := out.push (.titleDecl name unclosed recovered none pos)
+        if recovered then
+          i := j
+    else if name == "newtheorem" then
+      let j0 := skipSpaces preamble i
+      let (star, j0) := match preamble[j0]? with
+        | some (.word "*" _) => (true, skipSpaces preamble (j0 + 1))
+        | _ => (false, j0)
+      match preamble[j0]? with
+      | some (.group envRaws _) =>
+        let env := (rawSrc envRaws).trimAscii.toString
+        let (shared, j1) := takeOptRun preamble (skipSpaces preamble (j0 + 1))
+        let j2 := skipSpaces preamble j1
+        match preamble[j2]? with
+        | some (.group hRaws _) =>
+          let (within, j3) := takeOptRun preamble (skipSpaces preamble (j2 + 1))
+          i := j3
+          out := out.push (.newtheorem star env
+            (shared.map fun r => (rawSrc r).trimAscii.toString) (some hRaws)
+            (within.map fun r => (rawSrc r).trimAscii.toString) pos)
+        | _ =>
+          i := j2
+          out := out.push (.newtheorem star env none none none pos)
+      | _ =>
+        i := j0
+        out := out.push (.newtheorem star "" none none none pos)
+    else if name == "AtBeginSection" || name == "AtBeginSubsection" then
+      let (starred, code, j) := hookArgsAt preamble i
+      i := j
+      out := out.push (.sectionHook name starred code pos)
+    else if name == "theoremstyle" then
+      let j := skipSpaces preamble i
+      match preamble[j]? with
+      | some (.group g _) =>
+        i := j + 1
+        out := out.push (.theoremstyle (some (rawSrc g).trimAscii.toString) pos)
+      | _ =>
+        out := out.push (.theoremstyle none pos)
+    else if name == "numberwithin" then
+      let (fmt, j0) := takeOptRun preamble (skipSpaces preamble i)
+      let fmt := fmt.map fun r => (rawSrc r).trimAscii.toString
+      let j1 := skipSpaces preamble j0
+      let j2 := skipSpaces preamble (j1 + 1)
+      match preamble[j1]?, preamble[j2]? with
+      | some (.group c _), some (.group w _) =>
+        i := j2 + 1
+        out := out.push (.numberwithin fmt
+          (some ((rawSrc c).trimAscii.toString, (rawSrc w).trimAscii.toString)) pos)
+      | _, _ =>
+        i := j0
+        out := out.push (.numberwithin fmt none pos)
+    else if let some code := reservedCtrl.lookup name then
+      let (j, unclosed) := skipReservedArgs preamble i pos
+      match unclosed with
+      | some bpos =>
+        out := out.push (.reserved name code (some bpos) pos)
+        i := malformedRun preamble i pos (groups := true)
+      | none =>
+        out := out.push (.reserved name code none pos)
+        i := j
+    else
+      -- A TeX register assignment's `=` and value go with the skipped name.
+      let j0 := skipSpaces preamble i
+      match preamble[j0]? with
+      | some (.sym '=' _) =>
+        let j1 := skipSpaces preamble (j0 + 1)
+        match preamble[j1]? with
+        | some (.word _ _) | some (.ctrl _ _) => i := j1 + 1
+        | _ => i := j0 + 1
+      | some (.word w _) =>
+        if w.startsWith "=" then i := j0 + 1
+      | _ => pure ()
+      let (j, unclosed) := skipReservedArgs preamble i pos (maxGroups := 9)
+      let args := rawSrc (preamble.extract i j)
+      match unclosed with
+      | some bpos =>
+        out := out.push (.unknownCmd name args (some bpos) pos)
+        i := malformedRun preamble i pos (groups := true)
+      | none =>
+        out := out.push (.unknownCmd name args none pos)
+        i := j
+  | _ =>
+    i := i + 1
+    out := out.push (.stray (rawSrc #[r]) (rawPos? r))
+  return (curFile, curOwned, out, i)
+
+private def scanDeclsFrom (preamble : Array Raw) (i : Nat) (curFile : String) (curOwned : Bool)
+    (out : Array PDecl) : Array PDecl :=
+  if h : i < preamble.size then
+    let advance (_ : Unit) : Array PDecl :=
+      let (curFile, curOwned, out, j) := scanDeclStep preamble i h curFile curOwned out
+      have := sliceMeas_le Parse.Raw.envs preamble (show i ≤ max j (i + 1) by omega)
+      scanDeclsFrom preamble (max j (i + 1)) curFile curOwned out
+    match hr : preamble[i] with
+    | .env n wrapped pos =>
+      match Parse.inputEnvFile? n with
+      | some f =>
+        let owned := Compat.ownsInput curOwned curFile n
+        let mark (owned : Bool) := if owned then Marker.Kind.ownedFile else .file
+        let opening := #[Raw.ctrl (Marker.name (mark owned) f) pos]
+        let closing := #[Raw.ctrl (Marker.name (mark curOwned) curFile) pos]
+        have := sliceMeas_envs_splice h hr opening closing (by simp [opening, measList, Raw.envs])
+          (by simp [closing, measList, Raw.envs])
+        scanDeclsFrom (preamble.extract 0 i ++ (opening ++ wrapped ++ closing) ++
+          preamble.extract (i + 1) preamble.size) i curFile curOwned out
+      | none => advance ()
+    | _ => advance ()
+  else out
+termination_by (sliceMeas Parse.Raw.envs preamble i, preamble.size - i)
+decreasing_by
+  all_goals first
+    | exact .left _ _ ‹_›
+    | exact cursor_advance_lex ‹_› (by omega)
+
 /-- Segments the preamble into declaration values, `\input` wrappers
 spliced open between file markers. -/
-public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
-  let mut preamble := pre
-  let mut curFile := file
-  let mut curOwned := false
-  let mut out : Array PDecl := #[]
-  let mut i : Nat := 0
-  repeat
-    if h : i < preamble.size then
-      let r := preamble[i]
-      if let .env n wrapped pos := r then
-        if let some f := Parse.inputEnvFile? n then
-          let owned := Compat.ownsInput curOwned curFile n
-          let mark (owned : Bool) := if owned then Marker.Kind.ownedFile else .file
-          preamble := preamble.extract 0 i ++
-            #[Raw.ctrl (Marker.name (mark owned) f) pos] ++ wrapped ++
-            #[Raw.ctrl (Marker.name (mark curOwned) curFile) pos] ++
-            preamble.extract (i + 1) preamble.size
-          continue
-      match r with
-      | .space => i := i + 1
-      | .par _ => i := i + 1
-      | .ctrl "documentclass" pos =>
-        i := i + 1
-        let (optRun, j1) := takeOptRun preamble (skipSpaces preamble i)
-        let options : Option String := optRun.map rawSrc
-        let j := skipSpaces preamble j1
-        match preamble[j]? with
-        | some (.group nameRaws _) =>
-          i := j + 1
-          out := out.push (.docclass options
-            (some ((rawSrc nameRaws).trimAscii.toString)) pos)
-        | _ =>
-          out := out.push (.docclass options none pos)
-      | .ctrl "define" pos =>
-        i := i + 1
-        let j := skipSpaces preamble i
-        match preamble[j]? with
-        | some (.ctrl _ _) =>
-          let mut k := j + 1
-          for _ in [k:preamble.size] do
-            match preamble[k]? with
-            | some (.group _ _) =>
-              k := k + 1
-              break
-            | some _ => k := k + 1
-            | none => break
-          out := out.push (.defineCmd (preamble.extract i k) pos)
-          i := k
-        | _ =>
-          out := out.push (.defineCmd (preamble.extract i (j + 1)) pos)
-          i := j + 1
-      | .ctrl "defineenv" pos =>
-        i := i + 1
-        let j := skipSpaces preamble i
-        match preamble[j]? with
-        | some (.group nameRaws npos) =>
-          let envName := (rawSrc nameRaws).trimAscii.toString
-          let mut sigRaws : Array Raw := #[]
-          let mut dflt : Option (Array Raw) := none
-          let mut k := j + 1
-          let mut beginRaws : Option (Array Raw) := none
-          for _ in [k:preamble.size] do
-            match preamble[k]? with
-            | some (.group b _) =>
-              beginRaws := some b
-              k := k + 1
-              break
-            | some (.sym '[' _) =>
-              -- The default an absent optional argument takes stands before the codes.
-              match closeBracketFrom preamble (k + 1) with
-              | some c =>
-                dflt := some (preamble.extract (k + 1) c)
-                k := c + 1
-              | none =>
-                sigRaws := sigRaws.push (.sym '[' pos)
-                k := k + 1
-            | some r' =>
-              sigRaws := sigRaws.push r'
-              k := k + 1
-            | none => break
-          let k2 := skipSpaces preamble k
-          -- environ's `\NewEnviron`: the code before `\BODY` begins, the rest ends.
-          let isMark (r : Raw) : Bool := match r with
-            | .ctrl n _ => n == Marker.name .environBody ""
-            | _ => false
-          let environ := sigRaws.any isMark
-          sigRaws := sigRaws.filter (!isMark ·)
-          match beginRaws, environ with
-          | some code, true =>
-            let fb := skipSpaces preamble k
-            let (final, kf) : Option (Array Raw) × Nat := match preamble[fb]? with
-              | some (.sym '[' _) =>
-                match closeBracketFrom preamble (fb + 1) with
-                | some c => (some (preamble.extract (fb + 1) c), c + 1)
-                | none => (none, k)
-              | _ => (none, k)
-            let (bb, ee) := match Compat.bodySlot? code with
-              | some (bb, ee) => (bb.push (.ctrl (Marker.name .environBody "") pos), ee)
-              | none => (#[], code)
-            i := kf
-            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
-              (some bb) (some (ee ++ final.getD #[.ctrl "ignorespacesafterend" pos])) pos)
-          | _, _ =>
-            let endRaws : Option (Array Raw) := match preamble[k2]? with
-              | some (.group e _) => some e
-              | _ => none
-            i := if endRaws.isSome then k2 + 1 else k
-            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
-              beginRaws endRaws pos)
-        | _ =>
-          out := out.push (.defineEnv none "" none none none pos)
-          i := j + 1
-      | .ctrl name pos =>
-        i := i + 1
-        let marker := Marker.read? name
-        if let some (.file, f) := marker then
-          curFile := f
-          curOwned := false
-          out := out.push (.fileMark f false)
-        else if let some (.ownedFile, f) := marker then
-          curFile := f
-          curOwned := true
-          out := out.push (.fileMark f true)
-        else if marker.any fun (k, _) => k == .series || k == .lang then
-          -- premise: compatMarkerChecks — the Doc is the one without it
-          pure ()
-        else if let some (.pageColor, source) := marker then
-          out := out.push (.pageGround (some source) pos)
-        else if marker.any (·.1 == .pageColorReset) then
-          out := out.push (.pageGround none pos)
-        else if let some (.ink, source) := marker then
-          out := out.push (.bodyStart source pos)
-        else if runningCtrl.contains name then
-          let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
-          let j := skipSpaces preamble k
-          match preamble[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            out := out.push (.running name opts (some body) pos)
-          | _ =>
-            out := out.push (.running name opts none pos)
-        else if name == "logo" then
-          let j := skipSpaces preamble i
-          match preamble[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            out := out.push (.logo (some body) pos)
-          | _ =>
-            out := out.push (.logo none pos)
-        else if name == "logoleft" || name == "logoright" then
-          let j := skipSpaces preamble i
-          match preamble[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            out := out.push (.logoSlot (name == "logoleft") (some body) pos)
-          | _ =>
-            out := out.push (.logoSlot (name == "logoleft") none pos)
-        else if name == Compat.titlePageMark then
-          match preamble[i]? with
-          | some (.group #[.word idx _] _) =>
-            i := i + 1
-            if let some index := idx.toNat? then out := out.push (.titlePage index pos)
-          | _ => pure ()
-        else if name == BeamerColor.siteMarker then
-          let j := skipSpaces preamble i
-          let j2 := skipSpaces preamble (j + 1)
-          let j3 := skipSpaces preamble (j2 + 1)
-          match preamble[j]?, preamble[j2]?, preamble[j3]? with
-          | some (.group elems _), some (.group ch _), some (.group key _) =>
-            i := j3 + 1
-            let chain := elems.toList.filterMap fun r => match r with
-              | .group el _ => some (rawSrc el).trimAscii.toString
-              | _ => none
-            out := out.push (.beamerSite chain (rawSrc ch).trimAscii.toString
-              (rawSrc key).trimAscii.toString pos)
-          | _, _, _ => out := out.push (.unknownCmd "usebeamercolor" "" none pos)
-        else if name == BeamerColor.marker || name == BeamerColor.starMarker ||
-            name == BeamerColor.standoutMarker then
-          let j := skipSpaces preamble i
-          let j2 := skipSpaces preamble (j + 1)
-          match preamble[j]?, preamble[j2]? with
-          | some (.group elem _), some (.group body _) =>
-            i := j2 + 1
-            out := out.push (if name == BeamerColor.standoutMarker then
-              .standoutColor (rawSrc elem) (rawSrc body) pos
-              else .beamerColor (rawSrc elem) (name == BeamerColor.starMarker) (rawSrc body) pos)
-          | _, _ => out := out.push (.unknownCmd "setbeamercolor" "" none pos)
-        else if name == "palette" then
-          let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
-          let j := skipSpaces preamble k
-          match preamble[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            out := out.push (.palette opts (some body) pos)
-          | _ =>
-            out := out.push (.palette opts none pos)
-        else if name == "style" then
-          let j := skipSpaces preamble i
-          let j2 := skipSpaces preamble (j + 1)
-          match preamble[j]?, preamble[j2]? with
-          | some (.group elem _), some (.group body _) =>
-            i := j2 + 1
-            out := out.push (.style (some (declSrc elem, body)) pos)
-          | _, _ =>
-            out := out.push (.style none pos)
-        else if name == "allow" then
-          let j := skipSpaces preamble i
-          match preamble[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            out := out.push (.allow (some body) pos)
-          | _ =>
-            out := out.push (.allow none pos)
-        else if name == "tikzexternalize" then
-          let (_, k) := takeOptRun preamble (skipSpaces preamble i)
-          i := k
-          out := out.push (.pictures (some #[.word "tool = lualatex" pos]) pos)
-        else if name == Compat.cancelOptionsMark then
-          match preamble[i]? with
-          | some (.group body _) =>
-            i := i + 1
-            out := out.push (.cancelOpts (rawSrc body) pos)
-          | _ => out := out.push (.cancelOpts "" pos)
-        else if name == Compat.blueprintSiteMark then
-          match preamble[i]?, preamble[i + 1]? with
-          | some (.group key _), some (.group url _) =>
-            i := i + 2
-            if let some k := Blueprint.SiteKey.ofName? (rawSrc key) then
-              out := out.push (.blueprintSite k (rawSrc url) pos)
-          | _, _ => pure ()
-        else if let some (what, links, words, pairs, k) :=
-            (if name == "pdfmeta" then metaTextAt preamble (skipSpaces preamble i) else none) then
-          i := k
-          out := out.push (.pdfmetaText what links words pairs pos)
-        else if declCtrl.contains name then
-          let j := skipSpaces preamble i
-          let body : Option (Array Raw) := match preamble[j]? with
-            | some (.group body _) => some body
-            | _ => none
-          if body.isSome then
-            i := j + 1
-          match name with
-          | "theme" => out := out.push (.theme (body.map declSrc) pos)
-          | "assert" => out := out.push (.assert (body.map declSrc) pos)
-          | "output" => out := out.push (.output body pos)
-          | "tokens" => out := out.push (.tokens body pos)
-          | "chrome" => out := out.push (.chrome body pos)
-          | "page" => out := out.push (.page body pos)
-          | "fonts" => out := out.push (.fonts body pos)
-          | "pictures" => out := out.push (.pictures body pos)
-          | "figures" => out := out.push (.figures body pos)
-          | _ => out := out.push (.pdfmeta body pos)
-        else if name == "urlstyle" then
-          let j := skipSpaces preamble i
-          match preamble[j]? with
-          | some (.group gbody _) =>
-            i := j + 1
-            out := out.push (.urlstyle (some ((rawSrc gbody).trimAscii.toString)) pos)
-          | _ =>
-            out := out.push (.urlstyle none pos)
-        else if name == "captionsetup" then
-          let mut j := i
-          let mut unclosed : Option Pos := none
-          let mut scope : Option String := none
-          match scanBracketArg preamble j pos with
-          | .took j' =>
-            scope := some (bracketSrc preamble j j').trimAscii.toString
-            j := j'
-          | .unclosed bpos => unclosed := some bpos
-          | .content => pure ()
-          j := skipSpaces preamble j
-          match preamble[j]? with
-          | some (.group gbody _) =>
-            i := j + 1
-            out := out.push (.captionsetup scope unclosed (some (rawSrc gbody)) pos)
-          | _ =>
-            out := out.push (.captionsetup scope unclosed none pos)
-        else if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
-            || name == "SetKwFunction" || name == "SetKwData" then
-          let j := skipSpaces preamble i
-          let j2 := skipSpaces preamble (j + 1)
-          match preamble[j]?, preamble[j2]? with
-          | some (.group nm _), some (.group val _) =>
-            i := j2 + 1
-            out := out.push (.algKw name (some (nm, val)) pos)
-          | _, _ =>
-            out := out.push (.algKw name none pos)
-        else if name == "DontPrintSemicolon" || name == "PrintSemicolon"
-            || name == "LinesNumbered" then
-          out := out.push (.algFlag name pos)
-        else if let some k := algA2eSettings.lookup name then
-          let mut j := i
-          for _ in [0:k] do
-            let j2 := skipSpaces preamble j
-            if let some (.group _ _) := preamble[j2]? then
-              j := j2 + 1
-          i := j
-          out := out.push (.algSetting name pos)
-        else if titleCtrls.contains name then
-          let (j, recovered, _, unclosed) := scanOptArg preamble i pos
-          match preamble[j]? with
-          | some (.group b _) =>
-            let short := bracketArgRaws? preamble i pos
-            i := j + 1
-            out := out.push (.titleDecl name unclosed recovered
-              (some (b, short)) pos)
-          | _ =>
-            out := out.push (.titleDecl name unclosed recovered none pos)
-            if recovered then
-              i := j
-        else if name == "newtheorem" then
-          let j0 := skipSpaces preamble i
-          let (star, j0) := match preamble[j0]? with
-            | some (.word "*" _) => (true, skipSpaces preamble (j0 + 1))
-            | _ => (false, j0)
-          match preamble[j0]? with
-          | some (.group envRaws _) =>
-            let env := (rawSrc envRaws).trimAscii.toString
-            let (shared, j1) := takeOptRun preamble (skipSpaces preamble (j0 + 1))
-            let j2 := skipSpaces preamble j1
-            match preamble[j2]? with
-            | some (.group hRaws _) =>
-              let (within, j3) := takeOptRun preamble (skipSpaces preamble (j2 + 1))
-              i := j3
-              out := out.push (.newtheorem star env
-                (shared.map fun r => (rawSrc r).trimAscii.toString) (some hRaws)
-                (within.map fun r => (rawSrc r).trimAscii.toString) pos)
-            | _ =>
-              i := j2
-              out := out.push (.newtheorem star env none none none pos)
-          | _ =>
-            i := j0
-            out := out.push (.newtheorem star "" none none none pos)
-        else if name == "AtBeginSection" || name == "AtBeginSubsection" then
-          let (starred, code, j) := hookArgsAt preamble i
-          i := j
-          out := out.push (.sectionHook name starred code pos)
-        else if name == "theoremstyle" then
-          let j := skipSpaces preamble i
-          match preamble[j]? with
-          | some (.group g _) =>
-            i := j + 1
-            out := out.push (.theoremstyle (some (rawSrc g).trimAscii.toString) pos)
-          | _ =>
-            out := out.push (.theoremstyle none pos)
-        else if name == "numberwithin" then
-          let (fmt, j0) := takeOptRun preamble (skipSpaces preamble i)
-          let fmt := fmt.map fun r => (rawSrc r).trimAscii.toString
-          let j1 := skipSpaces preamble j0
-          let j2 := skipSpaces preamble (j1 + 1)
-          match preamble[j1]?, preamble[j2]? with
-          | some (.group c _), some (.group w _) =>
-            i := j2 + 1
-            out := out.push (.numberwithin fmt
-              (some ((rawSrc c).trimAscii.toString, (rawSrc w).trimAscii.toString)) pos)
-          | _, _ =>
-            i := j0
-            out := out.push (.numberwithin fmt none pos)
-        else if let some code := reservedCtrl.lookup name then
-          let (j, unclosed) := skipReservedArgs preamble i pos
-          match unclosed with
-          | some bpos =>
-            out := out.push (.reserved name code (some bpos) pos)
-            i := malformedRun preamble i pos (groups := true)
-          | none =>
-            out := out.push (.reserved name code none pos)
-            i := j
-        else
-          -- A TeX register assignment's `=` and value go with the skipped name.
-          let j0 := skipSpaces preamble i
-          match preamble[j0]? with
-          | some (.sym '=' _) =>
-            let j1 := skipSpaces preamble (j0 + 1)
-            match preamble[j1]? with
-            | some (.word _ _) | some (.ctrl _ _) => i := j1 + 1
-            | _ => i := j0 + 1
-          | some (.word w _) =>
-            if w.startsWith "=" then i := j0 + 1
-          | _ => pure ()
-          let (j, unclosed) := skipReservedArgs preamble i pos (maxGroups := 9)
-          let args := rawSrc (preamble.extract i j)
-          match unclosed with
-          | some bpos =>
-            out := out.push (.unknownCmd name args (some bpos) pos)
-            i := malformedRun preamble i pos (groups := true)
-          | none =>
-            out := out.push (.unknownCmd name args none pos)
-            i := j
-      | _ =>
-        i := i + 1
-        out := out.push (.stray (rawSrc #[r]) (rawPos? r))
-    else
-      break
-  return out
+public def scanDecls (file : String) (pre : Array Raw) : Array PDecl :=
+  scanDeclsFrom pre 0 file false #[]
 
 /-- Applies `\allow{...}`: each named code accepts its loss, a renumbered or
 retired code is noted, and an unknown one is refused. -/

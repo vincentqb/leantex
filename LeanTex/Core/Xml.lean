@@ -3,6 +3,7 @@ module
 import LeanTex.Core.WhatwgEncoding
 import LeanTex.Core.Hex
 import Std.Data.HashSet
+import LeanTex.Core.DeriveBEq
 
 /-! A total reader and canonical writer of the XML 1.0 an SVG file is written in; what could
 bring meaning from outside the file is refused. -/
@@ -14,7 +15,9 @@ children, or character data. -/
 public inductive Node where
   | elem (name : String) (attrs : Array (String × String)) (kids : Array Node)
   | text (s : String)
-  deriving Repr, Inhabited, BEq
+  deriving Repr, Inhabited
+
+deriving_structural_beq Node
 
 /-- Why bytes are no document this reader accepts: a syntax error at a byte offset, or a refused construct. -/
 public inductive Refusal where
@@ -540,7 +543,9 @@ XML 1.0 §5–§6). -/
 public inductive Item where
   | elem (ns : String) (name : String) (attrs : Array Attr) (kids : Array Item)
   | text (s : String)
-  deriving Repr, Inhabited, BEq
+  deriving Repr, Inhabited
+
+deriving_structural_beq Item
 
 @[expose] public def xmlNs : String := "http://www.w3.org/XML/1998/namespace"
 

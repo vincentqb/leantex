@@ -8,6 +8,7 @@ import LeanTex.Core.Definer
 import LeanTex.Core.KeyVal
 import Std.Data.HashMap
 import Std.Data.HashSet
+import LeanTex.Core.DeriveBEq
 
 namespace LeanTex.Core.Parse
 
@@ -143,7 +144,9 @@ public inductive Raw where
   | math (display : Bool) (body : Array Raw) (pos : Pos)
   | env (name : String) (body : Array Raw) (pos : Pos)
   | verb (env : String) (v : Verbatim) (pos : Pos)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Raw
 
 /-- Discharges a walk's termination goals: an array a constructor holds is smaller than it. -/
 macro "raws_dec" : tactic =>

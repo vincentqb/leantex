@@ -1690,15 +1690,36 @@ public structure Diag.Accepted where
   loss : String
   deriving Repr, BEq
 
+/-- An optional text spelled so distinct values spell distinct keys. -/
+private def optKey : Option String → String
+  | none => "none"
+  | some s => "some " ++ s.quote
+
+private def Diag.Recovery.key : Diag.Recovery → String
+  | .ignored => "ignored"
+  | .skipped => "skipped"
+  | .replacedBy r => "replacedBy " ++ r.quote
+
+/-- A span with every field of its position, so distinct spans spell distinct keys. -/
+public def Diag.spanKey : Option Span → String
+  | none => "none"
+  | some s =>
+    let origins := ",".intercalate (s.pos.origins.map fun o => s!"{o.id}:{o.name.quote}")
+    s!"{s.file.quote}|{s.pos.line}|{s.pos.col}|{origins}|{optKey s.pos.command}|\
+{s.pos.sourceMapped}|{s.pos.openEol}|{s.pos.closeEol}"
+
+/-- The output a record is scoped to, `all` where it applies to every one. -/
+public def Diag.outputKey (o : Option Diag.Output) : String := (o.map (·.label)).getD "all"
+
 public def Diag.Accepted.of (d : Diag) : Diag.Accepted :=
   { code := d.code, output := d.output
     loss := match d.subject with
       | some s => "subject\x00" ++ s
-      | none => s!"words\x00{d.message}\x00{repr d.help}\x00{repr d.recovery}\x00{repr d.refused}" }
+      | none => s!"words\x00{d.message}\x00{optKey d.help}\x00{(d.recovery.map (·.key)).getD "none"}\x00{optKey d.refused}" }
 
 /-- The accepted codes, one per loss, first acceptance first. -/
 public def Diag.acceptedLosses (accepted : Array Diag.Accepted) : Array String :=
-  let keyed := accepted.mapIdx fun i a => (s!"{a.code}\x00{repr a.output}\x00{a.loss}", i, a.code)
+  let keyed := accepted.mapIdx fun i a => (s!"{a.code}\x00{Diag.outputKey a.output}\x00{a.loss}", i, a.code)
   let sorted := keyed.qsort fun x y => x.1 < y.1 || (x.1 == y.1 && x.2.1 < y.2.1)
   let firsts := sorted.zipIdx.filterMap fun (x, k) =>
     if k > 0 && (sorted[k - 1]?.map (·.1)) == some x.1 then none else some x.2

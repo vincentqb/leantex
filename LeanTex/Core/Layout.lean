@@ -6836,24 +6836,24 @@ private def setsToMeasure (justify : Bool) (items : Array Item) (a j : Nat) : Bo
     | _ => pure ()
   return false
 
-private def trimLineGaps (segs : Array Seg) (width : Length) : Array Seg × Length := Id.run do
-  let mut segs := segs
-  let mut width := width
-  repeat
-    match segs.back? with
-    | some (.gap w _) | some (.decoratedGap w _ _) =>
-      segs := segs.pop
-      width := width - w
-    | _ => break
-  return (segs, width)
+private def trimLineGaps (segs : Array Seg) (width : Length) : Array Seg × Length :=
+  match _h : segs.back? with
+  | some (.gap w _) => trimLineGaps segs.pop (width - w)
+  | some (.decoratedGap w _ _) => trimLineGaps segs.pop (width - w)
+  | _ => (segs, width)
+termination_by segs.size
+decreasing_by
+  all_goals
+    have hn : segs.size ≠ 0 := by
+      intro hz
+      have he : segs = #[] := Array.eq_empty_of_size_eq_zero hz
+      simp [he] at *
+    simp only [Array.size_pop]
+    omega
 
 private theorem trimLineGaps_mem (segs : Array Seg) (width : Length) :
     ∀ s ∈ (trimLineGaps segs width).1, s ∈ segs := by
   unfold trimLineGaps
-  simp only [Id.run, bind, pure]
-  dsimp only [ForIn.forIn]
-  rw [Lean.Loop.forIn_eq_of_monadTail]
-  dsimp only
   split
   · rename_i w word _
     intro s hs
@@ -6880,10 +6880,6 @@ private theorem trimLineGaps_glyphChars (segs : Array Seg) (width : Length) :
     (trimLineGaps segs width).1.toList.flatMap Seg.glyphChars =
       segs.toList.flatMap Seg.glyphChars := by
   unfold trimLineGaps
-  simp only [Id.run, bind, pure]
-  dsimp only [ForIn.forIn]
-  rw [Lean.Loop.forIn_eq_of_monadTail]
-  dsimp only
   split
   · rename_i w word h
     have hp := trimLineGaps_glyphChars segs.pop (width - w)

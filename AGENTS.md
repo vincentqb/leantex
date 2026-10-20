@@ -142,9 +142,9 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 
 ## Lean rules
 
-- Every theorem has a complete proof and no project axiom; nothing is unsafe or declared partial
-  (`bannedWord`, `scripts/ProofAudit.lean`), though repeat loops compile to partial (owed (U72)):
-  the language is designed terminating. A guarantee in prose names its theorem; an unproved claim is
+- Every theorem has a complete proof and no project axiom; nothing is unsafe or declared partial,
+  nor is anything the binary reaches but premised loops (`bannedWord`, `partialReachChecks`): the
+  language is designed terminating. A guarantee in prose names its theorem; an unproved claim is
   pending work, never an unfinished declaration (`scripts/cites.lean`).
 - A resisting proof, a declaration near its budget or a kernel check of seconds is a factorization
   finding, never a raise, fuel or a sampled decide (review); a literal bound under the default holds

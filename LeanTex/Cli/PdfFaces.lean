@@ -141,18 +141,24 @@ public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
         | none => iw), route := r, diags := #[], native := false, checked := false }
   | r, .ok _, _ => { bytes := .error "no web face", route := r, diags := #[], native := false, checked := false }
 
+/-- A page selection as a slot spells it. -/
+public def pageKey : PdfRead.PageSelection → String
+  | .first => "first"
+  | .last => "last"
+  | .number n => s!"number {n}"
+
 /-- A face's slot, one per figure page: the page's bytes, page and stretch; a later
 engine's answer replaces an earlier one's. -/
 public def slotName (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) : String :=
   Flate.contentKey pdf ++ "-" ++
-    Flate.contentKey (String.intercalate "\u0000" ["pdf-face-v2", reprStr page, toString stretch]).toUTF8 ++
+    Flate.contentKey (String.intercalate "\u0000" ["pdf-face-v3", pageKey page, toString stretch]).toUTF8 ++
     ".face"
 
 /-- The key an answer is stored under: format, the page's content key, page, stretch and
 the reading engine. -/
 public def slotKey (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) (engine : String) :
     Array String :=
-  #["pdf-face-v2", Flate.contentKey pdf, reprStr page, toString stretch, engine]
+  #["pdf-face-v3", Flate.contentKey pdf, pageKey page, toString stretch, engine]
 
 /-- The import's answer through the face cache in `dir`: a slot holding this key answers,
 and anything else is read afresh and replaces it. -/
@@ -261,8 +267,8 @@ public theorem nativeOf_exact (pdf : ByteArray) (page : PdfRead.PageSelection) (
     FigureFace.lookup (PdfFaces.slotKey pdf page stretch engine)
         (FigureFace.encode (PdfFaces.slotKey pdf page stretch engine) (PdfFaces.nativeOf pdf page stretch)) =
         some (PdfFaces.nativeOf pdf page stretch) ∧
-      ∀ pdf' page' stretch' engine', (Flate.contentKey pdf', reprStr page', toString stretch', engine') ≠
-          (Flate.contentKey pdf, reprStr page, toString stretch, engine) →
+      ∀ pdf' page' stretch' engine', (Flate.contentKey pdf', PdfFaces.pageKey page', toString stretch', engine') ≠
+          (Flate.contentKey pdf, PdfFaces.pageKey page, toString stretch, engine) →
         FigureFace.lookup (PdfFaces.slotKey pdf' page' stretch' engine')
           (FigureFace.encode (PdfFaces.slotKey pdf page stretch engine) (PdfFaces.nativeOf pdf page stretch)) =
           none := by

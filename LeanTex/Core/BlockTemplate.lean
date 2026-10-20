@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
+import LeanTex.Core.DeriveBEq
 
 /-! The reader of beamer's block templates: runs the `block begin`/`block end` pair as TeX runs it,
 in TeX's box-and-rule vocabulary, and lowers the lists it builds onto `Ir.BlockShape`. -/
@@ -284,7 +285,9 @@ public inductive Node where
   | prevdepth (d : Dimen)
   | unboxed (id : Nat) (kids : Array Node) (atDepth endDepth : Dimen)
   | moved (d : Dimen) (n : Node)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+deriving_structural_beq Node
 
 /-- The identity of the box before the block, whose depth the block's list opens on. -/
 private def priorId : Nat := 0

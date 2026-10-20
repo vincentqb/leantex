@@ -2402,7 +2402,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       let d := if d.kind != .W0429 then d else match findEntry it.key with
         | some e => nameUnread (entries.find? (·.key == it.key)) e d
         | none => d
-      let site := s!"{d.code}\u0000{d.message}\u0000{repr d.span}\u0000{d.subject}"
+      let site := s!"{d.code}\u0000{d.message}\u0000{Diag.spanKey d.span}\u0000{d.subject}"
       unless reported.contains site do
         reported := reported.insert site
         diags := diags.push d
@@ -2605,7 +2605,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
 demoted to a note with no help. -/
 public def demoteRepeated (prior ds : Array Diag) : Array Diag :=
   let key (d : Diag) : Option String := d.subject.map fun s =>
-    s!"{d.code}\u0000{s}\u0000{repr d.output}"
+    s!"{d.code}\u0000{s}\u0000{Diag.outputKey d.output}"
   let seen : Std.HashSet String := prior.foldl (init := {}) fun m d =>
     match key d with
     | some k => m.insert k

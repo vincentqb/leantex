@@ -4,6 +4,7 @@ public import Std.Data.HashMap
 import Std.Data.HashSet
 import LeanTex.Core.KeyVal
 import LeanTex.Core.Hex
+import LeanTex.Core.Split
 
 /-! The CSS an SVG file states (SVG 2 §6): declarations, a selector subset, and the cascade
 of CSS Cascading 4 §6 over them. -/
@@ -517,7 +518,7 @@ outside the subset is named whole. -/
 public def parseSelector (s : String) : Except Unread Selector := do
   let outside : Unit → Unread := fun _ => .selector (oneLine s)
   let spaced := (s.replace ">" " > ").trimAscii.toString
-  let words := (spaced.split isWs).toList.map (·.toString) |>.filter (!·.isEmpty)
+  let words := splitWhere spaced isWs |>.filter (!·.isEmpty)
   match words with
   | [] => throw .emptySelector
   | first :: more =>
