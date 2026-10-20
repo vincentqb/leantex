@@ -127,9 +127,6 @@ public def natbibLoad (given : List String) : Array CiteDecl × List String :=
   ((Opt.names.filter (given.contains ·.1)).toArray.map (.option ·.2),
    given.filter fun o => (Opt.names.lookup o).isNone)
 
-/-- A natbib option as a loss names it, from either surface. -/
-public def natbibOption (o : String) : String := s!"'natbib' option '{o}'"
-
 /-- The value the last declaration of `k` among `ds` gives it. -/
 public def last? (ds : Array CiteDecl) (k : Key) : Option String :=
   ds.foldl (init := none) fun acc d => match d with

@@ -80,8 +80,8 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "input decoding: one bad byte reads as one U+FFFD" (count bad.text '\uFFFD' == 1)
   t "input decoding: one bad byte is one warning naming its offset and place"
     (bad.diags.size == 1 && codes bad.diags .W0002 == 1 && bad.diags.all fun d =>
-      d.message == "invalid encoding UTF-8 for file u96-badbyte.tex" &&
-      d.detail == some "byte 0xFF at offset 49" &&
+      d.message == "invalid character for file u96-badbyte.tex" &&
+      d.detail == some "not text in UTF-8: byte 0xFF at offset 49" &&
       d.span == some ⟨"u96-badbyte.tex", { line := 3, col := 9 }⟩ &&
       d.recovery == some (.replacedBy "U+FFFD") && d.offsets == #[49])
   t "input decoding: the replacement reaches the page"
@@ -90,7 +90,8 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("x".toUTF8 ++ bytes [0xFF, 0x61, 0xFE, 0x62, 0xFF, 0x63, 0xFE, 0x64, 0xFF])
   t "input decoding: a warning lists three offsets and gives a tool all of them"
     (five.diags.any fun d => d.kind == .W0002 && d.offsets == #[1, 3, 5, 7, 9] &&
-      d.detail == some "5 byte sequences, at offsets 1 (0xFF), 3 (0xFE), 5 (0xFF) and 2 more")
+      (d.detail.any (·.endsWith "5 byte sequences, at offsets 1 (0xFF), 3 (0xFE), 5 (0xFF) and 2 \
+more")))
   for (code, preamble, body) in [
       (DiagCode.W0002, "", "Caf".toUTF8 ++ bytes [0xE9] ++ ".".toUTF8),
       (.W0004, "\\usepackage[latin1]{inputenc}\n", "Café crème".toUTF8 ++ bytes [0x92] ++ "s.".toUTF8)] do
@@ -98,16 +99,17 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (readTexFile file (doc preamble b)).diags.filter (·.kind == code)
     let shown := (Diag.foldRepeats (read "doc.tex" body ++ read "chapter.tex" body)).filter
       (·.severity.isWarning)
-    t s!"input decoding: {code.code} in two files prints a line naming each"
-      (shown.map (·.sites) == #[1, 1] && hasStr (shown[0]?.map (·.message) |>.getD "") "file doc.tex" &&
-        hasStr (shown[1]?.map (·.message) |>.getD "") "file chapter.tex")
+    t s!"input decoding: {code.code} in two files prints a line per wording"
+      (if code == .W0002 then shown.map (·.sites) == #[1, 1] &&
+        shown.map (·.span.map (·.file)) == #[some "doc.tex", some "chapter.tex"]
+      else shown.map (·.sites) == #[2])
     let sites := read "doc.tex" (body ++ "\n\nProse.\n\n  ".toUTF8 ++ body)
     t s!"input decoding: {code.code} at two sites of one file is one record"
       (sites.size == 1 && sites.all (·.offsets.size == 2))
   let cut := Encoding.readTex none "cut.tex" ("a".toUTF8 ++ bytes [0xE2, 0x82] ++ "b".toUTF8)
   t "input decoding: a truncated sequence is one U+FFFD naming its bytes"
     (cut.text == "a\uFFFDb" && cut.diags.any fun d =>
-      d.detail == some "the bytes 0xE2 0x82 at offset 1")
+      (d.detail.any (·.endsWith "the bytes 0xE2 0x82 at offset 1")))
   let stray := Encoding.readTex none "stray.tex"
     ("Café crème".toUTF8 ++ bytes [0x92] ++ "s".toUTF8)
   t "input decoding: a stray byte in a UTF-8 file is advised as a correction"
@@ -163,7 +165,8 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
       codes mixed.diags .W0002 == 0)
   t "input decoding: the stray byte a UTF-8 file read as declared is named, a guess"
     (mixed.diags.size == 1 && mixed.diags.all fun d => d.kind == .W0004 &&
-      d.message == "substituted encoding 'Windows-1252 (Latin-1)' for file u96-mixed.tex" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
+      d.message == "substituted encoding 'Windows-1252 (Latin-1)' for \
+'UTF-8'" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
   -- A tie is no evidence: it goes to the declaration.
   let tie := readTexFile "tie.tex"
     (doc "\\usepackage[latin1]{inputenc}\n" ("x".toUTF8 ++ bytes [0xC3, 0xA9, 0x20, 0xE9]))
@@ -185,8 +188,8 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
   let hole := readTexFile "hole.tex" ("\\usepackage[cp1252]{inputenc}\n".toUTF8 ++ bytes [0x81])
   t "input decoding: a byte Windows-1252 leaves undefined is U+FFFD, named"
     (hole.text.endsWith "\uFFFD" && hole.diags.any fun d => d.kind == .W0002 &&
-      d.message == "invalid encoding 'Windows-1252 (Latin-1)' for file hole.tex" &&
-      d.detail == some "byte 0x81 at offset 30")
+      d.message == "invalid character for file hole.tex" &&
+      (d.detail.any (·.endsWith "byte 0x81 at offset 30")))
   let unread := readTexFile "latin2.tex"
     ("\\usepackage[latin2]{inputenc}\n".toUTF8 ++ bytes [0xB1])
   t "input decoding: an encoding the engine does not read is UTF-8 with its loss named"
@@ -209,12 +212,13 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
     (beRead.text == String.ofList ['A', Char.ofNat 0x1F600, '\uFFFD', '\uFFFD', 'B'] &&
       beRead.reading == .utf16 true && beRead.diags.size == 1 &&
       beRead.diags.all (fun d => d.kind == .W0002 && d.offsets == #[8, 10] &&
-        d.detail == some "2 byte sequences, at offsets 8 (0xDC 0x00) and 10 (0x00 0x00)"))
+        (d.detail.any (·.endsWith "2 byte sequences, at offsets 8 (0xDC 0x00) and 10 (0x00 \
+0x00)"))))
   let odd := Encoding.readMarkdown "u96-odd16.md" (← probe "u96-odd16.md")
   t "input decoding: a trailing odd byte of UTF-16 is the one byte it is"
     (odd.text == "Hi\uFFFD" && odd.diags.all fun d =>
-      d.message == "invalid encoding UTF-16LE for file u96-odd16.md" &&
-      d.detail == some "byte 0x41 at offset 6" && d.offsets == #[6])
+      d.message == "invalid character for file u96-odd16.md" &&
+      (d.detail.any (·.endsWith "byte 0x41 at offset 6")) && d.offsets == #[6])
   let bare := Encoding.readTex none "bare.tex"
     ("Hi there".toList.foldl (fun b c => b ++ bytes [c.toNat.toUInt8, 0]) ByteArray.empty)
   t "input decoding: UTF-16 with no mark is named as such"
@@ -233,7 +237,7 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
   t "input decoding: U+0000 and a bad byte in one file are one warning"
     (nulBad.diags.size == 1 && nulBad.diags.all fun d => d.kind == .W0002 &&
       d.offsets == #[10, 17] && d.subject == some "input-bytes:u96-nulbad.md" &&
-      d.detail == some "2 byte sequences, at offsets 10 (0x00) and 17 (0xFF)")
+      (d.detail.any (·.endsWith "2 byte sequences, at offsets 10 (0x00) and 17 (0xFF)")))
   let lfTex := doc "" "Caf\u00e9 one. % a comment\n\nSecond paragraph.".toUTF8
   let lfPage := pageLines fonts (Encoding.readTex none "lf.tex" lfTex).text
   for (label, bs) in [("CR", crOnly lfTex), ("CR LF", crlf lfTex)] do
@@ -320,26 +324,30 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
   t "input decoding: a declaration's note names the file it read and how"
     (latinNotes.size == 1 && latinNotes.all fun d => d.kind == .N0025 &&
       d.span == some ⟨"u96-latin1.tex", { line := 2, col := 1 }⟩ &&
-      d.message == "resolved option latin1 for package inputenc" && d.detail == some "'u96-latin1.tex' reads as Windows-1252 \
+      d.message == "resolved option latin1 for package \
+inputenc" && d.detail == some "'u96-latin1.tex' reads as Windows-1252 \
 (Latin-1)" &&
       d.help == some "save 'u96-latin1.tex' as UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8`), then \
 delete the declaration")
   let frenchNotes ← noteOf "u96-french.tex" (← probe "u96-french.tex")
   t "input decoding: the note names the runs a declared reading also reads as UTF-8"
-    (frenchNotes.all fun d => d.message == "resolved option latin1 for package inputenc" && d.detail == some "'u96-french.tex' \
+    (frenchNotes.all fun d => d.message == "resolved option latin1 for package \
+inputenc" && d.detail == some "'u96-french.tex' \
 reads as Windows-1252 (Latin-1), though its bytes at offsets 102 and 111 are well-formed UTF-8 \
 too" && d.help.any (·.startsWith "check the text at those offsets, save 'u96-french.tex'"))
   let staleNotes ← noteOf "stale.tex" (doc "\\usepackage[latin1]{inputenc}\n" "Café.".toUTF8)
   t "input decoding: a declaration no file needs is advised for deletion"
     (staleNotes.size == 1 && staleNotes.all fun d =>
-      d.message == "resolved option latin1 for package inputenc" && d.detail == some "'stale.tex' is UTF-8, so the declaration \
+      d.message == "resolved option latin1 for package inputenc" && d.detail == some "'stale.tex' \
+is UTF-8, so the declaration \
 is not applied to it" &&
       d.help == some "delete the declaration: every file it governs reads alike without it")
   -- Files a deleted declaration would damage: a declared stray byte, UTF-8 under no table.
   let mixedNotes ← noteOf "u96-mixed.tex" (← probe "u96-mixed.tex")
   t "input decoding: a declaration a stray byte reads by is kept until the byte is spelled"
     (mixedNotes.size == 1 && mixedNotes.all fun d =>
-      d.message == "resolved option latin1 for package inputenc" && d.detail == some "'u96-mixed.tex' is UTF-8 but for the \
+      d.message == "resolved option latin1 for package \
+inputenc" && d.detail == some "'u96-mixed.tex' is UTF-8 but for the \
 bytes read as Windows-1252 (Latin-1)" &&
       d.help == some "spell in UTF-8 the bytes 'u96-mixed.tex' reads as Windows-1252 (Latin-1), \
 then delete the declaration")
@@ -349,14 +357,16 @@ then delete the declaration")
   let latin2Notes ← noteOf "u96-latin2.tex" (← probe "u96-latin2.tex")
   t "input decoding: a UTF-8 file under an encoding with no table is not sent through iconv"
     (latin2Notes.size == 1 && latin2Notes.all fun d =>
-      d.message == "resolved option latin2 for package inputenc" && d.detail == some "an encoding the engine does not \
+      d.message == "resolved option latin2 for package inputenc" && d.detail == some "an encoding \
+the engine does not \
 read: 'u96-latin2.tex' is UTF-8" &&
       d.help == some "delete the declaration: every file it governs reads alike without it")
   let latin2Bytes ← noteOf "l2.tex"
     (doc "\\usepackage[latin2]{inputenc}\n" ("Zaz".toUTF8 ++ bytes [0xBF, 0xF3, 0xB3]))
   t "input decoding: a file in an encoding with no table is sent through iconv from it"
     (latin2Bytes.all fun d =>
-      d.message == "resolved option latin2 for package inputenc" && d.detail == some "an encoding the engine does not \
+      d.message == "resolved option latin2 for package inputenc" && d.detail == some "an encoding \
+the engine does not \
 read: 'l2.tex' is read as UTF-8, its other bytes replaced" &&
       d.help == some "save 'l2.tex' as UTF-8 (`iconv -f latin2 -t UTF-8`), then delete the \
 declaration")
@@ -373,7 +383,8 @@ declaration")
       ⟨"refs.bib", some d, .utf8, #[]⟩, ⟨"notes.tex", some d, .ascii, #[]⟩] }
   t "input decoding: a note names each file the declaration changed, and saves the one it read"
     (both.notes.size == 1 && both.notes.all fun n =>
-      n.message == "resolved option latin1 for package inputenc" && n.detail == some "'main.tex' reads as Windows-1252 \
+      n.message == "resolved option latin1 for package inputenc" && n.detail == some "'main.tex' \
+reads as Windows-1252 \
 (Latin-1); 'refs.bib' is UTF-8, so the declaration is not applied to it" &&
       n.help == some "save 'main.tex' as UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8`), then delete \
 the declaration")

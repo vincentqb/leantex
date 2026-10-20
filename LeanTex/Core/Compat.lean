@@ -2818,7 +2818,8 @@ private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) :
       | _, _ => dropped := dropped.push entry
     | (_, none) => dropped := dropped.push entry
   for e in dropped do
-    unreadParam "usepackage:unicode-math" (KeyVal.entry e).1 .option e (ofPackage "unicode-math") pos
+    unreadParam "usepackage:unicode-math" (KeyVal.entry e).1 .option e
+      (ofPackage "unicode-math") pos
       (help := "the math alphabets' source keys (mathrm=sym, ...) carry over")
   if sources.isEmpty then
     discard what "the engine keeps its existing math-source policy"
@@ -2927,8 +2928,9 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
   let dropped := pairs.filter fun (k, _) => !biblatexRead.contains k && !biblatexInert.contains k
   for (k, v) in pairs do
     if k == "hyperref" && v != "false" then
-      unreadParam "usepackage:biblatex" k .option s!"{k}={v}" (ofPackage "biblatex") pos
-        (detail := some "a link from each citation to its entry")
+      unreadParam "usepackage:biblatex" k .value (Diag.Name.value v)
+        (some (some .key, Diag.Name.of k))
+        pos (detail := some "biblatex's link from each citation to its entry")
     else if biblatexInert.contains k then
       inertParam "usepackage:biblatex" k s!"\\{name}[{k}={v}]\{biblatex}"
         (.engineSets "the engine reads the bibliography and sets its citations itself") pos
@@ -2936,8 +2938,9 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
     unreadParam "usepackage:biblatex" k .option (if v == "true" then k else s!"{k}={v}")
       (ofPackage "biblatex") pos
   let what := match biblatexFamily bbx, biblatexFamily cbx with
-    | none, none => some (if bbx == cbx then bbx else s!"{bbx}, {cbx}",
-        "the reference list and citations are set as numeric")
+    | none, none => some (bbx, if bbx == cbx then "the reference list and citations are set as \
+numeric"
+        else s!"with citation style {cbx}; the reference list and citations are set as numeric")
     | none, some _ => some (bbx, "the reference list is set as numeric")
     | some _, none => some (cbx, "the citations are set as numeric")
     | some _, some _ => none
@@ -2955,8 +2958,9 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
   let sorting ← if CiteDecl.sortingSchemes.contains declaredSorting then
       pure declaredSorting
     else do
-      say .W0101 (Diag.say .W0101 .option s!"sorting={declaredSorting}" (ofPackage "biblatex")) pos
-        (subject := some "usepackage:biblatex")
+      say .W0101 (Diag.say .W0101 .value (Diag.Name.value declaredSorting)
+        (some (some .key, Diag.Name.of "sorting"))) pos
+        (subject := some "usepackage:biblatex") (detail := some s!"sorted {defaultSorting}")
         (help := s!"the schemes sorted: {", ".intercalate CiteDecl.sortingSchemes}")
       pure defaultSorting
   let record :=
@@ -2969,12 +2973,15 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
     let some key := (CiteDecl.Key.carriedNames.lookup (if k == "babel" then "autolang" else k))
       | continue
     if k == "uniquename" && ["mininit", "minfull", "minyearinit", "minyearfull"].contains v then
-      say .W0101 (Diag.say .W0101 .option s!"uniquename={v}" (ofPackage "biblatex")) pos
+      say .W0101 (Diag.say .W0101 .value (Diag.Name.value v)
+        (some (some .key, Diag.Name.of "uniquename")))
+        pos
         (detail := some s!"read as uniquename={if v.endsWith "init" then "init" else "full"}")
         (subject := some "usepackage:biblatex")
       carried := carried.push (.set key (if v.endsWith "init" then "init" else "full"))
     else if k == "uniquelist" && v == "minyear" then
-      say .W0101 (Diag.say .W0101 .option "uniquelist=minyear" (ofPackage "biblatex")) pos
+      say .W0101 (Diag.say .W0101 .value (Diag.Name.value "minyear")
+        (some (some .key, Diag.Name.of "uniquelist"))) pos
         (subject := some "usepackage:biblatex") (detail := some "read as uniquelist=true")
       carried := carried.push (.set key "true")
     else carried := carried.push (.set key v)
@@ -3031,7 +3038,8 @@ private def lineNumbers (name : String) (opt : Option String) (pos : Pos) : M (A
   if on then
     if let some n := opt then
       unless n.trimAscii.toString == "1" do
-        say .W0101 (Diag.say .W0101 .option (Diag.Name.value n) (ofWritten s!"\\{name}")) pos
+        say .W0101 (Diag.say .W0101 .optionalArgument (Diag.Name.value n)
+          (ofWritten s!"\\{name}")) pos
           (detail := some "line numbers run from 1")
   setting s!"\\{name}" (.page #[(.linenumbers, if on then "on" else "off")]) pos
 
@@ -3430,7 +3438,8 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
     | _, _ => return undecided
   if let some v := flagTested st.flags h then
     if neg then return two v "" "" (toString v) 0 none
-    return { frame := .decided v, note := some (s!"flag:{h}:{v}", (flagMsg h v).1, (flagMsg h v).2) }
+    let (fm, fd) := flagMsg h v
+    return { frame := .decided v, note := some (s!"flag:{h}:{v}", fm, fd) }
   return undecided
 
 /-- Primitives that read the next token as itself, so a
@@ -4933,7 +4942,8 @@ private def condList [Monad m]
             | some d =>
               sayOnce ("cond:def:" ++ key) .N0114 msg pos
                 (detail := some s!"{detail}, in \\{d} as read at the end of the preamble")
-            | none => sayOnce ("cond:" ++ key) .N0114 msg (st.useSite.getD pos) (detail := some detail)
+            | none => sayOnce ("cond:" ++ key) .N0114 msg (st.useSite.getD pos)
+                        (detail := some detail)
         let stack' := r.frame :: stack
         match r.frame, unlessHead with
         | .opaque, some (h, hp) =>
@@ -5026,7 +5036,8 @@ private def condList [Monad m]
         condList ex drop raws following out stack rest (i + 1) 0
       | .set _, some _, none =>
         sayOnce ("cond:flag:value:" ++ key) .W0104 (Diag.say .W0104 .command call) site
-          (detail := some s!"a value for the {what} other than true or false, which LaTeX refuses") (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind}\{{name}}\{false}")
+          (detail := some s!"a value for the {what} other than true or false, which LaTeX refuses")
+            (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind}\{{name}}\{false}")
         condList ex drop raws following out stack rest (i + 1) 0
       | .test negate, some v, _ =>
         let ans := v != negate
@@ -5045,7 +5056,8 @@ private def condList [Monad m]
       match st.loads.answer query with
       | some ans =>
         let (msg, detail) := loadedMsg test query ans
-        sayOnce ("ifloaded:" ++ msg ++ detail) .N0114 msg (st.useSite.getD pos) (detail := some detail)
+        sayOnce ("ifloaded:" ++ msg ++ detail) .N0114 msg (st.useSite.getD pos)
+          (detail := some detail)
         condList ex (loadedPlan test ans) raws following out stack rest (i + 1) 0
       | none =>
         condStopSpaces
@@ -5083,7 +5095,8 @@ private def condList [Monad m]
         match tcolorboxValue raws i with
         | none =>
           sayOnce ("tcolorbox:definition:" ++ n) .W0104 (Diag.say .W0104 .definition s!"\\{n}")
-            (st.useSite.getD pos) (detail := some "an argument declaration the engine does not read")
+            (st.useSite.getD pos)
+              (detail := some "an argument declaration the engine does not read")
             (help := "use a braced environment name, 0–9 arguments, and at most one default")
         | some (name, value) =>
           let key := Tcolorbox.bindingName name
@@ -5628,7 +5641,7 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
         -- premise: macroForwardArgumentsChecks — an incomplete stored forwarder waits for its use
         if st.settling.isSome then return none
         sayOnce ("cond:arguments:" ++ n) .W0104 (Diag.say .W0104 .command s!"\\{n}") (site.getD pos)
-          (detail := some s!"its {body.arity} arguments end where the engine does not read")
+          (detail := some s!"its {body.arity} arguments are not read here")
           (help := "close an optional argument with ']' and put each required argument in braces")
         return none
       let origin : Option MacroOrigin := if body.arity > 0 && !inPic
@@ -6934,8 +6947,8 @@ private def listSpacingEntries (what reader : String) (e : Entries.Entry) (pos :
     match read with
     | some n => return some #[(key, n)]
     | none =>
-      unreadParam reader key .key s!"{key}={v}" (ofWritten what) pos
-        (detail := some "a length the engine cannot read")
+      unreadParam reader key .value (Diag.Name.value v) (some (some .key, Diag.Name.of key)) pos
+        (detail := some s!"in {what}, a length the engine cannot read")
         (help := "give a length such as 2pt, 0.5em or \\smallskipamount")
       return some #[]
   | _, _ => return none
@@ -7520,7 +7533,8 @@ private def hyperrefKeys (opts : Array Raw) (pos : Pos) : M HyperrefRead := do
     let hints := (if cut.isEmpty then [] else ["brace a value that holds a comma: key={...}"]) ++
       grammars.toList
     say .W0101 (Diag.say .W0101 .entry (obj := ofPackage "hyperref")) pos
-      (help := String.intercalate "; " hints) (detail := some (String.intercalate ", " dropped.toList))
+      (help := String.intercalate "; " hints)
+        (detail := some (String.intercalate ", " dropped.toList))
   unless unread.isEmpty do
     say .W0102 (Diag.say .W0102 .colour (obj := ofPackage "hyperref")) pos
       (detail := some (String.intercalate ", " unread.toList))
@@ -7793,10 +7807,12 @@ private def pageAttrBoxes (text : Option String) (keep : Bool) (what : String) (
     match native?, boxCorners v with
     | some key, some cs => keys := keys.push (key, s!"\"{" ".intercalate cs}\"")
     | some _, none =>
-      lost (Diag.say .W0443 .attribute s!"/{k}") "write the box as '[llx lly urx ury]' in PDF points"
+      lost (Diag.say .W0443 .attribute s!"/{k}") "write the box as '[llx lly urx ury]' in PDF \
+points"
         s!"pageattr:{k}" "not four numbers"
     | none, _ =>
-      lost (Diag.say .W0443 .attribute s!"/{k}") "a page attribute's '/TrimBox', '/BleedBox', '/ArtBox' and '/CropBox' are written; \
+      lost (Diag.say .W0443 .attribute s!"/{k}") "a page attribute's '/TrimBox', '/BleedBox', \
+'/ArtBox' and '/CropBox' are written; \
 '\\page' declares the rest of the page" s!"pageattr:{k}" "not a page box"
   let old := (← get).pageBoxes
   let boxes := [Native.PageKey.trimbox, .bleedbox, .artbox, .cropbox].filterMap fun key =>
@@ -7991,18 +8007,22 @@ private def defineSpotColor (raws : Array Raw) (start : Nat) (pos : Pos) :
     return some (#[], k)
   let (some n, some colorant, some v) := (names[0]?, names[1]?, vals[0]?)
     | say .W0102 (Diag.say .W0102 .colour (obj := ofWritten "\\definespotcolor")) pos
-        (detail := some "it needs a colour name, a colorant and its values") (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
+        (detail := some "it needs a colour name, a colorant and its values")
+          (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
       return some (#[], k)
   let n := (rawSrc n).trimAscii.toString
   unless nativeName n do
     say .W0102 (Diag.say .W0102 .colour n (ofWritten "\\definespotcolor")) pos
-      (detail := some "a name no palette entry spells") (help := "name the colour with ASCII letters, digits, '.' or '_'")
+      (detail := some "a name no palette entry spells")
+        (help := "name the colour with ASCII letters, digits, '.' or '_'")
     return some (#[], k)
   let flat := String.ofList ((rawSrc colorant).toList.map fun c => if c.isWhitespace then ' ' else c)
   let ink := " ".intercalate ((flat.splitOn " ").filter (!·.isEmpty))
   if ink.isEmpty || ink.contains '"' then
     say .W0102 (Diag.say .W0102 .colour n (ofWritten "\\definespotcolor")) pos
-      (detail := some "a colorant the PDF cannot carry") (help := "name the colorant without double quotes, as \\definespotcolor{name}{Ink Name}{c,m,y,k}")
+      (detail := some "a colorant the PDF cannot carry")
+        (help := "name the colorant without double quotes, as \\definespotcolor{name}{Ink \
+Name}{c,m,y,k}")
     return some (#[], k)
   let m := (model.map (·.trimAscii.toString)).getD "cmyk"
   let alternate := match Decl.parseColorSpec (some m) (rawSrc v) with
@@ -8094,8 +8114,7 @@ public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
     else some (before, after)
 
 /-- The words naming an environment definition the document body holds. -/
-public def bodyEnvDefMessage : String :=
-  Diag.say .W0104 .definition (obj := some (none, Diag.Name.of "the document body"))
+public def bodyEnvDefMessage : String := Diag.say .W0104 .definition
 
 public def bodyEnvDefHelp : String :=
   "define the environment in the preamble, before '\\begin{document}'"
@@ -8111,6 +8130,7 @@ private def refusedEnvDef (name env spec : String) (discards : Bool) (pos : Pos)
     write fun st => { st with definedEnvs := st.definedEnvs.push env }
     return false
   sayOnce ("ctrl:" ++ name ++ ":body") .W0104 bodyEnvDefMessage pos (help := bodyEnvDefHelp)
+    (detail := some "in the document body")
   unless name.startsWith "re" || name.startsWith "Re" || st.definedEnvs.contains env ||
       st.provideKeeps.contains (Tcolorbox.bindingName env) do
     write fun st => { st with refusedEnvs := Ir.redeclare st.refusedEnvs env (spec, discards) }
@@ -8250,7 +8270,8 @@ quad to the text" pos
         else
           sayOnce ("ctrl:runin:" ++ cmd) .W0104
             (Diag.say .W0104 .definition s!"\\{cmd}") pos
-            (detail := some (if runinBuiltin then "a run-in heading in a font the run-in title does not set"
+            (detail := some (if runinBuiltin then "a run-in heading in a font the run-in title \
+does not set"
               else "a run-in heading at a level the engine does not model"))
         return some #[]
       if element != cmd || !Ir.styleableElements.contains element then
@@ -8515,7 +8536,8 @@ private def ctrlRows2 : List CtrlRow :=
      .lower .colorLet { paramStands := some "the colour is not defined" }⟩]
 
 private def ctrlRows3 : List CtrlRow :=
-  [refusedRow "column" [.group] (Diag.say .W0104 .command "\\column") "\\column{width} splits the body of \\begin{columns} \
+  [refusedRow "column" [.group] (Diag.say .W0104 .command "\\column") "\\column{width} splits the \
+body of \\begin{columns} \
 ... \\end{columns}",
    ⟨"columnratio", [.needed, .opt], .lower .columnRatio {}⟩,
    ⟨"crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩,
@@ -8631,14 +8653,16 @@ private def ctrlRows8 : List CtrlRow :=
    ⟨"textbar", [], .tokens [.word "|" {}] none⟩,
    ⟨"textemdash", [], .tokens [.ctrl "emdash" {}] none⟩,
    ⟨"textendash", [], .tokens [.ctrl "endash" {}] none⟩,
-   ⟨"textoverprint", [.opt, .kept], .refuse .W0104 .each (Diag.say .W0104 .command "\\textoverprint")
+   ⟨"textoverprint", [.opt, .kept], .refuse .W0104 .each
+       (Diag.say .W0104 .command "\\textoverprint")
      none⟩,
    ⟨"textperiodcentered", [], .tokens [.ctrl "middot" {}] none⟩,
    ⟨"thepage", [], .tokens [.ctrl "pagenumber" {}] none⟩,
    ⟨"thispagestyle", [.group], .lower .thisPageStyle {}⟩,
    ⟨"titlegraphic", [.group], .lower .titleGraphic {}⟩,
    -- Core reads no clock, so `\today` is refused.
-   refusedRow "today" [] (Diag.say .W0104 .command "\\today") "write the date as text where it should appear; \
+   refusedRow "today" [] (Diag.say .W0104 .command "\\today") "write the date as text where it \
+should appear; \
 \\allow{W0104} accepts the skip",
    ⟨"ul", [], .tokens [.ctrl "underline" {}] (some "\\underline")⟩,
    ⟨"unimathsetup", [.needed], .lower .uniMathSetup {}⟩]
@@ -8721,10 +8745,13 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
           out := out ++ #[.ctrl BeamerColor.marker pos, .group #[.word element pos] pos,
             .group #[.word body pos] pos]
       | "block", none =>
-        sayOnce ("moloch:" ++ key) .W0104 (Diag.say .W0104 .option s!"{key}={value}" (ofWritten cmd)) pos
-          (help := "moloch's block option takes fill or transparent")
+        sayOnce ("moloch:" ++ key) .W0104
+          (Diag.say .W0104 .value (Diag.Name.value value) (some (some .key, Diag.Name.of key))) pos
+          (help := "moloch's block option takes fill or transparent") (detail := some s!"in {cmd}")
       | _, _ =>
-        sayOnce ("moloch:" ++ key) .W0104 (Diag.say .W0104 .option s!"{key}={value}" (ofWritten cmd)) pos
+        sayOnce ("moloch:" ++ key) .W0104
+          (Diag.say .W0104 .value (Diag.Name.value value) (some (some .key, Diag.Name.of key))) pos
+          (detail := some s!"in {cmd}")
     | (key, none) =>
       sayOnce ("moloch:" ++ key) .W0104 (Diag.say .W0104 .option key (ofWritten cmd)) pos
   return out
@@ -8839,7 +8866,8 @@ private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
         became "\\apptocmd{\\KV@beamerframe@standout}" "frame-local colour aliases" pos
         return some (aliases ++ tail, k)
   say .E0111 (Diag.say .E0111 .command "\\apptocmd") pos
-    (detail := some "the engine reads standout colour aliases and explicit-footer restoration") (help := "append '\\colorlet' aliases after loading the standout theme, or use \
+    (detail := some "the engine reads standout colour aliases and explicit-footer restoration")
+      (help := "append '\\colorlet' aliases after loading the standout theme, or use \
 '\\chrome{standout-note=true}' to restore explicit notes")
     (subject := some "ctrl:apptocmd")
   return some (tail, k)
@@ -9042,8 +9070,8 @@ which they run, before a block"]
       | none, _ => pure #[s!"its '{beginEl}' half, which the document never sets"]
     unless unread.isEmpty do
       sayOnce ("beamer:template:" ++ beginEl) .W0110
-        (Diag.say .W0110 .template s!"{beginEl} / {endEl}" (ofWritten "\\setbeamertemplate")) pos
-        (detail := some (String.intercalate "; " unread.toList))
+        (Diag.say .W0110 .template beginEl (ofWritten "\\setbeamertemplate")) pos
+        (detail := some (String.intercalate "; " ((s!"with {endEl}") :: unread.toList)))
         (help := "write the template with \\setbox, \\vbox, \\llap, \\vrule, \\strut and \\usebeamercolor")
     write fun st => { st with file := savedFile }
   return out
@@ -9160,7 +9188,8 @@ private def biblatexCiteArm (name : String) (pos : Pos) (raws : Array Raw) (star
   | "supercite" =>
     if authoryear then return to "citealp"
     say .W0428 (Diag.say .W0428 .command "\\supercite") pos
-      (detail := some "set as \\cite, in brackets on the line") (subject := some "citecmd:supercite")
+      (detail := some "set as \\cite, in brackets on the line")
+        (subject := some "citecmd:supercite")
     let keys := (args.filter (· matches .group ..)).back?
     return some (#[.ctrl "cite" pos] ++ keys.toArray, k)
   | "autocite" | "parencite" =>
@@ -9584,7 +9613,8 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     let factor := (rawSrc (args.getD 0 #[])).trimAscii.toString
     unless Decl.wholeValue factor do
       sayOnce ("ctrl:" ++ name) .W0104 (Diag.say .W0104 .command s!"\\{name}") pos
-        (detail := some "a factor the engine cannot read") (help := "give a number, such as \\linespread{1.2}")
+        (detail := some "a factor the engine cannot read")
+          (help := "give a number, such as \\linespread{1.2}")
       return some (#[], k)
     return some (← setting s!"\\{name}" (.page #[(.leading, factor)]) pos, k)
   | "xspace" =>
@@ -9937,7 +9967,8 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
             InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
-          .template (Diag.Name.of name.trimAscii.toString) (some (some .element, Diag.Name.of element)) pos
+          .template (Diag.Name.of name.trimAscii.toString)
+            (some (some .element, Diag.Name.of element)) pos
         return some (#[], predefinedEnd raws j)
       -- A title-page template of the overlay shape is read as the engine's own title page.
       let (bodyArgs, k) := takeGroups raws j 1
@@ -9958,7 +9989,8 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
           let what := if palette.pairs.isEmpty then "is skipped" else "sets its ground alone"
           sayOnce "beamer:template:title page" .W0104
             (Diag.say .W0104 .template "title page" (ofWritten "\\setbeamertemplate")) pos
-            (detail := some s!"in the document body it {what}") (help := "set the title-page template in the preamble")
+            (detail := some s!"in the document body it {what}")
+              (help := "set the title-page template in the preamble")
           return some (← carry palette pos, k)
         -- premise: titleTemplateTextChecks — a template no document follows sets no title page
         unless (← get).wholeDoc do
@@ -10009,7 +10041,8 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
             InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
-          .template (Diag.Name.of name.trimAscii.toString) (some (some .element, Diag.Name.of element)) pos
+          .template (Diag.Name.of name.trimAscii.toString)
+            (some (some .element, Diag.Name.of element)) pos
         return some (#[], predefinedEnd raws j)
       let (bodyArgs, k) := takeGroups raws j 1
       if ← paramArgs bodyArgs then
@@ -10050,7 +10083,8 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     if (← get).titlePageAsked && !(← get).inDef then
       sayOnce "partial:\\documentclass:titlepage:maketitle" .W0110
         (Diag.say .W0110 .option "titlepage" (ofWritten "\\documentclass")) pos
-        (detail := some "\\maketitle sets the title above the text") (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
+        (detail := some "\\maketitle sets the title above the text")
+          (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
       -- A class with chapters sets its title's page with no running furniture, as its title page.
       if (← get).chapters then
         return some (#[.ctrl Ir.titlePageBeginRole pos, .ctrl "maketitle" pos], start)
@@ -10457,7 +10491,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
       out := out ++ (← packageOptions name p (given.filter (· != "normalem")) pos)
     else
       say .W0103 (Diag.say .W0103 .package "ulem") pos
-        (detail := some "without normalem it changes \\emph") (help := "use \\usepackage[normalem]{ulem} for native \\sout")
+        (detail := some "without normalem it changes \\emph")
+          (help := "use \\usepackage[normalem]{ulem} for native \\sout")
         (refused := some p)
       mention (opt.getD "")
   -- premise: tableFaceOrderChecks — the face before or after the load ships identical pages
@@ -11286,7 +11321,8 @@ a deeper level apart"
         (kd, (Diag.Noun.list, Diag.Name.of kd), listHelp)) ++
       levels.filterMap fun l =>
         if l == 1 then some ("1", (Diag.Noun.level, Diag.Name.value "1"), firstHelp)
-        else if l == 0 || 4 < l then some (toString l, (Diag.Noun.level, Diag.Name.value (toString l)),
+        else if l == 0 || 4 < l then some (toString l,
+            (Diag.Noun.level, Diag.Name.value (toString l)),
           "lists nest four levels")
         else none
   -- enumitem's trivlist scope sets the trivlists' own `\topsep`, `\partopsep` and `\itemsep`.
@@ -11436,7 +11472,8 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
     let modeled := modeledColorSource (some (c.src 1)) (c.src 2)
     unless nativeName n && (modeled.isEmpty || Decl.wholeValue modeled) do
       say .W0102 (Diag.say .W0102 .colour n (ofWritten "\\definecolor")) c.pos
-        (detail := some "a name or value no palette entry spells") (help := "name the colour with ASCII letters, digits, '.' or '_'")
+        (detail := some "a name or value no palette entry spells")
+          (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
     became s!"\\definecolor\{{n}}" (Native.Setting.palette #[(n, modeled)]).render c.pos
     carry (.palette #[(n, Decl.xcolorDefinitionPrefix ++ modeled)]) c.pos
@@ -11445,7 +11482,8 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
     let src := if (c.src 1).trimAscii.toString == "." then "#000000" else c.src 1
     unless nativeName (c.src 0) && (src.isEmpty || Decl.wholeValue src) do
       say .W0102 (Diag.say .W0102 .colour (c.src 0) (ofWritten "\\colorlet")) c.pos
-        (detail := some "a name or colour no palette entry spells") (help := "name the colour with ASCII letters, digits, '.' or '_'")
+        (detail := some "a name or colour no palette entry spells")
+          (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
     became "\\colorlet" (Native.Setting.palette #[(c.src 0, src)]).render c.pos
     carry (.palette #[(c.src 0, Decl.xcolorDefinitionPrefix ++ src)]) c.pos
@@ -11751,7 +11789,7 @@ declare the furniture directly")
   | .pageBreak => do
     -- Every `\pagebreak` is taken whole; the demand level is not weighed.
     if (c.given 0).isSome then
-      say .N0102 (Diag.say .N0102 .option (obj := ofWritten "\\pagebreak")) c.pos
+      say .N0102 (Diag.say .N0102 .optionalArgument (obj := ofWritten "\\pagebreak")) c.pos
         (detail := some "demand levels; the break is taken")
     return #[.ctrl "pagebreak" c.pos]
   | .komaFont => do
@@ -11791,7 +11829,8 @@ the engine draws")
     if keys.isEmpty then
       let dropped := (opt.getD "").trimAscii.toString
       unless dropped.isEmpty do
-        say .W0101 (Diag.say .W0101 .entry (obj := ofWritten s!"\\RedeclareSectionCommand\{{element}}"))
+        say .W0101 (Diag.say .W0101 .entry
+          (obj := ofWritten s!"\\RedeclareSectionCommand\{{element}}"))
           c.pos (detail := some dropped)
       return #[]
     setting s!"\\RedeclareSectionCommand\{{element}}" (.style element keys) c.pos
@@ -11814,7 +11853,8 @@ the engine draws")
     else
       sayOnce ("param:\\newcounter:" ++ counter) .W0104
         (Diag.say .W0104 .counter counter (ofWritten "\\newcounter")) c.pos
-        (detail := some "nothing in the document reads it") (help := "use the counter where it should count, or drop it")
+        (detail := some "nothing in the document reads it")
+          (help := "use the counter where it should count, or drop it")
     return #[]
   | .ensureMath => return #[.ctrl c.name c.pos] ++ c.raws.extract c.start c.stop
   -- hyperref's `\texorpdfstring`: the page sets its TeX string.
@@ -11857,7 +11897,8 @@ the engine draws")
         (ofWritten "\\columnratio")) c.pos
         (help := "write one fraction between zero and one, like \\columnratio{0.35}")
     if (c.given 1).isSome then
-      sayOnce "paracol:right-ratio" .W0104 (Diag.say .W0104 .argument (obj := ofWritten "\\columnratio"))
+      sayOnce "paracol:right-ratio" .W0104
+        (Diag.say .W0104 .optionalArgument (obj := ofWritten "\\columnratio"))
         c.pos (detail := some "a paired-page ratio; the same-page ratio is used")
     became "\\columnratio" "the widths of the next two-column flow" c.pos
     return #[]
@@ -11950,8 +11991,10 @@ and 'transparent=<n>' are understood")
       discard s!"\\inputencoding\{{arg}}" "the file already reads in that encoding"
         ("inputencoding:" ++ arg) c.pos
     else
-      sayOnce ("inputencoding:" ++ arg) .W0104 (Diag.say .W0104 .encoding arg (ofWritten "\\inputencoding"))
-        c.pos (detail := some "each file reads in one encoding throughout") (help := s!"save the file in one encoding, UTF-8 best, and delete \
+      sayOnce ("inputencoding:" ++ arg) .W0104 (Diag.say .W0104 .encoding arg
+        (ofWritten "\\inputencoding"))
+        c.pos (detail := some "each file reads in one encoding throughout")
+          (help := s!"save the file in one encoding, UTF-8 best, and delete \
 '\\inputencoding\{{arg}}'")
     return #[]
   | .komaOptions => komaEntries "KOMAoptions" (Entries.items .keyval (c.arg 0)).toList c.pos
@@ -12213,8 +12256,10 @@ private def splitParacol (body : Array Raw) (start : Nat) :
       let afterStar := if starred then skipSpaces body (ks + 1) else k0
       let (spanning, k) := if starred then takeRawOpt body afterStar else (none, k0)
       if starred then
-        sayOnce "paracol:synchronized-switch" .W0104 (Diag.say .W0104 .command "\\switchcolumn*") spos
-          (detail := some (if spanning.isSome then "its spanning content stays in the selected column"
+        sayOnce "paracol:synchronized-switch" .W0104
+            (Diag.say .W0104 .command "\\switchcolumn*") spos
+          (detail := some (if spanning.isSome then "its spanning content stays in the selected \
+column"
             else "the column flows stay independent"))
       let fallback := if current == 0 then 1 else 0
       let next ← match selected.bind (rawSrc · |>.toNat?) with
@@ -12222,13 +12267,15 @@ private def splitParacol (body : Array Raw) (start : Nat) :
           if n < 2 then pure n
           else do
             sayOnce "paracol:switch-column" .W0104
-              (Diag.say .W0104 .column (Diag.Name.value (toString n)) (ofWritten "\\switchcolumn")) spos
+              (Diag.say .W0104 .column (Diag.Name.value (toString n))
+                (ofWritten "\\switchcolumn")) spos
+              (detail := some "the next column is used")
             pure fallback
         | none => do
           if selected.isSome then
             sayOnce "paracol:switch-column" .W0104
               (Diag.say .W0104 .column (obj := ofWritten "\\switchcolumn")) spos
-              (detail := some "a column is 0 or 1")
+              (detail := some "a column is 0 or 1; the next column is used")
           pure fallback
       current := next
       if let some text := spanning then
@@ -12248,7 +12295,8 @@ private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos)
   let (args, k) := takeGroups body j 1
   let count := (rawSrc (args.getD 0 #[])).trimAscii.toString.toNat?
   if leftCount.isSome then
-    sayOnce "paracol:left-count" .W0104 (Diag.say .W0104 .argument (obj := some (some .environment,
+    sayOnce "paracol:left-count" .W0104 (Diag.say .W0104 .optionalArgument
+      (obj := some (some .environment,
       Diag.Name.of "paracol"))) pos (detail := some "paired-page columns; both set on one page")
   if count != some 2 then
     sayOnce "env:paracol:count" .W0104 (Diag.say .W0104 .environment "paracol") pos
@@ -12798,7 +12846,8 @@ private def boxRowEmitAt (classPt : Option Nat) (rs : Array Raw) : M (Array Raw)
         "one row of boxes, the glue between them as written" p (subject := some "env:minipage-row")
     if opts then
       sayOnce "env:minipage-row-options" .N0102
-        (Diag.say .N0102 .option (obj := some (some .environment, Diag.Name.of "minipage"))) p
+        (Diag.say .N0102 .optionalArgument
+          (obj := some (some .environment, Diag.Name.of "minipage"))) p
         (detail := some "height and inner-pos, in a row of boxes")
   return out
 
@@ -13235,10 +13284,13 @@ private def overprintRaw : Raw → M (Array Raw)
       became "\\begin{overprint}" "\\alt alternation, one item per overlay" p
       -- An unnumberable spec is named once for the document (W0105).
       if loose > 0 then
-        let msg := Diag.say .W0105 .overlay (obj := some (some .environment, Diag.Name.of "overprint"))
+        let msg := Diag.say .W0105 .overlay
+          (obj := some (some .environment, Diag.Name.of "overprint"))
         sayOnce "spec:overlay" .W0105 msg p
-          (detail := some (if loose == 1 then "an item that names no step stands on the unclaimed steps"
-            else "an item that names no step stands on the unclaimed steps; later such items are not shown"))
+          (detail := some (if loose == 1 then "an item that names no step stands on the unclaimed \
+steps"
+            else "an item that names no step stands on the unclaimed steps; later such items are \
+not shown"))
           (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
       return repl
@@ -14071,7 +14123,8 @@ private def abstractUnderTitlePage (pos : Pos) : M Unit := do
   if (← get).titlePageAsked && !(← get).inDef then
     sayOnce "partial:\\documentclass:titlepage:abstract" .W0110
       (Diag.say .W0110 .option "titlepage" (ofWritten "\\documentclass")) pos
-      (detail := some "the abstract is set in the text") (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
+      (detail := some "the abstract is set in the text")
+        (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
 
 mutual
 
@@ -16559,7 +16612,8 @@ public def unusedLengths (file : String) (raws : Array Raw) (edefReads : Std.Has
     if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n || edefReads.contains n ||
         (texParamOf n).isSome || t.seen.getD n 0 > t.targets.getD n 0 then none
     else some (Diag.of .W0104 (Diag.notHonoured .length s!"\\{n}") (some ⟨f, p⟩)
-      (detail := some "nothing in the document or the engine reads it") (help := "use the length where the page should read it, or drop the setting")
+      (detail := some "nothing in the document or the engine reads it")
+        (help := "use the length where the page should read it, or drop the setting")
       (subject := some (paramSubject "setlength" n)))
 
 /-- Rewrites a whole parsed document. -/

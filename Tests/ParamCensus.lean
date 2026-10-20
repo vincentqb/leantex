@@ -169,7 +169,8 @@ def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
 
 /-- Whether a diagnostic is the note an inert row gives a setting, keyed by it. -/
 def notesInert (key : String) (d : Diag) : Bool :=
-  d.code == "N0100" && (d.detail.any (·.startsWith "nothing:") || hasStr (saidText d) "→ nothing:") &&
+  d.code == "N0100" && (d.detail.any (·.startsWith "nothing:") || hasStr (saidText d) "→ \
+nothing:") &&
     d.subject.any (keyedBy key)
 
 /-- One reader's vocabulary: each setting as the document writes it, the documents it is tried in
@@ -1022,7 +1023,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
       (let p := page (native "textheight = 500pt, vmarginratio = 1:1")
        p.vmargin == (p.height - Dim.pt 500) / 2 && p.bottomMargin == p.vmargin))
   t "text block: a malformed ratio says what the key takes"
-    ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr (saidText d) "a ratio such as 2:3")
+    ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr (saidText d) "a ratio such as \
+2:3")
   t "text block: a height past the page is named and the margins stand"
     (named (native "tmargin = 1in, textheight = 900pt") "textheight" &&
       held (native "tmargin = 1in, textheight = 900pt") (page (native "")).vmargin

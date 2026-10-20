@@ -213,8 +213,16 @@ def parseLog (exit : UInt32) (log : String) : TRun := Id.run do
 /-- A cascade naming a construct present in the source: an environment called unclosed whose
 `\end` is there, or an `\end` said to have no `\begin` that is there. -/
 def spurious (src : String) (d : LDiag) : Bool :=
+  let bare (s : String) : String :=
+    if s.length ≥ 2 && s.startsWith "'"
+      && s.endsWith "'" then ((s.drop 1).dropEnd 1).toString else s
   let named : Option String := match d.message.splitOn " " with
-    | ["unclosed", "environment", n] => some s!"\\end\{{n}}"
+    | ["unclosed", "environment", n] => some s!"\\end\{{bare n}}"
+    | ["unclosed", "math", n] =>
+      match bare n with
+      | "\\(" => some "\\)"
+      | "\\[" => some "\\]"
+      | _ => none
     | _ => match d.detail.splitOn " without " with
       | [_, w] => some w
       | _ => none
@@ -556,6 +564,8 @@ def selftest (repo : System.FilePath) (lualatex? : Option String) : IO UInt32 :=
     ("log: a clean log accepts", (parseLog 0 "Output written on t.pdf\n").accepted),
     ("spurious: a named construct present", spurious "\\end{document}"
       { code := "E0201", line := 2, message := "unclosed environment document" }),
+    ("spurious: an open \\( whose closer is present", spurious "\\)"
+      { code := "E0201", line := 2, message := "unclosed math \\(" }),
     ("spurious: a brace is never a construct", !spurious "}"
       { code := "E0201", line := 3, message := "unclosed group {" }),
     ("cache: a run round-trips", decodeT (encodeT { exit := 0, text := some "a\nb" }) ==

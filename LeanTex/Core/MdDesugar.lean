@@ -1153,7 +1153,8 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         | .unread => []
       let (decls, unread) := CiteDecl.natbibLoad given
       let ds := unread.toArray.map fun o =>
-        Diag.of .W0104 (Diag.notHonoured .option (Diag.Name.of o) (some (some .package, "natbib"))) (some ⟨file, f.pos⟩)
+        Diag.of .W0104 (Diag.notHonoured .option (Diag.Name.of o)
+          (some (some .package, "natbib"))) (some ⟨file, f.pos⟩)
           (subject := some ("md:meta:natbiboptions:" ++ o))
       out := { out with decls := out.decls ++ decls, diags := out.diags ++ ds }
     | "nocite", v =>

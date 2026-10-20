@@ -171,7 +171,10 @@ public def lineOf (accepted : String → Bool) (help id : String) (ds : Array Di
   { first with
     kind := .W0419
     message := Diag.say .W0419 .picture
-    detail := some (" · ".intercalate here.toList)
+    detail := match here.toList with
+      | [] => first.detail
+      | one :: [] => first.detail.orElse fun _ => some one
+      | many => some (" · ".intercalate many)
     help := first.help.map fun _ => help
     subject := some (Ir.picSrcPrefix ++ id)
     refused := none

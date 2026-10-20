@@ -88,7 +88,7 @@ example (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raws i := by
 
 example : True := by
   fail_if_success have := Parse.Stop
-  fail_if_success have := Parse.Stop.name
+  fail_if_success have := Parse.Stop.unclosed
   fail_if_success have := Parse.Stop.halfName
   fail_if_success have := Parse.Frame
   fail_if_success have := Parse.Frame.close

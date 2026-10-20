@@ -504,7 +504,7 @@ verbatim package spells it"))
               let shown := if star then body.map (fun c => if c == ' ' then '␣' else c) else body
               unless closed do
                 diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .command "\\verb")
-                  (some ⟨file, here⟩) (detail := some "its delimiter's second copy ends it on its line"))
+                  (some ⟨file, here⟩) (detail := some "no second delimiter on its line"))
               toks := toks.push ⟨.verb "verb" shown, here⟩
               let stop := if closed then e + 1 else e
               pos := posOver cs i stop pos
@@ -522,8 +522,8 @@ verbatim package spells it"))
                 diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .command s!"\\{name}")
                   (some ⟨file, here⟩)
                   (detail := some (if urlCommands.contains name then
-                    "its delimiter's second copy ends it on its line"
-                  else "its closing delimiter comes before a blank line")))
+                    "no second delimiter on its line"
+                  else "no closing delimiter before a blank line")))
               toks := toks.push ⟨.verb name call, here⟩
               pos := posOver cs i stop pos
               i := stop

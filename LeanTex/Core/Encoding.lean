@@ -488,7 +488,7 @@ private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs
     (pos : Pos) : Diag :=
   let message := if runs.all (·.nul) then
       Diag.say .W0002 .character "U+0000" (some (some .file, Diag.Name.of file))
-    else Diag.say .W0002 .encoding (Diag.Name.of encoding) (some (some .file, Diag.Name.of file))
+    else Diag.say .W0002 .character (obj := some (some .file, Diag.Name.of file))
   let detail := match runs.toList with
     | [r] =>
       if r.nul then s!"U+0000 at offset {r.offset}"
@@ -502,7 +502,8 @@ private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs
 {runList bytes (runs.map fun r => (r.offset, r.len)) true}"
   { Diag.of .W0002 message (some ⟨file, pos⟩) (help := some help)
       (subject := some ("input-bytes:" ++ file)) (recovery := some (.replacedBy "U+FFFD"))
-      (detail := some detail) with
+      (detail := some (if runs.all (·.nul) then detail else s!"not text in {encoding}: \
+{detail}")) with
     offsets := runs.map (·.offset) }
 
 /-- The warning a reading owes for what it replaced, if anything. -/
@@ -569,7 +570,8 @@ private def strayDiag (file : String) (e : Legacy) (bytes : ByteArray) (c : Chos
   match c.minority[0]? with
   | none => #[]
   | some (first, _) =>
-    let message := Diag.say .W0004 .encoding (Diag.Name.of e.name) (some (some .file, Diag.Name.of file))
+    let message := Diag.say .W0004 .encoding (Diag.Name.of e.name)
+        (some (none, Diag.Name.value "UTF-8"))
     let at_ := match c.minority.toList with
       | [(o, _)] => s!"byte {hexByte (bytes[o]?.getD 0)} at offset {o}"
       | _ => s!"{c.minority.size} bytes, at offsets {runList bytes c.minority true}"
@@ -832,7 +834,8 @@ public def Ledger.notes (l : Ledger) : Array Diag :=
   | some d =>
     let reads := l.reads
     let note (mh : String × String) : Array Diag :=
-      #[Diag.of .N0025 (Diag.say .N0025 .option d.option (some (some .package, Diag.Name.of "inputenc")))
+      #[Diag.of .N0025 (Diag.say .N0025 .option d.option
+        (some (some .package, Diag.Name.of "inputenc")))
         (some d.span) (help := some mh.2) (detail := some mh.1)
         (subject := some ("usepackage:inputenc:" ++ d.option))]
     match d.choice with

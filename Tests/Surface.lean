@@ -498,7 +498,7 @@ def columnFormChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{column}{0.5\\textwidth}b\\end{column}\\end{columns}")).map (·.size) == some 2)
   t "a \\column outside {columns} is named, its argument consumed"
     (let ds := (elabStr (deck169Frame "\\column{0.5\\textwidth}\nx")).2
-     (ds.any fun d => d.code == "W0104" && hasStr (d.help.getD "") "\\begin{columns}") &&
+     (ds.any fun d => d.code == "W0104" && d.subject == some "ctrl:column") &&
        !ds.any (·.code == "W0301") && !ds.any (·.code == "E0313"))
 /-- Listings apparatus and siunitx: `\lstset` precedence, listing numbering, minted's language
 argument, and number and unit texts under each locale. -/
@@ -662,7 +662,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dmDoc.info.pdfVersion == some "1.7")
   t "compat DocumentMetadata names the writer keys it drops"
     (dmDs.any fun d => d.code == "W0101" &&
-      !hasStr d.message "pdfversion" && hasStr (saidText d) "uncompress")
+      !hasStr (saidText d) "pdfversion" && hasStr (saidText d) "uncompress")
   let (hookDoc, hookDs) := elabStr ("\\documentclass{article}\n" ++
     "\\AddToHook{shipout/background}[me]{\\put(0,0){leak}}\n" ++
     "\\begin{document}\nx\n\\end{document}")
@@ -5540,7 +5540,7 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "data: a forward reference is W0364 — data precedes use"
     (((elabData #[] ("\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}" ++
         "\\data{ @job{a, role = {X}} }")).2.filter (·.severity == .warning)).any fun d =>
-      d.code == "W0364" && d.detail == some "no data records before this point")
+      d.code == "W0364" && d.message == "undefined record" && d.detail.isNone)
   t "data: a malformed inline entry is W0352 and the rest is kept"
     (let (doc, ds) := elabData #[]
       ("\\data{ @job{bad, role = ?} @job{ok, role = {Kept Role}} }" ++
@@ -6047,7 +6047,7 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let accepted := Boundary.fold #["W0334"] false "lualatex" w2 #[shade, unread]
   t "an accepted refusal is not folded, and the line names only the rest"
     (accepted.map (·.code) == #["W0334", "W0419"] &&
-     (accepted[1]?.any fun d => hasStr (saidText d) "'mod'" && !hasStr d.message "'\\shade'"))
+     (accepted[1]?.any fun d => hasStr (saidText d) "'mod'" && !hasStr (saidText d) "'\\shade'"))
   let everyOne := Boundary.fold #[] true "lualatex" w2 #[shade, unread]
   let bothNamed := Boundary.fold #["W0334", "E0333"] false "lualatex" w2 #[shade, unread]
   t "with every refusal accepted nothing folds; the first quotes the tool"

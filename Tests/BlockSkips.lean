@@ -423,7 +423,7 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (nfill.isSome && nfill == vfill && nds.all (·.severity != .error))
   let (_, bad) := pageOf "\\block[stretch = 3pt]{}"
   check ref "block skips: a stretch the block reader does not take names its values"
-    (bad.any fun d => hasStr (saidText d) "fill or unranked" && !hasStr d.message "has no key")
+    (bad.any fun d => d.code == "E0323" && hasStr (saidText d) "fill or unranked")
 
 /-- The sheet's rules for a skip box whose follower's term differs from the generic boundary's: a
 frame opening, a step carrier, a paragraph after a list, and a rule's `<hr>`. -/

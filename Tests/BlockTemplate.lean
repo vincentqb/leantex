@@ -2320,7 +2320,8 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (ddoc, dd) := Elab.run "block-template-wholebar-drift.tex" drifted
   let named := dd.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:block begin"
   check ref s!"whole bar: a flag the body changes before a block is named ({named.map (·.message)})"
-    (drifted != gapped && named.size == 1 && named.all (fun d => hasStr (saidText d) "changes \\ifprobe@gap"))
+    (drifted != gapped && named.size == 1 && named.all (fun d => hasStr (saidText d) "changes \
+\\ifprobe@gap"))
   check ref "whole bar: the blocks the body's flag changes keep the default pair"
     (((ddoc.styles.find? "block").bind (·.shape)).isNone)
 

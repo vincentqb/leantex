@@ -206,14 +206,16 @@ public def unusedHelp (what : String) : String := s!"delete {what}, or \\allow\{
 /-- The words and subject of listing defaults no listing after them reads, by the command that
 declares them and its lexer layer. -/
 public def listingWords (reader : String) (lang : Option String) : String × String :=
-  (Diag.say .W0449 .listing (lang.map Diag.Name.of) (some (none, Diag.Name.of s!"\\{reader}")),
+  (Diag.say .W0449 .command (Diag.Name.of s!"\\{reader}")
+      (lang.map fun l => (some .language, Diag.Name.of l)),
    s!"unused:listing:{reader}" ++ (lang.map (":" ++ ·)).getD "")
 
 /-- The loss of a face the document declares that no text is set in, at its entry in the declaring
 command. -/
 public def faceDiag (key : String) (span : Span) : Diag :=
   if key == "math" then
-    Diag.of .W0449 (Diag.say .W0449 .face "math") (detail := some "the document sets no mathematics")
+    Diag.of .W0449 (Diag.say .W0449 .face "math")
+      (detail := some "the document sets no mathematics")
       (span := some span) (subject := some "unused:face:math") (trigger := span.pos.command)
       (help := some (unusedHelp "the 'math' face's entry"))
   else if key.startsWith "family." then
@@ -236,7 +238,8 @@ public def metaDiag (file key : String) (pos : Pos) : Diag :=
 /-- The loss of a Lean page's directive key only a citation reads, on a page whose documentation
 cites nothing. -/
 public def directiveDiag (file key : String) (pos : Pos) : Diag :=
-  Diag.of .W0449 (Diag.say .W0449 .key key) (detail := some "the page's documentation cites nothing")
+  Diag.of .W0449 (Diag.say .W0449 .key key)
+    (detail := some "the page's documentation cites nothing")
     (span := some ⟨file, pos⟩) (subject := some s!"unused:directive:{key}")
     (help := some "cite an entry, as `[Key]` does, or delete the key")
 

@@ -486,11 +486,11 @@ private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
   | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, some ⟨.rbrace, _⟩ => (n, i + 3, #[])
   | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, _ =>
     (n, i + 2, #[err file .E0205 (Diag.say .E0205 .environmentName n) pos
-      (detail := some "a } closes the name")])
+      (detail := some "expected }")])
   | some ⟨.lbrace, _⟩, _, _ =>
     ("", i + 1, #[err file .E0205 (Diag.say .E0205 .environmentName) pos])
   | _, _, _ => ("", i, #[err file .E0205 (Diag.say .E0205 .environmentName) pos
-      (detail := some "a {name} follows \\begin and \\end")])
+      (detail := some "expected {name}")])
 
 /-- `\ifmmode`'s reading: its math branch as a formula first, then its text branch, each read in
 its mode, unforgeable because its name holds a space. -/
@@ -739,7 +739,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
               else
                 diags := diags.push
                   (err file .E0202 (Diag.say .E0202 .character "$") pos
-                    (detail := some "a second $ closes display math"))
+                    (detail := some "expected $"))
             frames := frames.pop
             acc := f.close acc
             continue

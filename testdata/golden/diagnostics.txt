@@ -238,13 +238,13 @@ info: the file claims its PDF/X standard on the engine's checks; a print service
 ── W0001 (config) content after \end{document} is ignored
 warning: content after '\end{document}' is ignored [W0001]
 ── W0002 (degraded) bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD
-warning: invalid encoding UTF-8 for file doc.tex [W0002]
-  note: byte 0xE9 at offset 44
+warning: invalid character for file doc.tex [W0002]
+  note: not text in UTF-8: byte 0xE9 at offset 44
 ── W0003 (degraded) no math face available; math set as plain text
 warning: no math font is available; math is set as plain text [W0003]
   note: declare \fonts{ math = "..." } naming an installed OpenType math face; `leantex fonts` lists families
 ── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
-warning: substituted encoding 'Windows-1252 (Latin-1)' for file doc.tex [W0004]
+warning: substituted encoding 'Windows-1252 (Latin-1)' for 'UTF-8' [W0004]
   note: byte 0x92 at offset 83
 ── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
 warning: overfull line; no feasible break [W0005]
@@ -749,7 +749,7 @@ warning: unused colour plum [W0449]
   note: delete the declaration of 'plum', or \allow{W0449} keeps it
 warning: unused style itemize [W0449]
   note: the document sets no itemize lists
-warning: unused listing for \lstset [W0449]
+warning: unused command \lstset [W0449]
   note: delete the declaration, or \allow{W0449} keeps it
 warning: unused face mono [W0449]
   note: delete the 'mono' face's entry, or \allow{W0449} keeps it

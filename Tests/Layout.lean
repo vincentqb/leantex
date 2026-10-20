@@ -4496,7 +4496,8 @@ def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "a report's abstract redefined on a quote keeps the quote's margins, as its refusal names"
     (place redefined "Alpha" == some (Dim.pt 25) &&
       ((short redefined "Alpha").map (decide <| Dim.pt 25 ≤ ·)).getD false &&
-      (elabStr redefined).2.any fun d => d.code == "W0303" && hasStr (saidText d) "quotation margins")
+      (elabStr redefined).2.any fun d => d.code == "W0303" && hasStr (saidText d) "quotation \
+margins")
 
 /-- A list right after a heading opens no `\topsep`: its first item stands where a paragraph after
 the heading stands. -/

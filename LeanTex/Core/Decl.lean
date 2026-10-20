@@ -1306,7 +1306,8 @@ public def splitEntry (entry : String) : Option (String × String) :=
 /-- Rejects keys the declaration does not define, naming the ones it does. -/
 public def unknownKey (file : String) (what key : String) (known : List String)
     (pos : Pos) : Diag :=
-  Diag.of .E0322 (Diag.say .E0322 .key key (some (none, Diag.Name.of s!"\\{what}"))) (some ⟨file, pos⟩)
+  Diag.of .E0322 (Diag.say .E0322 .key key (some (none, Diag.Name.of s!"\\{what}")))
+      (some ⟨file, pos⟩)
     (help := s!"known keys: {String.intercalate ", " known}")
     (subject := some s!"param:\\{what}:{key}")
 

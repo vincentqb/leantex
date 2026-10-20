@@ -224,7 +224,7 @@ names what the store carries, an empty store says how to fill it. -/
 private def sayNoRecords (kind : String) (pos : Pos) : M Unit := do
   let ks := (← get).store.kinds
   if ks.isEmpty then
-    say .W0364 (Diag.say .W0364 .record) pos (detail := some "no data records before this point")
+    say .W0364 (Diag.say .W0364 .record) pos
       (help := "'\\data{ file = \"records.bib\" }' declares them")
   else
     say .W0364 (Diag.say .W0364 .record s!"@{kind}") pos
@@ -285,7 +285,8 @@ private def expandList (env : List Binding) (out : Array Raw) :
       let out ← expandEach env s.2 sep out true bound
       expandList env out rest
     | none => do
-      say .E0304 (Diag.say .E0304 .argument (obj := some (some .environment, Diag.Name.of "foreach"))) pos
+      say .E0304 (Diag.say .E0304 .argument
+        (obj := some (some .environment, Diag.Name.of "foreach"))) pos
       expandList env out rest
   | .group body p :: rest => do
     let inner ← expandList env #[] body.toList

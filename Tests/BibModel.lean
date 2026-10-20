@@ -572,7 +572,7 @@ def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let (_, vds) := build "\\usepackage[style=authoryear-comp,sorting=anyvt]{biblatex}\n\\addbibresource{refs.bib}"
     "\\printbibliography" "dated"
   t "named: a sorting scheme the engine does not sort by is named"
-    (vds.any fun d => d.code == "W0101" && hasStr d.message "sorting=anyvt")
+    (vds.any fun d => d.code == "W0101" && hasStr d.message "'anyvt' for key sorting")
   t "named: a citation variant's own rules are named"
     (vds.any fun d => d.code == "W0101" && hasStr d.message "authoryear-comp")
   let mbib := "@article{m, author = {Ann Alpha}, title = {T}, journal = {J}, year = 2001,\n\

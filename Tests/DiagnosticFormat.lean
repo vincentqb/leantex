@@ -296,16 +296,17 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
       env := #[("LEANTEX_FONT", some face.toString)] }
     let shipped := (dir / "invalid.html").toString
     let human ← runFace #[file, "-o", shipped, "--color=never", "-q"]
+    let words := Diag.say .W0002 .character (obj := some (some .file, Diag.Name.of file))
     t "diagnostic format: a located loss is one line, its detail the one note"
       (human.exitCode == 0 && human.stdout.isEmpty && human.stderr.startsWith
-        (s!"{file}:1:1: warning: {Diag.say .W0002 .encoding "UTF-8" (some (some .file, Diag.Name.of file))} [W0002]\n" ++
-          "  note: byte 0xFF at offset 0\n"))
+        (s!"{file}:1:1: warning: {words} [W0002]\n" ++
+          "  note: not text in UTF-8: byte 0xFF at offset 0\n"))
     let machine ← runFace #[file, "-o", shipped, "--porcelain"]
     t "diagnostic format: a located loss stays JSONL on stdout"
       (machine.exitCode == 0 && machine.stderr.isEmpty && machine.stdout.startsWith
         ("{\"event\":\"diagnostic\",\"severity\":\"warning\",\"code\":\"W0002\"," ++
           "\"loss\":\"degraded\",\"message\":\"" ++
-            Diag.say .W0002 .encoding "UTF-8" (some (some .file, Diag.Name.of file)) ++ "\"," ++
+            Diag.say .W0002 .character (obj := some (some .file, Diag.Name.of file)) ++ "\"," ++
           "\"file\":\"" ++ file ++ "\",\"line\":1,\"col\":1,"))
     let usage ← run #["--not-a-flag"]
     t "diagnostic format: parser-independent argument errors keep their established output"
