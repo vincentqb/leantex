@@ -73,9 +73,8 @@ meta def numericConstant (e : Expr) : Bool :=
        | .str _ s => s.startsWith "inst"
        | _ => false)
 
-/-- An expression with every project constant naming a closed count read as its value, so a count
-behind a name (`def bpN : Nat := (bp 1).units.toNat`) meets the audit as its spelling; the base
-itself stays named. -/
+/-- An expression with each project constant of type Int, Nat or Rat naming a count read as its
+value, through four names, so `def bpN : Nat := (bp 1).units.toNat` meets the audit as its spelling. -/
 meta def unfoldCounts (env : Environment) (e : Expr) : Expr := Id.run do
   let project (c : Name) : Bool := match env.getModuleIdxFor? c with
     | some i => !(env.header.moduleNames[i.toNat]?).any fun m => [`Init, `Std, `Lean].contains m.getRoot

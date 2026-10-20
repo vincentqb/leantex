@@ -103,13 +103,6 @@ private theorem mul_zero_div (x : Length) (k : Nat) : x * (0 : Nat) / k = 0 := b
   length_units
   simp
 
-/-- A title metric at a leading and cap height. -/
-@[expose] public def metricAt (m : Ir.BlockMetric) (lead cap : Length) : Length :=
-  m.resolve lead cap
-
-/-- An alignment's share of the slack beside a box. -/
-@[expose] public def slackShare (h : Ir.HAlign) (slack : Length) : Length := h.boxOffset slack
-
 /-- A face set's x-height at a size. -/
 @[expose] public def xHeightOf (fs : FontSet) (size : Length) : Length := fs.xHeightAt size
 
@@ -11138,7 +11131,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       if offPaper then (r.geom.pageW - tableW) / 2 - r.geom.hmargin
       else max (-r.geom.hmargin)
         (min (indent - (tableW - total) / 2) (r.geom.pageW - r.geom.hmargin - tableW))
-    else indent + slackShare side (max 0 (total - tableW))
+    else indent + side.boxOffset (max 0 (total - tableW))
   -- A cell sets by its own spec: `\@arrayparboxrestore` zeroes the scope's skips (latex.ltx).
   let rc := { r with centreBoxes := false, pats := cellPats
                      geom := { r.geom with flushRight := false, justify := true } }
@@ -11780,7 +11773,7 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
 separation ([node distance = ...])")
         (detail := some s!"{n} {if n == 1 then "pair" else "pairs"} of labels")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
-  let x := indent + slackShare side (max 0 (avail - w))
+  let x := indent + side.boxOffset (max 0 (avail - w))
   let a := a.flushGap r
   let a := match display with
     | some dj => { a with ops := a.ops.push (.displayOpen dj x r.geom.fontSize) }
@@ -13031,8 +13024,8 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
     let runs := leaded face size
     let b := max strut.1 runs.1
     let box := b + max strut.2 runs.2
-    let h := metricAt height lead cap
-    let d := metricAt depth lead cap
+    let h := height.resolve lead cap
+    let d := depth.resolve lead cap
     let body := fs.get (fs.lookup 0 400 false)
     let next := scaledAt geom.fontSize body
       ((['b', 'd', 'f', 'h', 'k', 'l', 'H'].map body.charHeight).foldl max 0).toNat
@@ -13161,8 +13154,8 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let titleCap := (titleMetricsIn r.geom r.fs r.xHeight font).2
   let reachOf (e : Ir.BlockEdge) : Option EdgeReach := match e.reach with
     | .lines height depth =>
-      some { height := metricAt height titleLeading titleCap
-             depth := metricAt depth titleLeading titleCap }
+      some { height := height.resolve titleLeading titleCap
+             depth := depth.resolve titleLeading titleCap }
     | .box => none
   let titleReach : Option (Length × Length) :=
     (shape.edges.filter (·.besideTitle)).foldl (fun acc e =>
@@ -14310,7 +14303,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let natural := boxed.bind fun (w, _, body) =>
       if w.declared then none else naturalWidth? r a body (total - 2 * inset)
     let off := if cols.size == 1 && (unspecified == 0 || natural.isSome) then
-        slackShare side (max 0 (rem - 2 * inset - natural.getD 0))
+        side.boxOffset (max 0 (rem - 2 * inset - natural.getD 0))
       else 0
     let spec := boxed.map fun (w, b, _) => boxSpecOf r a b (r.geom.hmargin + indent + off)
       ((w.resolve total).or natural) w.pos total

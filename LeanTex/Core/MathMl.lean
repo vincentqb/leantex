@@ -84,7 +84,9 @@ def ruleAttrs (rule : Option Dim.Length) (em : Option Int) : Array (String × St
   | none => #[]
   | some t =>
     let width := max t 0
-    let points := if width == 0 then "0" else s!"{width.toBpString}pt"
+    let m := width * (1000 : Int) / Dim.bp 1
+    let fs := toString (m % 1000)
+    let points := if m == 0 then "0" else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt"
     let length := match em with
       | some size => if 0 < size then measuredEm width.units size else points
       | none => points

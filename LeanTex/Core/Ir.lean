@@ -7051,8 +7051,7 @@ public def shareOf (s : Nat × Nat) (e : Int) : Int :=
   if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
 
 /-- A length's share `s.1 / (s.1 + s.2)`, rounded down. -/
-public def shareLen (s : Nat × Nat) (e : Length) : Length :=
-  if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
+public def shareLen (s : Nat × Nat) (e : Length) : Length := ⟨shareOf s e.units⟩
 
 public theorem pagePoint_agree (p : BoxPoint) (e : Int) :
     shareOf p.hshares e = shareOf p.hshares 100000 * e / 100000 ∧

@@ -427,10 +427,10 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let scales : ScriptScales := { script := 73, scriptscript := 47 }
   for ambient in allStyles do
     for chosen in allStyles do
-      let em := Math.sizeFor scales (19 * 65536) chosen
+      let em := Math.sizeFor scales (Dim.pt 19).units chosen
       let mk : MathMl.Marks := {
         style := ambient, scales
-        em := fun st => some (Math.sizeFor scales (19 * 65536) st) }
+        em := fun st => some (Math.sizeFor scales (Dim.pt 19).units st) }
       for rule in [none, some 0, some (-Dim.pt 1), some (Dim.pt 8)] do
         let fraction : FracSpec := { style := some chosen, rule }
         let node := MathMl.nucNode mk (ambient.rank == 3) .ord

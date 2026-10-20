@@ -15705,11 +15705,8 @@ private def composeLeading (spec : PageSpec) : PageSpec :=
 
 /-- A page box from four numbers in PDF points, its lower-left corner first however written. -/
 private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Option PageBox := do
-  let toSp (m : Int) (sc : Nat) : Length :=
-    let v := Length.bpRound m.natAbs (max 1 sc)
-    if m < 0 then -v else v
   let nums ← ((s.splitOn " ").filter (!·.isEmpty)).mapM Decl.parseDecimal
-  let [a, b, c, d] := nums.map fun (m, sc) => toSp m sc | none
+  let [a, b, c, d] := nums.map fun (m, sc) => Length.ofBpParts (m < 0, m.natAbs, max 1 sc) | none
   some { kind, x0 := min a c, y0 := min b d, x1 := max a c, y1 := max b d, span }
 
 /-- The page field a dimension key sets. -/
