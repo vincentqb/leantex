@@ -352,6 +352,10 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((human.stderr.splitOn "\n").any fun l =>
         l.startsWith s!"✖ {triggered} — 1 error; wrote " && (l.splitOn ".pdf, 1 page (").length == 2)
     let machine ← run #[triggered.toString, "--porcelain"]
+    t "diagnostic format: the porcelain summary of a run shipping beside its errors counts its pages"
+      ((machine.stdout.splitOn "\n").any fun line => (Lean.Json.parse line).toOption.any fun j =>
+        j.getObjValAs? String "event" == .ok "summary" && j.getObjValAs? Nat "pages" == .ok 1 &&
+          j.getObjValAs? Nat "errors" == .ok 1)
     let warnings := (machine.stdout.splitOn "\n").filterMap fun line =>
       (Lean.Json.parse line).toOption |>.filter (·.getObjValAs? String "code" == .ok "W0104")
     t "diagnostic format: a compatibility warning preserves structured source evidence"

@@ -209,10 +209,12 @@ private def costFields (ms : Nat) (rssKiB : Option Nat) : List (String × String
   ("ms", toString ms) :: (rssKiB.map fun k => [("rssKiB", toString k)]).getD []
 
 public def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat)
-    (written : Array String := #[]) (rssKiB : Option Nat := none) : String :=
+    (written : Array String := #[]) (rssKiB : Option Nat := none) (pages : Option Nat := none) :
+    String :=
   obj ([("event", jstr "summary"), ("file", jstr file),
     ("ok", if ok then "true" else "false")] ++
     (if written.isEmpty then [] else [("output", jstr (", ".intercalate written.toList))]) ++
+    (pages.map fun n => ("pages", toString n)).toList ++
     [("errors", toString errors)] ++ costFields ms rssKiB)
 
 public def porcelainDone (file output : String) (pages : Option Nat) (ms : Nat)

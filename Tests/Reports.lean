@@ -2353,7 +2353,7 @@ def reports : List Report := [
   { id := "R999", date := "2026-10-20"
     what := "a command calling one defined after it set nothing, the later name an unknown command (W0301), where TeX looks a name up when the call expands; an environment's begin and end code saw only the commands defined before the environment; and a run shipping beside its errors named the artifacts it wrote but not their pages"
     pins := [check% macroBindingChecks, check% diagnosticFormatCliChecks]
-    accept := ["lualatex 1.24 on an invented article: a command calling two defined after it, in text and in a formula, an environment's halves calling a later command and a command reading another redefined after it set the later definitions' text; this tree sets the same, a command calling itself or its caller still stopping with W0301 where TeX runs out of memory",
+    accept := ["lualatex 1.24 on an invented article: a command calling two defined after it, in text and in a formula, an environment's halves calling a later command and a command reading another redefined after it set the later definitions' text; this tree sets the same, a command calling itself or its caller, a wrapper of a command's old text spelled with newcommand rather than let among them, still stopping with W0301 where TeX runs out of memory",
       "main's binary at 1e648c76 on the same probes: W0301 and the calls' text missing; the checks fail there",
       "the corpus and three private documents (two decks and a long markdown report) built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical, and every diagnostic the same"]
     state := .guarded "1e648c76" .before .author }

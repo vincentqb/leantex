@@ -153,7 +153,7 @@ def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) (written : Array Stri
     (pages : Option Nat := none) : IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn
-      (Render.porcelainSummary file (errors == 0) errors ms written (← ui.peak))
+      (Render.porcelainSummary file (errors == 0) errors ms written (← ui.peak) pages)
     ui.outStream.flush
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms written pages)
@@ -1196,7 +1196,7 @@ in the HTML" (← since t)
           ui.diag d
         ui.accepted resolved.accepted
         ui.summary file (unwritten.size + resolved.errors) (← since t0) written
-          (if setsPages then some out.pages.size else none)
+          (if setsPages && written.contains pdfPath then some out.pages.size else none)
         return exitFor (unwritten.size + resolved.errors) 0 resolved.warnings ui.cfg.werror
       -- An `\allow` that never fired warns.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
@@ -1205,7 +1205,7 @@ in the HTML" (← since t)
       -- The artifact ships beside its errors, which still decide the exit status.
       if resolved.errors > 0 then
         ui.summary file resolved.errors (← since t0) written
-          (if setsPages then some out.pages.size else none)
+          (if setsPages && written.contains pdfPath then some out.pages.size else none)
         return exitFor resolved.errors 0 resolved.warnings ui.cfg.werror
       ui.done file (String.intercalate ", " written.toList)
         (if setsPages then some out.pages.size else none) (← since t0)

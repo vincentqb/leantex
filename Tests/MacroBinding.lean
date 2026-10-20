@@ -60,6 +60,12 @@ def macroBindingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   page "environment halves"
     "\\newenvironment{fwdenv}{(\\fwdD}{\\fwdD)}\\newcommand{\\fwdD}{d}"
     "\\begin{fwdenv}in\\end{fwdenv}" "(dind)"
+  page "environment halves in a call"
+    ("\\newcommand{\\fwdG}{\\begin{fwdby}x\\end{fwdby}}\\newcommand{\\fwdH}{h}" ++
+      "\\newenvironment{fwdby}{[\\fwdH}{]}") "\\fwdG" "[hx]"
+  page "environment halves see a redefinition"
+    ("\\newcommand{\\fwdQ}{q}\\newenvironment{fwdbx}{[\\fwdQ}{]}" ++
+      "\\newcommand{\\fwdC}{\\begin{fwdbx}x\\end{fwdbx}}\\renewcommand{\\fwdQ}{r}") "\\fwdC" "[rx]"
   page "body definition" "\\newcommand{\\fwdF}{[\\fwdE]}" "\\newcommand{\\fwdE}{e}\\fwdF" "[e]"
   let (_, ds) := elabStr (dvDoc "\\newcommand{\\recA}{a\\recB}\\newcommand{\\recB}{b\\recA}" "\\recA")
   t "macro binding mutual recursion stops, named once"
