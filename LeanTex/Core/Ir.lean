@@ -982,7 +982,7 @@ public def captionCloseRole : String := "caption close"
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
     n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
-      n == captionCloseRole
+    n == captionCloseRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
