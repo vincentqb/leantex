@@ -68,8 +68,6 @@ public structure UserEnv where
   params : Array Param
   beginBody : Array Raw
   endBody : Array Raw
-  /-- The halves see only the commands defined before this environment. -/
-  cmdLimit : Nat
   ignoresLead : Bool := false
   trimsTail : Bool := false
   ignoresAfterEnd : Bool := false
@@ -259,6 +257,8 @@ public structure Ctx where
   listingReplies : Array ListingReply.Answer := #[]
   user : Array UserCmd := #[]
   limit : Nat := 0
+  /-- Every name a bound command's text calls, each once; a definition of none moves no command. -/
+  calls : Array String := #[]
   /-- Document-defined environments; `envLimit` bounds the visible prefix. -/
   userEnvs : Array UserEnv := #[]
   envLimit : Nat := 0
@@ -1581,8 +1581,7 @@ private def placeEnvContent (opened rest : Array Ir.Inline) : Array Ir.Inline :=
 
 /-- A defined environment from its halves, with the space rules
 `\ignorespaces`, environ and `\ignorespacesafterend` state at its seams. -/
-private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
-    (limit : Nat) : UserEnv :=
+private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw) : UserEnv :=
   let isCtrl (n : String) (r : Raw) : Bool := match r with
     | .ctrl m _ => m == n
     | _ => false
@@ -1593,7 +1592,7 @@ private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
   let environ := closing.any (isCtrl (Marker.name .environBody ""))
   let lead := environ || closing.any (isCtrl "ignorespaces")
   let params := params.map fun p => { p with code := referencesParamCode p.name (b.toList ++ e.toList) }
-  { name, params, cmdLimit := limit,
+  { name, params,
     beginBody := if lead then b.extract 0 (ink - 1) else b
     endBody := e.filter (!isCtrl "ignorespacesafterend" ·)
     ignoresLead := lead, trimsTail := environ,
@@ -5687,7 +5686,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
         match he : lookupUserEnv ctx name with
         | some (k, env) =>
-          -- Halves see only earlier definitions; the content sees the caller's.
+          -- Halves see only earlier environments and, as the content does, the caller's commands.
           have _ : k < ctx.envLimit := lookupUserEnv_lt he
           have hb0 : sliceWeight body 0 < sliceWeight raws i := by
             have h0 : sliceWeight body 0 = rawWeightList body.toList := by
@@ -5698,11 +5697,11 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- An absent optional argument takes its definition's default, read where the halves read.
           let bindings ← match absentDefault? env.params bindings with
             | some (p, d) => do
-              let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := k, args := bindings }
+              let dctx : Ctx := { ctx with envLimit := k, args := bindings }
               pure (bindDefault p d (← elabInlinesCore { dctx with argBody := true } d) bindings)
             | none => pure bindings
           let envCtx : Ctx := { ctx with
-            limit := env.cmdLimit, envLimit := k, args := bindings }
+            envLimit := k, args := bindings }
           let ⟨inner, _⟩ : { a : Array Raw // rawWeightList a.toList < sliceWeight raws i } :=
             ⟨envBody env body j, Nat.lt_of_le_of_lt (envBody_le env body j) hb0⟩
           let ⟨next, hnext⟩ : { n : Nat // i + 1 ≤ n } :=
@@ -9465,62 +9464,117 @@ private def withHookCall (raws : Array Raw) {i j : Nat} (hi : i < raws.size) (hi
     else ⟨raws, advance_measures raws hi hij⟩
   | none => ⟨raws, advance_measures raws hi hij⟩
 
-/-- Binds a document-defined command at the visibility boundary, which then
-advances past it alone. -/
+/-- Whether raws call one of the commands `names` names. -/
+private def callsAny (names : Array String) : List Raw → Bool
+  | [] => false
+  | .ctrl n _ :: rest => names.contains n || callsAny names rest
+  | .group body _ :: rest => callsAny names body.toList || callsAny names rest
+  | .math _ body _ :: rest => callsAny names body.toList || callsAny names rest
+  | .env _ body _ :: rest => callsAny names body.toList || callsAny names rest
+  | _ :: rest => callsAny names rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- The control words raws call, each once, after those in `acc`. -/
+private def callNames (acc : Array String) : List Raw → Array String
+  | [] => acc
+  | .ctrl n _ :: rest => callNames (if acc.contains n then acc else acc.push n) rest
+  | .group body _ :: rest => callNames (callNames acc body.toList) rest
+  | .math _ body _ :: rest => callNames (callNames acc body.toList) rest
+  | .env _ body _ :: rest => callNames (callNames acc body.toList) rest
+  | _ :: rest => callNames acc rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- The visible commands a new definition of `name` leaves in place, and above it the live ones
+calling it, directly or through one another, in their order. -/
+private def splitCallers (name : String) : List UserCmd → Array String → List UserCmd × List UserCmd
+  | [], _ => ([], [])
+  | c :: rest, names =>
+    if c.name != name && callsAny names c.body.toList && !rest.any (·.name == c.name) then
+      let (s, m) := splitCallers name rest (names.push c.name)
+      (s, c :: m)
+    else
+      let (s, m) := splitCallers name rest names
+      (c :: s, m)
+
+private theorem splitCallers_perm (name : String) (l : List UserCmd) (names : Array String) :
+    List.Perm ((splitCallers name l names).1 ++ (splitCallers name l names).2) l := by
+  induction l generalizing names with
+  | nil => simp [splitCallers]
+  | cons c rest ih =>
+    simp only [splitCallers]
+    split
+    · exact List.perm_middle.trans (List.Perm.cons c (ih _))
+    · exact List.Perm.cons c (ih _)
+
+private theorem visGo_sum (f : UserCmd → Nat) (u : Array UserCmd) (k : Nat) :
+    visGo f u k = ((u.toList.take k).map f).sum := by
+  induction k with
+  | zero => simp [visGo]
+  | succ k ih =>
+    simp only [visGo, ih, List.take_add_one]
+    split
+    · rename_i hk
+      simp [List.getElem?_eq_getElem (show k < u.toList.length by simpa using hk)]
+      omega
+    · rename_i hk
+      simp [List.getElem?_eq_none (show u.toList.length ≤ k by simp; omega)]
+
+/-- Binds a document-defined command at the visibility boundary, which then advances past it
+alone, and moves the live commands calling its name above it. -/
 private def bindCmd (ctx : Ctx) (cmd : UserCmd) : Ctx :=
   let b := min ctx.limit ctx.user.size
+  let pre := if ctx.calls.contains cmd.name then
+      let split := splitCallers cmd.name (ctx.user.extract 0 b).toList #[cmd.name]
+      (split.1 ++ cmd :: split.2).toArray
+    else (ctx.user.extract 0 b).push cmd
   { ctx with
-    user := (ctx.user.extract 0 b).push cmd ++ ctx.user.extract b ctx.user.size
-    limit := b + 1 }
+    user := pre ++ ctx.user.extract b ctx.user.size
+    limit := b + 1
+    calls := callNames ctx.calls cmd.body.toList }
 
 private theorem bindCmd_envLimit (ctx : Ctx) (cmd : UserCmd) :
     (bindCmd ctx cmd).envLimit = ctx.envLimit := rfl
 
-private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
-    (hj : ctx.limit ≤ j) (hs : j < ctx.user.size) :
-    (bindCmd ctx cmd).limit ≤ j + 1 ∧
-      (bindCmd ctx cmd).user[j + 1]? = ctx.user[j]? := by
-  simp only [bindCmd]
-  have hb : min ctx.limit ctx.user.size ≤ j := by omega
-  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
-  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
-      = min ctx.limit ctx.user.size + 1 := by
-    simp [Nat.min_eq_left hb']
-  refine ⟨by omega, ?_⟩
-  rw [Array.getElem?_append_right (by omega), hbs,
-    show j + 1 - (min ctx.limit ctx.user.size + 1)
-      = j - min ctx.limit ctx.user.size by omega,
-    Array.getElem?_extract]
-  rw [ite_eq_left (by simp; omega),
-    show min ctx.limit ctx.user.size + (j - min ctx.limit ctx.user.size) = j by omega]
+private theorem bindCmd_pre_perm (ctx : Ctx) (cmd : UserCmd) :
+    List.Perm (if ctx.calls.contains cmd.name then
+        let split := splitCallers cmd.name (ctx.user.extract 0 (min ctx.limit ctx.user.size)).toList
+          #[cmd.name]
+        (split.1 ++ cmd :: split.2).toArray
+      else (ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).toList
+      (ctx.user.toList.take (min ctx.limit ctx.user.size) ++ [cmd]) := by
+  have he : (ctx.user.extract 0 (min ctx.limit ctx.user.size)).toList
+      = ctx.user.toList.take (min ctx.limit ctx.user.size) := by
+    simp [Array.toList_extract, List.extract]
+  split
+  · have hp := splitCallers_perm cmd.name (ctx.user.extract 0 (min ctx.limit ctx.user.size)).toList
+      #[cmd.name]
+    rw [← he]
+    exact List.perm_middle.trans ((List.Perm.cons cmd hp).trans (List.perm_append_singleton _ _).symm)
+  · simp
 
 private theorem bindCmd_visGo (f : UserCmd → Nat) (ctx : Ctx) (cmd : UserCmd) :
     visGo f (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
       ≤ visGo f ctx.user ctx.limit + f cmd := by
+  have hp := bindCmd_pre_perm ctx cmd
   simp only [bindCmd]
-  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
-  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
-      = min ctx.limit ctx.user.size + 1 := by
-    simp [Nat.min_eq_left hb']
-  have hsame : ∀ m, m < min ctx.limit ctx.user.size →
-      ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
-        ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[m]?
-      = ctx.user[m]? := by
-    intro m hm
-    have hmu : m < ctx.user.size := by omega
-    rw [Array.getElem?_append_left (by simp; omega),
-      Array.getElem?_push_lt (by simp; omega), Array.getElem?_eq_getElem hmu]
-    simp [Array.getElem_extract]
-  have hat : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
-      ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[
-        min ctx.limit ctx.user.size]? = some cmd := by
-    rw [Array.getElem?_append_left (by simp), Array.getElem?_push]
-    simp
-  simp only [visGo]
-  obtain ⟨hlt, hcmd⟩ := Array.getElem?_eq_some_iff.mp hat
-  rw [visGo_congr fun m hm => hsame m hm]
-  simp only [hlt, dite_true, hcmd]
-  have := visGo_mono f ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
+  generalize (if ctx.calls.contains cmd.name then
+        let split := splitCallers cmd.name (ctx.user.extract 0 (min ctx.limit ctx.user.size)).toList
+          #[cmd.name]
+        (split.1 ++ cmd :: split.2).toArray
+      else (ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd) = pre at hp ⊢
+  have hlen : pre.toList.length = min ctx.limit ctx.user.size + 1 := by
+    have := hp.length_eq
+    simp at this ⊢
+    omega
+  have hm := (hp.map f).sum_nat
+  simp only [List.map_append, List.sum_append, List.map_cons, List.map_nil, List.sum_cons,
+    List.sum_nil] at hm
+  have hmono := visGo_mono f ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
+  rw [visGo_sum, visGo_sum] at hmono
+  rw [visGo_sum, visGo_sum, Array.toList_append,
+    List.take_append_of_le_length (by simp [hlen]), List.take_of_length_le (by simp [hlen])]
   omega
 
 private theorem bindCmd_visWeight (ctx : Ctx) (cmd : UserCmd) :
@@ -14022,12 +14076,12 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     -- An absent optional argument takes its definition's default, read where the halves read.
     let bindings ← match absentDefault? env.params bindings with
       | some (p, d) => do
-        let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := ke.1, args := bindings }
+        let dctx : Ctx := { ctx with envLimit := ke.1, args := bindings }
         pure (bindDefault p d (← elabInlinesCore { dctx with argBody := true } d) bindings)
       | none => pure bindings
     let ⟨envCtx, _⟩ : { c : Ctx // c.envLimit = ke.1 } ←
       pure ⟨{ ctx with
-        limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
+        envLimit := ke.1, args := bindings }, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.beginBody))
     have _ := tail_measures body j
     blocks := blocks ++ (← splicedFrameScope (some blocks.size)
@@ -17401,7 +17455,7 @@ optional; the default is ignored" pos
               params.modify 0 fun p => if p.optional then { p with default := some d } else p
             | none => params
           return { s with ctx := { s.ctx with
-            userEnvs := s.ctx.userEnvs.push (envOfHalves envName params b e s.ctx.limit)
+            userEnvs := s.ctx.userEnvs.push (envOfHalves envName params b e)
             envLimit := s.ctx.userEnvs.size + 1 } }
         | _, _ =>
           diag s.ctx .E0303 s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos

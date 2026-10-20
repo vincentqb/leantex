@@ -2812,8 +2812,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ["E0305"])
   t "elab self reference is unknown" (warnCodes
     ("\\define \\x() {\\x}\n\\begin{document}\\x\\end{document}") == ["W0301"])
-  t "elab forward reference is unknown" (warnCodes
-    ("\\define \\a() {\\b}\n\\define \\b() {y}\n\\begin{document}\\a\\end{document}") == ["W0301"])
+  t "elab forward reference resolves at the call" (warnCodes
+    ("\\define \\a() {\\b}\n\\define \\b() {y}\n\\begin{document}\\a\\end{document}") == [])
   t "elab later definition sees earlier" (errCodes
     ("\\define \\b() {y}\n\\define \\a() {\\b}\n\\begin{document}\\a\\end{document}") == [])
 
@@ -5454,7 +5454,7 @@ def citeNoBibChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a document with no citations stays silent"
     ((dvE (dvDoc "" "plain text")).all (·.code != "W0351"))
 
-/-- Elaboration terminates under a wall clock (`bindCmd_monotone` forbids the loop), failing loudly
+/-- Elaboration terminates under a wall clock (`bindCmd_visGo` bounds the visible bodies), failing loudly
 rather than hanging. -/
 def terminationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let name := "a \\define inside its own expansion terminates (cffb141 regression)"

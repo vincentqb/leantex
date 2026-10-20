@@ -51,5 +51,18 @@ def macroBindingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       ("\\iffalse\\installerprobe\\fi" ++
         "\\ifdefined\\installedprobe Leaked\\else Absent\\fi{} Tail")
       "Absent Tail"
+  -- A name is looked up when its caller expands, as TeX does, whichever was defined first.
+  page "forward reference"
+    "\\newcommand{\\fwdA}{[\\fwdB]}\\newcommand{\\fwdB}{B\\fwdC}\\newcommand{\\fwdC}{c}"
+    "\\fwdA{} $\\fwdA$" "[Bc] $[Bc]$"
+  page "use-time redefinition"
+    "\\newcommand{\\useX}{1}\\newcommand{\\useY}{\\useX}\\renewcommand{\\useX}{2}" "\\useY" "2"
+  page "environment halves"
+    "\\newenvironment{fwdenv}{(\\fwdD}{\\fwdD)}\\newcommand{\\fwdD}{d}"
+    "\\begin{fwdenv}in\\end{fwdenv}" "(dind)"
+  page "body definition" "\\newcommand{\\fwdF}{[\\fwdE]}" "\\newcommand{\\fwdE}{e}\\fwdF" "[e]"
+  let (_, ds) := elabStr (dvDoc "\\newcommand{\\recA}{a\\recB}\\newcommand{\\recB}{b\\recA}" "\\recA")
+  t "macro binding mutual recursion stops, named once"
+    ((ds.filter (·.code == "W0301")).size == 1)
 
 end Tests

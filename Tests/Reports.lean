@@ -158,6 +158,7 @@ import Tests.SectionPages
 import Tests.Contents
 import Tests.Themes
 import Tests.VerbatimAmbient
+import Tests.MacroBinding
 import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
@@ -182,6 +183,7 @@ import Tests.SvgHtml
 
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
+open Tests (macroBindingChecks diagnosticFormatCliChecks)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
   shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
@@ -2347,6 +2349,13 @@ def reports : List Report := [
     pins := [check% Tests.ListGaps.checks]
     accept := ["lualatex 1.24 on invented probes: a trivlist's paragraph break 12pt, its next item 16pt; under small a quotation's paragraphs 13pt apart and its opening 14.7pt below the line before, a description's lines 11pt apart and its label small; a 4pt vspace after a caption, inside or outside the center or with no center, 4pt more between the caption and the text below; this tree sets each the same to a hundredth of a point",
       "main's binary at 1e648c76 on the same probes: the trivlist's paragraph break 16pt, the quotation's paragraphs 15pt, the description's lines 12pt, and the vspace above the caption or lost; the guards fail there"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R999", date := "2026-10-20"
+    what := "a command calling one defined after it set nothing, the later name an unknown command (W0301), where TeX looks a name up when the call expands; an environment's begin and end code saw only the commands defined before the environment; and a run shipping beside its errors named the artifacts it wrote but not their pages"
+    pins := [check% macroBindingChecks, check% diagnosticFormatCliChecks]
+    accept := ["lualatex 1.24 on an invented article: a command calling two defined after it, in text and in a formula, an environment's halves calling a later command and a command reading another redefined after it set the later definitions' text; this tree sets the same, a command calling itself or its caller still stopping with W0301 where TeX runs out of memory",
+      "main's binary at 1e648c76 on the same probes: W0301 and the calls' text missing; the checks fail there",
+      "the corpus and three private documents (two decks and a long markdown report) built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical, and every diagnostic the same"]
     state := .guarded "1e648c76" .before .author }
 ]
 
