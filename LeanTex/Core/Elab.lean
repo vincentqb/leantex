@@ -246,6 +246,15 @@ public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.Li
   { nest with depth, set
               parskip := some (((Ir.listSpacing l size depth tokens set).map (·.1.parsep)).getD {}) }
 
+/-- A set of command names, compared as sets. -/
+public structure NameSet where
+  names : Std.HashSet String := {}
+
+instance : BEq NameSet :=
+  ⟨fun a b => a.names.size == b.names.size && a.names.toList.all b.names.contains⟩
+
+instance : Repr NameSet := ⟨fun a _ => repr a.names.toList⟩
+
 /-- The elaboration context; `limit` bounds the prefix of `user` a command
 sees. -/
 public structure Ctx where
@@ -259,7 +268,7 @@ public structure Ctx where
   user : Array UserCmd := #[]
   limit : Nat := 0
   /-- Every name a bound command's text calls, each once; a definition of none moves no command. -/
-  calls : Array String := #[]
+  calls : NameSet := {}
   /-- Document-defined environments; `envLimit` bounds the visible prefix. -/
   userEnvs : Array UserEnv := #[]
   envLimit : Nat := 0
@@ -9476,10 +9485,10 @@ private def callsAny (names : Std.HashSet String) : List Raw → Bool
 termination_by l => sizeOf l
 decreasing_by raws_dec
 
-/-- The control words raws call, each once, after those in `acc`. -/
-private def callNames (acc : Array String) : List Raw → Array String
+/-- The control words raws call, added to `acc`. -/
+private def callNames (acc : Std.HashSet String) : List Raw → Std.HashSet String
   | [] => acc
-  | .ctrl n _ :: rest => callNames (if acc.contains n then acc else acc.push n) rest
+  | .ctrl n _ :: rest => callNames (acc.insert n) rest
   | .group body _ :: rest => callNames (callNames acc body.toList) rest
   | .math _ body _ :: rest => callNames (callNames acc body.toList) rest
   | .env _ body _ :: rest => callNames (callNames acc body.toList) rest
@@ -9536,7 +9545,7 @@ private def lastIndex (pre : Array UserCmd) : Std.HashMap String Nat := Id.run d
 some bound text calls it, else last. -/
 private def bindPre (ctx : Ctx) (cmd : UserCmd) : Array UserCmd :=
   let pre := ctx.user.extract 0 (min ctx.limit ctx.user.size)
-  if ctx.calls.contains cmd.name then
+  if ctx.calls.names.contains cmd.name then
     let split := splitCallers cmd.name (lastIndex pre) pre.toList 0 {cmd.name} #[] #[]
     split.1.push cmd ++ split.2
   else pre.push cmd
@@ -9564,7 +9573,7 @@ private def bindCmd (ctx : Ctx) (cmd : UserCmd) : Ctx :=
   { ctx with
     user := bindPre ctx cmd ++ ctx.user.extract b ctx.user.size
     limit := b + 1
-    calls := callNames ctx.calls cmd.body.toList }
+    calls := ⟨callNames ctx.calls.names cmd.body.toList⟩ }
 
 private theorem bindCmd_envLimit (ctx : Ctx) (cmd : UserCmd) :
     (bindCmd ctx cmd).envLimit = ctx.envLimit := rfl
