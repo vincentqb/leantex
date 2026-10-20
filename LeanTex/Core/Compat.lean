@@ -15191,13 +15191,13 @@ private def envDefAt (raws : Array Raw) (j : Nat) :
     Option (String × Option (Array Raw) × Nat × Nat × Nat × Array Raw × Array Raw) := do
   let (args, j) := takeGroups raws (skipStar raws j) 1
   let name ← args[0]?.map fun a => (rawSrc a).trimAscii.toString
-  let (count, j) := takeOpt raws j
+  let (count, j) := takeRawOpt raws j
   let (dflt, j) := takeRawOpt raws j
   let b := skipSpaces raws j
   let some (.group code _) := raws[b]? | none
   let e := skipSpaces raws (b + 1)
   let some (.group close _) := raws[e]? | none
-  return (name, dflt, (count.bind String.toNat?).getD 0, b, e, code, close)
+  return (name, dflt, ((count.map rawSrc).bind (·.trimAscii.toString.toNat?)).getD 0, b, e, code, close)
 
 /-- An environment's body with its begin code, the arguments a use spells given their values,
 before it and its end code after it, or none where the use spells too few arguments; an unbraced

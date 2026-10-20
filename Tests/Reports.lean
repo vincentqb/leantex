@@ -2240,28 +2240,28 @@ def reports : List Report := [
       "main's binary at 70096387 on the same probes: E0111 and no artifact for the bodies and the body form, W0104 for the predefined template; the guards fail there",
       "the corpus built by main's binary at 70096387 and by this tree's: no corpus document's footline changes; another footline body is still refused as carrying content (E0111)"]
     state := .guarded "70096387" .before .author },
-  { id := "R250", date := "2026-10-19"
+  { id := "R253", date := "2026-10-19"
     what := "a class with chapters listed none in its contents, its sections at article's top level, every subsubsection listed and its contents and reference list headed as sections, the reference list named References; and a contents line's numberline was set as words before the entry's own, an empty one leaving the entry flush where its number's box stands"
     pins := [check% chapterContentsChecks, check% contentsGapChecks]
     accept := ["lualatex on invented probes: report lists its chapter bold at the margin with its bare number, its section 1.5em in and its subsection 3.8em in, no subsubsection, under a chapter head reading Contents, and heads its reference list Bibliography as a chapter on a page of its own, Literaturverzeichnis in German; article sets an empty numberline's words 1.5em in for a section and 3.8em in for a subsection, a written one's number in the box there; this tree sets the same",
       "main's binary at 70096387 on the same probes: no chapter entry, the section's number running into its title, a section head reading References, and the numberline entries flush at their level's indent; the guards fail there",
       "the corpus and the private decks built by main's binary at 70096387 and by this tree's: every artifact byte-identical"]
     state := .guarded "70096387" .before .author },
-  { id := "R999", date := "2026-10-19"
+  { id := "R254", date := "2026-10-19"
     what := "a list, quote, center or flush environment in a paragraph column's cell, its spanning cell's or a group's in it, stopped the build (E0312) with no artifact, and the cell's paragraphs ran into one line; a list opening a minipage or a float spent its topsep above its first line"
     pins := [check% Tests.ItemLabels.cellChecks]
     accept := ["lualatex 1.24 on invented probes: an itemize after text in a p{5cm} cell sets its items a leftmargin in, wrapped lines hanging at the item's text, a topsep of 8pt above and below; a paragraph break in the cell opens a line one baselineskip down, a declaration before it reaching the paragraph after; the cell's last line stands its row's strut above the next row; a list opening a minipage stands a baselineskip below the line before it, a label before it changing nothing, and one opening a beamer column spends beamer's 3pt; this tree sets the same, but a list opening a cell, where LaTeX spends its topsep below the row's baseline, stands on that baseline as a minipage's list does",
       "main's binary at 730c0b54 on the same probes: the cell stops the build with E0312 and no artifact, the paragraphs share a line, and the minipage's list stands its topsep lower; the guards fail there",
       "the corpus and the private references built by main's binary at bbdd0223c and by this tree's: every PDF byte-identical, every web page differing only in the stylesheet's rule zeroing a cell's paragraph gap, with no visible difference"]
     state := .guarded "730c0b54" .before .author },
-  { id := "R999", date := "2026-10-19"
+  { id := "R255", date := "2026-10-19"
     what := "the peer gap between paragraphs had no stretch, so a page split a short paragraph into a club and a widow line LaTeX moves whole; a page could end between a display and the line before it, as it still may after a heading's one-line paragraph; and displaywidowpenalty, interlinepenalty and predisplaypenalty went unread"
     pins := [check% Tests.PageTurns.checks]
     accept := ["lualatex 1.24 on invented probes: two-line paragraphs in article, report and book turn every page between paragraphs, its page builder's trace costing the break before a paragraph 53 against 150 and more inside one; around a display the trace offers the break after it at 0 and before the line ahead of it at displaywidowpenalty's 50, never one between them; this tree sets each so, markdown pages taking the same stretch",
       "main's binary at 6714141d on the checks' documents: two of three page turns split a paragraph in an article and a report, and seven of 150 pages open with a display; the checks fail there",
       "the corpus built by main's binary at bbdd0223 and by this tree's: every artifact byte-identical"]
     state := .guarded "6714141d" .before .author },
-  { id := "R999", date := "2026-10-19"
+  { id := "R256", date := "2026-10-19"
     what := "a setting in an environment's begin code reading the environment's arguments (a length, a colour, a language, a font face and the other settings a macro's argument can give) was skipped and named W0104, and a parskip length set in the body was named W0104 and left the paragraphs' gaps as the preamble declared them"
     pins := [check% Tests.EnvCode.templateCodeUseChecks, check% Tests.ParamCensus.bodyParskipChecks]
     accept := ["lualatex on invented probes: an environment's argument sets its box separation, colour and bold label at each use, an optional one defaulted, its end code under the begin code's declarations; after the body sets the parskip to 12pt the next paragraphs stand 24pt apart, in a group setting it to 30pt 42pt apart, and after the group 24pt again; under a body parskip of 20pt a heading, a list item's second paragraph, a quote, centred text and a minipage space as under the preamble's; a frame's value ends with the frame; a table after a group setting its column gap takes the page's; this tree sets the same",
