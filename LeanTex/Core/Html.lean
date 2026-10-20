@@ -492,6 +492,20 @@ private def attrsInto (acc : String) (attrs : Array (String × String)) : String
   attrs.foldl (init := acc) fun acc (k, v) =>
     if v.isEmpty then acc ++ " " ++ k else acc ++ " " ++ k ++ "=\"" ++ escapeAttr v ++ "\""
 
+/-- Elements after whose start tag the HTML parser drops one line feed (§13.2.6.4.7). -/
+public def lfTags : List String := ["pre", "listing", "textarea"]
+
+/-- Whether children rendered inline begin with a line feed. -/
+def leadsLF : List Node → Bool
+  | [] => false
+  | .text s :: rest => if s.isEmpty then leadsLF rest else s.front? == some '\n'
+  | _ :: _ => false
+
+/-- The line feed the parser drops after an `lfTags` start tag, written when the content begins
+with one so that the content keeps it. -/
+def lfGuard (tag : String) (kids : Array Node) : String :=
+  if lfTags.contains tag && leadsLF kids.toList then "\n" else ""
+
 private def isInlineOnly (kids : Array Node) : Bool :=
   kids.all fun k =>
     match k with
@@ -823,7 +837,7 @@ private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
       opened ++ "\n"
     else if preserveTags.contains tag || phrasingTags.contains tag ||
         isInlineOnly kids then
-      inlineRenderListInto opened kids.toList ++ "</" ++ tag ++ ">\n"
+      inlineRenderListInto (opened ++ lfGuard tag kids) kids.toList ++ "</" ++ tag ++ ">\n"
     else
       renderListInto (opened ++ "\n") kids.toList (indent + 1)
         ++ pad ++ "</" ++ tag ++ ">\n"
@@ -837,7 +851,7 @@ private def inlineRenderInto (acc : String) (n : Node) : String :=
   | .elem tag attrs kids =>
     let opened := attrsInto (acc ++ "<" ++ tag) attrs ++ ">"
     if voidTags.contains tag then opened
-    else inlineRenderListInto opened kids.toList ++ "</" ++ tag ++ ">"
+    else inlineRenderListInto (opened ++ lfGuard tag kids) kids.toList ++ "</" ++ tag ++ ">"
 
 private def renderListInto (acc : String) : List Node → Nat → String
   | [], _ => acc

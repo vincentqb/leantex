@@ -95,6 +95,9 @@ public import LeanTex.Core.Decl
 public import LeanTex.Core.Html
 public import LeanTex.Core.MathMl
 public import LeanTex.Core.HtmlDoc
+public import LeanTex.Core.HtmlRead
+public import LeanTex.Core.HtmlReadProof
+public import LeanTex.Core.HtmlDocRead
 public import LeanTex.Core.HtmlFaces
 public import LeanTex.Core.MarkdownDoc
 public import LeanTex.Core.Layout

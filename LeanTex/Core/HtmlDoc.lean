@@ -10824,6 +10824,13 @@ public theorem emit_lang_declared (cfg : Config) (doc : Doc) :
   rcases h : emitTree cfg doc with ⟨head, body, ds⟩
   exact ⟨head, body, by simp [emit, h]⟩
 
+/-- The page `emit` writes is the document of the tree `emitTree` builds. -/
+public theorem emit_tree_exact (cfg : Config) (doc : Doc) :
+    (emit cfg doc).1 = Html.document (doc.info.language.getD "en") (emitTree cfg doc).1
+      (emitTree cfg doc).2.1 := by
+  rcases h : emitTree cfg doc with ⟨head, body, ds⟩
+  simp [emit, h]
+
 /-! ## Accessibility facts -/
 
 /-- Whether an element carries an accessible name in its own markup. -/

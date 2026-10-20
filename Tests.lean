@@ -238,6 +238,7 @@ import Tests.CompatGate
 import Tests.CompatExecution
 import Tests.HtmlTokens
 import Tests.HtmlContained
+import Tests.HtmlRead
 import Tests.MachineLoss
 import Tests.HtmlA11y
 import Tests.Conditionals
@@ -511,6 +512,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.bulmaSheetChecks ref
   Tests.machineLossChecks ref
   htmlContainedCorpusChecks ref
+  Tests.htmlReadChecks ref
   publicationPathChecks ref
   Tests.publicationWriteChecks ref
   Tests.overwritePlanChecks ref
