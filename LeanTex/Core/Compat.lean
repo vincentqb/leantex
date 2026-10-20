@@ -11775,10 +11775,12 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .beamerCovered => some { args := [some "transparent"], inDoc := false }
   | .blueprintSite => some { args := [some "https://example.org"], inDoc := false }
   | .texOrPdf => some { args := [some "zza", some "zzb"], inDoc := true }
+  | .komaOptions => some { args := [some "fontsize=12pt"], inDoc := false }
+  | .komaOption => some { args := [some "fontsize", some "12pt"], inDoc := false }
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
-  | .beamerOption | .inputEncoding | .komaOptions | .graphColor => none
+  | .beamerOption | .inputEncoding | .graphColor => none
 
 /-- Whether lowering `l`, called as `name` on witness `w`, returns raws. -/
 public def Lowering.emitsOn (l : Lowering) (name : String) (w : LowerWitness) : Bool :=

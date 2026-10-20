@@ -1055,12 +1055,14 @@ public def rawSrcOneOnto (r : Raw) : String :=
     if n.length == 1 && !Lex.nameChar n.front && n != " " then "\\" ++ n else "\\" ++ n ++ " "
   | .group body _ =>
     "{" ++ rawSrcOnto body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
-  | .math d body _ =>
+  | .math d body p =>
     let inner := rawSrcOnto body
-    if d then s!"\\[{inner}\\]" else s!"${inner}$"
+    if p.command == some modeBranch then inner ++ "\\else "
+    else if d then s!"\\[{inner}\\]" else s!"${inner}$"
   | .env n body _ =>
     if n == scopeEnv then
       "{" ++ rawSrcOnto body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
+    else if n == modeEnv then "\\ifmmode " ++ rawSrcOntoList "" body.toList ++ "\\fi "
     else s!"\\begin\{{n}}" ++ rawSrcOnto body ++ s!"\\end\{{n}}"
   | .verb env v p => rawSrcOne (.verb env v p)
 
@@ -1084,7 +1086,9 @@ private theorem rawSrcOneOnto_eq (r : Raw) : rawSrcOne r = rawSrcOneOnto r := by
   | .word s _ | .space | .par _ | .sym c _ | .ctrl n _ => rfl
   | .group body _ => simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body]
   | .math d body _ => simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body]
-  | .env n body _ => simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body]
+  | .env n body _ =>
+    simp only [rawSrcOne, rawSrcOneOnto, rawSrcOnto_eq body, ← rawSrcOntoList_eq "" body.toList,
+      String.empty_append]
   | .verb env v _ => rfl
 
 end

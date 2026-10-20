@@ -263,7 +263,7 @@ def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
      ("sections of macro uses", "macros.tex", macroSections, 8),
      ("overlay selections in a frame", "frame.tex", overlayFrame, 1000),
      ("paragraphs in a note", "note.md", longNote, 800),
-     ("lines in a picture", "pic.tex", pictureLines, 4000)],
+     ("lines in a picture", "pic.tex", pictureLines, 4000),
      ("paragraphs reading ifmmode", "mode.tex", modeParagraphs, 4000)]
   for (label, file, doc, size) in rows do
     growthBound s!"elab, {4 * size} / {size} {label}"
