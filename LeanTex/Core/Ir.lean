@@ -1026,6 +1026,14 @@ public def parRunsOnRole : String := "par runs on"
 float sets after the caption (latex.ltx `\endtrivlist`). -/
 public def captionCloseRole : String := "caption close"
 
+/-- The role an empty marker rides in where a float's caption below its object stood, the skips
+after it set below the caption. -/
+public def captionAtRole : String := "caption at"
+
+/-- The role an empty marker rides in where a trivlist environment's next `\item` opens, which
+spends the `\itemsep` in force (latex.ltx `\@item`). -/
+public def trivItemRole : String := "trivlist item"
+
 /-- The reserved role `\cleardoublepage` declares: a two-sided page's next folio falls odd, a
 blank verso before it where needed. -/
 public def rectoRole : String := "page recto"
@@ -1035,7 +1043,7 @@ public def rectoRole : String := "page recto"
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
     n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
-    n == captionCloseRole || n == rectoRole
+    n == captionCloseRole || n == rectoRole || n == trivItemRole || n == captionAtRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -5517,18 +5525,45 @@ public inductive Block where
 @[expose] public def cellLine (cell : Array Block) : Array Inline :=
   (cellLine? cell).getD #[]
 
-/-- Whether a float's body ends where a center its caption below stood in closed
-(`captionCloseRole`). -/
+/-- Whether `b` is one of a float's marks after its caption below, `captionAtRole`'s or
+`captionCloseRole`'s, alone or as the paragraph it stands in. -/
+public def Block.captionMark (b : Block) : Bool :=
+  let named (n : String) := n == captionCloseRole || n == captionAtRole
+  match b with
+  | .role n inner => named n ||
+    (n == inParagraphRole && match inner.toList with
+      | [.role c _] => named c
+      | _ => false)
+  | _ => false
+
+/-- Whether `b` is the mark of a center closing after its float's caption (`captionCloseRole`). -/
+public def Block.closesCaption (b : Block) : Bool :=
+  match b with
+  | .role n inner => n == captionCloseRole ||
+    (n == inParagraphRole && match inner.toList with
+      | [.role c _] => c == captionCloseRole
+      | _ => false)
+  | _ => false
+
+/-- Whether `b` may stand after a float's caption below its object: a caption mark, a skip, or a
+skip's marker. -/
+public def Block.captionTailish (b : Block) : Bool :=
+  b.captionMark || match b with
+    | .spaced _ inner => inner.isEmpty
+    | .role n inner => inner.isEmpty && (n == primitiveSkipRole || n == pageAnchorRole)
+    | _ => false
+
+/-- A float's body split where its caption below stood: the object, and from the first caption mark
+among the marks and skips ending the body, what is set below the caption; `none` where no caption
+mark ends the body. -/
+public def captionTail? (capBelow : Bool) (body : Array Block) : Option (Array Block × Array Block) :=
+  let run := (body.toList.reverse.takeWhile Block.captionTailish).reverse
+  let k := body.size - run.length + (run.takeWhile (!·.captionMark)).length
+  if capBelow && k < body.size then some (body.extract 0 k, body.extract k body.size) else none
+
+/-- Whether a float's center closed after its caption below (`captionTail?`). -/
 public def closesAfterCaption (capBelow : Bool) (body : Array Block) : Bool :=
-  let mark (b : Block) : Bool := match b with
-    | .role n _ => n == captionCloseRole
-    | _ => false
-  capBelow && match body.back? with
-    | some b@(.role n inner) =>
-      mark b || (n == inParagraphRole && match inner.toList with
-        | [c] => mark c
-        | _ => false)
-    | _ => false
+  ((captionTail? capBelow body).map fun (_, after) => after.any Block.closesCaption).getD false
 
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
 @[match_pattern, expose] public def Block.step (n : Nat) (last : Option Nat) (body : Array Block) : Block :=
@@ -18387,6 +18422,8 @@ public def paraStepIn (xs : List Inline) : Option String :=
   match xs with
   | [x] => paraStepOne x
   | [] => none
+  | .role n _ :: y :: rest =>
+    if n == descLabelRole || n == itemLabelRole then paraStepIn (y :: rest) else none
   | _ :: _ :: _ => none
 
 -- conserves: none — the one-node classifier.

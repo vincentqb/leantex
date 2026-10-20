@@ -233,16 +233,17 @@ public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet)
 /-- What a quotation opening here keeps over its level's: what its level keeps of the lists around
 it, under what its level's macro sets from the `\parskip` in force. -/
 public def ListNest.quoteSet (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Length)
-    (outer : Dim.SymGlue) : Ir.ListSet :=
+    (outer : Dim.SymGlue) (step : Option String) : Ir.ListSet :=
   let depth := nest.depth + 1
-  (Ir.ListSet.within l size depth nest.set).over (extra.over size depth (nest.parskip.getD outer))
+  ((Ir.ListSet.within l size depth nest.set).over (Ir.stepListI l size step depth)).over
+    (extra.over size depth (nest.parskip.getD outer))
 
 /-- One quotation deeper: a level whose own macro sets the skips again over what the `\parskip` in
 force asks of it, under what its environment sets (`own`), its `\parsep` TeX's `\parskip` inside. -/
 public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Length)
-    (tokens : Ir.Tokens) (outer : Dim.SymGlue) (own : Ir.ListSet) : ListNest :=
+    (tokens : Ir.Tokens) (outer : Dim.SymGlue) (step : Option String) (own : Ir.ListSet) : ListNest :=
   let depth := nest.depth + 1
-  let set := (nest.quoteSet l extra size outer).over own
+  let set := (nest.quoteSet l extra size outer step).over own
   { nest with depth, set
               parskip := some (((Ir.listSpacing l size depth tokens set).map (·.1.parsep)).getD {}) }
 
@@ -352,13 +353,13 @@ public theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : St
     ({ ctx with callSite := some (span, name) } : Ctx).sourceSpan pos = span := by rfl
 
 /-- The lists around a quotation's content: one level deeper, under what its environment sets. -/
-public def Ctx.quotedNest (ctx : Ctx) (own : Ir.ListSet) : ListNest :=
+public def Ctx.quotedNest (ctx : Ctx) (step : Option String) (own : Ir.ListSet) : ListNest :=
   ctx.listNest.quoted ctx.lists ctx.listExtra ctx.page.fontSize ctx.tokens (Ir.texParskipOf ctx.page)
-    own
+    step own
 
 /-- What a quotation opening here keeps over its level's (`ListNest.quoteSet`). -/
-public def Ctx.quoteSet (ctx : Ctx) : Ir.ListSet :=
-  ctx.listNest.quoteSet ctx.lists ctx.listExtra ctx.page.fontSize (Ir.texParskipOf ctx.page)
+public def Ctx.quoteSet (ctx : Ctx) (step : Option String) : Ir.ListSet :=
+  ctx.listNest.quoteSet ctx.lists ctx.listExtra ctx.page.fontSize (Ir.texParskipOf ctx.page) step
 
 /-- A counter's numeral style: `\arabic`, `\alph`, `\Alph`, `\roman` or `\Roman`. -/
 public abbrev SecNumStyle := Ir.NumStyle
@@ -9723,6 +9724,34 @@ private theorem SliceFits.mark {cur body : Array Raw} {j bound pbound : Nat}
   simp only [rawWeight, nestedPars]
   omega
 
+/-- A float's body with its caption's last mark (`captionAtRole`) kept only where a skip stands
+after it among marks, skips and anchors alone, the anchors moved before it. -/
+private def settleCaptionMark (body : Array Block) : Array Block :=
+  let at? (b : Block) : Bool := b.captionMark && !b.closesCaption
+  let anchor (b : Block) : Bool := match b with
+    | .para content => Ir.anchorsOnly content
+    | _ => false
+  let after := (body.toList.reverse.takeWhile (!at? ·)).reverse
+  let k := body.size - after.length
+  if k > 0 && after.all (fun b => b.captionTailish || anchor b) &&
+      after.any (fun b => b matches .spaced _ #[]) then
+    (body.extract 0 (k - 1)).filter (!at? ·) ++ (after.filter anchor).toArray ++
+      body.extract (k - 1) k ++ (after.filter (!anchor ·)).toArray
+  else body.filter (!at? ·)
+
+/-- The raws a float keeps past its caption: a caption below its object marks where it stands, for
+the skips after it (`settleCaptionMark`). -/
+private def captionRest (capAbove : Bool) (rest : Array Raw) (p : Pos) : Array Raw :=
+  if capAbove then rest else rest.push (.ctrl Ir.captionAtRole p)
+
+private theorem SliceFits.caption {cur body : Array Raw} {j k bound pbound : Nat}
+    (hf : SliceFits cur body j bound pbound) (h : j < body.size) (capAbove : Bool) (p : Pos)
+    (hk : j + 1 ≤ k) : SliceFits (captionRest capAbove cur p) body k bound pbound := by
+  unfold captionRest
+  split
+  · exact hf.skip (by omega)
+  · exact (hf.mark h _ p).skip hk
+
 private theorem SliceFits.flush {cur body : Array Raw} {j k bound pbound : Nat}
     (hf : SliceFits cur body j bound pbound) (hk : j ≤ k) : SliceFits #[] body k bound pbound := by
   have := sliceWeight_le body hk
@@ -11832,9 +11861,9 @@ private def scopedEnvOwn (l : Ir.ListLineage) (size : Length) (level : Nat) (n :
 
 /-- The context of environment `n`'s body: a quotation's is a list level its enclosing lists'
 spacing reaches. -/
-private def quoteMCtx (ctx : Ctx) (n : String) : MCtx ctx :=
+private def quoteMCtx (ctx : Ctx) (n : String) (step : Option String) : MCtx ctx :=
   ⟨if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
-    else { ctx with listNest := { ctx.quotedNest
+    else { ctx with listNest := { ctx.quotedNest step
         (scopedEnvOwn ctx.lists ctx.page.fontSize (ctx.listNest.depth + 1) n) with
       shaped := if ctx.lists == Ir.ListLineage.web || (n != "quotation" && n != "verse") then none
         else Ir.QuoteKind.ofName? n } },
@@ -12077,6 +12106,13 @@ private def descLabelRaws (body : Array Raw) : Array (Option (Array Raw)) := Id.
       out := out.push label
   return out
 
+/-- An item's label in the size its first paragraph sets in, as `\makelabel` sets in the font in
+force at the `\item`. -/
+private def atParaStep (c label : Array Inline) : Array Inline :=
+  match Ir.paraStep? c with
+  | some n => #[.styled (.size n) label]
+  | none => label
+
 /-- A description list's items with their labels run in, bold and followed by
 `\labelsep`, as latex.ltx's `\descriptionlabel` sets them. -/
 private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block)) :
@@ -12087,11 +12123,11 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
     let label ← match labels[i]?.join with
       | some raws => elabInlines ctx raws
       | none => pure #[]
-    let head : Array Inline :=
-      #[.role Ir.descLabelRole #[.styled .normal #[.styled .bold label], .text labelSep]]
+    let head (c : Array Inline) : Array Inline :=
+      #[.role Ir.descLabelRole (atParaStep c #[.styled .normal #[.styled .bold label], .text labelSep])]
     out := out.push (match item[0]? with
-      | some (Block.para c) => item.modify 0 fun _ => .para (head ++ c)
-      | _ => #[Block.para head] ++ item)
+      | some (Block.para c) => item.modify 0 fun _ => .para (head c ++ c)
+      | _ => #[Block.para (head #[])] ++ item)
   return out
 
 /-- An itemize's or enumerate's items, each `\item[label]`'s label first in its first paragraph, which
@@ -12103,10 +12139,11 @@ private def labelledItems (ctx : Ctx) (body : Array Raw) (items : Array (Array B
   for (item, i) in items.zipIdx do
     match labels[i]?.join with
     | some raws =>
-      let head : Array Inline := #[.role Ir.itemLabelRole (← elabInlines ctx raws)]
+      let label ← elabInlines ctx raws
+      let head (c : Array Inline) : Array Inline := #[.role Ir.itemLabelRole (atParaStep c label)]
       out := out.push (match item[0]? with
-        | some (Block.para c) => item.modify 0 fun _ => .para (head ++ c)
-        | _ => #[Block.para head] ++ item)
+        | some (Block.para c) => item.modify 0 fun _ => .para (head c ++ c)
+        | _ => #[Block.para (head #[])] ++ item)
     | none => out := out.push item
   return out
 
@@ -12957,6 +12994,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
+    || n == Ir.trivItemRole || n == Ir.captionAtRole
     || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
@@ -13158,6 +13196,14 @@ private def preItemSet (ctx : Ctx) (body : Array Raw) (k : Nat) : Ir.ListSet := 
     | some _, _ => j := j + 1
   return set
 
+/-- The size step whose `\@listi` the lists and quotations opening here take: `\small` and
+`\footnotesize` redefine it (size1x.clo), `\normalsize` restores it. -/
+private def listSizeStep : EM (Option String) := do
+  return (← get).scope.blockDecls.foldl (fun acc d => match d with
+    | .style (.size n) =>
+      if n == "normalsize" then none else if n == "small" || n == "footnotesize" then some n else acc
+    | _ => acc) none
+
 /-- A list's options and the scopes over it: the index past its options, the spacing it declares as
 enumitem sets it, its scopes in order, its own options last, over what its level's macro sets from
 the `\parskip` in force and what it keeps of the enclosing list's, and its `\parsep`. -/
@@ -13195,11 +13241,7 @@ their own specifications say" pos
     acc.over (((ctx.styles.find? e).map (·.list)).getD {})) {}
   let size := ctx.page.fontSize
   let extra := ctx.listExtra.over size depth (nest.parskip.getD (Ir.texParskipOf ctx.page))
-  -- `\small` and `\footnotesize` redefine `\@listi` (size1x.clo) for the lists opening in them.
-  let step := (← get).scope.blockDecls.foldl (fun acc d => match d with
-    | .style (.size n) =>
-      if n == "normalsize" then none else if n == "small" || n == "footnotesize" then some n else acc
-    | _ => acc) none
+  let step ← listSizeStep
   let set := ((((Ir.ListSet.within ctx.lists size depth nest.set).over
     (Ir.stepListI ctx.lists size step depth)).over extra).over (scopes.over own)).over
     (preItemSet ctx body bodyFrom)
@@ -13307,7 +13349,8 @@ private def pageMark? (n : String) : Option Block :=
   if n == "pagebreak" then some .pagebreak
   else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
-  else if n == Ir.captionCloseRole then some (.role n #[])
+  else if n == Ir.captionCloseRole || n == Ir.trivItemRole || n == Ir.captionAtRole then
+    some (.role n #[])
   else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole then some (.role n #[])
   else none
 
@@ -13591,8 +13634,8 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
         let caption ← elabInlines ctx t
         let capAbove := innerBlocks.isEmpty && cols.isEmpty
           && rest.all isSpaceOrPar
-        figureGo ctx n kind body (j3 + 1) innerBlocks cols rest caption
-          capAbove blocks (hf.skip (by omega))
+        figureGo ctx n kind body (j3 + 1) innerBlocks cols (captionRest capAbove rest cpos) caption
+          capAbove blocks (hf.caption h capAbove cpos (by omega))
       | _ =>
         diag ctx .E0304 "'\\caption' needs a {text} group" cpos
         figureGo ctx n kind body j3 innerBlocks cols rest caption
@@ -13675,7 +13718,7 @@ text width; the box shares the leftover" spos
     have _ : slicePars rest 0 = nestedParsList rest.toList :=
       slicePars_zero _
     have _ := hf.bounds
-    let rb ← elabBlockScope ctx rest
+    let rb := settleCaptionMark (← elabBlockScope ctx rest)
     let mut inner := innerBlocks ++ rb
     unless caption.isEmpty do
       inner := Ir.captionAltBlocks caption inner
@@ -13900,11 +13943,12 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
       || n == "appendices" then
     let saved ← enterAppendicesIf (n == "appendices")
-    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure (quoteMCtx ctx n)
+    let step ← listSizeStep
+    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure (quoteMCtx ctx n step)
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
       (elabBlockScope quoteCtx body)
     leaveAppendices saved
-    blocks := wrapScopedEnv n ctx.quoteSet blocks inner
+    blocks := wrapScopedEnv n (ctx.quoteSet step) blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
     let kind : Ir.FloatKind :=
       if n == "table" || n == "table*" then .table else .figure

@@ -15362,11 +15362,15 @@ past it and hung that far into the margin, as `\trivlist` zeroes `\leftmargin` (
 private def trivlistItems (body : Array Raw) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
   let mut skipTo := 0
+  let mut seen := false
   for i in [0:body.size] do
     if i < skipTo then continue
     match body[i]? with
     | some (.ctrl "item" p) =>
-      out := out.push (.par p) |>.push (.ctrl "noindent" p)
+      out := out.push (.par p)
+      if seen then out := out.push (.ctrl Ir.trivItemRole p)
+      seen := true
+      out := out.push (.ctrl "noindent" p)
       let j := skipSpaces body (i + 1)
       if body[j]? matches some (.sym '[' _) then
         let close := ((List.range (body.size - j)).find? fun d =>

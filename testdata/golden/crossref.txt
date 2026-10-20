@@ -21,13 +21,13 @@ float figure 1
     text "An invented crossref panel."
   para
     label "fig:panel"
-    text "An invented stand-in for a figure body. "
+    text "An invented stand-in for a figure body."
 float table 1
   caption
     text "An invented data strip."
   para
     label "tab:strip"
-    text "A one-line stand-in for tabular content. "
+    text "A one-line stand-in for tabular content."
 para
   text "Figure "
   ref "fig:panel" shows "1" -> #fig:panel

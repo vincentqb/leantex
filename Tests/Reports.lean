@@ -5,6 +5,7 @@ import Tests.PrintColour
 import Tests.TexFontTrees
 import Tests.ItemLabels
 import Tests.LabelLines
+import Tests.ListGaps
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2340,7 +2341,13 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: an a4 book's recto text block 0.4 of the free width from its left edge and a verso's 0.6, a verso head of the folio and CHAPTER 1. ALPHA in slanted capitals, a recto head of 1.1. BETA and the folio, a chapter's opening page plain with the folio centred in its foot, a short chapter followed by a blank verso before the next; a one-sided book heads every page with the chapter's mark and the folio; a two-sided article heads a verso with 1 ALPHA, a recto with 1.1 Beta; fancyhdr's [LE,RO] folio outside; scrbook's recto margins 1:2; a book's front matter on i and a blank ii before its main matter's 1; a cleardoublepage on two-sided pages leaving a blank verso; this tree sets the same within its own measure",
       "main's binary at 730c0b54 on the same probes: one margin on every page, no head, the folio in every foot, chapters on consecutive pages; the guards fail there",
       "the corpus built by main's binary at 6714141d and by this tree's: every PDF and web page byte-identical and every diagnostic, notes included, the same, no corpus document being two-sided"]
-    state := .guarded "730c0b54" .before .author }
+    state := .guarded "730c0b54" .before .author },
+  { id := "R267", date := "2026-10-20"
+    what := "a trivlist's paragraph break stood an itemsep and a parsep where LaTeX sets its parskip alone; a quotation under small or footnotesize took the body size's list spacing; a small description's lines led at the body's baselineskip and its label set at the body's size; and a skip after a float's caption below its object, after its center's close, inside the center after the caption, or with no center, stood above the caption or was absorbed by the float's own space"
+    pins := [check% Tests.ListGaps.checks]
+    accept := ["lualatex 1.24 on invented probes: a trivlist's paragraph break 12pt, its next item 16pt; under small a quotation's paragraphs 13pt apart and its opening 14.7pt below the line before, a description's lines 11pt apart and its label small; a 4pt vspace after a caption, inside or outside the center or with no center, 4pt more between the caption and the text below; this tree sets each the same to a hundredth of a point",
+      "main's binary at 1e648c76 on the same probes: the trivlist's paragraph break 16pt, the quotation's paragraphs 15pt, the description's lines 12pt, and the vspace above the caption or lost; the guards fail there"]
+    state := .guarded "1e648c76" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

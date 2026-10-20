@@ -9,7 +9,7 @@ float figure 1
     text "An invented centred panel."
   para
     label "fig:panel"
-    text "An invented stand-in for a centred panel body. "
+    text "An invented stand-in for a centred panel body."
   role caption close
 float table 1
   caption

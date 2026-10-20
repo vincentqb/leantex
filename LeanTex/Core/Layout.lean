@@ -9811,6 +9811,8 @@ public structure Spacing.Context where
   private pictureSpans : Array (Nat × Span) := #[]
   /-- The walk is inside a float, whose paragraphs are uncounted box content. -/
   private inFloat : Bool := false
+  /-- The float's object ends at its center's close after the caption (`Ir.captionTail?`). -/
+  private floatTail : Bool := false
   /-- The headline band a headline class draws on each frame page (`Doc.headline`). -/
   private headline : Option Ir.Headline := none
   /-- The overlay step the page being collected is (`Ir.altShowsFirst`); 1 with no overlay. -/
@@ -13615,6 +13617,17 @@ private def Spacing.Context.loneLabel (r : Rd) (a : Acc) (blk : Block) (rest : L
     | none, none => none
   | _, _ => none
 
+/-- A skip standing after a float's center close below its caption (`Ir.captionTail?`), set as
+`collectBlock` sets it. -/
+private def floatTailSkip (r : Rd) (a : Acc) (b : Block) : Acc :=
+  if let .spaced before _ := b then
+    let g := r.resolve before.value
+    a.vspace (if r.boxed then { g with fil := false } else g)
+  else if let .role n _ := b then
+    if n == Ir.primitiveSkipRole then a.primitiveSkip
+    else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size } else a
+  else a
+
 mutual
 
 -- The block walk recurses through `List` companions, so every call is structural.
@@ -13916,7 +13929,10 @@ private def collectCentered (r : Rd) (a : Acc)
         (collectCentered r a firstPage.toList indent false).leafRange (Struct.leafCountBlocks otherPage) |>.1
       else collectCentered r (a.leafRange (Struct.leafCountBlocks firstPage)).1 otherPage.toList indent false
     collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
+  -- A float's object ends at its center's close after the caption, what follows it set below.
   | blk :: rest =>
+    if r.floatTail && blk.captionMark && rest.all Ir.Block.captionTailish then
+      r.settleLabels a indent else
     let r := r.underParskip a.tokens
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let (r, a) := r.meetLabels a blk indent
@@ -13940,8 +13956,10 @@ private def collectCentered (r : Rd) (a : Acc)
     let waits := match labelMeet blk with
       | .waits => true
       | _ => false
+    let ends := rest.all statefulBlock ||
+      (r.floatTail && rest.any Ir.Block.captionMark && rest.all Ir.Block.captionTailish)
     collectCentered (if statefulBlock blk || waits then r else { r with labels := #[] })
-      (if rest.all statefulBlock || statefulBlock blk then a else a.wantGap) rest indent (ruleBlock blk)
+      (if ends || statefulBlock blk then a else a.wantGap) rest indent (ruleBlock blk)
 
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
@@ -14079,10 +14097,10 @@ private def collectBlock (r : Rd) (a : Acc)
     if n == Ir.trivlistRole then
       let (r, a) := r.takeLabel a
       let (ri, a, g) := a.trivOpen r
-      -- The environment's items stand `\itemsep` and its `\parsep`, TeX's `\parskip`, apart.
+      -- The environment's paragraphs stand its `\parsep`, TeX's `\parskip`, apart, its items the
+      -- `\itemsep` in force more (`Ir.trivItemRole`).
       let ri := if !r.lists.trivTexParskip || !trivItems body then ri
-        else { ri with geom := { ri.geom with
-          parskip := (r.trivOuter a).itemsep.add r.geom.texParskip } }
+        else { ri with geom := { ri.geom with parskip := r.geom.texParskip } }
       (collectBlocks ri a body indent).trivClose r g
     else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
     -- A theorem-like block (`Ir.thmSkips`): its own space above, the `\topsep` in force below.
@@ -14099,6 +14117,8 @@ private def collectBlock (r : Rd) (a : Acc)
             (a.listDepth))
         (collectBlocks r (a.trivSpace g) body indent).trivSpace g
     else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size }
+    else if n == Ir.trivItemRole then
+      if r.lists.trivTexParskip then a.addvspace (r.resolve (r.trivOuter a).itemsep) else a
     else if n == Ir.noInterlineRole then { a with ops := a.ops.push .noInterline }
     else if n == Ir.primitiveSkipRole then a.primitiveSkip
     else
@@ -14354,7 +14374,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let rf := { (r.within blk) with inFloat := true }
     -- In beamer's lineage the text-side gaps are the trivlist's (`Ir.floatSpaceFor`).
     let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
-    let tail := Ir.closesAfterCaption (!capAbove && !caption.isEmpty) body
+    let tail := Ir.captionTail? (!capAbove && !caption.isEmpty) body
     -- The caption's skip after the object adds to a trivlist's close there, as `\@makecaption`'s
     -- `\vskip\abovecaptionskip` does.
     let a := plan.zipIdx.foldl
@@ -14364,15 +14384,20 @@ private def collectBlock (r : Rd) (a : Acc)
           else if !capAbove && i == 2 && !caption.isEmpty then a.vskip g else a.addvspace g
         | .caption =>
           let a := collectFloatCaption r rf a kind caption capLeaf capSpan indent
-          -- A center's close after the caption spends its space below it, inside the float's box.
-          if tail then
-            let a := a.trivClose rf (some (rf.trivAdd a))
+          -- A center's close after the caption spends its space below it, inside the float's box,
+          -- and the skips after the caption follow it.
+          match tail with
+          | some (_, after) =>
+            let a := if after.any Ir.Block.closesCaption then
+                (a.trivClose rf (some (rf.trivAdd a)))
+              else a
+            let a := after.foldl (floatTailSkip rf) a
             { a with owed := a.owed.push {} }
-          else a
+          | none => a
         -- The float's box opens as a minipage does, unless its caption above set a line first.
         | .object =>
-          collectCentered rf { a with boxTop := !capAbove || caption.isEmpty }
-            body.toList indent false) a
+          collectCentered { rf with floatTail := tail.isSome }
+            { a with boxTop := !capAbove || caption.isEmpty } body.toList indent false) a
     { a.pushOp .floatClose with noBreakNext := held }
   | .frame title standout valign breakable body =>
     let marks := Ir.frameMarks body
@@ -14468,13 +14493,13 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   have hst' : (r.underParskip a.tokens).styles.find? n = none := by
     rw [Spacing.Context.underParskip_styles]; exact hst
   simp only [collectBlock, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
-    hdc, hop, hpic, hre, Bool.false_eq_true, ite_false]
+    hdc, hop, hpic, hre, hti, Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
     (opening : Ir.PageOpening) (indent : Length)

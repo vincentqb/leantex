@@ -9572,10 +9572,16 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       if caption.isEmpty then #[]
       else #[Html.elem "figcaption"
         (inlines cfg (Ir.numberedCaption cfg.locale kind num caption))]
-    let kids := blockNodesInto cfg.into #[] body.toList
-    -- A center's close the caption below stood in stands after the caption.
-    let tail := if Ir.closesAfterCaption (!capAbove && !caption.isEmpty) body
-      then #[Html.elem "div" #[] #[("class", roleClass Ir.trivlistRole)]] else #[]
+    let all := blockNodesInto cfg.into #[] body.toList
+    -- A center's close the caption below stood in stands after the caption, the skips after it too,
+    -- each block but a marker one node.
+    let (kids, tail) := match Ir.captionTail? (!capAbove && !caption.isEmpty) body with
+      | some (_, after) =>
+        let k := all.size - (after.filter (!Ir.pageMarkerBlock ·)).size
+        let close := if after.any Ir.Block.closesCaption then
+          #[Html.elem "div" #[] #[("class", roleClass Ir.trivlistRole)]] else #[]
+        (all.extract 0 k, close ++ all.extract k all.size)
+      | none => (all, #[])
     let kindCls := floatKindClass kind
     let cls := if kind == .figure then "float" else "float " ++ kindCls
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
