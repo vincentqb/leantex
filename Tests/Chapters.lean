@@ -91,12 +91,8 @@ def twosideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     ps[i]?.bind fun p => (p.lines.filter (!·.furniture)).foldl (fun m l => some (match m with
       | some v => min v l.x
       | none => l.x)) none
-  let furniture (ps : Array CensusPage) (i : Nat) : Array CensusLine :=
-    (ps[i]?.map fun p => p.lines.filter (·.furniture)).getD #[]
-  let head (ps : Array CensusPage) (i : Nat) : String :=
-    (((furniture ps i).foldl (fun m l => match m with
-      | some (a : CensusLine) => if l.y < a.y then some l else m
-      | none => some l) none).map (·.text.replace " " "")).getD ""
+  let furniture := furnitureLines
+  let head := headText
   let heads (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (head ps)
   let hm (src : String) : Dim.Length := (elabStr src).1.page.hmargin
   let bk := doc "{book}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}"
@@ -198,14 +194,10 @@ def markChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
   let doc (cls pre body : String) : String :=
     s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
   let pages (src : String) : Array CensusPage := censusOfSrc fonts src
-  let furniture (ps : Array CensusPage) (i : Nat) : Array CensusLine :=
-    (ps[i]?.map fun p => p.lines.filter (·.furniture)).getD #[]
+  let furniture := furnitureLines
   let texts (ps : Array CensusPage) (i : Nat) : List String :=
     (((furniture ps i).qsort (·.y < ·.y)).toList.map (·.text.replace " " "")).filter (!·.isEmpty)
-  let head (ps : Array CensusPage) (i : Nat) : String :=
-    (((furniture ps i).foldl (fun m l => match m with
-      | some (a : CensusLine) => if l.y < a.y then some l else m
-      | none => some l) none).map (·.text.replace " " "")).getD ""
+  let head := headText
   let heads (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (head ps)
   let pre := pages (doc "{book}" "" s!"\\chapter*\{Preface}\n\\markboth\{Preface}\{Preface}\n{filler}")
   t s!"marks: a hand-written markboth heads the pages after it ({heads pre 3})"
@@ -245,6 +237,33 @@ def markChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
     s!"{filler}\\thispagestyle\{plain}\n{filler}")
   t s!"marks: thispagestyle plain sets one page plain ({(List.range 3).map (texts plainHere)})"
     ((List.range plainHere.size).any fun i => texts plainHere i == [toString (i + 1)])
+  let short := pages (doc "{article}" (fancyPre ++ "\\lhead{Probe Left}\\rhead{Probe Right}\\cfoot{}\\rfoot{Page \\thepage}")
+    s!"\\section\{Alpha}\n{filler}")
+  t s!"marks: fancyhdr's shorthands replace its defaults ({texts short 1})"
+    (texts short 1 == ["ProbeLeftProbeRight", "Page2"])
+  let later := pages (doc "{article}" (fancyPre ++ "\\pagestyle{empty}") s!"\\section\{Alpha}\n{filler}")
+  t "marks: a later empty style sets no fancyhdr field"
+    ((List.range later.size).all fun i => (furniture later i).isEmpty)
+  let counted := pages (doc "{article}" (fancyPre ++ "\\fancyhf{}\n\\fancyhead[L]{R:\\rightmark}")
+    s!"\\section\{Alpha}\\markright\{Part \\thesection}\n{filler}\\section\{Bravo}\\markright\{Part \\thesection}\n{filler}")
+  t s!"marks: a mark's counters read where it stands ({heads counted 2})"
+    (head counted 1 == "R:Part1")
+  let sides := pages (doc "{article}" ("\\usepackage[twoside]{geometry}\n" ++ fancyPre ++
+    "\\fancyhf{}\n\\fancyhead[LE,RO]{\\thepage}\n\\fancyhead[RE,LO]{Probe}") filler)
+  t s!"marks: geometry's twoside gives fancyhdr its verso fields ({heads sides 2})"
+    (head sides 0 == "Probe1" && head sides 1 == "2Probe")
+  let bookTitle := pages (doc "{book}" "\\title{Probe Title}\\author{Probe}" s!"\\maketitle\n\\chapter\{Alpha}\n{filler}")
+  t s!"marks: a book's title page carries no furniture ({texts bookTitle 0})"
+    ((furniture bookTitle 0).isEmpty)
+  let native := pages (doc "{report}" "\\runninghead{Native Head \\hfill \\thepage}" s!"\\chapter\{Alpha}\n{filler}")
+  t s!"marks: a native head stands on a chapter's page too ({texts native 0})"
+    ((texts native 0).head?.any (·.startsWith "NativeHead"))
+  let mid := (elabStr (doc "{article}" "" "First words \\thispagestyle{plain} last words.")).1
+  t "marks: thispagestyle inside a paragraph leaves it whole"
+    ((mid.body.filter (· matches .para _)).size == 1)
+  let (inlineHtml, _) := HtmlDoc.emit {} (elabStr (doc "{article}" "" "Some words \\markright{Probe Mark} more.")).1
+  t "marks: a mark inside a paragraph sets nothing on the web page"
+    (!hasStr inlineHtml "u-page" && !hasStr inlineHtml "Probe Mark")
   let kb := pages (doc "{scrbook}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}\\section\{Charlie}\n{filler}")
   t s!"marks: scrbook heads a verso with its chapter, a recto with its section, the folio in the \
 foot ({(List.range 3).map (texts kb)})"

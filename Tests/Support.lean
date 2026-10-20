@@ -2466,6 +2466,16 @@ def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
         unless out.contains pair do out := out.push pair
   return out
 
+/-- A census page's running furniture lines. -/
+def furnitureLines (ps : Array CensusPage) (i : Nat) : Array CensusLine :=
+  (ps[i]?.map fun p => p.lines.filter (·.furniture)).getD #[]
+
+/-- The text of a census page's topmost furniture line, its spaces dropped. -/
+def headText (ps : Array CensusPage) (i : Nat) : String :=
+  (((furnitureLines ps i).foldl (fun m l => match m with
+    | some (a : CensusLine) => if l.y < a.y then some l else m
+    | none => some l) none).map (·.text.replace " " "")).getD ""
+
 /-- The shipped-page census of a source laid out with `fonts`. -/
 def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=
   let (doc, _) := elabStr src

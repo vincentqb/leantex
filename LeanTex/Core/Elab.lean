@@ -700,8 +700,9 @@ public structure ESt where
   /-- An `\addcontentsline` entry waiting for the starred heading or reference list it stands
   before: that opener's site, the entry's unit and its words. -/
   contentsLine : Option (Pos × String × Array Inline × Option String) := none
-  /-- The groups each `\markboth` or `\markright` wrote, elaborated where the document ends. -/
-  markRaws : Array (Option (Array Raw) × Array Raw) := #[]
+  /-- The groups each `\markboth` or `\markright` wrote and the counters where it stood, elaborated
+under them where the document ends. -/
+  markRaws : Array (Option (Array Raw) × Array Raw × Counters) := #[]
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -1064,8 +1065,10 @@ private def recordMark (raws : Array Raw) (i : Nat) (n : String) :
     EM (String × { j : Nat // i < j }) := do
   let both := n == "markboth"
   let (gs, j) := Compat.takeGroups raws (i + 1) (if both then 2 else 1)
-  let k := (← get).markRaws.size
-  let entry := if both then (some (gs.getD 0 #[]), gs.getD 1 #[]) else (none, gs.getD 0 #[])
+  let st ← get
+  let k := st.markRaws.size
+  let entry := if both then (some (gs.getD 0 #[]), gs.getD 1 #[], st.ctr)
+    else (none, gs.getD 0 #[], st.ctr)
   modify fun st => { st with markRaws := st.markRaws.push entry }
   return (Ir.markRole k, ⟨max (i + 1) j, by omega⟩)
 
@@ -11161,8 +11164,9 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
     let content := if tps.align == some .left then inner else #[.center inner]
-    -- `\maketitle` sets its page in the plain style.
-    blocks := (blocks.push (.role Ir.plainPageRole #[])) ++ content
+    -- `\maketitle` sets its page in the plain style, a class's title page in the empty one.
+    let titlePage := blocks.back? == some (.role Ir.titlePageBeginRole #[])
+    blocks := (if titlePage then blocks else blocks.push (.role Ir.plainPageRole #[])) ++ content
   return blocks
 
 /-- A frame, flattened into the lone frame it holds when neither carries a
@@ -11432,7 +11436,7 @@ private theorem carryTokens_quiet (ctx : Ctx) (cur : Array Raw)
 /-- Whether a control is a `\pagenumbering` role: mid-paragraph it opens the page the paragraph
 starts on, as TeX ships that page after it, and leaves the paragraph whole. -/
 private def numberingRole (n : String) : Bool :=
-  n.startsWith "pagenumbering " && (Ir.pageOpeningOfRole? n).isSome
+  (n.startsWith "pagenumbering " && (Ir.pageOpeningOfRole? n).isSome) || n == Ir.plainPageRole
 
 /-- A mid-paragraph mark that changes shipout state, not structure, ahead of the open paragraph: a
 page ground's palette, or a page numbering's opening. -/
@@ -13373,7 +13377,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
     || n == Ir.trivItemRole || n == Ir.captionAtRole
-    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || n == Ir.plainPageRole
+    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || (n == Ir.plainPageRole && cur.isEmpty)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
@@ -15863,6 +15867,7 @@ private def pageSwitch : Native.PageKey → Option (Bool → PageSpec → PageSp
   | .twoside => some fun b s => { s with twoside := b }
   | .headings => some fun b s => { s with markHeads := b }
   | .openright => some fun b s => { s with openRight := b }
+  | .plainpages => some fun b s => { s with plainPages := b }
   | _ => none
 
 /-- What a page key's value must be, as its type error names it. -/
@@ -19203,6 +19208,9 @@ margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "
     else if KeyVal.entry o matches ("draft", none) | ("draft", some "true") then
       classSay .W0104 key
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
+    -- KOMA-Script's report and book give their title a page of its own, which `titlepage=false`
+    -- takes back.
+    else if o == "titlepage=false" && docClass == .koma && (← get).ctr.chapters then pure ()
     else if let some why := ((classOptionsInert.lookup record.model).bind (·.lookup o)).map (·.why) then
       classSay .N0100 key s!"'\\documentclass[{o}]' → nothing: {why}"
     else if (optionSkip o).isSome then
@@ -19468,8 +19476,12 @@ the .bib file"
       salvage := (← get).salvage
       frameRestart := (← get).frameRestart
       shortTitles := (← get).headingShorts
-      marks := ← (← get).markRaws.mapM fun (l, r) => do
-        return { left := ← l.mapM (elabInlines ctx), right := ← elabInlines ctx r }
+      marks := ← (← get).markRaws.mapM fun (l, r, ctr) => do
+        let now := (← get).ctr
+        modify fun st => { st with ctr := ctr }
+        let mark : Ir.PageMark := { left := ← l.mapM (elabInlines ctx), right := ← elabInlines ctx r }
+        modify fun st => { st with ctr := now }
+        return mark
       listNotes := (← get).ctr.notesAt.map (·, 0)
     }
     return { doc, table, pictureReport, locale := ctx.locale, resolve := !stRefs.refSites.isEmpty }

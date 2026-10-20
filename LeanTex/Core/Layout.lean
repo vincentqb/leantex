@@ -20181,7 +20181,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     let verso := doc.page.twoside && page.pageState.folio % 2 == 0
     let (left, right) := marked[i]?.getD (#[], #[])
     -- A plain page (a chapter's opening, `\maketitle`'s) carries no running field but the folio.
-    let plainHere := page.pageState.plain && (headings || declared)
+    let plainHere := page.pageState.plain && (headings || (declared && doc.page.plainPages))
     -- KOMA-Script's folio stands in the foot, outside on two-sided pages.
     let komaFolio : Array Inline := if !doc.page.twoside then #[.fill, .pageNumber, .fill]
       else if verso then #[.pageNumber, .fill] else #[.fill, .pageNumber]

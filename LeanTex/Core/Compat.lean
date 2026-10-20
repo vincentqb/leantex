@@ -7014,7 +7014,8 @@ private def geometry (opts : Array Raw) (pos : Pos)
   -- The width as a fraction of the paper's (`hscale`).
   let mut hs : Option (String × String) := none
   -- Whether the pages are two-sided, geometry's own `twoside` included.
-  let mut sided := (← get).twoSided
+  let sided := (← get).twoSided ||
+    (Entries.read .keyval opts).any fun e => e.key == "twoside" && e.value.isNone
   for entry in Entries.read .keyval opts do
     let e := entry.src
     match entry.key, entry.value with
@@ -7044,7 +7045,7 @@ option") pos
         else inertParam "geometry" f spelling (.asWithout "one-sided margins are equal") pos
       -- geometry's `twoside` mirrors a verso's margins, the free width split 2:3 unless declared.
       else if f == "twoside" then
-        sided := true
+        write fun st => { st with twoSided := true }
         keys := keys.push (.twoside, "on", #[f])
       else dropped := dropped.push f
     | k0, some v0 =>
@@ -10069,6 +10070,8 @@ template around it; the engine's own {element} stands" pos
       sayOnce "partial:\\documentclass:titlepage:maketitle" .W0110
         "'\\maketitle' sets the title above the text, where the class's title page gives it a \
 page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
+      -- The title's page carries no running furniture, as the class's title page does.
+      return some (#[.ctrl Ir.titlePageBeginRole pos, .ctrl "maketitle" pos], start)
     return none
   | "setbeamercolor" =>
     -- A later parent declaration changes its children, so nothing is flattened here.
@@ -11562,9 +11565,11 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
       else if name.startsWith "c" then 1 else 2
     -- KOMA-Script's inner and outer sides change places on a verso.
     let mirrored := if name.startsWith "i" then 2 else if name.startsWith "o" then 0 else slot
+    let isHead := name.endsWith "head"
     write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
-      if name.endsWith "head" then
+      let st := { st with fancyTouched := st.fancyTouched ++ #[(isHead, false, slot), (isHead, true, mirrored)] }
+      if isHead then
         { st with head := Ir.redeclare st.head slot src
                   headEven := Ir.redeclare st.headEven mirrored src }
       else
@@ -11625,17 +11630,17 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
       return #[]
     | "plain" =>
       -- article's initial style is the centred page number in the foot.
-      write fun st => { st with headingsStyle := some false }
+      write fun st => { st with headingsStyle := some false, fancyStyle := false }
       setting "\\pagestyle{plain}" (.page #[(.numbers, "on")]) c.pos
     | "headings" =>
       -- The standard classes' style, the folio and the headings' marks in the head, set once the
       -- preamble ends.
-      write fun st => { st with headingsStyle := some true }
+      write fun st => { st with headingsStyle := some true, fancyStyle := false }
       became "\\pagestyle{headings}" "\\page{ numbers = on, headings = on }" c.pos
       carry (.page #[(.numbers, "on")]) c.pos
     | "empty" =>
       write fun st => { st with head := #[], foot := #[], headEven := #[], footEven := #[],
-                                headingsStyle := some false }
+                                headingsStyle := some false, fancyStyle := false }
       let page : Native.Setting := .page #[(.numbers, "off")]
       became "\\pagestyle{empty}" s!"{page.note?.getD ""}, and no running fields" c.pos
       carry page c.pos
@@ -15144,7 +15149,7 @@ private theorem rewriteCursor_last_document_exact (cursor : RewriteCursor)
 /-- fancyhdr's fields where the document names none, as the package initialises them: the marks in
 the head, the outer place the right mark's, and the folio in the foot's centre. -/
 private def fancyDefaults (twoside : Bool) (pos : Pos) : Array (Bool × Bool × Nat × Array Raw) :=
-  let mark (n : String) : Array Raw := #[.ctrl "slshape" pos, .ctrl n pos]
+  let mark (n : String) : Array Raw := #[.group #[.ctrl "slshape" pos, .ctrl n pos] pos]
   let heads := if twoside then
       #[(false, 0, "leftmark"), (false, 2, "rightmark"), (true, 0, "rightmark"), (true, 2, "leftmark")]
     else #[(false, 0, "rightmark"), (false, 2, "leftmark"), (true, 0, "rightmark"), (true, 2, "leftmark")]
@@ -15202,6 +15207,9 @@ private def flushRunning : M (Array Raw) := do
     became "\\fancyfoot[E] / \\ifoot / \\ofoot"
       s!"\\runningfoot[pages = even]\{{lineSrc st.footEven}}" pos
     out := out ++ #[.ctrl "runningfoot" pos] ++ evenRaws ++ #[.group (line st.footEven) pos]
+  -- Fields fancyhdr or scrlayer-scrpage declares leave a plain page, a chapter's or a title's, plain.
+  if !st.head.isEmpty || !st.foot.isEmpty || cleared true || cleared false then
+    out := out ++ (Native.Setting.page #[(.plainpages, "on")]).raws pos
   -- fancyhdr's rule under the head, `\headrulewidth` thick, 0.4pt unless redefined.
   if st.fancyStyle then
     let width := match st.binds["headrulewidth"]? with

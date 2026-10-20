@@ -337,6 +337,9 @@ public structure PageSpec where
   /-- The rule under a running head, fancyhdr's `\headrulewidth` thick, a strut's depth below its
   baseline. -/
   headRule : Option Length := none
+  /-- Whether a plain page (a chapter's opening, `\maketitle`'s) sets the plain style over the
+  declared running fields, as LaTeX's page styles do. -/
+  plainPages : Bool := false
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin

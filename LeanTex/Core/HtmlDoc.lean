@@ -6989,6 +6989,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .role n body =>
     -- url.sty's low tilde names only the twin's spelling, so the page sets its box alone
     if n == Ir.urlTildeRole then acc ++ inlineNodesInto cfg #[] body.toList else
+    -- a page mark and a mark reading are paged-media furniture, setting nothing here
+    if Ir.pageMarkerRole n || n == Ir.leftMarkRole || n == Ir.rightMarkRole then
+      inlineNodesInto cfg acc body.toList else
     -- a title-part role also states its size and baseline skip; other roles carry only their class
     let part := Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n
     let style := part.bind fun p =>
