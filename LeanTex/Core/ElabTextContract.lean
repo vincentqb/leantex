@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.TextAccount
 public import LeanTex.Core.Elab
+public import LeanTex.Core.TextSymData
 
 import all LeanTex.Core.Ir
 import all LeanTex.Core.Elab
@@ -35,12 +36,14 @@ theorem smartPunct_canon (s : String) :
   simp [Ir.smartPunct, hx, hs, hw]
 
 theorem smartPunctAfter_canon (lead : Option Char) (s : String) :
-    canon (Ir.smartPunctAfter lead s).toList = canon s.toList := by
+    canon (Ir.smartPunctAfter lead s).toList = canon s.toList ∧
+      (Ir.smartPunctAfter lead s).toList.filter (·.isWhitespace) =
+        s.toList.filter (·.isWhitespace) := by
   cases lead with
-  | none => exact (smartPunct_canon s).1
+  | none => exact smartPunct_canon s
   | some c =>
-    obtain ⟨x, hx, hs, _⟩ := smartPunct_go_canon s.toList [c]
-    simp [Ir.smartPunctAfter, hx, hs]
+    obtain ⟨x, hx, hs, hw⟩ := smartPunct_go_canon s.toList [c]
+    simp [Ir.smartPunctAfter, hx, hs, hw]
 
 /-- Smart punctuation reads alike from either origin. -/
 theorem chars_smart (named : List Span) (o : Origin) (s : String) :
@@ -49,7 +52,7 @@ theorem chars_smart (named : List Span) (o : Origin) (s : String) :
   | source sp =>
     simp only [keep_source]
     split
-    · rfl
+    · rw [(smartPunct_canon s).2]
     · exact (smartPunct_canon s).1
   | engine =>
     rw [keep_engine, keep_engine, (smartPunct_canon s).2]
@@ -113,21 +116,35 @@ theorem view_mapSmartText (named : List Span) (xs : Array Inline) :
   simp only [view, norm, locatedText, Array.toList_map]
   rw [mapSmartTextList_canon]
 
-/-- The raws the plain-text arms of the inline knot read: words, spaces, paragraph breaks and
-symbols, whatever expansion marks them, and groups, declaration scopes and input wrappers of
-them. -/
-public inductive PlainRaw : Parse.Raw → Prop
-  | word (s : String) (p : Pos) : PlainRaw (Parse.Raw.word s p)
-  | space : PlainRaw Parse.Raw.space
-  | par (p : Pos) : PlainRaw (Parse.Raw.par p)
-  | sym (c : Char) (p : Pos) : PlainRaw (Parse.Raw.sym c p)
-  | group (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw r) →
-      PlainRaw (Parse.Raw.group body p)
-  | scope (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw r) →
-      PlainRaw (Parse.Raw.env Parse.scopeEnv body p)
+/-- The raws the plain-text arms of the inline knot read: words, spaces, paragraph breaks, symbols
+other than white space and the control words `K` admits, whatever expansion marks them, and
+groups, declaration scopes and input wrappers of them. -/
+public inductive PlainRaw (K : String → Prop) : Parse.Raw → Prop
+  | word (s : String) (p : Pos) : PlainRaw K (Parse.Raw.word s p)
+  | space : PlainRaw K Parse.Raw.space
+  | par (p : Pos) : PlainRaw K (Parse.Raw.par p)
+  | sym (c : Char) (p : Pos) : c.isWhitespace = false → PlainRaw K (Parse.Raw.sym c p)
+  | group (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw K r) →
+      PlainRaw K (Parse.Raw.group body p)
+  | scope (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw K r) →
+      PlainRaw K (Parse.Raw.env Parse.scopeEnv body p)
   | input (name file : String) (body : Array Raw) (p : Pos) :
-      Parse.inputEnvFile? name = some file → (∀ r ∈ body, PlainRaw r) →
-      PlainRaw (Parse.Raw.env name body p)
+      Parse.inputEnvFile? name = some file → (∀ r ∈ body, PlainRaw K r) →
+      PlainRaw K (Parse.Raw.env name body p)
+  | ctrl (name : String) (p : Pos) : K name → PlainRaw K (Parse.Raw.ctrl name p)
+
+/-- A control word the inline knot sets as its own text whatever follows it: `\hfill`, `\par`,
+or an escape or text symbol no accent shares, read under its own name. -/
+@[expose] public def PlainCtrl (name : String) : Prop :=
+  Compat.overlayName name = name ∧ (TextSymData.accents.map (·.1)).contains name = false ∧
+    (name = "hfill" ∨ name = "par" ∨
+      (name ∉ ["addcontentsline", "addtocontents", "qedhere", "ensuremath", "\\"] ∧
+        ((escapeOf name).isSome ∨ (Lex.textSymbols.lookup name).isSome)))
+
+/-- A context the controls `K` names read as built-ins in: no parameter and no document command
+takes one of their names. -/
+@[expose] public def Fits (K : String → Prop) (ctx : Ctx) : Prop :=
+  (∀ a ∈ ctx.args, ¬ K a.1) ∧ ∀ c ∈ ctx.user, ¬ K c.name
 
 /-- An inline run accounts for the source text `src` after `pre`: the pieces its diagnostics add
 are tokens of `src`, and once they are excused its text reads as `pre` then `src`. -/
@@ -160,6 +177,44 @@ private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : 
     rw [hv named (fun s hs => hn s (List.mem_append_right _ hs)),
       hview named (fun s hs => hn s (List.mem_append_left _ hs))]
     simp only [Parse.rawTextList_cons, List.append_assoc]
+
+private theorem accounts_prefix (file : String) (rs src : List Raw) (run : Array Inline × ESt)
+    (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
+    (h : Accounts file src run st1 pre')
+    (hd : st1.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added0)
+    (hd0 : ∀ s ∈ added0, ∃ c s', Span.samePlace s s' ∧ (c, .source s') ∈ Parse.rawTextList file rs)
+    (hview : ∀ named : List Span, (∀ s ∈ added0, s ∈ named) →
+      ∀ tail, view named (pre' ++ tail) = view named (pre ++ Parse.rawTextList file rs ++ tail)) :
+    Accounts file (rs ++ src) run st pre := by
+  obtain ⟨added, hdiags, hsrc, hv⟩ := h
+  refine ⟨added0 ++ added, ?_, ?_, ?_⟩
+  · rw [hdiags, hd, List.append_assoc]
+  · intro s hs
+    rcases List.mem_append.mp hs with hs | hs
+    · obtain ⟨c, s', hp, hc⟩ := hd0 s hs
+      exact ⟨c, s', hp, by rw [Parse.rawTextList_append]; exact List.mem_append_left _ hc⟩
+    · obtain ⟨c, s', hp, hc⟩ := hsrc s hs
+      exact ⟨c, s', hp, by rw [Parse.rawTextList_append]; exact List.mem_append_right _ hc⟩
+  · intro named hn
+    rw [hv named (fun s hs => hn s (List.mem_append_right _ hs)),
+      hview named (fun s hs => hn s (List.mem_append_left _ hs))]
+    simp only [Parse.rawTextList_append, List.append_assoc]
+
+private theorem drop_skipSpaces (raws : Array Raw) (i : Nat) :
+    ∃ k, raws.toList.drop i = List.replicate k .space ++ raws.toList.drop (skipSpaces raws i) := by
+  fun_induction skipSpaces raws i with
+  | case1 i h hs ih =>
+    obtain ⟨k, hk⟩ := ih
+    refine ⟨k + 1, ?_⟩
+    have hl : i < raws.toList.length := by simpa using h
+    rw [List.drop_eq_getElem_cons hl, hk]
+    have : raws.toList[i] = .space := by
+      simp only [Array.getElem_toList]
+      revert hs
+      cases raws[i] <;> simp
+    rw [this, List.replicate_succ, List.cons_append]
+  | case2 => exact ⟨0, by simp⟩
+  | case3 => exact ⟨0, by simp⟩
 
 private theorem locatedText_flushText (acc : Array Inline) (sb : String) :
     locatedText (flushText acc sb) = locatedText acc ++ chars .unplaced sb := by
@@ -334,19 +389,51 @@ private theorem pre_inner (acc inner : Array Inline) (sb : String) :
   simp [locatedText_append, locatedText_flushText]
 
 private theorem wordAfter_canon (ctx : Ctx) (acc : Array Inline) (sb w : String) :
-    canon (wordAfter ctx acc sb w).toList = canon w.toList := by
+    canon (wordAfter ctx acc sb w).toList = canon w.toList ∧
+      (wordAfter ctx acc sb w).toList.filter (·.isWhitespace) =
+        w.toList.filter (·.isWhitespace) := by
   unfold wordAfter
   split
-  · rfl
+  · exact ⟨rfl, rfl⟩
   · split
     · exact smartPunctAfter_canon _ _
-    · rfl
+    · exact ⟨rfl, rfl⟩
 
 private theorem slice_body {raws body : Array Raw} {i : Nat} (h : i < raws.size)
     (hb : rawWeightList body.toList < rawWeight raws[i]) :
     sliceWeight body 0 < sliceWeight raws i := by
   have := body_lt_slice' h hb
   simpa [sliceWeight] using this
+
+private theorem find_args_none (K : String → Prop) (ctx : Ctx) (name : String) (hfit : Fits K ctx)
+    (hk : K name) : ctx.args.find? (fun x => x.fst == name) = none := by
+  rw [Array.find?_eq_none]
+  intro a ha he
+  simp only [beq_iff_eq] at he
+  exact hfit.1 a ha (he ▸ hk)
+
+private theorem latestNamed_mem {α : Type} {nameOf : α → String} {xs : Array α} {want : String}
+    {n k : Nat} {x : α} (h : latestNamed nameOf xs want n = some (k, x)) :
+    x ∈ xs ∧ nameOf x = want := by
+  fun_induction latestNamed nameOf xs want n with
+  | case1 => simp at h
+  | case2 k hk hn =>
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨_, rfl⟩ := h
+    exact ⟨Array.getElem_mem hk, by simpa using hn⟩
+  | case3 _ _ _ ih => exact ih h
+  | case4 _ _ ih => exact ih h
+
+private theorem lookupUser_fits (K : String → Prop) (ctx : Ctx) (name : String) (hfit : Fits K ctx)
+    (hk : K name) : lookupUser ctx name = none := by
+  unfold lookupUser
+  split
+  · rfl
+  · cases hl : latestNamed (·.name) ctx.user name ctx.limit with
+    | none => rfl
+    | some x =>
+      obtain ⟨hm, hn⟩ := latestNamed_mem hl
+      exact absurd (hn ▸ hk) (hfit.2 _ hm)
 
 /-- What the spine owes at `raws`, `i`: its run accounts for the raws from `i`. -/
 private def SpineAccounts (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
@@ -356,11 +443,12 @@ private def SpineAccounts (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array 
     (locatedText acc ++ chars .unplaced sb)
 
 /-- One step of the spine, the steps after it lighter. -/
-private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
-    (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r)
+private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl n) (ctx : Ctx)
+    (raws : Array Raw) (i : Nat) (acc : Array Inline) (sb : String) (st : ESt) (hfit : Fits K ctx)
+    (hr : ∀ r ∈ raws, PlainRaw K r)
     (ih : ∀ (ctx' : Ctx) (raws' : Array Raw) (i' : Nat) (acc' : Array Inline) (sb' : String)
-      (st' : ESt), sliceWeight raws' i' < sliceWeight raws i → (∀ r ∈ raws', PlainRaw r) →
-      SpineAccounts ctx' raws' i' acc' sb' st') :
+      (st' : ESt), sliceWeight raws' i' < sliceWeight raws i → Fits K ctx' →
+      (∀ r ∈ raws', PlainRaw K r) → SpineAccounts ctx' raws' i' acc' sb' st') :
     Accounts ctx.file (raws.toList.drop i)
       ((elabInlinesFrom { ctx with callSite := none, literalWhen := none } raws i acc sb).run st) st
       (locatedText acc ++ chars .unplaced sb) := by
@@ -404,7 +492,7 @@ private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array
     all_goals rw [heq]
     case h_1.word s p =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp only [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
@@ -412,17 +500,17 @@ private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array
         Parse.rawTextOne_word, Option.map_none, Option.getD_none, List.append_nil,
         List.append_assoc, chars_empty]
       rw [← List.append_assoc (locatedText acc'), ← List.append_assoc (locatedText acc')]
-      exact view_token named _ (wordAfter_canon _ _ _ _) _ _
+      exact view_token named _ (wordAfter_canon _ _ _ _).1 (wordAfter_canon _ _ _ _).2 _ _
     case h_2.space =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hfit hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp only [Parse.rawTextOne_space]
       exact view_pending_space named _ sb' tail
     case h_3.par p =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hfit hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp only [Parse.rawTextOne_par]
@@ -447,24 +535,111 @@ private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array
           have := view_space_after named (locatedText acc' ++ chars .unplaced sb') tail
             (by obtain ⟨y, hy⟩ := chars_ends sb' he; exact ⟨locatedText acc' ++ y, by simp [hy]⟩)
           simpa [chars] using this.symm
-    case h_4.sym p | h_5.sym p | h_6.sym p =>
+    case h_12.ctrl name p hk =>
+      have hfit' : Fits K ({ { ctx with callSite := none, literalWhen := none } with
+          macroRoles := roles } : Ctx) := hfit
+      rw [find_args_none K _ name hfit' hk]
+      split
+      · rename_i hu
+        cases hu
+      split
+      · rename_i hu
+        rw [lookupUser_fits K _ name hfit' hk] at hu
+        cases hu
+      obtain ⟨hover, hacc, hcase⟩ := hK name hk
+      simp only [hover]
+      by_cases hhf : name = "hfill"
+      · subst hhf
+        simp only [show ("hfill" == "addcontentsline" || "hfill" == "addtocontents") = false by
+            decide, show ("hfill" == "hfill") = true by decide, Bool.false_eq_true, ↓reduceIte]
+        refine accounts_cons ctx.file _ _ _ st st _ _ []
+          (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
+          (by simp) (by simp) ?_
+        intro named _ tail
+        simp [locatedText_push, locatedText_flushText, locatedOne, locatedOnto, Parse.ctrlText]
+      by_cases hpar : name = "par"
+      · subst hpar
+        simp only [show ("par" == "addcontentsline" || "par" == "addtocontents") = false by decide,
+          show ("par" == "hfill") = false by decide, show ("par" == "qedhere") = false by decide,
+          show ("par" == "ensuremath") = false by decide,
+          show ("par" == "\\") = false by decide, beq_self_eq_true, Bool.or_true,
+          Bool.false_eq_true, ↓reduceIte]
+        obtain ⟨k, hk'⟩ := drop_skipSpaces raws (i + 1)
+        rw [hk', ← List.cons_append]
+        have hj := Parse.skipSpaces_ge raws (i + 1)
+        refine accounts_prefix ctx.file _ _ _ st st _ _ []
+          (ih { ctx with macroRoles := roles } raws (skipSpaces raws (i + 1)) _ "" st
+            (sliceWeight_lt raws h (by omega)) hfit hr) (by simp) (by simp) ?_
+        intro named _ tail
+        simp only [locatedText_push, locatedText_flushText, chars_empty, List.append_nil,
+          Parse.rawTextList_cons, Parse.rawTextOne_ctrl, Parse.ctrlText, ↓reduceIte,
+          List.append_assoc, List.cons_append, List.nil_append, Parse.rawTextList_spaces]
+        have hl : locatedOne .unplaced (Inline.linebreak {}) = [(' ', .engine)] := rfl
+        rw [hl, List.singleton_append, ← List.append_assoc, ← List.append_assoc,
+          view_spaces, view_engine_space]
+      obtain ⟨hnot, hown⟩ := hcase.resolve_left hhf |>.resolve_left hpar
+      simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hnot
+      obtain ⟨n1, n2, n3, n4, n5⟩ := hnot
+      have haccent : raws[i + 1]?.bind (accentCompose name) = none := by
+        have hm : accentMarkOf name = none :=
+          Std.HashMap.getElem?_ofList_of_contains_eq_false hacc
+        cases raws[i + 1]? <;> simp [accentCompose, hm]
+      simp only [beq_eq_false_iff_ne.mpr n1, beq_eq_false_iff_ne.mpr n2,
+        beq_eq_false_iff_ne.mpr hhf, beq_eq_false_iff_ne.mpr n3, beq_eq_false_iff_ne.mpr n4,
+        beq_eq_false_iff_ne.mpr n5, beq_eq_false_iff_ne.mpr hpar, haccent, Bool.or_false,
+        Bool.false_eq_true, ↓reduceIte]
+      cases hesc : escapeOf name with
+      | some lit =>
+        simp only []
+        by_cases hsp : name = " "
+        · subst hsp
+          have hlit : lit = " " := by
+            have hl : escapes.lookup " " = some " " := by decide
+            simp only [escapeOf, hl, Option.some.injEq] at hesc
+            exact hesc.symm
+          subst hlit
+          simp only [beq_self_eq_true, ↓reduceIte]
+          refine accounts_cons ctx.file _ _ _ st st _ _ []
+            (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hfit hr)
+            (by simp) (by simp) ?_
+          intro named _ tail
+          simp [Parse.ctrlText, hesc, chars, view, keep]
+        · simp only [beq_eq_false_iff_ne.mpr hsp, Bool.false_eq_true, ↓reduceIte]
+          refine accounts_cons ctx.file _ _ _ st st _ _ []
+            (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
+            (by simp) (by simp) ?_
+          intro named _ tail
+          simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
+            locatedList_cons, Parse.ctrlText, hesc, hhf, hpar]
+      | none =>
+        have hsym : (Lex.textSymbols.lookup name).isSome = true := by
+          simpa [hesc] using hown
+        obtain ⟨t, ht⟩ := Option.isSome_iff_exists.mp hsym
+        simp only [ht, Option.getD_some]
+        refine accounts_cons ctx.file _ _ _ st st _ _ []
+          (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
+          (by simp) (by simp) ?_
+        intro named _ tail
+        simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
+          locatedList_cons, Parse.ctrlText, hesc, hhf, hpar, ht]
+    case h_4.sym p _ | h_5.sym p _ | h_6.sym p _ =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
         locatedList_cons, chars]
-    case h_7.sym c p h1 h2 h3 =>
+    case h_7.sym c p h1 h2 h3 hwc =>
       have hc : c ≠ '~' := h3
       split
       · refine accounts_cons ctx.file _ _ _ st st _ _ []
-          (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hr)
+          (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
           (by simp) (by simp) ?_
         intro named _ tail
         simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
           locatedList_cons, chars, hc]
       · refine accounts_cons ctx.file _ _ _ st _ _ _ [⟨ctx.file, p⟩]
-          (ih { ctx with macroRoles := roles } raws (i + 1) acc' sb' _ hnext hr) ?_ ?_ ?_
+          (ih { ctx with macroRoles := roles } raws (i + 1) acc' sb' _ hnext hfit hr) ?_ ?_ ?_
         · show (st.diags.push _).toList.flatMap Diag.piece = _
           have hloss : DiagCode.E0311.loss = .dropped := rfl
           simp [Diag.piece, diagOf, Diag.of, Ctx.sourceSpan, hloss]
@@ -474,29 +649,30 @@ private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array
           exact ⟨c, ⟨ctx.file, p⟩, Span.samePlace_self _, by simp [hc]⟩
         · intro named hn tail
           have hs : (⟨ctx.file, p⟩ : Span) ∈ named := hn _ (List.mem_singleton_self _)
-          have := view_named named _ hs [c] (locatedText acc' ++ chars .unplaced sb') tail
+          have := view_named named _ hs [c] (by simpa using hwc) (locatedText acc' ++
+            chars .unplaced sb') tail
           simpa [hc, List.append_assoc] using this.symm
     case h_9.group body p _ =>
-      have hb : ∀ r ∈ body, PlainRaw r := by assumption
+      have hb : ∀ r ∈ body, PlainRaw K r := by assumption
       rw [run_group]
       refine accounts_inner ctx.file ctx.file _ body _ _ st _ _ _ _
         (core_plain { ctx with macroRoles := roles } body st fun st =>
-          ih { ctx with macroRoles := roles.enter } body 0 #[] "" st (hgroup heq) hb)
+          ih { ctx with macroRoles := roles.enter } body 0 #[] "" st (hgroup heq) hfit hb)
         (by simp) rfl ?_
       rw [← pre_inner]
-      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hr
+      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hfit hr
     case h_10.scope body p _ =>
-      have hb : ∀ r ∈ body, PlainRaw r := by assumption
+      have hb : ∀ r ∈ body, PlainRaw K r := by assumption
       simp only [beq_self_eq_true, ↓reduceIte]
       rw [run_bind']
       refine accounts_inner ctx.file ctx.file _ body _ _ st _ _ _ _
         (core_plain { ctx with macroRoles := roles } body st fun st =>
-          ih { ctx with macroRoles := roles.enter } body 0 #[] "" st (henv heq) hb)
+          ih { ctx with macroRoles := roles.enter } body 0 #[] "" st (henv heq) hfit hb)
         (by simp [inputEnvFile?_scope]) rfl ?_
       rw [← pre_inner]
-      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hr
+      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hfit hr
     case h_10.input name body p f _ _ =>
-      have hb : ∀ r ∈ body, PlainRaw r := by assumption
+      have hb : ∀ r ∈ body, PlainRaw K r := by assumption
       have hf : Parse.inputEnvFile? name = some f := by assumption
       have hs : (name == Parse.scopeEnv) = false := by
         rw [beq_eq_false_iff_ne]
@@ -514,10 +690,10 @@ private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array
       let ictx : Ctx := base.enterInput name f
       refine accounts_inner ctx.file f _ body _ _ st _ _ _ _
         (core_enter ictx body st rfl rfl fun st =>
-          ih { ictx with macroRoles := roles.enter } body 0 #[] "" st (henv heq) hb)
+          ih { ictx with macroRoles := roles.enter } body 0 #[] "" st (henv heq) hfit hb)
         (by simp [hf]) rfl ?_
       rw [← pre_inner]
-      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hr
+      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hfit hr
   · simp only [h, ↓reduceDIte]
     have hdrop : raws.toList.drop i = [] := List.drop_eq_nil_of_le (by simpa using Nat.not_lt.mp h)
     rw [hdrop]
@@ -526,29 +702,44 @@ private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array
     rw [locatedText_mergeTexts, locatedText_flushText]
     simp
 
-private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
-    (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r) :
+private theorem spine_plain (K : String → Prop) (hK : ∀ n, K n → PlainCtrl n) (ctx : Ctx)
+    (raws : Array Raw) (i : Nat) (acc : Array Inline) (sb : String) (st : ESt) (hfit : Fits K ctx)
+    (hr : ∀ r ∈ raws, PlainRaw K r) :
     SpineAccounts ctx raws i acc sb st := by
   have key : ∀ n (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline) (sb : String)
-      (st : ESt), sliceWeight raws i = n → (∀ r ∈ raws, PlainRaw r) →
+      (st : ESt), sliceWeight raws i = n → Fits K ctx → (∀ r ∈ raws, PlainRaw K r) →
       SpineAccounts ctx raws i acc sb st := by
     intro n
     induction n using Nat.strongRecOn with
     | ind n ih =>
-      intro ctx raws i acc sb st hn hr
-      exact spine_step ctx raws i acc sb st hr fun ctx' raws' i' acc' sb' st' hlt hr' =>
-        ih _ (hn ▸ hlt) ctx' raws' i' acc' sb' st' rfl hr'
-  exact key _ ctx raws i acc sb st rfl hr
+      intro ctx raws i acc sb st hn hfit hr
+      exact spine_step K hK ctx raws i acc sb st hfit hr
+        fun ctx' raws' i' acc' sb' st' hlt hfit' hr' =>
+          ih _ (hn ▸ hlt) ctx' raws' i' acc' sb' st' rfl hfit' hr'
+  exact key _ ctx raws i acc sb st rfl hfit hr
 
 /-- The plain-text arms of the inline knot conserve the source's text: once the reserved
 characters it refuses are excused, a run of words, spaces, breaks and symbols, through groups,
 declaration scopes and input wrappers, reads as its source. -/
 public theorem elabInlines_plain_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
-    (hr : ∀ r ∈ raws, PlainRaw r) :
+    (hr : ∀ r ∈ raws, PlainRaw (fun _ => False) r) :
     Accounts ctx.file raws.toList ((elabInlines ctx raws).run st) st [] := by
   rw [elabInlines]
   exact core_enter ctx raws st hsite hwhen fun st =>
-    spine_plain { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] "" st hr
+    spine_plain _ (fun _ h => h.elim) { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[]
+      "" st ⟨fun _ _ h => h, fun _ _ h => h⟩ hr
+
+/-- Control words that set their own text conserve it too: with no parameter or document command
+taking their names, `\hfill`, `\par`, escapes and text symbols read as their source among the
+plain-text arms. -/
+public theorem elabInlines_ctrl_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
+    (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none) (hfit : Fits PlainCtrl ctx)
+    (hr : ∀ r ∈ raws, PlainRaw PlainCtrl r) :
+    Accounts ctx.file raws.toList ((elabInlines ctx raws).run st) st [] := by
+  rw [elabInlines]
+  exact core_enter ctx raws st hsite hwhen fun st =>
+    spine_plain _ (fun _ h => h) { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] "" st
+      hfit hr
 
 end LeanTex.Core.Elab

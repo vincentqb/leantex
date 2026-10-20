@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Ir
 public import LeanTex.Core.Parse
+public import LeanTex.Core.Elab
 
 namespace LeanTex.Core
 
@@ -54,10 +55,11 @@ space. -/
 @[expose] public def norm (s : List Char) : List Char := squash false (canon s)
 
 /-- The characters a text keeps once the places `named` are excused: every character but those
-from an excused place and the engine's marks, the marks' white space kept. -/
+from an excused place and the engine's marks, white space always kept. -/
 @[expose] public def keep (named : List Span) (t : List (Char × Origin)) : List Char :=
   t.filterMap fun (c, o) => match o with
-    | .source s => if named.any (Span.samePlace · s) then none else some c
+    | .source s =>
+      if c.isWhitespace then some c else if named.any (Span.samePlace · s) then none else some c
     | .engine => if c.isWhitespace then some c else none
     | .unplaced => some c
 
@@ -155,9 +157,12 @@ public theorem view_space_run (named : List Span) (a b : List (Char × Origin)) 
 
 public theorem keep_source (named : List Span) (s : Span) (w : String) :
     keep named (chars (.source s) w) =
-      if named.any (Span.samePlace · s) then [] else w.toList := by
-  cases h : named.any (Span.samePlace · s) <;>
-    simp only [keep, chars, List.filterMap_map, Function.comp_def, h] <;> simp
+      if named.any (Span.samePlace · s) then w.toList.filter (·.isWhitespace) else w.toList := by
+  simp only [keep, chars, List.filterMap_map, Function.comp_def]
+  cases h : named.any (Span.samePlace · s) <;> simp only [Bool.false_eq_true, ↓reduceIte] <;>
+    induction w.toList with
+    | nil => rfl
+    | cons c rest ih => by_cases hc : c.isWhitespace = true <;> simp [hc, ih]
 
 public theorem keep_engine (named : List Span) (s : String) :
     keep named (chars .engine s) = s.toList.filter (·.isWhitespace) := by
@@ -173,25 +178,42 @@ public theorem keep_unplaced (named : List Span) (s : String) :
   | nil => rfl
   | cons c rest ih => simp [ih]
 
+/-- The engine's space reads as any other. -/
+public theorem view_engine_space (named : List Span) (a b : List (Char × Origin)) :
+    view named (a ++ (' ', .engine) :: b) = view named (a ++ (' ', .unplaced) :: b) := by
+  simp [view, keep]
+
+/-- A run of spaces reads as its first. -/
+public theorem view_spaces (named : List Span) (a b : List (Char × Origin)) (k : Nat) :
+    view named (a ++ (' ', .unplaced) :: (List.replicate k (' ', .unplaced) ++ b)) =
+      view named (a ++ (' ', .unplaced) :: b) := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+    rw [← ih, List.replicate_succ, List.cons_append]
+    exact view_space_run named a _
+
 /-- Two spellings TeX reads alike, from one source token, read alike. -/
 public theorem view_token (named : List Span) (s : Span) {w w' : String}
-    (h : canon w'.toList = canon w.toList) (a b : List (Char × Origin)) :
+    (h : canon w'.toList = canon w.toList)
+    (hw : w'.toList.filter (·.isWhitespace) = w.toList.filter (·.isWhitespace))
+    (a b : List (Char × Origin)) :
     view named (a ++ (chars (.source s) w' ++ b)) =
       view named (a ++ (chars (.source s) w ++ b)) := by
   simp only [view, norm, keep_append, canon_append, keep_source]
-  split <;> simp [h]
+  split <;> simp [h, hw]
 
 /-- A named token's characters are excused. -/
 public theorem view_named (named : List Span) (s : Span) (hs : s ∈ named)
-    (l : List Char) (a b : List (Char × Origin)) :
+    (l : List Char) (hl : ∀ c ∈ l, c.isWhitespace = false) (a b : List (Char × Origin)) :
     view named (a ++ (l.map (·, .source s) ++ b)) = view named (a ++ b) := by
   have hk : keep named (l.map (·, .source s)) = [] := by
     simp only [keep, List.filterMap_map, Function.comp_def]
     rw [List.filterMap_eq_nil_iff]
-    intro c _
+    intro c hc
     have : named.any (Span.samePlace · s) = true :=
       List.any_eq_true.mpr ⟨s, hs, Span.samePlace_self s⟩
-    simp [this]
+    simp [this, hl c hc]
   simp only [view, norm, keep_append, hk, List.nil_append]
 
 @[simp] public theorem chars_empty (o : Origin) : chars o "" = [] := rfl
@@ -373,11 +395,22 @@ end Ir
 
 namespace Parse
 
+/-- A control word's own text from its place: a paragraph break's space, none for `\hfill`, else
+the escape or text symbol it names. -/
+@[expose] public def ctrlText (file name : String) (p : Pos) : List (Char × Origin) :=
+  if name = "par" then [(' ', .unplaced)]
+  else if name = "hfill" then []
+  else match Elab.escapeOf name with
+    | some lit => Text.chars (.source ⟨file, p⟩) lit
+    | none => match Lex.textSymbols.lookup name with
+      | some t => Text.chars (.source ⟨file, p⟩) t
+      | none => []
+
 mutual
 
 /-- The text slots of raws read in `file`, onto `acc`: a word's, symbol's (a tie as its no-break
 space), formula's floor and verbatim's characters from their place, a space or break as a space,
-and a group's or environment's body, an input's in its file; a control word sets none here. -/
+a group's or environment's body, an input's in its file, and a control word's own (`ctrlText`). -/
 @[expose] public def rawTextListOnto (file : String) (acc : Array (Char × Origin)) :
     List Raw → Array (Char × Origin)
   | [] => acc
@@ -394,7 +427,7 @@ and a group's or environment's body, an input's in its file; a control word sets
   | .math _ body p =>
     acc ++ (Text.chars (.source ⟨file, p⟩) (Ir.mathFloor (rawSrc (mathReading body)))).toArray
   | .verb _ v p => acc ++ (Text.chars (.source ⟨file, p⟩) v.text).toArray
-  | .ctrl _ _ => acc
+  | .ctrl name p => acc ++ (ctrlText file name p).toArray
 
 end
 
@@ -438,6 +471,12 @@ public theorem rawTextList_cons (file : String) (r : Raw) (rest : List Raw) :
   simp only [rawTextList, rawTextOne, rawTextListOnto]
   rw [rawTextListOnto_acc, Array.toList_append]
 
+public theorem rawTextList_append (file : String) (a b : List Raw) :
+    rawTextList file (a ++ b) = rawTextList file a ++ rawTextList file b := by
+  induction a with
+  | nil => simp
+  | cons r rest ih => simp [rawTextList_cons, ih]
+
 @[simp] public theorem rawTextOne_word (file s : String) (p : Pos) :
     rawTextOne file (.word s p) = Text.chars (.source ⟨file, p⟩) s := by
   simp [rawTextOne, rawTextOnto]
@@ -451,12 +490,22 @@ public theorem rawTextList_cons (file : String) (r : Raw) (rest : List Raw) :
 @[simp] public theorem rawTextOne_sym (file : String) (c : Char) (p : Pos) :
     rawTextOne file (.sym c p) = [(if c = '~' then '\u00a0' else c, .source ⟨file, p⟩)] := rfl
 
+@[simp] public theorem rawTextOne_ctrl (file name : String) (p : Pos) :
+    rawTextOne file (.ctrl name p) = ctrlText file name p := by
+  simp [rawTextOne, rawTextOnto]
+
 @[simp] public theorem rawTextOne_group (file : String) (body : Array Raw) (p : Pos) :
     rawTextOne file (.group body p) = rawTextList file body.toList := rfl
 
 @[simp] public theorem rawTextOne_env (file name : String) (body : Array Raw) (p : Pos) :
     rawTextOne file (.env name body p) =
       rawTextList ((inputEnvFile? name).getD file) body.toList := rfl
+
+public theorem rawTextList_spaces (file : String) (k : Nat) :
+    rawTextList file (List.replicate k .space) = List.replicate k (' ', .unplaced) := by
+  induction k with
+  | zero => rfl
+  | succ k ih => simp [List.replicate_succ, rawTextList_cons, ih]
 
 end Parse
 

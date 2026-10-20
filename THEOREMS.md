@@ -68,7 +68,7 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 -- either, so reading it as none is owed with the block knot's arms (U111). srcText is read after execution, so decoding, lexing, includes and execution owe the
 -- same equation from the source bytes (U111).
 -- Text.view P t: the characters Text.keep P keeps (all but those from an excused place and the
--- engine's marks, the marks' white space kept), read through Text.norm: TeX's punctuation
+-- engine's marks, white space always kept), read through Text.norm: TeX's punctuation
 -- spellings as one (Text.canon), quotes of either hand alike since a quote's hand is typography
 -- the tiers judge, and a white-space run as one space (Text.squash); NFC, glyph ligatures and the
 -- hyphen a line break sets are the backends' to read back (U110), and an artifact marking no
@@ -85,7 +85,7 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 | A result | No declaration is marked partial or unsafe, by a line scan: `bannedWord`; no constant the binary's entry reaches through kernel values is partial but the watch mode's repeat and the loops the toolchain-loops premise names, by a scan of those values: `partialReachChecks`; a call resolves to the latest visible command, and a chain of expansions as the knot's call sites build it is bounded by the environments visible where it starts and the commands each opens: `Elab.lookupUser_latest_exact`, `Elab.expandUser_depth_le` | owed (U77): `Elab.knot_calls_nest` |
 | Ships unless stopped | tested: `machineLossChecks` | owed (U37): `DiagCode.error_iff_fatal`, its writer-stopping causes widened to the output name's and publication's refusals |
 | Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `Code.segmentsOf_source_exact`; by unfolding: `read_tex_exact`; supporting, no text step: `Md.desugar_vocabulary_mem` (the vocabulary a desugaring lowers into), `rewriteCtrl_accounts` (an empty rewrite paid by a diagnostic or a state write) | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
-| Elaboration and IR passes | the model: `Parse.rawText`, `Ir.locatedText` (`Ir.locatedText_erased`), `Diag.piece`, `Text.view` (`Text.view_congr`); the inline knot's plain-text arms (words, spaces, paragraph breaks, symbols with E0311's refusals, groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector): `Elab.elabInlines_plain_text`; an include standing as its own block sequence: `elabBlocks_input_exact`, `markdownInput_blocks_text`; supporting, no text step of the driver's: `Ir.mapInlines_text` and `Ir.mapBlocks_text` (for a leaf keeping `Ir.plainTextOne`), `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` (declaration scope) | owed (U111): the inline knot's other arms, `Elab.elabInlines_ctrl_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`; owed (U111): the block knot, `Elab.elabBlocks_text_accounts` over `Ir.locatedBlocks`; owed (U111): `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
+| Elaboration and IR passes | the model: `Parse.rawText`, `Ir.locatedText` (`Ir.locatedText_erased`), `Diag.piece`, `Text.view` (`Text.view_congr`); the inline knot's plain-text arms (words, spaces, paragraph breaks, symbols with E0311's refusals, groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector): `Elab.elabInlines_plain_text`; with them the control words setting their own text (escapes, text symbols, `\par`, `\hfill`) where no parameter or document command takes their name: `Elab.elabInlines_ctrl_text`; an include standing as its own block sequence: `elabBlocks_input_exact`, `markdownInput_blocks_text`; supporting, no text step of the driver's: `Ir.mapInlines_text` and `Ir.mapBlocks_text` (for a leaf keeping `Ir.plainTextOne`), `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` (declaration scope) | owed (U111): the inline knot's other arms, `Elab.elabInlines_args_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`; owed (U111): the block knot, `Elab.elabBlocks_text_accounts` over `Ir.locatedBlocks`; owed (U111): `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
 | Accounting: every loss reaches D once | `Elab.runPrepared_reports_contract`, `Elab.accountFront_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | owed (U112): `Driver.build_reports_contract` |
 | PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
 | HTML page text | `escapeText_spec`, `mathml_glyphs_agree` | owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts` |
@@ -116,19 +116,21 @@ Three gaps keep the composition open:
   places of those raws' text and, those excused, the text it appends reads as theirs; arms compose
   along the spine (`Text.view_congr`), a group's or a scope's inner run standing for its body. The
   plain-text arms of the inline knot are proved (`Elab.elabInlines_plain_text`), whatever expansion
-  marks their raws. The model's open terms are owed with the arms that read them: `Parse.rawText`
-  reads a group's text whatever control precedes it, so the control arms owe signature-typed slots,
-  a `\label` or `\ref` key, a length or a file name being no text, and a control's own text (an
-  escape, a text symbol, a break); a formula's text is the floor its source reads, so the formula
-  arm owes the parsed formula's floor reading as it; an environment's body reads whole, so the
-  environment arm owes a mode conditional read by its text branch, a display or alignment as its
-  formula's floor and a picture by its labels; a command's expansion sets its text at its call's
-  place, so the call arm owes srcText reading a call through its definition; a piece is a place, so
-  where the compatibility pass sets several raws at one place a refusal there excuses them all, and
-  token identity is owed. owed (U111): `Elab.elabInlines_ctrl_text`, `Elab.elabInlines_math_text`,
-  `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`,
-  `Elab.elabInlines_selector_text`, `Elab.elabBlocks_text_accounts`, `Ir.locatedBlocks`,
-  `Parse.rawTextFor`, `Compat.executeInputs_text_accounts`, `Elab.runPrepared_text_accounts`,
+  marks their raws, and with them the control words setting their own text
+  (`Elab.elabInlines_ctrl_text`), read by `Parse.ctrlText`. The model's open terms are owed with the
+  arms that read them: `Parse.rawText` reads a group's text whatever control precedes it, so the
+  arms of controls reading arguments owe signature-typed slots, a `\label` or `\ref` key, a length
+  or a file name being no text, and an accent's composition with what follows; a formula's text is
+  the floor its source reads, so the formula arm owes the parsed formula's floor reading as it; an
+  environment's body reads whole, so the environment arm owes a mode conditional read by its text
+  branch, a display or alignment as its formula's floor and a picture by its labels; a command's
+  expansion sets its text at its call's place, so the call arm owes srcText reading a call through
+  its definition; a piece is a place, so where the compatibility pass sets several raws at one place
+  a refusal there excuses them all, and token identity is owed. owed (U111):
+  `Elab.elabInlines_args_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`,
+  `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`,
+  `Elab.elabBlocks_text_accounts`, `Ir.locatedBlocks`, `Parse.rawTextFor`,
+  `Compat.executeInputs_text_accounts`, `Elab.runPrepared_text_accounts`,
   `Driver.passes_text_accounts`. Modules: `LeanTex/Core/ElabTextContract.lean`,
   `LeanTex/Core/TextAccount.lean`, `LeanTex/Core/Elab.lean`, `LeanTex/Core/Compat.lean`,
   `LeanTex/Core/Diag.lean`, `LeanTex/Cli/Input.lean`, `LeanTex/Cli/Driver.lean`.
@@ -167,7 +169,7 @@ Three gaps keep the composition open:
 | Termination | Every definition the binary's entry reaches through its kernel value is total: none is partial, every loop recurses structurally or on a measure, both knots on lexicographic ones, and a nested type's equality is derived structurally; the loops outside are the watch mode's, rebuilding until interrupted, the toolchain's file-system walks and the iterator loops of its string, path and sort functions, which the toolchain-loops premise holds to end, and the code the runtime runs for a definition is its meaning by the lean-runtime premise. A chain of user expansions as the knot's call sites build it, a command under the commands below it and an environment under the environments below it, is no deeper than those counts allow. | `Elab.expandUser_depth_le`; checked over every constant the entry reaches: `partialReachChecks` |
 | Macro visibility | A call resolves to the latest command of its name the visible prefix holds, none where the context keeps its raws. | `Elab.lookupUser_latest_exact` |
 | Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
-| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike. | `Elab.elabInlines_plain_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_ctrl_text`, `Elab.elabBlocks_text_accounts` |
+| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike. ; so do the control words setting their own text, an escape, a text symbol, `\par` and `\hfill`, where no parameter or document command takes their name. | `Elab.elabInlines_plain_text`, `Elab.elabInlines_ctrl_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_args_text`, `Elab.elabBlocks_text_accounts` |
 | Group scope | A group's end, block or inline, restores the declaration state its start held, with the global assignments logged inside replayed over it; with none logged, a group, an environment holding block content and a braced group of block content with no paragraph end inside each leave the state as they found it. | `texGroup_scope_id`, `elabBlocks_env_scope_id`, `elabBlocks_group_scope_id`; by unfolding: `texGroup_scope_exact`, `inlineGroup_scope_exact` |
 
 ## IR
