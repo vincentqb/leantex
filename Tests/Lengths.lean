@@ -136,4 +136,15 @@ def texLengthChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a length times or over a whole number reads, over a fraction it is refused, as TeX refuses it"
     (Decl.texLength (fun _ => some 1000) "\\la*3/2" == some 1500 &&
       Decl.texLength (fun _ => some 1000) "\\la*1.5" == none &&
-      Decl.texLength (fun _ => some 1000) "\\la/2.5" == none)
+      Decl.texLength (fun _ => some 1000) "\\la/2.5" == none &&
+      Decl.texLength (fun _ => some 1000) "\\la*2.0" == none &&
+      Decl.texLength (fun _ => some 1000) "\\dimexpr\\la*(6/4*2)\\relax" == some 4000)
+  t "a unit or a coefficient takes a number as written, never a parenthesised sum"
+    (Decl.texLength (fun _ => some 1000) "(1+2)pt" == none &&
+      Decl.texLength (fun _ => some 1000) "(0.5)\\la" == none)
+  t "TeX bounds a length it reads and a dimexpr's sums, never calc's, nor a scaling's middle"
+    (Decl.texLength (fun _ => none) "10000pt+10000pt" == some (20000 * 65536) &&
+      Decl.texLength (fun _ => none) "\\dimexpr 10000pt+10000pt\\relax" == none &&
+      Decl.texLength (fun _ => none) "\\dimexpr 10000pt*7200/7227\\relax" ==
+        some (10000 * 65536 * 7200 / 7227 + 1) &&
+      Decl.texLength (fun _ => none) "20000pt-10000pt" == none)

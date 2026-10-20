@@ -952,38 +952,45 @@ private def coefSp (ip f : Nat) (x : Int) : Int := ip * x + (x * f).tdiv 65536
 /-- The scaled points TeX reads for `v` of a unit: `px` as LuaTeX's `\pxdimen` of 1bp; `none` for
 a font-relative or unknown unit. -/
 private def unitSp (v : Rat) (u : String) : Option Int :=
-  let (ip, f) := texDecimal (if v < 0 then -v else v)
-  let x := if u == "px" || u == "truepx" then (ptRatio "bp").map fun r => coefSp ip f (ratioSp 1 0 r)
-    else (ptRatio u).map (ratioSp ip f)
-  x.map fun x => if v < 0 then -x else x
+  let (ip, f) := texDecimal v
+  if u == "px" || u == "truepx" then (ptRatio "bp").map fun r => coefSp ip f (ratioSp 1 0 r)
+  else (ptRatio u).map (ratioSp ip f)
+
+/-- A length TeX holds, under its largest dimension of 2³⁰ scaled points. -/
+private def bounded (x : Int) : Option Int := if x.natAbs < 2 ^ 30 then some x else none
 
 /-- `n / d`, rounded half away from zero as `\dimexpr` divides, else truncated as `\divide`
 and calc do. -/
 private def spDiv (round : Bool) (n : Int) (d : Nat) : Int :=
   if round then n.sign * ((2 * n.natAbs + d) / (2 * d) : Nat) else n.tdiv d
 
-/-- An operand of TeX's evaluation: a number as written, or a length in scaled points. -/
+/-- An operand of TeX's evaluation: a number, whole when every number it came from was, or a
+length in scaled points. -/
 private inductive XVal where
-  | scalar (v : Rat)
+  | scalar (v : Rat) (whole : Bool)
   | len (sp : Int)
 
+/-- One operator on two operands; `round` inside a `\dimexpr`, whose sums TeX also bounds. -/
 private def xApply (round : Bool) (op : Char) (a b : XVal) : Option XVal :=
+  let len (x : Int) : Option XVal := if round then (bounded x).map .len else some (.len x)
   match op, a, b with
-  | '+', .len x, .len y => some (.len (x + y))
-  | '-', .len x, .len y => some (.len (x - y))
-  | '+', .scalar x, .scalar y => some (.scalar (x + y))
-  | '-', .scalar x, .scalar y => some (.scalar (x - y))
-  | '*', .len y, .scalar x => if x.den == 1 then some (.len (y * x.num)) else none
-  | '*', .scalar x, .scalar y => some (.scalar (x * y))
-  | '/', .len x, .scalar y =>
-    if y == 0 || y.den != 1 then none else some (.len (spDiv round (x * y.num.sign) y.num.natAbs))
-  | '/', .scalar x, .scalar y => if y == 0 then none else some (.scalar (x / y))
+  | '+', .len x, .len y => len (x + y)
+  | '-', .len x, .len y => len (x - y)
+  | '+', .scalar x u, .scalar y w => some (.scalar (x + y) (u && w))
+  | '-', .scalar x u, .scalar y w => some (.scalar (x - y) (u && w))
+  | '*', .len y, .scalar x true => some (.len (y * x.num))
+  | '*', .scalar x u, .scalar y w => some (.scalar (x * y) (u && w))
+  | '/', .len x, .scalar y true =>
+    if y == 0 then none else some (.len (spDiv round (x * y.num.sign) y.num.natAbs))
+  | '/', .scalar x true, .scalar y true =>
+    if y == 0 then none else some (.scalar (spDiv round (x.num * y.num.sign) y.num.natAbs) true)
+  | '/', .scalar x _, .scalar y _ => if y == 0 then none else some (.scalar (x / y) false)
   | _, _, _ => none
 
 private def xPop (round : Bool) (vals : Array XVal) (op : Char) : Option (Array XVal) :=
   if op == 'u' then
     vals.back?.map fun x => match x with
-      | .scalar v => vals.pop.push (.scalar (-v))
+      | .scalar v w => vals.pop.push (.scalar (-v) w)
       | .len v => vals.pop.push (.len (-v))
   else
     match vals.back?, vals.pop.back? with
@@ -1028,21 +1035,25 @@ public def texLength (look : String → Option Int) (s : String) : Option Int :=
   let mut vals : Array XVal := #[]
   let mut ops : Array Char := #[]
   let mut prev := false
+  let mut literal := false
   for t in toks do
+    let wasLiteral := literal
+    literal := t matches .num ..
     match t with
     | .num m sc =>
       if prev then failure
-      vals := vals.push (.scalar ((m : Rat) / (sc : Rat)))
+      vals := vals.push (.scalar ((m : Rat) / (sc : Rat)) (sc == 1))
       prev := true
     | .ident n =>
       match vals.back?, prev with
-      | some (.scalar v), true =>
-        match unitSp v n with
-        | some x => vals := vals.pop.push (.len x)
-        | none =>
-          let (ip, f) := texDecimal (if v < 0 then -v else v)
-          let x := coefSp ip f (← look n)
-          vals := vals.pop.push (.len (if v < 0 then -x else x))
+      | some (.scalar v _), true =>
+        unless wasLiteral do failure
+        let x ← match unitSp v n with
+          | some x => pure x
+          | none => do
+            let (ip, f) := texDecimal v
+            pure (coefSp ip f (← look n))
+        vals := vals.pop.push (.len (← bounded x))
       | _, true => failure
       | _, false =>
         vals := vals.push (.len (← look n))
@@ -1086,7 +1097,7 @@ public def texLength (look : String → Option Int) (s : String) : Option Int :=
       ops := ops.pop
     | none => break
   match vals.toList with
-  | [.len v] => if v.natAbs < 2 ^ 30 then return v else failure
+  | [.len v] => return v
   | _ => failure
 
 /-- Parses one length expression without resolving its references. -/
