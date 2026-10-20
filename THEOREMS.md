@@ -14,18 +14,22 @@ only on the document, the fonts and the output name. Resemblance to lualatex is 
 tiers measure that. In Lean terms, over the stages `Cli.Driver.build` runs:
 
 ```lean
--- One run of file f with bytes b, font environment E and configuration cfg; the driver answers
--- each host question the pure stages ask.
-ft                  := (Encoding.readDocument f b).1
-(raws, dRead)       := Surface.read (Ir.Surface.ofPath f) f ft.text
-ex                  ← Compat.executeInputs host f raws
-(doc, dElab, spans) := Elab.runPrepared f (Elab.prepareExecuted f ex) (ft.diags ++ dRead) metric wd
-dFront              := Bib.accountFront dElab dBib notes refs
-fitted              := Layout.runFitted geom fs pats doc imgs
-pdf                 := Pdf.writeChecked geom fs fitted.out.pages doc.info imgs …
-(html, dHtml)       := HtmlDoc.emit cfg doc
-md                  := MarkdownDoc.emit doc bibName
-D                   := Diag.foldRepeats (dFront ++ fitted.out.diags ++ dHtml ++ …)
+-- One run of file f with bytes b, font environment E (the host's faces and cfg.fontDirs) and
+-- configuration cfg; the driver answers each host question the pure stages ask.
+src                 ← Input.readDocument f b      -- decode, Surface.read, includes, execution
+p                   := Elab.prepareExecuted f src.executed
+(doc, dElab, spans) := Elab.runPrepared f p src.diags metric wd
+dFront              := Bib.accountFront (dElab ++ dSty) dBib notes refs
+doc'                := passes doc  -- Input.resolveBibliography, FigureAlt.titled,
+                                   -- Ir.resolveMathAlphas, Ir.squeezeFrames, Layout.pdfView
+fitted              := Layout.runFitted geom fs pats doc' imgs
+pdf                 := Pdf.writeChecked geom fs fitted.out.pages doc'.info imgs …
+(html, dHtml)       := HtmlDoc.emit cfg doc'
+md                  := MarkdownDoc.emit doc' bibName
+D                   := every diagnostic the run reports: each phase's batch through
+                       Diag.resolveAll (Diag.forOutputs outs batch), and the refusals Ui.diag prints
+-- The driver elaborates again when list notes renumber, a settled face measures a label
+-- otherwise, or a picture withdraws; doc and dFront above are the run that ships.
 
 -- A text is its characters, each with its origin: a byte of a source file, or generated.
 inductive Origin | source (file : String) (offset : Nat) | generated
@@ -34,39 +38,47 @@ irText doc : List (Char × Origin) := Ir.foldDoc located [] doc      -- Ir.plain
   -- each under its innermost .located span; erased, Ir.blocksText doc.body, then each
   -- Ir.furnitureInlines region's Ir.plainText
 text A     : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks
-named D A  : Set Origin := ⋃ {(Diag.piece d).offsets | d ∈ Diag.forOutputs #[A] D,
-                                                        d.kind.floor ≠ .content}
+lost D A   : List Diag :=
+  (Diag.forOutputs #[A.output] D).filter (·.kind.loss ∈ [.dropped, .pending])
+named D A  : Set Origin := ⋃ {(Diag.piece d).origins | d ∈ lost D A}
 keep P t   : String := String.mk ((t.filter fun (_, o) => o ∉ P ∧ o ≠ .generated).map (·.1))
 
 theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) :
     let r := compile cfg src E      -- the stages above; src is f and every file the run reads
-    (r.D.all (!·.kind.stopsWriter) → r.shipped = r.emitted) ∧
+    ((∀ d ∈ r.D, ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606, .E0607]) →
+      r.shipped = r.emitted) ∧
     (∀ A ∈ r.shipped,
-      Text.norm (keep (named r.D A) (text A)) = Text.norm (keep (named r.D A) (srcText r.ex))) ∧
-    ((r.D.filter (·.kind.floor ≠ .content)).map (·.piece)).Pairwise Disjoint ∧
-    (PdfCensus.census r.pdf).isOk ∧ HtmlDoc.scripts r.html ⊆ {deckScript, cfg.mathBoundary} ∧
+      Text.norm (keep (named r.D A) (text A)) = Text.norm (keep (named r.D A) (srcText r.ex)) ∧
+      ((lost r.D A).map (·.piece)).Pairwise Disjoint) ∧
+    (PdfCensus.census r.pdf).isOk ∧
+    HtmlDoc.scripts r.html ⊆ {HtmlDoc.deckScript} ∪ r.boundaryText ∧  -- the file read, if declared
     ∀ cfg', cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
-      (compile cfg' src E).artifacts = r.artifacts
--- A result exists because every stage is total and terminates.
+      cfg'.fontDirs = cfg.fontDirs → let r' := compile cfg' src E
+      ∀ A ∈ r.shipped, A ∈ r'.shipped → r'.bytes A = r.bytes A
+-- A result exists because every stage is total and terminates. Only dropped and pending losses
+-- excuse text: an error or a warning the default run shows, a repeat its shown line counts
+-- (Diag.foldRepeats), or a loss the document accepts. srcText is read after execution, so
+-- decoding, lexing, includes and execution owe the same equation from the source bytes (U111).
 -- Text.norm: NFC, a white-space run as one space, TeX's ligature and quote spellings as the
 -- characters they set, a line-end hyphen joined.
--- Composition: surface ∘ elaboration gives keep (named dFront) (irText doc) = keep (named dFront)
--- (srcText ex); each backend gives keep (named D A) (text A) = keep (named D A) (irText doc); the
--- accounting gives dRead ⊆ dFront ⊆ D (Reported), so named dFront ⊆ named D A.
+-- Composition, for each artifact A: surface ∘ elaboration ∘ passes gives
+-- keep (named dFront A) (irText doc') = keep (named dFront A) (srcText ex); each backend gives
+-- keep (named D A) (text A) = keep (named D A) (irText doc'); the accounting gives
+-- src.diags ⊆ dFront ⊆ D, up to site counts and demotion, so named dFront A ⊆ named D A.
 ```
 
 | Stage | Proved | Owed |
 |---|---|---|
-| A result | No declaration is partial or unsafe (`bannedWord`), and both knots recurse on measures the kernel checks. | owed (U72): `partialReachChecks`; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between` |
-| Ships unless stopped | Only the causes `DiagCode.stopsWriter` lists stop the writer; tested: `machineLossChecks`. | owed (U37): `DiagCode.error_iff_fatal` |
-| Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `read_tex_exact`, `Code.segmentsOf_source_exact`, `Md.desugar_vocabulary_mem`, `elabBlocks_input_exact`, `markdownInput_blocks_text`, `rewriteCtrl_accounts` | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts` |
-| Elaboration: raws to IR text | `Ir.mapInlines_text`, `Ir.mapBlocks_text`, `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` | owed (U111): `Parse.rawText`, `Diag.piece`, `Elab.runPrepared_text_accounts` |
-| Accounting: every loss reaches D once | `Elab.run_reports_contract`, `Elab.accountFront_reports_contract`, `Elab.runExecuted_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `pending_named`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | |
-| PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
+| A result | No declaration is marked partial or unsafe (`bannedWord`, `scripts/ProofAudit.lean`). | owed (U72): `partialReachChecks`; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between` |
+| Ships unless stopped | tested: `machineLossChecks` | owed (U37): `DiagCode.error_iff_fatal`, its writer-stopping causes widened to the output name's and publication's refusals |
+| Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `read_tex_exact`, `Code.segmentsOf_source_exact`, `Md.desugar_vocabulary_mem`, `elabBlocks_input_exact`, `markdownInput_blocks_text`, `rewriteCtrl_accounts` | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
+| Elaboration and IR passes | `Ir.mapInlines_text`, `Ir.mapBlocks_text`, `Ir.numberFloats_text`, `Ir.markDisplay_text`, `Struct.ofDoc_text`, `texGroup_scope_id` | owed (U111): `Parse.rawText`, `Diag.piece`, `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
+| Accounting: every loss reaches D once | `Elab.runPrepared_reports_contract`, `Elab.accountFront_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | owed (U112): `Driver.build_reports_contract` |
+| PDF text layer | `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
 | HTML page text | `escapeText_spec`, `mathml_glyphs_agree` | owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts` |
 | Markdown twin | `rowLine_cells_exact` | owed (U49): `MarkdownDoc.escape_read_id`; owed (U110): `MarkdownDoc.emit_text_accounts` |
-| Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `hidden_script_gated`, `math_boundary_contract` | owed (U113): `HtmlDoc.emit_scripts_mem` |
-| Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free` | |
+| Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; tested: `htmlContainedCorpusChecks` | owed (U113): `HtmlDoc.emit_scripts_mem` |
+| Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free`; the driver's reads, by a line scan: `undeclaredConfigRead` | owed (U112): `Driver.build_flag_free` |
 | The headline | the rows above, composed | owed (U112): `compile_text_accounts` |
 
 Three gaps keep the composition open:
@@ -79,13 +91,16 @@ Three gaps keep the composition open:
   the compiled closure; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between`.
   Modules: `scripts/ProofAudit.lean`, `LeanTex/Core/Elab.lean` and the loops' own, most in
   `LeanTex/Core/Layout.lean`.
-- Elaboration conservation: through both of Elab's knots, keep (named dFront) (irText doc) = keep
-  (named dFront) (srcText ex), the pieces of distinct diagnostics disjoint. srcText reads the
-  executed surface's text slots, each argument a control's registry signature types as text, with
-  its offsets; a diagnostic's piece is the source range its loss covers, where a span holds only its
-  start today. owed (U111): `Parse.rawText`, `Diag.piece`, `Elab.runPrepared_text_accounts`.
-  Modules: `LeanTex/Core/Parse.lean`, `LeanTex/Core/Compat.lean`, `LeanTex/Core/Elab.lean`,
-  `LeanTex/Core/Diag.lean`, `LeanTex/Core/InputContract.lean`.
+- Elaboration conservation: for each artifact A, through execution, both of Elab's knots and the
+  driver's IR passes, keep (named dFront A) (irText doc') = keep (named dFront A) (srcText ex), the
+  pieces of distinct diagnostics disjoint, and execution keeps the decoded source's text slots the
+  same way. srcText reads the executed surface's text slots, each argument a control's registry
+  signature types as text, with its offsets; a diagnostic's piece is the source range its loss
+  covers, where a span holds only its start today. owed (U111): `Parse.rawText`, `Diag.piece`,
+  `Compat.executeInputs_text_accounts`, `Elab.runPrepared_text_accounts`,
+  `Driver.passes_text_accounts`. Modules: `LeanTex/Core/Parse.lean`, `LeanTex/Core/Compat.lean`,
+  `LeanTex/Core/Elab.lean`, `LeanTex/Core/Diag.lean`, `LeanTex/Core/InputContract.lean`,
+  `LeanTex/Cli/Input.lean`, `LeanTex/Cli/Driver.lean`.
 - Artifact text: a model of what a viewer extracts, against which each backend's census is proved.
   For the PDF, PDF 2.0's text extraction: content-stream strings through each font's ToUnicode map
   in marked-content order, Artifact content generated, origins from the structure tree's marked
@@ -93,8 +108,8 @@ Three gaps keep the composition open:
   `Layout.runFitted_text_accounts`. For HTML, a model of the WHATWG parse over the emitted subset
   that reads the rendered bytes back as their tree, its text the text nodes in tree order outside
   style and script; owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts`. For the
-  twin, the markdown reader's text of the emitted file; owed (U110):
-  `MarkdownDoc.emit_text_accounts`.
+  twin, the markdown reader's text of the emitted file, whose losses need a diagnostic channel
+  `MarkdownDoc.emit` lacks today; owed (U110): `MarkdownDoc.emit_text_accounts`.
   Modules: `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Layout.lean`, `LeanTex/Core/Html.lean`,
   `LeanTex/Core/HtmlDoc.lean`, `LeanTex/Core/MarkdownDoc.lean`, `LeanTex/Core/MdParse.lean`.
 
