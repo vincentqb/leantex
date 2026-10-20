@@ -130,6 +130,7 @@ public import LeanTex.Core.PdfGfx.Fn
 public import LeanTex.Core.PdfFilters
 public import LeanTex.Core.PngEncode
 public import LeanTex.Core.PngEncodeProof
+public import LeanTex.Core.FloatNumberProof
 public import LeanTex.Core.PdfFont
 public import LeanTex.Core.PdfGfx
 public import LeanTex.Core.PdfGfxReadback

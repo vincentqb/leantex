@@ -2219,9 +2219,18 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
      (html.splitOn "the note text").length == 2)
   t "html: each endnote carries its doc-backlink to the mark"
     ((html.splitOn "role=\"doc-backlink\"").length == 3 &&
-     (html.splitOn "href=\"#fnref7\"").length == 2)
+     (html.splitOn "href=\"#fnref2\"").length == 2 &&
+     (html.splitOn "value=\"7\"").length == 2)
   t "html: the note anchors resolve both ways (W0326 silent)"
     (hds.all (·.code != "W0326"))
+  -- A book restarts its notes at each chapter: anchors follow each note's place, items its number.
+  let (book, _) := elabStr ("\\documentclass{book}\\begin{document}\\chapter{One}A\\footnote{first}" ++
+    " B\\footnote{second}.\n\n\\chapter{Two}C\\footnote{third}.\\end{document}")
+  let (bookHtml, _) := HtmlDoc.emit {} book
+  t "html: restarted notes keep distinct anchors, each item showing its mark's number"
+    ((bookHtml.splitOn "id=\"fn1\"").length == 2 && (bookHtml.splitOn "id=\"fnref1\"").length == 2 &&
+     (bookHtml.splitOn "href=\"#fn3\"").length == 2 && (bookHtml.splitOn "id=\"fn3\"").length == 2 &&
+     (bookHtml.splitOn "value=\"1\"").length == 3)
   t "html: the apparatus ships no script"
     ((html.splitOn "<script").length == 1)
   let md := MarkdownDoc.emit doc

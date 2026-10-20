@@ -178,6 +178,8 @@ public structure Config where
   inFillRow : Bool := false
   /-- Inside a link's text, where a link or a reference sets its text alone: HTML nests no anchor. -/
   inLink : Bool := false
+  /-- The document's notes by place, which name each mark's and endnote's anchors. -/
+  notes : Ir.NotePlaces := default
 
 /-- The current text area: the local context, else the page's. -/
 public def Config.measureValues (cfg : Config) : MeasureValues :=
@@ -7056,13 +7058,14 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .cite _ keys => acc.push (Html.text (Ir.citeMarks keys))
   | .cited _ _ ink => inlineNodesInto cfg acc ink.toList
   -- the mark links to the note's endnote entry (DPUB-ARIA `doc-noteref`)
-  | .footnote num _ =>
+  | .footnote num body =>
     let n := num.getD 0
+    let k := (cfg.notes.place num body).getD n
     -- Inside a link's text the mark is its number alone, as no anchor nests.
-    if cfg.inLink then acc.push (Html.elem "sup" #[Html.text (toString n)] #[("id", s!"fnref{n}")])
+    if cfg.inLink then acc.push (Html.elem "sup" #[Html.text (toString n)] #[("id", s!"fnref{k}")])
     else acc.push (Html.elem "sup"
       #[Html.elem "a" #[Html.text (toString n)]
-        #[("href", s!"#fn{n}"), ("id", s!"fnref{n}"),
+        #[("href", s!"#fn{k}"), ("id", s!"fnref{k}"),
           ("role", "doc-noteref"), ("style", "color: inherit")]])
   -- page furniture has no meaning in a continuous document
   | .pageNumber => acc
@@ -10104,7 +10107,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
   -- backend conditionals resolve here, so every walk below sees only this page's content
   let doc := { doc with body := Ir.keepFor "html" doc.body }
   let cfg := { cfg with locale := doc.info.locale, chapters := doc.chapters
-                        chapterInline := doc.docClass == Ir.DocClass.koma }
+                        chapterInline := doc.docClass == Ir.DocClass.koma
+                        notes := Ir.NotePlaces.of (Ir.footnotesOf doc.body) }
   let judge := if cfg.css == .own then Contrast.schemeJudge doc else {}
   let cfg := { cfg with pal := doc.palette, docPal := doc.palette, frames := judge.frames
                         views := (judge.views.head?.map (·.2)).getD []
@@ -10471,16 +10475,16 @@ retitle them apart, or link to the numbered anchor")
   diags := diags ++ sectionDiags
   -- the endnotes: one `doc-endnotes` section, each note back-linked to its mark
   let notes := Ir.footnotesOf doc.body
+  -- Each note named by its place, showing the number its mark shows, back to its mark's place.
   let inner := if notes.isEmpty then inner else
     inner.push (Html.elem "section"
-      #[Html.elem "ol" (notes.map fun (num, content) =>
-          let n := num.getD 0
+      #[Html.elem "ol" (notes.zipIdx.map fun ((num, content), i) =>
           Html.elem "li"
             ((inlineNodesInto cfg #[] content.toList).push (Html.text " ")
               |>.push (Html.elem "a" #[Html.text "\u21a9"]
-                #[("href", s!"#fnref{n}"), ("role", "doc-backlink"),
+                #[("href", s!"#fnref{(cfg.notes.place num content).getD (i + 1)}"), ("role", "doc-backlink"),
                   ("aria-label", "back to the text"), ("style", "color: inherit")]))
-            #[("id", s!"fn{n}")]) #[]]
+            #[("id", s!"fn{i + 1}"), ("value", toString (num.getD 0))]) #[]]
       #[("role", "doc-endnotes")])
   let mainAttrs := (if bodyClass.isEmpty then #[] else #[("class", bodyClass)]) ++
     #[("style", "container-type: inline-size")]

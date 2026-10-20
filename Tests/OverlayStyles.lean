@@ -372,7 +372,7 @@ private def styleRepeatedNotes (ref : IO.Ref (List String)) (fonts : Font.FontSe
     t (label ++ ": HTML retains max multiplicity across exclusive branches")
       (treeShownOccurs tree "RepeatNote" == maximum &&
         ((elemAttrsList (· == "li") #[] tree.toList).filter fun (_, attrs) =>
-          styleAttr attrs "id" == "fn7").size == maximum)
+          styleAttr attrs "value" == "7").size == maximum)
     for (count, i) in [other, first].zipIdx do
       let page := stylePage out i
       let notes : Layout.Out := { page with pages := page.pages.map fun p =>

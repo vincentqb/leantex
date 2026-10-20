@@ -13990,6 +13990,20 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
 
 end
 
+/-- Each note's place: one past the index of the first equal note among a document's notes, the
+name a backend gives it whatever number it shows. -/
+public structure NotePlaces where
+  table : Std.HashMap (Option Nat × String) (Array (Array Inline × Nat))
+  deriving Inhabited
+
+public def NotePlaces.of (notes : Array (Option Nat × Array Inline)) : NotePlaces :=
+  ⟨notes.zipIdx.foldl (init := {}) fun m ((n, c), i) =>
+    let xs := m.getD (n, plainText c) #[]
+    if xs.any (·.1 == c) then m else m.insert (n, plainText c) (xs.push (c, i + 1))⟩
+
+public def NotePlaces.place (t : NotePlaces) (n : Option Nat) (c : Array Inline) : Option Nat :=
+  ((t.table.getD (n, plainText c) #[]).find? (·.1 == c)).map (·.2)
+
 mutual
 
 /-- A field's notes numbered in reading order from `k + 1`; returns the counter past them. -/

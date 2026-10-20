@@ -1612,13 +1612,9 @@ private def notesByPlace (body : Array Block) : Array Block :=
     | x => x)
   let notes := Ir.footnotesOf flat
   if notes.isEmpty then flat else
-  let key (n : Option Nat) (content : Array Inline) : String := s!"{n}|{Ir.plainText content}"
-  let table : Std.HashMap String (Array ((Option Nat × Array Inline) × Nat)) :=
-    notes.zipIdx.foldl (init := {}) fun m (e, i) => m.insert (key e.1 e.2) ((m.getD (key e.1 e.2) #[]).push (e, i + 1))
-  let place (n : Option Nat) (content : Array Inline) : Option Nat :=
-    ((table.getD (key n content) #[]).find? (·.1 == (n, content))).map (·.2)
+  let places := Ir.NotePlaces.of notes
   Ir.mapBlocks id flat (finish := fun xs => xs.map fun x => match x with
-    | .footnote n content => .footnote ((place n content).orElse fun _ => n) content
+    | .footnote n content => .footnote ((places.place n content).orElse fun _ => n) content
     | x => x)
 
 /-- The twin's view of a document's body: source locations erased, backend conditionals resolved
