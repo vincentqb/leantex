@@ -543,6 +543,8 @@ public structure Counters where
   mainMatter : Bool := true
   /-- Each enumerate level's last item number, which a list resuming its numbering continues. -/
   listResume : Array (String × Nat × Nat) := #[]
+  /-- The labels a nested enumerate item bound, each awaiting the number of the level it names. -/
+  listRefPending : Array (String × Nat) := #[]
   /-- The equation counter, restarting under the `\numberwithin` level
   `eqWithin` when one is declared. -/
   eqNum : Nat := 0
@@ -12442,6 +12444,46 @@ private def itemLabelSpec (ctx : Ctx) (n : String) (kd : Nat) (body : Array Raw)
     return (some (.raws raws), start, resume)
   | none => return (none, start, resume)
 
+/-- An enumerate item's `\ref` text template, and whether the class's `\p@enum` prefix of the levels
+around it applies: its `ref` option, else its `label` option or level style's, else the class's
+`\theenum`. -/
+private def itemRefSpec (ctx : Ctx) (kd : Nat) (body : Array Raw) (pos : Pos) :
+    EM (Option LabelSrc × Bool) := do
+  let mut ref : Option LabelSrc := none
+  let mut label : Option LabelSrc := none
+  let j := skipSpaces body 0
+  if body[j]? matches some (.sym '[' _) then
+    if let .took k' := scanOpeningArg body pos fun _ => true then
+      for e in Entries.read .keyval (body.extract (j + 1) (k' - 1)) do
+        match e.key, e.value with
+        | "ref", some v => ref := some (.raws v)
+        | "label", some v => label := some (.raws v)
+        | _, _ => pure ()
+  if let some r := ref.orElse fun _ => label then return (some r, false)
+  let level := if 1 < kd then (ctx.styles.find? s!"enumerate{kd}").orElse fun _ =>
+      ctx.styles.find? "enumerate" else ctx.styles.find? "enumerate"
+  if let some parts := level.bind (·.label) then return (some (.parts parts), false)
+  let roman := ListMark.romanN kd
+  let the := "theenum" ++ roman
+  return ((ctx.user.findRev? fun c => c.name == the && c.params.isEmpty).map (.raws ·.body), true)
+
+/-- Binds the labels an enumerate item holds, where they bound to what stands around the list, to
+the item's `\ref` text, the class's levels around a nested item prefixing theirs as `\p@enum`
+does: level 2's in parentheses. -/
+private def bindItemLabels (kd : Nat) (keys : Array String) (outer : Option Ir.RefBinding)
+    (own : String) (prefixed : Bool) : EM Unit :=
+  modify fun st =>
+    let contrib := if kd == 2 then "(" ++ own ++ ")" else own
+    let waiting := st.ctr.listRefPending.filter fun (k, l) => l == kd + 1 && keys.contains k
+    let labels := st.labels.map fun (key, b) =>
+      if keys.contains key && b == outer then (key, some { kind := none, num := own })
+      else if prefixed && waiting.any (·.1 == key) then (key, b.map fun b => { b with num := contrib ++ b.num })
+      else (key, b)
+    let bound := keys.filter fun k => st.labels.any fun (key, b) => key == k && b == outer
+    let rest := st.ctr.listRefPending.filter fun (k, l) => !(l == kd + 1 && keys.contains k)
+    let raised := if 1 < kd && prefixed then waiting.map (·.1, kd) ++ bound.map (·, kd) else #[]
+    { st with labels, ctr := { st.ctr with listRefPending := rest ++ raised } }
+
 /-- A list's items, each led by its `\item[label]` or its template's label at its number
 (`itemLabelSpec`), as latex.ltx's `\@item` sets `\makelabel`. -/
 private def labelledItems (ctx : Ctx) (n : String) (body : Array Raw) (bodyFrom : Nat)
@@ -12453,6 +12495,13 @@ private def labelledItems (ctx : Ctx) (n : String) (body : Array Raw) (bodyFrom 
   let first := if resume then (held.getD 0) + 1 else start.getD 1
   -- An enumerate starting past 1 labels its items as its level does at their numbers.
   let byLevel := template.isNone && n == "enumerate" && first != 1
+  let (refSrc, prefixed) ← if n == "enumerate" then itemRefSpec ctx kd body pos else pure (none, false)
+  let outer := (← get).refTarget
+  let numeral : Ir.NumStyle := match kd with
+    | 2 => .alph
+    | 3 => .roman
+    | 4 => .uAlph
+    | _ => .arabic
   let mut out := #[]
   let mut num := first
   for (item, i) in items.zipIdx do
@@ -12461,6 +12510,12 @@ private def labelledItems (ctx : Ctx) (n : String) (body : Array Raw) (bodyFrom 
       | none =>
         let k := num
         num := num + 1
+        -- `\refstepcounter`: a label the item holds names its number.
+        if n == "enumerate" then
+          let own ← match refSrc with
+            | some src => pure (Ir.plainText (← src.at ctx (ListMark.numText · k)))
+            | none => pure (ListMark.numText numeral k)
+          bindItemLabels kd (Ir.blockLabelKeys item) outer own prefixed
         match template with
         | some src => pure (some (← src.at ctx (ListMark.numText · k)))
         | none => pure (if byLevel then some #[.text (ListMark.enumLabel kd k)] else none)
@@ -13562,7 +13617,7 @@ their own specifications say" pos
             s!"'\{{n}}' option '{key}' has a length this engine cannot read; skipped" pos
             (help := "give a length such as 2pt, 0.5em or a token name")
       else unless key.isEmpty || (key == "label" && n != "description") ||
-          ((key == "start" || key == "resume") && n == "enumerate" &&
+          ((key == "start" || key == "resume" || key == "ref") && n == "enumerate" &&
             !(key == "resume" && value.isSome)) do
         warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
           s!"'\{{n}}' option '{key}' is not honoured per list; the declared list style stands" pos

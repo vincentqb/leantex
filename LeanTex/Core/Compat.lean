@@ -15737,6 +15737,89 @@ termination_by structural r => r
 
 end
 
+/-- The kinds enumitem's `\newlist` copies. -/
+private def newListKinds : List String := ["itemize", "enumerate", "description"]
+
+/-- The lists a preamble's `\newlist` declares, each with the kind it copies and the keys its own
+`\setlist` scope holds, those calls dropped, read in order: an unstarred one replaces the keys. -/
+private def newListDecls (raws : Array Raw) : Array (String × String × Array Raw) × Array Raw := Id.run do
+  let mut decls : Array (String × String × Array Raw) := #[]
+  let mut out : Array Raw := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    if h : i < raws.size then
+      match raws[i] with
+      | .ctrl "newlist" _ | .ctrl "renewlist" _ =>
+        let a := skipSpaces raws (i + 1)
+        let b := skipSpaces raws (a + 1)
+        let c := skipSpaces raws (b + 1)
+        match raws[a]?, raws[b]?, raws[c]? with
+        | some (.group name _), some (.group kind _), some (.group _ _) =>
+          let k := (rawSrc kind).trimAscii.toString
+          -- A standard kind declared again stays itself.
+          if newListKinds.contains (rawSrc name).trimAscii.toString then i := c + 1
+          else if newListKinds.contains k then
+            decls := (decls.filter (·.1 != (rawSrc name).trimAscii.toString)).push
+              ((rawSrc name).trimAscii.toString, k, #[])
+            i := c + 1
+          else
+            out := out.push raws[i]
+            i := i + 1
+        | _, _, _ =>
+          out := out.push raws[i]
+          i := i + 1
+      | .ctrl "setlist" sp =>
+        let j := skipSpaces raws (i + 1)
+        let (star, j) := if raws[j]? matches some (.sym '*' _) then (true, j + 1) else (false, j)
+        let (scope, k) := takeRawOpt raws j
+        let g := skipSpaces raws k
+        let name := ((scope.map rawSrc).getD "").trimAscii.toString
+        match decls.findIdx? (·.1 == name), raws[g]? with
+        | some idx, some (.group keys _) =>
+          decls := decls.modify idx fun (n, kd, held) =>
+            (n, kd, if star && !held.isEmpty then held ++ #[.word ", " sp] ++ keys else keys)
+          i := g + 1
+        | _, _ =>
+          out := out.push raws[i]
+          i := i + 1
+      | r =>
+        out := out.push r
+        i := i + 1
+  return (decls, out)
+
+mutual
+
+/-- Every list a `\newlist` declares as the list it copies, its scope's keys before its own options. -/
+private def newListEnvsList (decls : Array (String × String × Array Raw)) :
+    List Raw → Array Raw → Array Raw
+  | [], out => out
+  | r :: rest, out => newListEnvsList decls rest (out ++ newListEnvsRaw decls r)
+termination_by structural l => l
+
+private def newListEnvsRaw (decls : Array (String × String × Array Raw)) : Raw → Array Raw
+  | .group body p => #[.group (newListEnvsList decls body.toList #[]) p]
+  | .env n body p =>
+    let inner := newListEnvsList decls body.toList #[]
+    match decls.find? (·.1 == n) with
+    | some (_, kind, keys) =>
+      let (own, k) := takeRawOpt inner 0
+      let opts : Array Raw := match own with
+        | some o => if keys.isEmpty then o else keys ++ #[Raw.word ", " p] ++ o
+        | none => keys
+      #[.env kind ((if opts.isEmpty then #[] else #[Raw.sym '[' p] ++ opts ++ #[Raw.sym ']' p]) ++
+        inner.extract (if own.isSome then k else 0) inner.size) p]
+    | none => #[.env n inner p]
+  | r => #[r]
+termination_by structural r => r
+
+end
+
+/-- enumitem's `\newlist` lists set as the lists they copy (`newListDecls`). -/
+private def newListEnvs (raws : Array Raw) : Array Raw :=
+  if !raws.any (· matches .ctrl "newlist" _ | .ctrl "renewlist" _) then raws else
+  let (decls, rest) := newListDecls raws
+  newListEnvsList decls rest.toList #[]
+
 mutual
 
 -- conserves: none — a setting's arguments read for a parameter, or the parskip they set
@@ -16058,7 +16141,7 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     let raws ← delimDocument raws
     let raws := frameCommands raws
     let raws := (splitColumnsList raws.toList).toArray
-    let raws := trivlistEnvsList raws.toList #[]
+    let raws := trivlistEnvsList (newListEnvs raws).toList #[]
     let raws := (envCodesList #[] false raws #[] raws.toList 0 0).1
     nameDefinedListings raws
     let raws := headingsLiftedList raws.toList #[]
@@ -16099,6 +16182,12 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       countersRead := counterReadsList {} (packageCall command names pos gp np).toList } hd
   have hcols : splitColumnsList (packageCall command names pos gp np).toList =
       (packageCall command names pos gp np).toList := by rfl
+  have hnew : newListEnvs (packageCall command names pos gp np) =
+      packageCall command names pos gp np := by
+    have hnl : (packageCall command names pos gp np).any
+        (· matches .ctrl "newlist" _ | .ctrl "renewlist" _) = false := by
+      rcases hc with rfl | rfl <;> simp [packageCall]
+    simp only [newListEnvs, hnl, Bool.not_false, ite_true]
   have htriv : trivlistEnvsList (packageCall command names pos gp np).toList #[] =
       packageCall command names pos gp np := by
     simp [packageCall, trivlistEnvsList, trivlistEnvsRaw]
@@ -16123,7 +16212,7 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       simp [frameCommands, declaresPresentation, packageCall, List.findIdx?_cons]
   simp only [hw, StateT.run, bind, StateT.bind,
     pairGroups_package_exact, hdelim, hframes,
-    hcols, htriv, hcodes, hdefs, hheads, overprint_package_exact _ _ _ _ _ hc,
+    hcols, hnew, htriv, hcodes, hdefs, hheads, overprint_package_exact _ _ _ _ _ hc,
     onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
     pure, StateT.pure, packageRewriteState]
 

@@ -10,6 +10,7 @@ import Tests.ListLabels
 import Tests.ItemBoxes
 import Tests.Tabbing
 import Tests.ScrExtend
+import Tests.ItemRefs
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2447,6 +2448,12 @@ def reports : List Report := [
     pins := [check% Tests.InlineBoxes.boxScopeChecks]
     accept := ["main's binary at 1e648c76 on invented probes: black, blue and dark literal colorboxes holding a minipage or a list declaring a white or yellow ink drop the dark schemes (W0308), and in a standout frame W0315 names the ink on the page; this tree keeps all five schemes and names nothing, shipping the ink carried with its ground as the textcolor spelling does; the guard fails there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact and diagnostic as the commit before"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R271", date := "2026-10-20"
+    what := "a label in an enumerate item named the heading or theorem around the list, not the item: its reference showed the section's number; and enumitem's newlist was unknown, its lists unknown environments"
+    pins := [check% Tests.ItemRefs.checks]
+    accept := ["lualatex 1.24 on an invented article: references to items show 1, 1a, 1(a)i and 2 through three levels, (a) for an enumitem label and for its ref key, A under a redefined theenumi, and the section's 1 for an itemize item, and a newlist list numbered as the enumerate it copies under its own setlist label; this tree shows the same",
+      "main's binary at 1e648c76 on the same article: 1 for each; the guard fails there"]
     state := .guarded "1e648c76" .before .author }
 ]
 
