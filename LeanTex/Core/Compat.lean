@@ -789,7 +789,7 @@ private structure GeometryBlock where
   deriving Inhabited
 
 /-- What an argument group holding block environments becomes: a style command's declaration over
-it, or a footnote's text whose lists set in lines. -/
+it, or a footnote's text whose lists and headings set in lines. -/
 private inductive ArgBlocks where
   | decl (name : String)
   | inlineLists
@@ -2662,6 +2662,50 @@ private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
   match raws[i]? with
   | some (.word "*" _) => i + 1
   | _ => i
+
+/-- The sectioning commands, which end the paragraph they meet. -/
+private def headingCommands : List String :=
+  ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph",
+   "addpart", "addchap", "addsec"]
+
+/-- A heading's title from `i`, past its star and options, and the index past it, at least one past
+the heading. -/
+private def headingTitleEnd (body : Array Raw) (i : Nat) : Array Raw × Nat :=
+  let (_, j) := takeOpts body (skipStar body (skipSpaces body (i + 1))) 1
+  let (title, k) := takeGroups body j 1
+  ((title[0]?).getD #[], max k (i + 1))
+
+/-- The index past a heading's star, options and title from `i`, at least one past it. -/
+private def headingEnd (body : Array Raw) (i : Nat) : Nat := (headingTitleEnd body i).2
+
+/-- A footnote's text with each heading it holds set as a bold line of its title, a line being the
+note's only break. -/
+private def noteHeadingLines (raws : Array Raw) : Array Raw := Id.run do
+  let ink (r : Raw) : Bool := !(r matches .space || r matches .par _)
+  let lineEnd (r : Raw) : Bool := r matches .ctrl "\\" _
+  let mut out : Array Raw := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    match (raws[i]? : Option Raw) with
+    | some (.ctrl n p) =>
+      if headingCommands.contains n then
+        let (title, k) := headingTitleEnd raws i
+        out := out.popWhile (!ink ·)
+        if out.any ink && !(out.back?.any lineEnd) then out := out.push (.ctrl "\\" p)
+        out := out ++ #[.ctrl "textbf" p, .group title p]
+        let rest := raws.extract k raws.size
+        if rest.any (fun r => ink r && !lineEnd r) then out := out.push (.ctrl "\\" p)
+        -- A line end the author wrote after the heading is the one already set.
+        let k := skipSpaces raws k
+        i := if (raws[k]? : Option Raw).any lineEnd then skipSpaces raws (k + 1) else k
+      else
+        out := out.push (.ctrl n p)
+        i := i + 1
+    | some r =>
+      out := out.push r
+      i := i + 1
+    | none => break
+  return out
 
 /-- The end of a predefined beamer template's arguments: its further options and a brace group
 standing right after them, never a control word on the next line. -/
@@ -10006,8 +10050,12 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
     -- A box's content is TeX's argument; a listing an expansion carried there is the elaborator's.
     for (env, vp, _) in boxListingsList (args[1]?.getD #[]).toList #[] do
-      if vp.origins.isEmpty then
-        say .W0411 (scannedListingMessage env) vp (help := scannedListingHelp)
+      -- A box nested in a box reads one listing once.
+      let site := s!"{vp.line}:{vp.col}"
+      -- premise: argumentBlockChecks — a definition's text is read where a call runs it
+      if vp.origins.isEmpty && !(← get).inDef && !(← get).warned.contains ("listing-arg:" ++ site) then
+        sayOnce ("listing-arg:" ++ site) .W0411 (scannedListingMessage env) vp
+          (help := scannedListingHelp)
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
     -- The body group stays in the walk, which rewrites it before it joins the box.
     let body := skipSpaces raws (takeGroups raws j 1).2
@@ -10091,6 +10139,14 @@ private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
 margin, each item after its mark, the list's options unread" pos
       (help := "a footnote is one paragraph; a list that needs its indent or its own marks reads \
 better in the text")
+    write fun st => { st with argBlocks := some .inlineLists }
+  -- A heading in a footnote's text is a line of it, LaTeX setting it as a heading in the note.
+  if name == "footnote" && (nextArgGroup raws start).any (·.any fun r => match r with
+      | .ctrl n _ => headingCommands.contains n
+      | _ => false) then
+    sayOnce "footnote:heading" .W0371 "a heading inside '\\footnote' is set as a bold line of the \
+note and not counted, so a numbered one leaves the headings after it a number below LaTeX's" pos
+      (help := "a footnote is one paragraph; a heading reads better in the text")
     write fun st => { st with argBlocks := some .inlineLists }
   rewriteCtrlLaterNamed name pos raws start
 
@@ -11708,6 +11764,13 @@ native equivalent were dropped: {dropped}" c.pos
         (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
     -- An empty box is still a box: it starts a paragraph, as `\item \mbox{}` sets a label's line.
     if let some (.group body _) := c.raws[skipSpaces c.raws c.stop]? then
+      for (env, vp, _) in boxListingsList body.toList #[] do
+        -- A box nested in a box reads one listing once.
+        let site := s!"{vp.line}:{vp.col}"
+        -- premise: argumentBlockChecks — a definition's text is read where a call runs it
+        if vp.origins.isEmpty && !(← get).inDef && !(← get).warned.contains ("listing-arg:" ++ site) then
+          sayOnce ("listing-arg:" ++ site) .W0411 (scannedListingMessage env) vp
+            (help := scannedListingHelp)
       if body.all (· matches .space) then
         became s!"\\{c.name}" "an empty box" c.pos
         return #[.ctrl "hspace" c.pos, .word "*" c.pos, .group #[.word "0pt" c.pos] c.pos]
@@ -14007,10 +14070,11 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
                               tableTop := false, defTop := saved > 0, localLengths := #[]
                               quietNext := false, envCode := st.envCode || envBody, envNext := 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
-    -- A style command's block argument sets under its declaration, a footnote's lists in lines.
+    -- A style command's block argument sets under its declaration, a footnote's lists and headings
+    -- in lines.
     let body' := match blocks with
       | some (.decl d) => #[Raw.ctrl d p] ++ body'
-      | some .inlineLists => inlineListRaws body'
+      | some .inlineLists => inlineListRaws (noteHeadingLines body')
       | none => body'
     if quiet then
       write fun st => { st with diags := st.diags.extract 0 said, warned := warned }
@@ -15585,23 +15649,28 @@ private def textFontCommands : List String :=
   ["textrm", "textsf", "texttt", "textmd", "textbf", "textup", "textit", "textsl", "textsc",
    "textnormal", "emph"]
 
-/-- The sectioning commands, which end the paragraph they meet. -/
-private def headingCommands : List String :=
-  ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph",
-   "addpart", "addchap", "addsec"]
-
-/-- The index past a heading's star, options and title from `i`, at least one past it. -/
-private def headingEnd (body : Array Raw) (i : Nat) : Nat :=
-  let (_, j) := takeOpts body (skipStar body (skipSpaces body (i + 1))) 1
-  max (takeGroups body j 1).2 (i + 1)
-
-/-- A text-font argument's raws from `i`, each heading whole and marked. -/
+/-- A text-font argument's raws from `i`, each heading or list item whole and marked. -/
 private def cutAtHeadings (body : Array Raw) (i : Nat) (out : Array (Array Raw × Bool)) :
     Array (Array Raw × Bool) :=
   if h : i < body.size then
     match body[i] with
     | .ctrl n p =>
-      if headingCommands.contains n then
+      if n == "item" then
+        -- An item's overlay and label belong to it, as `\\item<2->[x]` reads them.
+        let j := skipSpaces body (i + 1)
+        let sel := (body[j]?).bind fun r => overlaySelector? body j r
+        let k0 := max ((sel.map (·.stop)).getD (i + 1)) (i + 1)
+        let tail := (sel.map (·.tail)).getD #[]
+        let ⟨k, hk⟩ : { k : Nat // k0 ≤ k } := if tail.isEmpty
+          then ⟨max (takeOpts body (skipSpaces body k0) 1).2 k0, Nat.le_max_right _ _⟩
+          else ⟨k0, Nat.le_refl _⟩
+        have : i < k := Nat.lt_of_lt_of_le
+          (Nat.lt_of_lt_of_le (Nat.lt_succ_self i) (Nat.le_max_right _ _)) hk
+        let label := body.extract k0 k
+        let head := (#[Raw.ctrl n p] ++ (sel.map (·.word)).toArray) ++ label
+        let out := out.push (head, true)
+        cutAtHeadings body k (if tail.isEmpty then out else out.push (tail, false))
+      else if headingCommands.contains n then
         let k := headingEnd body i
         have : i < k := Nat.lt_of_lt_of_le (Nat.lt_succ_self i) (Nat.le_max_right _ _)
         cutAtHeadings body k (out.push (body.extract i k, true))
@@ -15610,9 +15679,9 @@ private def cutAtHeadings (body : Array Raw) (i : Nat) (out : Array (Array Raw �
   else out
 termination_by body.size - i
 
-/-- Whether a raw is a sectioning command. -/
-private def isHeadingRaw : Raw → Bool
-  | .ctrl n _ => headingCommands.contains n
+/-- Whether a raw is a sectioning command or a list item, either ending the paragraph it meets. -/
+private def endsParagraphRaw : Raw → Bool
+  | .ctrl n _ => headingCommands.contains n || n == "item"
   | _ => false
 
 /-- The command `head` over each run beside the headings, edge spaces dropped as TeX's vertical
@@ -15625,7 +15694,7 @@ private def overRuns (head wrap : Array Raw) (gp : Pos) (out run : Array Raw) (a
       let run := run.popWhile (· matches .space)
       let out := if run.any (!· matches .space) then (out ++ head).push (.group run gp) else out
       -- The heading ends the paragraph before it, so its group is no argument of the run's command.
-      let out := if wrap.isEmpty then out ++ raws
+      let out := if wrap.isEmpty || (raws[0]? : Option Raw) matches some (.ctrl "item" _) then out ++ raws
         else (out.push (.par gp)).push (.group (wrap ++ raws) gp)
       overRuns head wrap gp out #[] true rest
     else if after && run.isEmpty && raws.all (· matches .space) then
@@ -15640,17 +15709,17 @@ private def styledHeadings : List Raw → Array Raw → Array Raw
   | .ctrl "textcolor" p :: .sym '[' q :: .word m mp :: .sym ']' r :: .group c cp ::
       .group body gp :: rest, out =>
     let model := #[Raw.sym '[' q, .word m mp, .sym ']' r, .group c cp]
-    if body.any isHeadingRaw then
+    if body.any endsParagraphRaw then
       styledHeadings rest (overRuns (#[.ctrl "textcolor" p] ++ model) (#[.ctrl "color" p] ++ model)
         gp out #[] false (cutAtHeadings body 0 #[]).toList)
     else styledHeadings (.group body gp :: rest) ((out.push (.ctrl "textcolor" p)) ++ model)
   | .ctrl "textcolor" p :: .group c cp :: .group body gp :: rest, out =>
-    if body.any isHeadingRaw then
+    if body.any endsParagraphRaw then
       styledHeadings rest (overRuns #[.ctrl "textcolor" p, .group c cp]
         #[.ctrl "color" p, .group c cp] gp out #[] false (cutAtHeadings body 0 #[]).toList)
     else styledHeadings (.group body gp :: rest) ((out.push (.ctrl "textcolor" p)).push (.group c cp))
   | .ctrl n p :: .group body gp :: rest, out =>
-    if textFontCommands.contains n && body.any isHeadingRaw then
+    if textFontCommands.contains n && body.any endsParagraphRaw then
       styledHeadings rest (overRuns #[.ctrl n p] #[] gp out #[] false
         (cutAtHeadings body 0 #[]).toList)
     else styledHeadings (.group body gp :: rest) (out.push (.ctrl n p))

@@ -535,6 +535,16 @@ warning: '\footnotemark' is not paired with its partner yet; its [...] options w
 ── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin
 warning: a paragraph break inside '\footnote' is set as a space [W0371]
   note: a footnote is one paragraph; split a long note into two \footnote calls
+⚠ [W0370] - \footnotemark
+  '\footnotemark' is not paired with its partner yet; its text is kept in place
+  suggestion: \footnote{...} where the mark should stand sets the note at the page foot
+⚠ [W0370] - \footnotemark
+  '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place
+  suggestion: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
+── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin, a heading as a bold line
+⚠ [W0371] - \footnote
+  a paragraph break inside '\footnote' is set as a space
+  suggestion: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
 warning: a footnote is taller than the text block; it overruns its page [W0372]
   note: 63.053pt taller

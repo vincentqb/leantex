@@ -170,11 +170,64 @@ the paragraphs around it ({ls}, {ds.map (·.code)})"
       ("a group after noindent", dvDoc "" ("\\noindent{" ++ listing ++ "}"), 0),
       ("an item's group", dvDoc ""
         ("\\begin{itemize}\n\\item[\\textbf{x}] {\\small " ++ listing ++ "}\n\\end{itemize}"), 0),
+      ("an mbox's argument", dvDoc "" ("A \\mbox{" ++ listing ++ "} b."), 1),
+      ("a makebox's argument", dvDoc "" ("A \\makebox[4cm]{" ++ listing ++ "} b."), 1),
+      ("a box in a box", dvDoc "" ("A \\mbox{\\mbox{" ++ listing ++ "}} b."), 1),
       ("a minipage", dvDoc "" ("\\begin{minipage}{6cm}\n" ++ listing ++ "\n\\end{minipage}"), 0),
       ("the body", dvDoc "" listing, 0)] do
     let (ls, ds) := lines src
     t s!"argument blocks: a listing in {what} draws {want} W0411, its words set ({sites ds})"
       (sites ds == want && ls.any (hasStr · "verbwords"))
+  -- An environment defined over verbatim's halves sets its body verbatim, as the verbatim package
+  -- reads it; spelled as the environment, which LaTeX cannot read, it is named.
+  for (halves, want) in [("{\\verbatim}{\\endverbatim}", 0),
+      ("{\\begin{verbatim}}{\\end{verbatim}}", 1)] do
+    let (ls, ds) := lines (dvDoc ("\\usepackage{verbatim}\n\\newenvironment{codev}" ++ halves ++ "\n")
+      "Before.\n\\begin{codev}\nverb \\words{\n\\end{codev}\nAfter.")
+    t s!"argument blocks: an environment over verbatim's halves {halves} sets its body verbatim, \
+{want} W0411 ({ls}, {ds.map (·.code)})"
+      (sites ds == want && !ds.any (fun d => d.severity == .error || d.kind == .W0301) &&
+        ls.any (hasStr · "\\words{"))
+  let (_, boxDefDs) := lines (dvDoc ("\\newcommand{\\unusedbox}{\\mbox{" ++ listing ++ "}}\n") "Words.")
+  t "argument blocks: a box in a definition no call runs names nothing" (sites boxDefDs == 0)
+  let (cls, cds) := lines (dvDoc ("\\usepackage{verbatim}\n\\newenvironment{codev}% note\n  " ++
+    "{\\verbatim}%\n  {\\endverbatim}\n") "\\begin{codev}\nverb \\words{\n\\end{codev}")
+  t s!"argument blocks: a verbatim definition across commented lines is read ({cls})"
+    (!cds.any (fun d => d.severity == .error || d.kind == .W0301) && cls.any (hasStr · "\\words{"))
+  let (rls, rds) := lines (dvDoc ("\\newenvironment{codev}{\\verbatim}{\\endverbatim}\n" ++
+    "\\renewenvironment{codev}{\\itshape}{}\n") "\\begin{codev}\\emph{Kqzv} y\\end{codev}")
+  t s!"argument blocks: a redefinition with other text ends a verbatim environment ({rls})"
+    (!rds.any (·.severity == .error) && rls.any (hasStr · "Kqzv") && !rls.any (hasStr · "\\emph"))
+  let (ils, ids) := lines (dvDoc "" ("\\begin{itemize}\n\\item Alpha \\textbf{\\item Kqzv} Omega\n" ++
+    "\\end{itemize}"))
+  let itemAt (s : String) : Option Nat := ils.findIdx? (hasStr · s)
+  t s!"argument blocks: an item in bold text starts the next item, the text after it bold in it \
+({ils}, {ids.map (·.code)})"
+    (!ids.any (·.kind == .E0312) && itemAt "Kqzv" == itemAt "Omega" &&
+      (match itemAt "Alpha", itemAt "Kqzv" with
+       | some a, some k => a < k
+       | _, _ => false))
+  let (odoc, ods) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n" ++
+    "\\begin{itemize}\n\\item Alpha \\textbf{\\item<2-> Kqzv} Omega\n\\end{itemize}\n" ++
+    "\\end{frame}\n\\end{document}")
+  let ols := (allLines (layoutOf fs odoc)).map (lineText ·)
+  t s!"argument blocks: an item's overlay stays the item's when bold text holds it ({ols})"
+    (!ods.any (·.severity == .error) && !ols.any (hasStr · "<2") && ols.any (hasStr · "Kqzv"))
+  let (tdoc, _) := elabStr (dvDoc "" "Text\\footnote{Intro. \\section{Ka}\\subsection{Kb} rest.} more.")
+  let tls := (allLines (layoutOf fs tdoc)).map (lineText ·)
+  t s!"argument blocks: two headings in a footnote are two lines, no empty one between ({tls})"
+    (match tls.findIdx? (hasStr · "Ka"), tls.findIdx? (hasStr · "Kb") with
+     | some a, some b => b == a + 1
+     | _, _ => false)
+  let (fdoc, fds) := elabStr (dvDoc "" "Text\\footnote{Before. \\section{Kqzv} note.} more.")
+  let fls := (allLines (layoutOf fs fdoc)).map (lineText ·)
+  let fat (s : String) : Option Nat := fls.findIdx? (hasStr · s)
+  t s!"argument blocks: a heading in a footnote is a bold line of the note, named once \
+({fls}, {fds.map (·.code)})"
+    (!fds.any (·.kind == .E0312) && (fds.filter (·.kind == .W0371)).size == 1 &&
+      (match fat "Before.", fat "Kqzv", fat "note." with
+       | some a, some k, some o => a < k && k < o
+       | _, _, _ => false))
   let (_, unusedDs) := lines (dvDoc ("\\newcommand{\\unused}{" ++ listing ++ "}\n") "Words.")
   t "argument blocks: a definition no call runs names nothing" (sites unusedDs == 0)
   let (_, fileDs) := lines (dvDoc "\\usepackage{listings}\n\\newcommand{\\inc}[1]{\\lstinputlisting{#1}}\n"

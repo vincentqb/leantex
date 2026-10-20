@@ -2390,6 +2390,13 @@ def reports : List Report := [
     pins := [check% Tests.ListLabels.checks]
     accept := ["lualatex 1.24 on invented probes: a counting Roman label sets I. and II., an alphabetic one in parentheses (a), start=4 4., resume the next number, a redefined labelenumi (a) and (b), leftmargin=* the label's widest width and labelsep, a bullet and 0. at the outer margin, (viii) for a roman label, widest=III III., a description's next lines at the outer margin, a second setlist for itemize the bullet at 25pt; this tree sets every label and text start the same to a hundredth of a point",
       "main's binary at 1e648c76 on the same probes: 1., 2. at the level's margin and the first setlist's label and margin; the guards fail there"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R268", date := "2026-10-20"
+    what := "a list item inside bold, emphasised or coloured text and a heading inside a footnote stopped as block commands used inline (E0312), where LaTeX starts the next item or sets the heading in the note; a listing environment inside an mbox or a makebox, which LaTeX cannot read, was set with nothing said; and an environment defined over verbatim's halves, the verbatim package's idiom, set its body as TeX, or with the environment spelled stopped as a definition missing its halves (E0303)"
+    pins := [check% argumentBlockChecks]
+    accept := ["lualatex 1.24 on invented articles: an item in bold text starts the next item with the text after it bold; a section in a footnote sets in the note; a verbatim in an mbox is refused in LR mode; an environment over verbatim's halves with the verbatim package sets its body verbatim, without the package or with the environment spelled stops the run; this tree sets the items byte-identically to the same items written apart, the footnote's heading as a bold line of the note (W0371, unnumbered, where LaTeX numbers it), names the boxed listing once (W0411), sets both verbatim definitions' bodies verbatim and names the spelled one (W0411)",
+      "main's binary at 1e648c76 on the same probes: E0312 for the item and the footnote heading, nothing for the boxed listing, the verbatim body read as TeX with W0301 or E0303 and W0302; the checks fail there",
+      "the corpus and three private documents (two decks and a long markdown report) built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical, and every diagnostic the same"]
     state := .guarded "1e648c76" .before .author }
 ]
 

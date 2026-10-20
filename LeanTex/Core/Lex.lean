@@ -344,11 +344,53 @@ private theorem writtenRange_source_exact
         exact ⟨a.1, b.1, good.1.1, good.1.2, good.2, h.symm⟩
       next bad => simp [failure] at h
 
-/-- The lexically blind environments, whose bodies are
-captured raw in one token. -/
-private def verbEnvs : List (String × Array Char × Array Char) :=
-  ["verbatim", "lstlisting", "minted"].map fun n =>
-    (n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
+/-- The lexically blind environments, whose bodies are captured raw in one token: the token's
+environment, the name written, and the opener and closer the capture spans. -/
+private def verbEnvs : Array (String × String × Array Char × Array Char) :=
+  #["verbatim", "lstlisting", "minted"].map fun n =>
+    (n, n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
+
+/-- The index past spaces and `%` comments from `k`. -/
+private def skipBlank (cs : Array Char) (k : Nat) : Nat := Id.run do
+  let mut k := scanWhile cs k isWs
+  for _ in [0:cs.size] do
+    if cs[k]? != some '%' then break
+    k := scanWhile cs (scanWhile cs k (· != '\n')) isWs
+  return k
+
+/-- The index past `\\verbatim` or `\\begin{verbatim}` at `k` (the `end` spellings when `close`), and
+whether it was written as the environment, which a definition's text cannot hold under LaTeX. -/
+private def verbHalf (cs : Array Char) (k : Nat) (close : Bool) : Option (Nat × Bool) :=
+  let env := (if close then "\\end{verbatim}" else "\\begin{verbatim}").toList.toArray
+  let cmd := (if close then "\\endverbatim" else "\\verbatim").toList.toArray
+  if matchAt cs k env then some (k + env.size, true)
+  else if matchAt cs k cmd && !(cs[k + cmd.size]?.any nameChar) then some (k + cmd.size, false)
+  else none
+
+/-- The name an environment definition from `j` defines, and the index past its group. -/
+private def envDefName (cs : Array Char) (j : Nat) : Option (String × Nat) := do
+  let k := skipBlank cs j
+  guard (cs[k]? == some '{')
+  let e := scanWhile cs (k + 1) fun c => c != '}' && c != '{' && c != '\\' && !isWs c
+  guard (e > k + 1 && cs[e]? == some '}')
+  return (strFrom cs (k + 1) e, e + 1)
+
+/-- An environment a definition from `j` makes verbatim, its begin and end code `\\verbatim` and
+`\\endverbatim` as the verbatim package reads them, or the environment's own spellings; its name,
+whether the environment was spelled, and the index past the definition. -/
+private def verbEnvDef (cs : Array Char) (j : Nat) : Option (String × Bool × Nat) := do
+  let (name, e) ← envDefName cs j
+  let b := skipBlank cs e
+  guard (cs[b]? == some '{')
+  let (b, spelled) ← verbHalf cs (skipBlank cs (b + 1)) false
+  let b := skipBlank cs b
+  guard (cs[b]? == some '}')
+  let c := skipBlank cs (b + 1)
+  guard (cs[c]? == some '{')
+  let (c, spelledEnd) ← verbHalf cs (skipBlank cs (c + 1)) true
+  let c := skipBlank cs c
+  guard (cs[c]? == some '}')
+  return (name, spelled || spelledEnd, c + 1)
 
 public def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
   -- Normalized to NFC here, once, so every consumer sees one canonical spelling.
@@ -368,6 +410,9 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
   let mut closeEol := false
   -- How deep the scan stands in TikZ pictures, whose `\path` is TikZ's own.
   let mut tikz : Nat := 0
+  -- The verbatim environments, the document's among them, and where a definition read ends.
+  let mut verbs := verbEnvs
+  let mut verbDefStop : Nat := 0
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
@@ -408,12 +453,32 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
             let name := strFrom cs (i + 1) j
             if (name == "begin" || name == "end") && matchAt cs j "{tikzpicture}".toList.toArray then
               tikz := if name == "begin" then tikz + 1 else tikz - 1
-            if name == "begin" &&
-                verbEnvs.any (fun e => matchAt cs j e.2.1) then
+            if (name == "newenvironment" || name == "renewenvironment") then
+              match verbEnvDef cs j, envDefName cs j with
+              | some (env, spelled, stop), _ =>
+                verbs := (verbs.filter (·.2.1 != env)).push
+                  ("verbatim", env, s!"\{{env}}".toList.toArray, s!"\\end\{{env}}".toList.toArray)
+                verbDefStop := stop
+                if spelled then
+                  diags := diags.push (Diag.of .W0411
+                    s!"'\\begin\{verbatim}' in a definition's text does not compile under LaTeX; \
+'\{{env}}' sets its body verbatim" (some ⟨file, here⟩)
+                    (help := s!"\\newenvironment\{{env}}\{\\verbatim}\{\\endverbatim} with the \
+verbatim package spells it"))
+              | none, some (env, _) =>
+                -- A definition of any other text ends the document's verbatim one.
+                verbs := verbs.filter fun v => v.2.1 != env || verbEnvs.any (·.2.1 == env)
+              | none, none => pure ()
+            if i < verbDefStop && (name == "begin" || name == "end") &&
+                matchAt cs j "{verbatim}".toList.toArray then
+              -- A definition's verbatim halves, read as the verbatim package's commands.
+              toks := toks.push ⟨.ctrl (if name == "begin" then "verbatim" else "endverbatim"), here⟩
+              let stop := j + "{verbatim}".length
+              pos := posOver cs i stop pos
+              i := stop
+            else if let some (env, written, opener, closer) :=
+                (if name == "begin" then verbs.find? (fun e => matchAt cs j e.2.2.1) else none) then
               -- verbatim and the listing environments capture raw content in one token.
-              let (env, opener, closer) :=
-                (verbEnvs.find? (fun e => matchAt cs j e.2.1)).getD
-                  ("verbatim", #[], #[])
               let start := j + opener.size
               match findSub cs start closer with
               | some k =>
@@ -423,7 +488,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
                 i := stop
               | none =>
                 diags := diags.push (Diag.of .E0102
-                  s!"unclosed \{{env}}: expected '\\end\{{env}}'" (some ⟨file, here⟩))
+                  s!"unclosed \{{written}}: expected '\\end\{{written}}'" (some ⟨file, here⟩))
                 toks := toks.push ⟨.verb env (strFrom cs start cs.size), here⟩
                 pos := posOver cs i cs.size pos
                 i := cs.size
