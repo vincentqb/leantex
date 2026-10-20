@@ -15,4 +15,4 @@ para
   image "figures/box" height 20pt alt "The same card, small"
   text "."
 -- diagnostics
-info[N0100] 2:1 translated command \usepackage{graphicx} | detail: nothing: the engine does this itself
+info[N0100] 2:1 translated package graphicx | detail: nothing: the engine does this itself

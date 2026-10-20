@@ -92,7 +92,7 @@ frame standout
   para
     text "Azure room."
 -- diagnostics
-info[N0100] 4:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
-info[N0100] 4:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
-info[N0100] 4:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
+info[N0100] 4:1 translated class beamer | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 4:1 translated package amsmath | detail: nothing: the engine does this itself
+info[N0100] 4:1 translated package amsthm | detail: \theoremstyle{plain}
 info[N0100] 22:6 translated command \alert | detail: the alert colour

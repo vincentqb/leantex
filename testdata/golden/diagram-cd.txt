@@ -95,4 +95,4 @@ role display-vefo
         draw path (23.91,0)--(23.91,-17.534) stroke #000000 0.399
         draw path (26.301,-15.661)~(23.91,-17.733)~(21.519,-15.661) stroke #000000 0.399 cap round join round
 -- diagnostics
-info[N0100] 11:1 translated command \usepackage{tikz-cd} | detail: nothing: the engine does this itself
+info[N0100] 11:1 translated package tikz-cd | detail: nothing: the engine does this itself

@@ -116,7 +116,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] (same.push other)
   t "porcelain: the first site carries the count and the later ones none"
     ((porcelainRows porcelain "W0110").map (·.1) == [4, 0, 0, 0, 1])
-  t "porcelain: the later sites read note, the first warning"
+  t "porcelain: the later sites read info, the first warning"
     ((porcelainRows porcelain "W0110").map (·.2) ==
       ["warning", "info", "info", "info", "warning"])
   let advised := #[Diag.of .W0110 "zzsame words" (span 1) (help := some "zzone"),

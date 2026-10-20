@@ -64,7 +64,7 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
       | none => ""
     else ""
   let count := if d.sites ≤ 1 then "" else s!" ({d.sites} sites)"
-  let message := humanText "\n  " (d.message.replace "\r\n" "\n")
+  let message := humanText "\\n" (d.message.replace "\r\n" "\n")
   let note := match note? d with
     | some text => "\n  " ++ sgr color "1" "note:" ++ " " ++
         humanText "\n    " (text.replace "\r\n" "\n")

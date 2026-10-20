@@ -5,7 +5,7 @@ error: unreadable file doc.tex [E0001]
 error: duplicate output [E0003]
   note: HTML and Markdown both name 'out.html'
 ── E0004 (dropped) an artifact could not be written to its destination
-error: invalid output site/out.pdf [E0004]
+error: failed output site/out.pdf [E0004]
   note: permission denied
 ── E0005 (dropped) an artifact would be written over one of the build's inputs; publication is refused
 error: invalid output doc.md [E0005]
@@ -192,7 +192,7 @@ info: missing face italic for family 'DejaVu Sans Mono' [N0031]
 info: no facts for 'Tide' stand at '/p/.lake/build/leantex/Tide.facts'; its code is set without statements [N0032]
   note: run `lake exe leantex-export Tide` in a project that requires leantex-export, or declare `facts = <path>`
 ── N0100 (info) LaTeX idiom translated to its native declaration
-info: translated command \usepackage{geometry} [N0100]
+info: translated package geometry [N0100]
   note: \tokens{ footskip = 30pt }\page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 info: frame option 'shrink' is not modelled; ignored [N0102]
@@ -248,15 +248,15 @@ warning: a frame's line runs past its measure; no feasible break [W0005]
 warning: a section page's line runs past its measure; no feasible break [W0005]
   note: the section page: 834.237pt too wide
 ── W0006 (degraded) declared face variant missing; another face substitutes
-warning: substituted face 'Demo Serif Regular' for 'Demo Serif bold' [W0006]
-warning: substituted face 'Demo Serif Regular' for 'Demo Serif bold' [W0006]
+warning: substituted face 'Demo Serif Regular' for 'Demo Serif Bold' [W0006]
+warning: substituted face 'Demo Serif Regular' for 'Demo Serif Bold' [W0006]
   note: 'DemoSerif-Bold.otf' is not installed
 ── W0007 (degraded) paged-media furniture omitted from HTML
 warning: running head/foot is paged-media furniture; omitted from HTML [W0007]
   note: body content reaches both backends: move the masthead there
 ── W0008 (config) \fonts dir is not a directory
 warning: missing directory fonts [W0008]
-  note: ./fonts
+  note: resolves to ./fonts
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
 warning: 'Open Sans' has no glyph for U+2200 [W0009]
   note: a glyph from 'Source Code Pro'
@@ -615,9 +615,9 @@ warning: a \vfill before more of its list item, or inside \alt, spaces nothing o
 warning: a frame stands past its text area, in the gap below it [W0400]
   note: frame 1: 1.216pt past
 ── W0403 (degraded) no installed font family by that name; the slot's default family stands in
-warning: substituted family for 'Sourse Serif Pro' [W0403]
+warning: missing family 'Sourse Serif Pro' [W0403]
   note: did you mean: Source Serif Pro? — `leantex fonts` lists every family
-warning: substituted family for 'Kaputt Grotesk' [W0403]
+warning: missing family 'Kaputt Grotesk' [W0403]
   note: 12 families are installed — `leantex fonts` lists every family
 ── W0411 (standard) a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent
 warning: '\begin{minted}' within a line of text or an argument does not compile under LaTeX; it is set as inline code [W0411]
@@ -655,7 +655,7 @@ warning: biblatex sets the @set entry 's' as one entry of its members; the engin
 warning: biblatex sets the entries 'r' that 'k' names as related after it; the engine does not set related entries [W0423]
 ── W0424 (degraded) a .bib file among the bibliography's is not there; the list holds the other files' entries
 warning: missing file references [W0424]
-  note: named by \bibliography
+  note: put the file at ./references.bib, or drop 'references' from the list of files
 ── W0425 (degraded) a .bib entry's crossref or xdata reference biber does not resolve: no such entry, no @xdata entry, no such field, or a cycle; the entry is set without what it would inherit
 warning: the crossref 'nowhere' that 'k' names is no entry of the bibliography; 'k' is set without the fields it would inherit [W0425]
   note: add an entry with key 'nowhere' to the .bib file, or fix the spelling in 'crossref'
@@ -759,7 +759,7 @@ warning: a documentation comment's cross-reference names a program element no ta
   note: `Other`
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
-  note: named by \bibliography
+  note: put the file at ./references.bib, or correct its name in \bibliography
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning: image file not found: 'figures/plot.png'; a placeholder box holds its place [W0601]
   note: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added

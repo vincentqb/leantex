@@ -72,5 +72,5 @@ frame
     "    # an invented comment"
     "    return \"synthetic\" + str(n + 1)"
 -- diagnostics
-info[N0100] 7:1 translated command \usepackage{minted} | detail: nothing: the engine does this itself
+info[N0100] 7:1 translated package minted | detail: nothing: the engine does this itself
 info[N0100] 16:22 translated command \alert | detail: the alert colour

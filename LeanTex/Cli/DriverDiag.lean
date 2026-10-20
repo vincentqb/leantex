@@ -67,10 +67,12 @@ public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
         s!"the PDF body needs {bytes} bytes; offsets stay below {2 ^ 64}")
     | .objectStreamSize bytes =>
       (Diag.say .E0607 .output,
-        s!"the largest object stream needs {bytes} decoded bytes; the limit is {PdfRead.maxDecoded}")
+        s!"the largest object stream needs {bytes} decoded bytes; the limit is \
+{PdfRead.maxDecoded}")
     | .xrefStreamSize bytes =>
       (Diag.say .E0607 .output,
-        s!"the cross-reference stream needs {bytes} decoded bytes; the limit is {PdfRead.maxDecoded}")
+        s!"the cross-reference stream needs {bytes} decoded bytes; the limit is \
+{PdfRead.maxDecoded}")
     | .objectSpelling id =>
       (Diag.say .E0607 .object (Diag.Name.of (toString id)),
         "a spelling the writer cannot represent")
@@ -102,7 +104,7 @@ public def noFont : Diag :=
 
 /-- W0008: the document's `\fonts{ dir = ... }` is not a directory. -/
 public def fontsDirMissing (decl resolved : String) : Diag :=
-  Diag.of .W0008 (Diag.say .W0008 .directory decl) (detail := some resolved)
+  Diag.of .W0008 (Diag.say .W0008 .directory decl) (detail := some s!"resolves to {resolved}")
     (subject := some "param:\\fonts:dir")
 
 /-- W0403: a named family is not installed, at the declaration naming it; `near` are the closest
@@ -111,7 +113,7 @@ public def familyMissing (family : String) (near : List String) (installed : Nat
     (span : Option Span := none) : Diag :=
   let hint := if near.isEmpty then s!"{installed} families are installed"
     else s!"did you mean: {String.intercalate ", " near}?"
-  Diag.of .W0403 (Diag.say .W0403 .family (obj := some (none, family))) span
+  Diag.of .W0403 (Diag.say .W0403 .family family) span
     (subject := some ("family:" ++ family))
     (help := s!"{hint} — `leantex fonts` lists every family")
 
@@ -318,19 +320,19 @@ public def inputMissing (name : String) (span : Option Span) (command : String :
 
 /-- What names a missing `.bib` file: the `\bibliography` command that requested it, else
 biblatex's resource. -/
-private def bibNamed (command : Option String) : String × String :=
+private def bibNamed (command : Option String) : String :=
   match command with
-  | some c => (s!"named by {c}", s!"correct its name in {c}")
-  | none => ("named by a bibliography resource", "correct the resource's name")
+  | some c => s!"correct its name in {c}"
+  | none => "correct the resource's name"
 
 /-- W0503: a `.bib` file the list's `command` names is not there; the reference list stays empty
 and, where `shows`, every citation shows `?`, unless the document lists entries of its own. -/
 public def bibMissing (name looked : String) (span : Option Span)
     (command : Option String := some "\\bibliography") (own : Bool := false)
     (shows : Bool := true) : Diag :=
-  let (named, fix) := bibNamed command
+  let fix := bibNamed command
   Diag.of .W0503 (Diag.say .W0503 .file name)
-    span (help := s!"put the file at {looked}, or {fix}") (detail := some named)
+    span (help := s!"put the file at {looked}, or {fix}")
     (subject := some ("bibfile:" ++ name)) (carries := if own || !shows then [] else [.W0351])
 
 /-- W0424: one `.bib` file of several a bibliography names is not there;
@@ -341,15 +343,15 @@ public def bibMissingAmong (name looked : String) (span : Option Span)
   let drop := if command.isSome then s!"drop '{name}' from the list of files"
     else "drop the resource"
   Diag.of .W0424 (Diag.say .W0424 .file name) span
-    (help := s!"put the file at {looked}, or {drop}") (detail := some (bibNamed command).1)
+    (help := s!"put the file at {looked}, or {drop}")
     (subject := some ("bibfile:" ++ name))
 
 /-- W0503 as a code file's documentation names its bibliography, on its page or under the inclusion
 `entry` names: the file is not there, so its documentation's citations stay as written. -/
-public def bibMissingLean (name looked : String) (span : Span) (entry : Option String) : Diag :=
+public def bibMissingLean (name looked : String) (span : Span) (_entry : Option String) : Diag :=
   Diag.of .W0503 (Diag.say .W0503 .file name) (some span)
-    (detail := some (if entry.isSome then "named by the included documentation"
-      else "named by the documentation")) (help := s!"put the file at {looked}") (subject := some ("bibfile:" ++ name))
+    (help := s!"put the file at {looked}")
+    (subject := some ("bibfile:" ++ name))
 
 /-- W0503 as a code file's documentation cites entries of its project's bibliography, `name` from the
 file, and declares none in `home`, where the line `spelled` would. -/
@@ -366,7 +368,7 @@ public def bibMissingMarkdown (among : Bool) (name looked : String) (span : Opti
       (help := s!"put the file at {looked}, or drop '{name}' from 'bibliography:'")
       (subject := some ("bibfile:" ++ name))
   else
-    Diag.of .W0503 (Diag.say .W0503 .file name) (detail := some "named by 'bibliography:'")
+    Diag.of .W0503 (Diag.say .W0503 .file name)
       span (help := s!"put the file at {looked}, or correct its name in 'bibliography:'")
       (subject := some ("bibfile:" ++ name)) (carries := if shows then [.W0351] else [])
 

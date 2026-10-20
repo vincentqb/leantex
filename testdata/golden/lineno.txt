@@ -22,5 +22,5 @@ para
 para
   text "A closing paragraph on the far side of the break, still counted in the same running sequence from one."
 -- diagnostics
-info[N0100] 2:1 translated command \usepackage{lineno} | detail: nothing: the engine does this itself
+info[N0100] 2:1 translated package lineno | detail: nothing: the engine does this itself
 info[N0100] 3:1 translated command \linenumbers | detail: \page{ linenumbers = on }

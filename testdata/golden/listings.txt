@@ -15,9 +15,9 @@ para
   ref "lst:probe" shows "1" -> #lst:probe
   text " adds one. A mass of 12 345.6 kg moves at m s⁻¹ across 45°; about 1 × 10⁵ samples, 5 to 10 runs."
 -- diagnostics
-info[N0100] 2:1 translated command \usepackage{listings} | detail: nothing: the engine does this itself
-info[N0100] 3:1 translated command \usepackage{minted} | detail: nothing: the engine does this itself
-info[N0100] 4:1 translated command \usepackage{siunitx} | detail: nothing: the engine does this itself
+info[N0100] 2:1 translated package listings | detail: nothing: the engine does this itself
+info[N0100] 3:1 translated package minted | detail: nothing: the engine does this itself
+info[N0100] 4:1 translated package siunitx | detail: nothing: the engine does this itself
 info[N0100] 20:45 '\SI' spells its text natively: locale digits and unit symbols (siunitx)
 info[N0100] 21:10 '\si' spells its text natively: locale digits and unit symbols (siunitx)
 info[N0100] 21:40 '\ang' spells its text natively: locale digits and unit symbols (siunitx)

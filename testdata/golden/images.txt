@@ -26,4 +26,4 @@ para
   image "rects-alpha.png" alt "Three synthetic rectangles over transparency"
   text " keeps its alpha."
 -- diagnostics
-info[N0100] 8:1 translated command \usepackage{graphicx} | detail: nothing: the engine does this itself
+info[N0100] 8:1 translated package graphicx | detail: nothing: the engine does this itself

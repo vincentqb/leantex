@@ -308,8 +308,8 @@ def ctrlLeaveChecks (ref : IO.Ref (List String)) : IO Unit := do
     ds.any fun d => d.kind == .W0301 && (d.message.splitOn s!"'\\{n}'").length > 1
   let defined := "\\newcommand{\\zzmac}{\\usepackage{xcolor}}"
   t "control leave: a load in a definition body waits for the definition's use"
-    (!noted (run defined "Alpha.") "usepackage{xcolor}" &&
-      noted (run (defined ++ "\\zzmac") "Alpha.") "usepackage{xcolor}")
+    (!noted (run defined "Alpha.") "package xcolor" &&
+      noted (run (defined ++ "\\zzmac") "Alpha.") "package xcolor")
   t "control leave: a blueprint declaration without the package is left to elaboration"
     (unknown (run "\\graphcolor{a}{b}{c}" "Alpha.") "graphcolor" &&
       !unknown (run "\\usepackage{blueprint}\\graphcolor{a}{b}{c}" "Alpha.") "graphcolor")

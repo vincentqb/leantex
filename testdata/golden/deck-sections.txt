@@ -54,7 +54,7 @@ frame
   para
     text "The last frame dries the cups."
 -- diagnostics
-info[N0100] 8:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
-info[N0100] 8:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
-info[N0100] 8:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
+info[N0100] 8:1 translated class beamer | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 8:1 translated package amsmath | detail: nothing: the engine does this itself
+info[N0100] 8:1 translated package amsthm | detail: \theoremstyle{plain}
 info[N0100] 10:1 translated command \usetheme | detail: \theme{default}

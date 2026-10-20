@@ -193,10 +193,10 @@ when the family has no face. -/
 public def resolveVariant (faces : Array Face) (family : String) (declared : Option String)
     (v : Variant) : Option (Face × Option Substituted) :=
   let want :=
-    if v.bold && v.italic then "bold italic"
-    else if v.bold then "bold"
-    else if v.italic then "italic"
-    else "regular"
+    if v.bold && v.italic then "Bold Italic"
+    else if v.bold then "Bold"
+    else if v.italic then "Italic"
+    else "Regular"
   match declared with
   | some name =>
     match resolveNamed faces name with

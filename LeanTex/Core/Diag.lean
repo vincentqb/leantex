@@ -65,7 +65,7 @@ public def Severity.label : Severity → String
   | .note => "info"
 
 /-- The class letter a severity puts on its codes: `error` codes are `E…`,
-`warning` codes `W…`, `note` codes `N…`. -/
+`warning` codes `W…`, `info` codes `N…`. -/
 public def Severity.letter : Severity → Char
   | .error => 'E'
   | .warning => 'W'
@@ -542,13 +542,13 @@ public def DiagCode.qual : DiagCode → Diag.Qual
     .ignored
   | .N0103 | .N0105 | .W0013 | .N0029 | .W0416 | .W0449 =>
     .unused
-  | .W0002 | .E0004 | .E0005 | .E0205 | .E0303 | .E0305 | .E0320 | .E0321 | .E0323 | .E0325 |
+  | .W0002 | .E0005 | .E0205 | .E0303 | .E0305 | .E0320 | .E0321 | .E0323 | .E0325 |
     .E0331 | .E0332 | .E0501 | .W0014 | .W0105 | .W0107 | .W0202 | .E0333 | .W0314 | .W0332 |
     .W0337 | .W0352 | .W0420 | .W0425 | .W0429 | .W0306 | .W0431 | .W0442 | .W0433 =>
     .invalid
   | .E0001 | .E0402 | .E0404 | .W0601 | .W0446 =>
     .unreadable
-  | .E0304 | .E0401 | .W0003 | .E0405 | .W0008 | .N0018 | .W0309 | .W0312 | .W0320 | .W0326 |
+  | .W0403 | .E0304 | .E0401 | .W0003 | .E0405 | .W0008 | .N0018 | .W0309 | .W0312 | .W0320 | .W0326 |
     .E0502 | .E0365 | .N0376 | .W0377 | .W0378 | .W0379 | .W0382 | .W0390 | .W0393 | .W0394 |
     .E0395 | .E0606 | .W0424 | .N0031 | .W0414 | .W0432 | .N0032 | .W0503 =>
     .missing
@@ -559,14 +559,14 @@ public def DiagCode.qual : DiagCode → Diag.Qual
   | .E0101 | .E0202 | .E0310 | .E0311 | .E0312 | .E0313 | .W0321 | .W0398 | .W0411 | .W0413 |
     .W0451 | .W0452 =>
     .unexpected
-  | .W0004 | .W0403 | .W0006 | .W0009 | .W0016 | .W0366 | .W0368 | .N0026 | .W0421 | .W0447 =>
+  | .W0004 | .W0006 | .W0009 | .W0016 | .W0366 | .W0368 | .N0026 | .W0421 | .W0447 =>
     .substituted
   | .W0005 | .W0328 | .W0333 | .W0335 | .W0336 | .W0338 | .W0358 | .W0372 | .W0384 | .W0400 |
     .W0386 | .W0388 | .W0396 =>
     .overfull
   | .W0201 | .W0315 | .W0330 | .W0345 | .W0308 =>
     .illegible
-  | .E0330 =>
+  | .E0004 | .E0330 =>
     .failed
   | .N0200 =>
     .tight
@@ -582,11 +582,25 @@ public def Diag.say (c : DiagCode) (noun : Diag.Noun) (name : Option Diag.Name :
     (obj : Option (Option Diag.Noun × Diag.Name) := none) : String :=
   { qual := c.qual, noun, name, obj : Diag.Words }.render
 
-/-- N0100's words for a written construct: an environment by its name, anything else as written. -/
+/-- The name inside a construct's last `{...}` group, when it ends with one. -/
+private def Diag.groupName? (what : String) : Option String :=
+  if what.endsWith "}" then
+    match (what.dropEnd 1).toString.splitOn "{" with
+    | [] | [_] => none
+    | parts => parts.getLast?
+  else none
+
+/-- N0100's words for a written construct: a package, a class or an environment by its name, a
+key by its spelling, anything else as written. -/
 public def Diag.translated (what : String) : String :=
-  match (what.dropPrefix? "\\begin{").bind (·.toString.dropSuffix? "}") with
-  | some env => Diag.say .N0100 .environment (Diag.Name.of env.toString)
-  | none => Diag.say .N0100 .command (Diag.Name.of what)
+  let named (noun : Diag.Noun) : String :=
+    Diag.say .N0100 noun (Diag.Name.of ((Diag.groupName? what).getD what))
+  if what.startsWith "\\usepackage" || what.startsWith "\\RequirePackage" then named .package
+  else if what.startsWith "\\documentclass" then named .class
+  else if what.startsWith "\\begin{" then named .environment
+  else if !what.startsWith "\\" && (what.splitOn "=").length > 1 then
+    Diag.say .N0100 .key (Diag.Name.of what)
+  else Diag.say .N0100 .command (Diag.Name.of what)
 
 public def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
 

@@ -207,11 +207,11 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "declared face the host lacks degrades and says so"
     ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Nope Sans") { bold := true }).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", some
-        "substituted face 'Alpha Sans Light' for 'Alpha Sans Light bold'; 'Nope Sans' is not installed"))
+        "substituted face 'Alpha Sans Light' for 'Alpha Sans Light Bold'; 'Nope Sans' is not installed"))
   t "substitution names the face actually used"
     ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map
       (subMsg ·.2) ==
-      some (some "substituted face 'Alpha Sans Light' for 'Alpha Sans Light bold'"))
+      some (some "substituted face 'Alpha Sans Light' for 'Alpha Sans Light Bold'"))
   t "a satisfied variant carries no message"
     ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (subMsg ·.2) == some none)
   t "a missing family is still the caller's W0403"

@@ -26,6 +26,6 @@ role display-peao
       formula display "a &= {\\color {red}\\textcolor {blue}{\\cancelto {7}{z}}} + w^2"
         ord:align[(|ord:𝑎|ord:{} rel:= ord:{ink:#FF0000 ord:{ink:#0000FF ord:cancelto{ord:𝑧}to{ord:7}}} bin:+ ord:𝑤^{ord:2})]
 -- diagnostics
-info[N0100] 5:1 translated command \usepackage{amsmath} | detail: nothing: the engine does this itself
-info[N0100] 5:1 translated command \usepackage{xcolor} | detail: nothing: the engine does this itself
-info[N0100] 6:1 translated command \usepackage{cancel} | detail: the cancel marks, drawn from the math font's own rule constants
+info[N0100] 5:1 translated package amsmath | detail: nothing: the engine does this itself
+info[N0100] 5:1 translated package xcolor | detail: nothing: the engine does this itself
+info[N0100] 6:1 translated package cancel | detail: the cancel marks, drawn from the math font's own rule constants

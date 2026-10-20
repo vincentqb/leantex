@@ -851,19 +851,20 @@ def dvTokens (s : String) : List String := Id.run do
   let mut i := 0
   for _ in [0:cs.size + 1] do
     if i ≥ cs.size then break
-    if cs[i]! == ' ' then
+    let ch (k : Nat) : Char := cs[k]?.getD ' '
+    if ch i == ' ' then
       i := i + 1
       continue
     let mut j := i + 1
-    if cs[i]! == '\'' then
+    if ch i == '\'' then
       for _ in [0:cs.size] do
         if j ≥ cs.size then break
-        if cs[j]! == '\'' && (j + 1 == cs.size || cs[j + 1]! == ' ') then break
+        if ch j == '\'' && ch (j + 1) == ' ' then break
         j := j + 1
       j := min cs.size (j + 1)
     else
       for _ in [0:cs.size] do
-        if j ≥ cs.size || cs[j]! == ' ' then break
+        if j ≥ cs.size || ch j == ' ' then break
         j := j + 1
     out := out.push (String.ofList (cs.extract i j).toList)
     i := j
@@ -882,7 +883,7 @@ def dvNoun? : List String → Option (Diag.Noun × List String)
 def dvName (t : String) : Option Diag.Name :=
   if t.length ≥ 2 && t.startsWith "'" && t.endsWith "'" then
     some { text := ((t.drop 1).dropEnd 1).toString, quoted := true }
-  else if t.startsWith "'" then none
+  else if t.any (· == '\'') then none
   else some { text := t, quoted := false }
 
 /-- The form a message reads as, when it reads as one: `qual noun [name] [for [noun] name]`. -/
@@ -1128,7 +1129,7 @@ def dvFormSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("missing argument for \\page", true), ("missing font", true),
       ("unknown command '\\mystery'; its {...} arguments were kept as text", false),
       ("undefined banana \\foo", false), ("undefined command \\foo bar", false),
-      ("undefined command 'a b", false)] do
+      ("undefined command 'a b", false), ("missing font it's", false)] do
     check ref s!"diag form reader: {text} reads {ok}" ((dvForm? text).isSome == ok)
 
 /-- The lint over one fired diagnostic; the `\allow` codes (W0013, E0329, N0105) may quote the
@@ -1997,7 +1998,8 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       resolved.errors == 0 && resolved.warnings == 0 &&
       exitFor resolved.errors 0 resolved.warnings true == 0)
   t "alternative advice renders with the information icon and code"
-    (advice.all fun d => (Render.human false d).startsWith "info: ")
+    (advice.all fun d => (Render.human false d).startsWith "info: " &&
+      ((Render.human false d).splitOn "[N0376]").length == 2)
   let (oldDoc, oldDs) := elabStr (dvDoc "\\allow{W0376}\n"
     "\\includegraphics{chart.png}")
   t "the former alternative warning migrates without granting acceptance"
@@ -2209,7 +2211,7 @@ def porcelainCensusChecks (ref : IO.Ref (List String)) : IO Unit := do
     misfiled.isEmpty
   let (acc, accepted) := Diag.accept #["W0301"] false (Diag.of .W0301 "m")
   let accLine := Render.porcelainDiag acc
-  t "porcelain: an accepted loss reads note and keeps its declared class"
+  t "porcelain: an accepted loss reads info and keeps its declared class"
     (accepted && hasStr accLine (field "severity" "info") && hasStr accLine (field "loss" "degraded"))
   let repeated := (elabStr (dvDoc "" "\\zzpcrep{a}\n\n\\zzpcrep{b}")).2.filter (·.code == "W0301")
   t "porcelain: a repeat site's note keeps its declared class"

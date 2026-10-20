@@ -1823,7 +1823,7 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Render.humanPhase "boundary" "x\u001b]0;t\u0007y" 3 == "boundary: x\\x1b]0;t\\x07y (3 ms)")
 
   t "human diag plain" (Render.human false d ==
-    "a.tex:3:7: error: bad \"quote\"\n  line [E0001]\n  note: fix it")
+    "a.tex:3:7: error: bad \"quote\"\\nline [E0001]\n  note: fix it")
 
 def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

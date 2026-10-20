@@ -61,7 +61,7 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "diagnostic format: multiline text is indented and controls cannot forge a record"
     (Render.human false multi ==
       "part\\nforged\\r\\x1b.tex:1:2: error: " ++
-      "first\n  Error - not another record\n  \n  last\\rline\\tend\\x1b[31m [E0001]\n" ++
+      "first\\nError - not another record\\n\\nlast\\rline\\tend\\x1b[31m [E0001]\n" ++
       "  note: run <red>{command}</red>\n    then retry\n    ")
   let controls := String.ofList ['\x00', '\x07', '\x08', '\x7f', '\x85', '\x9b']
   t "diagnostic format: terminal controls are visible text"
@@ -335,7 +335,8 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     let human ← run #[triggered.toString, "--color=never"]
     t "diagnostic format: a compatibility warning leads with its location"
       (human.exitCode == 1 && (human.stderr.splitOn "\n").any fun line =>
-        line.startsWith s!"{triggered}:2:1: warning: " && (line.splitOn "[W0104]").length == 2)
+        line.startsWith s!"{triggered}:2:1: warning: " && (line.splitOn "[W0104]").length == 2 &&
+          (line.splitOn "\\directlua").length == 2)
     t "diagnostic format: a run shipping beside its errors counts the pages it wrote"
       ((human.stderr.splitOn "\n").any fun l =>
         l.startsWith s!"✖ {triggered} — 1 error; wrote " && (l.splitOn ".pdf, 1 page (").length == 2)

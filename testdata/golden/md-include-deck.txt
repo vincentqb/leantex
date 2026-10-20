@@ -75,4 +75,4 @@ frame
     para
       text "A quoted placeholder line."
 -- diagnostics
-info[N0100] 8:1 translated command \usepackage{markdown} | detail: nothing: native Markdown fragments are read at each '\markdownInput' command
+info[N0100] 8:1 translated package markdown | detail: nothing: native Markdown fragments are read at each '\markdownInput' command

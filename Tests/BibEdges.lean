@@ -196,7 +196,7 @@ def missingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"bib missing: biblatex's file is named as its resource, never as a command it was not \
 ({repr (bds.map fun d => (d.message, d.help))})"
     (bds.map (·.kind) == #[.W0503] && bds.all fun d =>
-      d.detail == some "named by a bibliography resource" && !hasStr (saidText d) "\\bibliography" &&
+      d.help.any (hasStr · "the resource's name") && !hasStr (saidText d) "\\bibliography" &&
         !hasStr (saidText d) "\\printbibliography" && !d.help.any (hasStr · "\\bibliography"))
   let ownDoc := (elabStr ("\\documentclass{article}\n\\begin{document}\nSee \\cite{o} and \\cite{a}.\n\
 \\begin{thebibliography}{9}\n\\bibitem{o} Own Notes.\n\\end{thebibliography}\n\\bibliography{absent}\n\
@@ -214,7 +214,7 @@ def missingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"bib missing: a biblatex list a macro prints names its file as a resource \
 ({repr (mds.map fun d => (d.message, d.help))})"
     (mds.map (·.kind) == #[.W0503] && mds.all fun d =>
-      d.detail == some "named by a bibliography resource" && !d.help.any (hasStr · "\\bibliography"))
+      d.help.any (hasStr · "the resource's name") && !d.help.any (hasStr · "\\bibliography"))
   let quiet := (elabStr (citingDoc "No citation here." (files := "absent"))).1
   let (_, qds, _) ← Input.resolveBibliography "doc.tex" quiet Bib.plainReading #[]
   t s!"bib missing: with no citation the file's loss claims no mark \

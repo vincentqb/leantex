@@ -222,8 +222,8 @@ frame
             step 2
               text "0.67"
 -- diagnostics
-info[N0100] 6:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
-info[N0100] 6:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
-info[N0100] 6:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
-info[N0100] 7:1 translated command \usepackage{booktabs} | detail: nothing: the engine does this itself
+info[N0100] 6:1 translated class beamer | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 6:1 translated package amsmath | detail: nothing: the engine does this itself
+info[N0100] 6:1 translated package amsthm | detail: \theoremstyle{plain}
+info[N0100] 7:1 translated package booktabs | detail: nothing: the engine does this itself
 info[N0100] 9:1 translated command \newcommand{\later} | detail: \define \later(a1: content) {...}
