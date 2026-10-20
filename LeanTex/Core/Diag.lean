@@ -508,7 +508,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0444 => ("0444", .degraded, "links on the printed sheet, which the PDF/X standard the file claims does not admit; the PDF carries none, the web page keeps them")
   | .N0448 => ("0448", .info, "a file claiming a PDF/X standard on the checks the engine makes; a print service's preflight judges what they leave")
   | .W0449 => ("0449", .config, "a setting the document declares that nothing it sets uses; every artifact is the same without it")
-  | .W0503 => ("0503", .degraded, "a bibliography file is not there; its entries are absent and what cites them is unresolved")
+  | .W0503 => ("0503", .degraded, "a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved")
   | .W0450 => ("0450", .degraded, "a .bib key names a second entry setting other fields; the first entry stands")
   | .W0451 => ("0451", .degraded, "a block environment inside a line of text, a table cell or a note; its words are set in the line")
   | .W0452 => ("0452", .degraded, "a box holding a block stands on a line of its own; the text beside it is set apart from it")

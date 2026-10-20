@@ -387,16 +387,19 @@ def metadataChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "unused metadata: a citation an image's text alternative sets reads them"
     (named (front ++ "![A caption citing [@roe2020].](fig.png)\n")).isEmpty
   let leanPage (doc : String) (refs : Option Code.Refs) : Array (Option String) :=
-    ((Code.read .lean "t.lean" ("-- leantex: bibliography = refs.bib, biblio-style = plain\n" ++ doc)
+    ((Code.read .lean "t.lean" ("-- leantex: biblio-style = plain\n" ++ doc)
       (refs := refs)).2.filter (·.kind == .W0449)).map (·.subject)
   let refs : Code.Refs := { path := "refs.bib", keys := ({} : Std.HashSet String).insert "roe2020" }
-  t "unused metadata: a Lean page's citation directive keys are named where its documentation cites nothing"
-    (leanPage "/-! Plain words. -/\ndef x := 1\n" (some refs) ==
-      #[some "unused:directive:bibliography", some "unused:directive:biblio-style"])
-  t "unused metadata: a Lean page's citation reads its directive keys"
-    (leanPage "/-! A claim [roe2020]. -/\ndef x := 1\n" (some refs)).isEmpty
+  let declaring (words : String) : String :=
+    s!"/-! {words}\n\nBibliography: [refs.bib](refs.bib) -/\ndef x := 1\n"
+  t "unused metadata: a Lean page's citation directive key and bibliography line are named where its \
+documentation cites nothing"
+    (leanPage (declaring "Plain words.") (some refs) ==
+      #[some "unused:directive:biblio-style", some "unused:docstring:bibliography"])
+  t "unused metadata: a Lean page's citation reads its directive key and bibliography line"
+    (leanPage (declaring "A claim [roe2020].") (some refs)).isEmpty
   t "unused metadata: a Lean page whose bibliography is not read is not judged"
-    (leanPage "/-! A claim [roe2020]. -/\ndef x := 1\n" none).isEmpty
+    (leanPage (declaring "A claim [roe2020].") none).isEmpty
   t "unused metadata: a nocite reads them"
     (named ("---\nbibliography: refs.bib\nnocite: '@roe2020'\n---\n\nPlain words.\n")).isEmpty
   t "unused metadata: a document with no metadata names nothing"

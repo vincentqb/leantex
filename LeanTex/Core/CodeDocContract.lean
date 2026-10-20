@@ -276,8 +276,7 @@ private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
     apply adm_mapPos
     rw [← hf]
     exact desugar_adm file pr.text k dl hdl
-  let pr := (lowered lang file seg.text known
-    (proseIn lang seg.text (lineCol starts seg.start).1 ((lineCol starts seg.start).2 - 1))).1
+  let pr := (lowered lang file seg.text known (segProse lang starts seg)).1
   have h := hraws pr
   cases opens with
   | true =>

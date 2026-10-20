@@ -382,18 +382,42 @@ def docMarkupChecks (ref : IO.Ref (List String)) : IO Unit := do
     IO.FS.writeFile (dir / "pkg" / "pyproject.toml") "[project]\nname = \"tides\"\n"
     IO.FS.writeFile (dir / "pkg" / "docs" / "references.bib") (← fixtureText "testdata/codedoc/langs/cite.bib")
     let src := "\"\"\"Tides follow [Almanac12].\"\"\"\n"
-    let (d, _) ← elabCodeFixture "m" .python src (dir := (dir / "pkg").toString) (driver := true)
-    t "citations: a Python file's docstring cites into its project's docs/references.bib"
-      (String.intercalate " " (elemTexts "li" d).toList |>.contains "An Invented Almanac of Tides")
+    let (d, ds) ← elabCodeFixture "m" .python src (dir := (dir / "pkg").toString) (driver := true)
+    let named := ds.filter (·.kind == .W0503)
+    t s!"citations: a Python file citing its project's docs/references.bib undeclared is named once, \
+its citation as written ({repr (named.map (·.help))})"
+      ((elemTexts "li" d).isEmpty && (elemTexts "p" d).any (·.contains "[Almanac12]") &&
+        named.size == 1 && named.all fun d => d.help.any (·.contains "the module docstring"))
+    IO.FS.writeFile (dir / "pkg" / "m.py")
+      "\"\"\"Tides follow [Almanac12].\n\nBibliography: [references.bib](docs/references.bib)\n\"\"\"\n"
+    let (d, ds) ← elabCodeFixture "m" .python (← IO.FS.readFile (dir / "pkg" / "m.py"))
+      (dir := (dir / "pkg").toString) (driver := true)
+    t s!"citations: a Python module docstring's declaration is read, its line set as nothing \
+({kinds ds})"
+      ((String.intercalate " " (elemTexts "li" d).toList).contains "An Invented Almanac of Tides" &&
+        !(elemTexts "p" d).any (·.contains "Bibliography"))
     IO.FS.removeFile (dir / "pkg" / "pyproject.toml")
-    let (d, _) ← elabCodeFixture "m" .python src (dir := (dir / "pkg").toString) (driver := true)
-    t "citations: a folder holding no project marker gives its docs/references.bib to no file"
-      ((elemTexts "li" d).isEmpty && (elemTexts "p" d).any (·.contains "[Almanac12]"))
+    let (_, ds) ← elabCodeFixture "m" .python src (dir := (dir / "pkg").toString) (driver := true)
+    t "citations: a folder holding no project marker names no undeclared citation"
+      (!ds.any (·.kind == .W0503))
   let citeSrc ← fixtureText "testdata/codedoc/langs/rust-cite.rs"
   let (cited, citedDs) ← elabCodeFixture "rust-cite" .rust citeSrc (dir := "testdata/codedoc/langs")
   let shown := String.intercalate " " ((elemTexts "p" cited) ++ (elemTexts "li" cited)).toList
   t s!"citations: a Rust page's documentation cites into its declared bibliography ({kinds citedDs})"
     (shown.contains "An Invented Almanac of Tides" && !shown.contains "[Almanac12]" &&
-      !citedDs.any (·.kind == .W0351) && !citedDs.any (·.kind == .W0110))
+      !citedDs.any (·.kind == .W0351) && !citedDs.any (·.kind == .W0110) &&
+      !shown.contains "Bibliography")
+  let (_, ds) := elabCode "t.rs" "/// Bibliography: [r.bib](r.bib)\nfn f() {}\n"
+  t "citations: a Rust outer doc's bibliography line declares nothing, named"
+    (ds.any fun d => d.subject == some "code:bibliography-line" &&
+      d.message.contains "an inner doc comment")
+  let (_, ds) := elabCode "t.rs" "// leantex: bibliography = r.bib\n//! Notes.\nfn f() {}\n"
+  t "citations: a Rust directive's bibliography is refused, its help the inner doc's line"
+    (ds.any fun d => d.subject == some "code:bibliography" &&
+      d.help.any (·.contains "Bibliography: [r.bib](r.bib)"))
+  let (_, ds) := elabCode "t.java" "// leantex: bibliography = r.bib\n/** Notes. */\nclass A {}\n"
+  t "citations: a Java directive's bibliography is refused, its help Javadoc's anchor"
+    (ds.any fun d => d.subject == some "code:bibliography" &&
+      d.help.any (·.contains "<a href=\"r.bib\">r.bib</a>"))
 
 end Tests.CodeDoc

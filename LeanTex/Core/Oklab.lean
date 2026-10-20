@@ -3,8 +3,9 @@ module
 public import LeanTex.Core.Color
 import LeanTex.Core.Trig
 
-/-! Oklab [Ottosson2020] as integer arithmetic over 8-bit `Color` ([CSSColor4] §19), for covering
-and derived colours: mixes toward an achromatic surface keep hue exactly. -/
+/-! Oklab [Ottosson2020] as integer arithmetic over 8-bit `Color` ([CSSColor4] §19).
+
+Bibliography: [references.bib](../../docs/references.bib) -/
 
 namespace LeanTex.Core.Oklab
 

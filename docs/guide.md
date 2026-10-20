@@ -108,18 +108,21 @@ sets at the end. The list stands in the first `::: {#refs}` division, else at
 the end, and only where something is cited or a Lean division sets its
 documentation (`show = "docs"`, under Code files). Citations set as Pandoc's
 LaTeX writer sets them under natbib, with the numbering, list, styles and
-diagnostics of TeX's `\cite`; the web page links each to its entry. A
-citation inside another's note, or in an image's text alternative, sets as
-its text, named. The markdown twin writes citations back in Pandoc's syntax,
-the list as its division with the entries in a comment there, and closes with
-a metadata block naming the bibliography from where the twin stands, every
-listed entry as `nocite`, wherever each citation reads back so in one list;
-otherwise it sets every citation as its marks, linked to the entries it
-writes. Every other metadata key is named as not read, `csl` among them, since
-no CSL processor runs. A Markdown file included in TeX reads citations, into
-the TeX document's bibliography, where the document loads the markdown package
-with its `citations` option or `\markdownInput[citations]{…}` asks, as the
-markdown package reads them.
+diagnostics of TeX's `\cite`; the web page links each to its entry. A citation
+sets as its label with the reference list, never as a footnote, in every
+artifact; only biblatex's `\footcite`, `\smartcite` and their kin in a TeX
+document set one in a footnote, as LaTeX does. A citation inside another's
+note, or in an image's text alternative, sets as its text, named. The markdown
+twin writes citations back in Pandoc's syntax, the list as its division with
+the entries in a comment there, and closes with a metadata block naming the
+bibliography from where the twin stands, every listed entry as `nocite`,
+wherever each citation reads back so in one list; otherwise it sets every
+citation as its marks, linked to the entries it writes. Every other metadata
+key is named as not read, `csl` among them, since no CSL processor runs. A
+Markdown file included in TeX reads citations, into the TeX document's
+bibliography, where the document loads the markdown package with its
+`citations` option or `\markdownInput[citations]{…}` asks, as the markdown
+package reads them.
 
 Source files are read as UTF-8 unless a byte-order mark says UTF-16, and a
 line ends at LF, CR LF or a CR alone. A TeX document that declares
@@ -230,14 +233,28 @@ preprocessor line is no doc. A block doc's prose drops its leading `*`
 decoration, and a line doc's its markers; then the margin its lines share
 goes.
 
-A code page's documentation cites into its project's bibliography:
-`docs/references.bib` beneath the nearest directory above the file that holds
-its project's marker (a lakefile for Lean, `Cargo.toml` for Rust, `pom.xml` or
-a Gradle build for Java, `pyproject.toml`, `setup.py` or `setup.cfg` for
-Python, `CMakeLists.txt`, `meson.build`, `configure.ac` or a `Makefile` for C
-and C++), or the files the directive names beside it,
-`-- leantex: bibliography = refs.bib`; a Doxygen `\cite key` cites as `[key]`
-does. A bracket cites as doc-gen4 resolves
+A code file's documentation cites into the bibliography it declares on a line
+of its own, `Bibliography:` and a link to each `.bib` file relative to the
+source, which the language's documentation tool shows as a link and leantex
+reads as the declaration, setting no text for it. The line stands in a Lean
+module docstring, a Python module docstring, a shell file's leading comments,
+a Rust inner doc (`//!`), or any Doxygen or Javadoc comment; Javadoc's HTML
+spells the link `<a href="refs.bib">refs.bib</a>`:
+
+```lean
+/-! Optimal line breaking [KnuthPlass1981].
+
+Bibliography: [references.bib](../docs/references.bib) -/
+```
+
+Nothing else names a code file's bibliography: where it declares none, its
+citations stay as written, and where its project's `docs/references.bib`
+(beneath the nearest directory above the file holding its project's marker: a
+lakefile for Lean, as doc-gen4 reads it, `Cargo.toml` for Rust, `pom.xml` or a
+Gradle build for Java, `pyproject.toml`, `setup.py` or `setup.cfg` for Python,
+`CMakeLists.txt`, `meson.build`, `configure.ac` or a `Makefile` for C and C++)
+holds keys it cites, the run names them once with the line to declare. A
+Doxygen `\cite key` cites as `[key]` does. A bracket cites as doc-gen4 resolves
 one. doc-gen4 registers each key the bibliography holds that its scan finds
 between a `[` and the next `]`, resuming after that `]`, so `[[Key]]` alone
 registers nothing; then `[Key]`, `[Key][]` and `[Key](Theorem 2)` cite a
@@ -409,17 +426,16 @@ give constants their words there as a directive's do. An included file's
 documentation comments are code, as its source has them, unless `show = docs`
 sets the file as its page does, documentation as prose and code as listings.
 Its citations then cite into the including document's bibliography: a bracket
-cites by the keys of the files the inclusion names beside the document,
-`bibliography = refs.bib`, else of the Lean file's project's
-`docs/references.bib`, and the files it cites from join the document's
-reference list after its own, as if `\bibliography` named them last (under
-biblatex, as resources added before `\printbibliography`), so the citations
-number and set in the document's style and a key both hold is set from the
-document's file. A list the document writes itself, `thebibliography`, names
-no file, so they resolve against its items; where the document has no list
-they show as `?`, named. A `bibliography` with no `show = docs` and a
-`biblio-style` are named and ignored, and `docs` beside another view, `decls`
-or `proofs` sets the documentation view alone, named.
+cites by the keys of the files the Lean file's module docstring declares, and
+the files it cites from join the document's reference list after its own, as
+if `\bibliography` named them last (under biblatex, as resources added before
+`\printbibliography`), so the citations number and set in the document's style
+and a key both hold is set from the document's file. A list the document
+writes itself, `thebibliography`, names no file, so they resolve against its
+items; where the document has no list they show as `?`, named. A
+`bibliography` option or directive key, which the module docstring's line
+replaces, and a `biblio-style` are named and ignored, and `docs` beside
+another view, `decls` or `proofs` sets the documentation view alone, named.
 
 ## Fonts and themes
 

@@ -246,6 +246,13 @@ cites nothing"
     (span := some ⟨file, pos⟩) (subject := some s!"unused:directive:{key}")
     (help := some "cite an entry, as `[Key]` does, or delete the key")
 
+/-- The loss of a code page's bibliography line, on a page whose documentation cites nothing. -/
+public def bibLineDiag (file : String) (pos : Pos) : Diag :=
+  Diag.of .W0449 "the documentation declares a bibliography here, and the page's documentation \
+cites nothing"
+    (span := some ⟨file, pos⟩) (subject := some "unused:docstring:bibliography")
+    (help := some "cite an entry, as `[Key]` does, or delete the line")
+
 /-- The loss of an author colour nothing paints with. -/
 private def colorDiag (name : String) (span : Span) : Diag :=
   Diag.of .W0449 s!"the colour '{name}' is declared here, and nothing the document sets paints with it"

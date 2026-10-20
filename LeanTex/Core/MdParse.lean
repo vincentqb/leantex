@@ -13,9 +13,9 @@ import LeanTex.Core.HtmlEntity
 import Std.Data.HashMap
 public import Std.Data.HashSet
 
-/-! The markdown reader: strict CommonMark [CommonMark] with GFM tables [GFM] into an md AST
-carrying `.md` spans, refusing raw HTML outside a closed vocabulary, indented
-code and lazy continuation (E0390), and a code file's documentation's dialect. -/
+/-! The markdown reader: strict CommonMark [CommonMark] with GFM tables [GFM] into an md AST.
+
+Bibliography: [references.bib](../../docs/references.bib) -/
 
 namespace LeanTex.Core.Md
 

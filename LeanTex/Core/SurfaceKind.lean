@@ -74,7 +74,7 @@ public inductive DocSource where
 
 /-- What a language's source files read by: the extensions selecting it, the listing language its
 code sets in, the line comment its directive is written in, where its documentation stands, and the
-files marking its project's root, whose `docs/references.bib` its documentation cites into. -/
+files marking its project's root, whose `docs/references.bib` names its undeclared citations. -/
 public structure LangRow where
   extensions : List String
   listing : String

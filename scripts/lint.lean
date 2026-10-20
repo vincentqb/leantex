@@ -20,6 +20,7 @@ def concurrent : Array (String × Array String) := #[
   (".lake/build/bin/cites", #["--selftest"]),
   (".lake/build/bin/cites", #["--check"]),
   (".lake/build/bin/lint", #["--linters"]),
+  (".lake/build/bin/lint", #["--docnotes"]),
   (".lake/build/bin/lint", #["--selftest"])]
 
 def check : IO UInt32 := do
@@ -203,6 +204,71 @@ def linters : IO UInt32 := do
   for m in bad do IO.eprintln s!"lint: {m}"
   return 1
 
+/-- A text with each markdown code span blanked, a run of backticks closing at the next run of its
+length, so a fence's body is blanked too. -/
+def blankCode (cs : Array Char) : Array Char := Id.run do
+  let run (k : Nat) : Nat := ((cs.extract k cs.size).toList.takeWhile (· == '`')).length
+  let mut out := cs
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let n := run i
+    if n == 0 then i := i + 1 else
+    let mut close : Option Nat := none
+    let mut j := i + n
+    for _ in [0:cs.size] do
+      if j ≥ cs.size then break
+      let m := run j
+      if m == n then
+        close := some j
+        break
+      j := j + max m 1
+    match close with
+    | some c =>
+      for k in [i:c + n] do
+        if cs.getD k ' ' != '\n' then out := out.setIfInBounds k ' '
+      i := c + n
+    | none => i := i + n
+  return out
+
+/-- The lines, from one, on which a Lean source's docstrings set a footnote, `[^label]` outside code. -/
+def docFootnotes (text : String) : Array Nat := Id.run do
+  let cls := lexClasses text
+  let mut out : Array Nat := #[]
+  let mut line := 1
+  let mut doc : Option (Array (Char × Nat)) := none
+  for (c, k) in cls, i in [0:cls.size] do
+    if k == .blockOpen then
+      doc := if (cls[i + 2]?.map fun (d, dk) => dk == .mark && (d == '-' || d == '!')).getD false
+        then some #[] else none
+    else if k == .blockClose then
+      if let some body := doc then
+        let chars := blankCode (body.map (·.1))
+        for j in [0:chars.size] do
+          if chars.getD j ' ' == '[' && chars.getD (j + 1) ' ' == '^' then
+            let label := (chars.extract (j + 2) chars.size).toList.takeWhile
+              fun d => d != ']' && d != ' ' && d != '\n'
+            if !label.isEmpty && chars.getD (j + 2 + label.length) ' ' == ']' then
+              let at_ := (body[j]?.map (·.2)).getD line
+              unless out.contains at_ do out := out.push at_
+      doc := none
+    else if let some body := doc then
+      if k == .prose || k == .newline then doc := some (body.push (c, line))
+    if k == .newline then line := line + 1
+  return out
+
+/-- No docstring of a maintained Lean source sets a footnote. -/
+def docnotes : IO UInt32 := do
+  let mut bad : Array String := #[]
+  for f in ← sources do
+    for l in docFootnotes (← IO.FS.readFile f) do
+      bad := bad.push s!"{f}:{l} sets a footnote in a docstring; write it as a sentence or a citation"
+  if bad.isEmpty then
+    IO.println "lint: no docstring sets a footnote"
+    return 0
+  for m in bad do IO.eprintln s!"lint: {m}"
+  return 1
+
 /-- Every case the liveness check's readers must catch and every spelling they must pass. -/
 def selftest : IO UInt32 := do
   let mut bad : Array String := #[]
@@ -223,6 +289,12 @@ def selftest : IO UInt32 := do
   unless (← intact (setupOf "lakefile.toml")) && !(← intact (setupOf ".lake/build/no-such.olean")) &&
       (← intact (Json.mkObj [])) do
     bad := bad.push "intact misread a setup's recorded imports"
+  for (src, want) in [("/-- A note[^1].\n\n[^1]: The note. -/\ndef x := 1\n", #[1, 3]),
+      ("/-! Spelled `[^label]` and\n```\n[^x]\n``` -/\n", #[]), ("-- a [^1] comment\n", #[]),
+      ("/- a [^1] comment -/\n", #[]), ("def s := \"[^1]\"\n", #[]),
+      ("/-- A regex `[^\\]]+` and ``[^a]`` -/\n", #[]), ("/-- An ^[inline] [^ x] -/\n", #[]),
+      ("/-- Nested /- [^n] -/ still doc. -/\n", #[1])] do
+    unless docFootnotes src == want do bad := bad.push s!"docFootnotes {repr src}: {docFootnotes src}"
   if bad.isEmpty then
     IO.println "lint selftest: all passed"
     return 0
@@ -235,7 +307,8 @@ def main (args : List String) : IO UInt32 :=
   match args with
   | [] => Lint.check
   | ["--linters"] => Lint.linters
+  | ["--docnotes"] => Lint.docnotes
   | ["--selftest"] => Lint.selftest
   | _ => do
-    IO.eprintln "usage: lint [--linters | --selftest]"
+    IO.eprintln "usage: lint [--linters | --docnotes | --selftest]"
     return 2

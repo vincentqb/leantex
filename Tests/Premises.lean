@@ -169,8 +169,8 @@ def registry : List Premise := [
     owed := some "Run each tool under two inherited environments that differ in TEXINPUTS, FONTCONFIG_FILE and LANG, and require the same answer."
     retiring := ["tool-env-closed"] },
   { name := "code-project-layout", residue := .host "project layout", reach := .render
-    statement := "A code file's project keeps its bibliography at docs/references.bib in its root, the nearest folder above the file holding one of its row's project markers (a lakefile, Cargo.toml, pom.xml or a Gradle build, pyproject.toml, setup.py or setup.cfg, CMakeLists.txt, meson.build, configure.ac or a Makefile), though a project whose members each hold a marker, such as a Cargo workspace or a Maven or CMake tree, keeps one root its members' files do not find, and they cite only what their directive names."
-    sites := [("LeanTex/Cli/LeanFactsFile.lean", "bibFor")]
+    statement := "A code file's project keeps the bibliography its undeclared citations are named against at docs/references.bib in its root, the nearest folder above the file holding one of its row's project markers (a lakefile, Cargo.toml, pom.xml or a Gradle build, pyproject.toml, setup.py or setup.cfg, CMakeLists.txt, meson.build, configure.ac or a Makefile), though a project whose members each hold a marker, such as a Cargo workspace or a Maven or CMake tree, keeps one root its members' files do not find, and their undeclared citations go unnamed."
+    sites := [("LeanTex/Cli/LeanFactsFile.lean", "projectBib")]
     checks := [check% Tests.CodeDoc.docMarkupChecks] },
   { name := "path-lookup", residue := .host "PATH", reach := .render
     statement := "World.ToolPath.probe starts the file execvp starts, the first regular file of the name on PATH the OS accepts, with relative and empty entries read from the driver's working directory, which PictureAssets.produce does not do, since it runs the bare name in its scratch directory, where a relative or empty entry names another file than the one the witness describes."

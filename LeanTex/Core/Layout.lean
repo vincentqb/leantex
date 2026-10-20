@@ -24,6 +24,8 @@ import LeanTex.Core.Layout.GlyphBounds
 public import LeanTex.Core.Layout.LabelAudit
 import LeanTex.Core.LoopProgress
 
+/-! Bibliography: [references.bib](../../docs/references.bib) -/
+
 namespace LeanTex.Core.Layout
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Ir
@@ -6617,8 +6619,7 @@ private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List N
     simp [kpStart, Nat.ne_of_lt hp]
 
 
-/-- Optimal breakpoints [KnuthPlass1981] by dynamic programming over break
-positions, with prefix-sum line measures and an active list. -/
+/-- Optimal breakpoints [KnuthPlass1981] by dynamic programming over break positions. -/
 public def kp (items : Array Item) (target : Length) (protrude : Bool := false)
     (expand : Bool := false) (bg : Length := 0) (fil : Bool := false) (runt : Bool := false) :
     Array Nat :=

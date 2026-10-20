@@ -7,9 +7,9 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-/-! A Lean page's documentation cites into its project's bibliography: doc-gen4's bracketed keys as
-doc-gen4 resolves them, and Pandoc's syntax for the keys the bibliography holds, onto the one
-bibliography path, never asked of Lean; an inclusion's documentation cites into its document's. -/
+/-! A Lean page's documentation cites into the bibliography its module docstring declares: doc-gen4's
+bracketed keys as doc-gen4 resolves them, and Pandoc's syntax for the keys the bibliography holds,
+never asked of Lean; an inclusion's documentation cites into its document's. -/
 
 namespace Tests.LeanCite
 
@@ -181,8 +181,9 @@ def leanCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "lean cite: a Python docstring cites as a Lean page's documentation does" !(citesOf d).isEmpty
   let (_, ds) := Surface.readCode .python "m.py" "# leantex: bibliography = refs.bib\nprint(1)\n"
     none {} (some refs)
-  t "lean cite: a Python directive's bibliography no docstring cites into is named"
-    (ds.any (·.subject == some "unused:directive:bibliography"))
+  t "lean cite: a Python directive's bibliography is refused, its help the module docstring's line"
+    (ds.any fun d => d.subject == some "code:bibliography" &&
+      d.help.any (hasStr · "Bibliography: [refs.bib](refs.bib)"))
   let (_, ds) := elabCode "F.lean" "-- leantex: show = docs\n/-! Notes. -/\ndef x := 1\n"
   t "lean cite: a page has no docs view, which it names"
     (ds.any (·.subject == some "code:show:docs"))
@@ -213,43 +214,93 @@ listing ({repr (ds.map (·.message))})"
     let (back, ds) := mdBibBuild (MarkdownDoc.emit d) (← corpusBibs d)
     t s!"lean cite: {n}'s twin, rebuilt with its bibliography, sets its ink"
       (!(listsOf d).isEmpty && inkFlat back.body == inkFlat d.body && !ds.any (·.kind == .W0351))
-  -- Where the bibliography is read: declared beside the Lean file, else the project's own.
+  -- The declaration: one line of a module docstring linking each `.bib` file, which sets nothing.
+  for (line, want) in [("Bibliography: [refs.bib](refs.bib)", some #["refs.bib"]),
+      ("bibliography: [a](../a.bib), [b](<b c/d.bib>)", some #["../a.bib", "b c/d.bib"]),
+      ("Bibliography: [a](a.bib), [b](sub/b.bib)", some #["a.bib", "sub/b.bib"]),
+      ("Bibliography: [notes](notes.md)", none), ("Bibliography:", none),
+      ("Bibliography: see [refs.bib](refs.bib)", none), ("The bibliography: [a](a.bib)", none),
+      ("Bibliography: [r](https://example.org/r.bib)", none),
+      ("Bibliography: [r](my%20refs.bib)", some #["my refs.bib"]),
+      ("Bibliography: [r](<my%20refs.bib>)", some #["my refs.bib"]), ("Bibliography: [r](r%FF.bib)", none)] do
+    t s!"lean cite: {repr line} declares {repr want}" (Code.bibLine? line == want)
+  let declaring := "/-! Cites [ash2001].\n\nBibliography: [refs.bib](refs.bib)\n\n```\n\
+Bibliography: [fenced.bib](fenced.bib)\n```\n-/\n\n/-- Bibliography: [decl.bib](decl.bib) -/\n\
+def x := 1\n"
+  t s!"lean cite: a module docstring's line declares, not one in a fence or a declaration's docstring, \
+as a Python module docstring's does \
+({repr (Code.declaredBibs .lean declaring)})"
+    (Code.declaredBibs .lean declaring == #[⟨"refs.bib", 3⟩] &&
+      Code.declaredBibs .python "\"\"\"Bibliography: [r.bib](r.bib)\"\"\"\n" == #[⟨"r.bib", 1⟩])
+  let fences := "/-! Cites.\n\n````\n```\nBibliography: [a.bib](a.bib)\n````\n\n~~~\n\
+Bibliography: [b.bib](b.bib)\n```\n~~~\nBibliography: [c.bib](c.bib) -/\ndef x := 1\n"
+  t s!"lean cite: a fence closes only on its own mark at its length or longer \
+({repr (Code.declaredBibs .lean fences)})"
+    (Code.declaredBibs .lean fences == #[⟨"c.bib", 12⟩])
+  let (d, _) := page "Cites [ash2001].\n\nBibliography: [refs.bib](refs.bib)"
+  let html := docHtmlOf d
+  let twin := MarkdownDoc.emit d
+  t "lean cite: the declaration sets no ink on the web page or in the twin"
+    (([html, twin].all fun shown => !hasStr shown "Bibliography:" && !hasStr shown "(refs.bib)") &&
+      hasStr html "Cites [" && listsOf d == #[(some "alpha", #["ash2001"])])
+  let (d, _) := page "Cites [ash2001] mid-paragraph,\nBibliography: [refs.bib](refs.bib)\nand on."
+  t "lean cite: a declaration inside a paragraph leaves the paragraph whole"
+    (hasStr (MarkdownDoc.emit d) "mid-paragraph, and on.")
+  for bad in ["Bibliography: refs.bib", "Bibliography: [r](refs.bibtex)",
+      "Bibliography: [r](refs.bib) more text", "Bibliography: [r](https://example.org/r.bib)"] do
+    let (d, ds) := page s!"Cites [ash2001].\n\n{bad}"
+    t s!"lean cite: {repr bad} declares nothing, named at its line and set as written"
+      ((ds.filter (·.subject == some "code:bibliography-line")).map
+          (·.span.map fun sp => (sp.pos.line, sp.pos.col)) == #[some (3, 1)] &&
+        hasStr (MarkdownDoc.emit d) "Bibliography:")
+  let (d, ds) := page "Notes.\n-/\n\n/-- A value.\n\nBibliography: [refs.bib](refs.bib) -/\ndef y := 2\n/-! More."
+  t "lean cite: a declaration docstring's bibliography line declares nothing, named and set as written"
+    ((ds.filter (·.subject == some "code:bibliography-line")).map (·.span.map (·.pos.line)) ==
+      #[some 6] && hasStr (MarkdownDoc.emit d) "Bibliography:")
+  let (_, ds) := elabCode "F.lean" "-- leantex: bibliography = refs.bib\n/-! Notes. -/\ndef x := 1\n"
+  t "lean cite: a directive's bibliography is refused, its help the docstring's line"
+    (ds.any fun d => d.subject == some "code:bibliography" &&
+      d.help.any (hasStr · "Bibliography: [refs.bib](refs.bib)"))
+  -- Where the bibliography is read: the files the module docstring declares, beside the Lean file.
   let bibBytes := leanBib.toUTF8
   let lakefile := ("/work/lakefile.toml", "name = \"t\"".toUTF8)
   let standard := ("/work/docs/references.bib", bibBytes)
-  let at_ : Span := ⟨"Sub/F.lean", {}⟩
-  let found := (LeanFactsFile.bibFor "Sub/F.lean" [] at_).run
-    (factsWorld [lakefile, ("/work/Sub/F.lean", "".toUTF8), standard])
-  t s!"lean cite: a page's bibliography defaults to its project's docs/references.bib, named from \
-the page ({repr (found.1.map (·.name))})"
-    (found.1.map (·.name) == #["../docs/references.bib"] &&
-      found.1.map (·.path) == #["/work/docs/references.bib"] && found.2.isEmpty)
-  let declared := (LeanFactsFile.bibFor "Sub/F.lean" ["refs.bib", "more.bib"] at_).run
-    (factsWorld [lakefile, ("/work/Sub/refs.bib", bibBytes), ("/work/Sub/more.bib", bibBytes),
-      standard])
-  t "lean cite: declared bibliographies are read beside the Lean file, each one"
-    (declared.1.map (·.name) == #["refs.bib", "more.bib"] && declared.2.isEmpty)
-  let absent := (LeanFactsFile.bibFor "Sub/F.lean" ["refs.bib"] at_).run (factsWorld [lakefile])
-  t "lean cite: a declared bibliography that is not there is named"
-    (absent.1.isEmpty && absent.2.map (·.kind) == #[.W0503])
-  let none0 := (LeanFactsFile.bibFor "Sub/F.lean" [] at_).run (factsWorld [lakefile])
-  t "lean cite: a project without docs/references.bib reads none, named nowhere"
+  let declared := (LeanFactsFile.bibFor "Sub/F.lean" #[("refs.bib", 3), ("../docs/references.bib", 4)]).run
+    (factsWorld [lakefile, ("/work/Sub/refs.bib", bibBytes), standard])
+  t s!"lean cite: declared bibliographies are read beside the Lean file, each named from it \
+({repr (declared.1.map (·.name))})"
+    (declared.1.map (·.name) == #["refs.bib", "../docs/references.bib"] &&
+      declared.1.map (·.path) == #["/work/Sub/refs.bib", "/work/docs/references.bib"] &&
+      declared.2.isEmpty)
+  let absent := (LeanFactsFile.bibFor "Sub/F.lean" #[("refs.bib", 3)]).run (factsWorld [lakefile])
+  t "lean cite: a declared bibliography that is not there is named at its line"
+    (absent.1.isEmpty && absent.2.map (·.kind) == #[.W0503] &&
+      absent.2.map (·.span.map (·.pos.line)) == #[some 3])
+  let none0 := (LeanFactsFile.bibFor "Sub/F.lean" #[]).run (factsWorld [lakefile, standard])
+  t "lean cite: a file declaring no bibliography reads none, its project's docs/references.bib unread"
     (none0.1.isEmpty && none0.2.isEmpty)
-  let linked := (LeanFactsFile.bibFor "other/F.lean" [] ⟨"other/F.lean", {}⟩).run
+  let docGen := (LeanFactsFile.projectBib "Sub/F.lean" Ir.CodeLang.lean.row.project).run
+    (factsWorld [lakefile, ("/work/Sub/F.lean", "".toUTF8), standard])
+  t s!"lean cite: the bibliography doc-gen4 reads is its project's docs/references.bib, named from the \
+file ({repr (docGen.map (·.name))})"
+    (docGen.map (·.name) == some "../docs/references.bib" &&
+      ((LeanFactsFile.projectBib "Sub/F.lean" Ir.CodeLang.lean.row.project).run
+        (factsWorld [lakefile])).isNone)
+  let linked := (LeanFactsFile.bibFor "other/F.lean" #[("../docs/references.bib", 1)]).run
     (linkedWorld [("/work/proj/lakefile.toml", "".toUTF8), ("/work/proj/Sub/F.lean", "".toUTF8),
       ("/work/proj/docs/references.bib", bibBytes)] [("/work/other/F.lean", "/work/proj/Sub/F.lean")])
-  t s!"lean cite: a linked page reads its real file's project, named from the page as given \
-({repr (linked.1.map (·.name))})"
+  t s!"lean cite: a linked page's declaration is read beside its real file, named from the page as \
+given ({repr (linked.1.map (·.name))})"
     (linked.1.map (·.name) == #["../proj/docs/references.bib"] && linked.2.isEmpty)
   let latin1 : ByteArray := "@misc{caf".toUTF8 ++ ⟨#[0xE9]⟩ ++
     ", title = {T}}\n@misc{ash2001, title = {T}}\n".toUTF8
-  let latin := (LeanFactsFile.bibFor "Sub/F.lean" [] at_).run
+  let latin := (LeanFactsFile.bibFor "Sub/F.lean" #[("../docs/references.bib", 1)]).run
     (factsWorld [lakefile, ("/work/docs/references.bib", latin1)])
   let keysRead (f : LeanFactsFile.BibFile) := Bib.keysOf (Encoding.readMarkdown f.path f.bytes).text
   t s!"lean cite: a bibliography that is no UTF-8 still gives its keys, read as its list reads them \
 ({repr (latin.1.map keysRead)})"
     (latin.1.any fun f => (keysRead f).contains "ash2001" && !(keysRead f).contains "café")
-  let linkedFolder := (LeanFactsFile.bibFor "projlink/Sub/F.lean" [] ⟨"projlink/Sub/F.lean", {}⟩).run
+  let linkedFolder := (LeanFactsFile.bibFor "projlink/Sub/F.lean" #[("../docs/references.bib", 1)]).run
     (linkedWorld [("/work/src/proj/lakefile.toml", "".toUTF8), ("/work/src/proj/Sub/F.lean", "".toUTF8),
       ("/work/src/proj/docs/references.bib", bibBytes)]
       [("/work/projlink/Sub/F.lean", "/work/src/proj/Sub/F.lean"),
@@ -257,13 +308,14 @@ the page ({repr (found.1.map (·.name))})"
   t s!"lean cite: a page in a linked folder is named from where that folder really stands \
 ({repr (linkedFolder.1.map (·.name))})"
     (linkedFolder.1.map (·.name) == #["../docs/references.bib"] && linkedFolder.2.isEmpty)
-  let besideDoc := (LeanFactsFile.bibFor "proj/Sub/F.lean" [] ⟨"d.tex", {}⟩ (base := some ".")).run
+  let besideDoc := (LeanFactsFile.bibFor "proj/Sub/F.lean" #[("../docs/references.bib", 1)]
+    (base := some ".")).run
     (factsWorld [("/work/proj/lakefile.toml", "".toUTF8), ("/work/proj/Sub/F.lean", "".toUTF8),
       ("/work/proj/docs/references.bib", bibBytes)])
   t s!"lean cite: an inclusion's bibliography is named from its document's folder \
 ({repr (besideDoc.1.map (·.name))})"
     (besideDoc.1.map (·.name) == #["proj/docs/references.bib"])
-  -- The driver: a page reads its project's bibliography, and an inclusion's joins its document's.
+  -- The driver: a page reads the bibliography it declares, and an inclusion's joins its document's.
   IO.FS.withTempDir fun tmp => do
     let proj := tmp / "proj"
     IO.FS.createDirAll (proj / "docs")
@@ -271,9 +323,10 @@ the page ({repr (found.1.map (·.name))})"
     IO.FS.writeFile (proj / "lakefile.toml") "name = \"t\"\n"
     IO.FS.writeFile (proj / "docs/references.bib") leanBib
     IO.FS.writeFile (proj / "Sub/F.lean")
-      "/-! Cites [ash2001] and [roe2020]. -/\n\ndef x := 1\n"
+      "/-! Cites [ash2001] and [roe2020].\n\nBibliography: [references.bib](../docs/references.bib) -/\n\
+\ndef x := 1\n"
     let (d, ds) ← driverBuild (proj / "Sub/F.lean").toString
-    t s!"lean cite: through the driver a page cites into its project's docs/references.bib \
+    t s!"lean cite: through the driver a page cites into the bibliography its docstring declares \
 ({repr (listFilesOf d)}, {repr (ds.map (·.message))})"
       (listFilesOf d == #["../docs/references.bib"] &&
         listsOf d == #[(some "alpha", #["ash2001", "roe2020"])] &&
@@ -315,13 +368,55 @@ cites nothing ({repr (listFilesOf d)}, {repr (listsOf d)}, {repr (ds.map (·.mes
 ({repr (inkText d.body)})"
       ((listsOf d).isEmpty && hasStr (inkText d.body) "Cites [?] and [?]." &&
         ds.any (·.kind == .W0351))
+    IO.FS.writeFile (proj / "Sub/Gone.lean")
+      "/-! Cites [ash2001].\n\nBibliography: [gone.bib](gone.bib) -/\n\ndef x := 1\n"
     IO.FS.writeFile (tmp / "missing.tex") ("\\documentclass{article}\n\\begin{document}\n\
-\\inputlean[show = docs, bibliography = gone.bib]{proj/Sub/F.lean}\n\\end{document}\n")
+\\inputlean[show = docs]{proj/Sub/Gone.lean}\n\\end{document}\n")
     let (_, ds) ← driverBuild (tmp / "missing.tex").toString
-    t s!"lean cite: an inclusion's declared bibliography that is not there is named at the inclusion \
+    t s!"lean cite: an inclusion's declared bibliography that is not there is named at its line \
 ({repr (ds.map (·.message))})"
-      (ds.any fun d => d.kind == .W0503 && d.span.any (·.file.endsWith "missing.tex") &&
-        !hasStr d.message "reference list" && !hasStr (d.help.getD "") "/./")
+      (ds.any fun d => d.kind == .W0503 && d.span.any (fun sp => sp.file.endsWith "Gone.lean" &&
+        sp.pos.line == 3) && !hasStr d.message "reference list" && !hasStr (d.help.getD "") "/./")
+    IO.FS.writeFile (tmp / "twice.tex") ("\\documentclass{article}\n\\begin{document}\n\
+\\inputlean[show = docs]{proj/Sub/Gone.lean}\n\\inputlean[show = docs]{proj/Sub/Gone.lean}\n\
+\\end{document}\n")
+    let (_, ds) ← driverBuild (tmp / "twice.tex").toString
+    t s!"lean cite: a Lean file included twice names its bibliography once \
+({repr ((ds.filter (·.kind == .W0503)).map (·.message))})"
+      ((ds.filter (·.kind == .W0503)).size == 1)
+    IO.FS.writeFile (tmp / "option.tex") ("\\documentclass{article}\n\\begin{document}\n\
+\\inputlean[show = docs, bibliography = own.bib]{proj/Sub/F.lean}\n\\bibliography{own}\n\
+\\end{document}\n")
+    let (d, ds) ← driverBuild (tmp / "option.tex").toString
+    t s!"lean cite: an inclusion's bibliography option is refused, the Lean file's own declaration read \
+({repr (listFilesOf d)})"
+      (ds.any (fun d => d.subject == some "code:bibliography" && d.kind == .W0110) &&
+        listFilesOf d == #["own,proj/docs/references.bib"])
+    -- A file citing what doc-gen4 would resolve with no declaration is named once, nothing resolved.
+    IO.FS.writeFile (proj / "Sub/H.lean")
+      "/-! Cites [ash2001] and [roe2020]. -/\n\n/-- Again [ash2001]. -/\ndef x := 1\n"
+    let (d, ds) ← driverBuild (proj / "Sub/H.lean").toString
+    let named := ds.filter (·.kind == .W0503)
+    t s!"lean cite: a page citing its project's docs/references.bib undeclared is named once, its \
+citations as written ({repr (named.map (·.message))}, {repr (inkText d.body)})"
+      (named.size == 1 && named.all (fun d => d.detail == some "ash2001, roe2020" &&
+          d.help.any (hasStr · "`Bibliography: [references.bib](../docs/references.bib)`")) &&
+        (listsOf d).isEmpty && hasStr (inkText d.body) "Cites [ash2001] and [roe2020].")
+    IO.FS.writeFile (proj / "Sub/Late.lean")
+      "-- see [ash2001x] and @ash2001\n\ndef y := 2\n\n/-- Cites [ash2001]. -/\ndef x := 1\n"
+    let (_, ds) ← driverBuild (proj / "Sub/Late.lean").toString
+    t s!"lean cite: an undeclared citation is named where the documentation cites, not where code \
+or a comment spells the key ({repr ((ds.filter (·.kind == .W0503)).map (·.span))})"
+      ((ds.filter (·.kind == .W0503)).map (·.span.map (·.pos.line)) == #[some 5])
+    IO.FS.writeFile (proj / "Sub/Quiet.lean") "/-! Cites nothing. -/\n\ndef x := 1\n"
+    let (_, ds) ← driverBuild (proj / "Sub/Quiet.lean").toString
+    t "lean cite: a page citing nothing, declaring nothing, is named nowhere"
+      (!ds.any (·.kind == .W0503))
+    IO.FS.writeFile (tmp / "undeclared.tex") ("\\documentclass{article}\n\\begin{document}\n\
+\\inputlean[show = docs]{proj/Sub/H.lean}\n\\bibliography{own}\n\\end{document}\n")
+    let (d, ds) ← driverBuild (tmp / "undeclared.tex").toString
+    t s!"lean cite: an undeclared inclusion is named once and joins no file ({repr (listFilesOf d)})"
+      ((ds.filter (·.kind == .W0503)).size == 1 && listFilesOf d == #["own"])
     IO.FS.writeFile (tmp / "bl.tex") ("\\documentclass{article}\n\\usepackage{biblatex}\n\
 \\addbibresource{own.bib}\n\\begin{document}\n\\inputlean[show = docs]{proj/Sub/F.lean}\n\
 \\printbibliography\n\\end{document}\n")
@@ -341,33 +436,79 @@ cites nothing ({repr (listFilesOf d)}, {repr (listsOf d)}, {repr (ds.map (·.mes
     IO.FS.createDirAll (comma / "docs")
     IO.FS.writeFile (comma / "lakefile.toml") "name = \"t\"\n"
     IO.FS.writeFile (comma / "docs/references.bib") leanBib
-    IO.FS.writeFile (comma / "F.lean") "/-! Cites [ash2001]. -/\n\ndef x := 1\n"
+    IO.FS.writeFile (comma / "F.lean")
+      "/-! Cites [ash2001].\n\nBibliography: [references.bib](docs/references.bib) -/\n\ndef x := 1\n"
     IO.FS.writeFile (tmp / "comma.tex") ("\\documentclass{article}\n\\begin{document}\n\
 \\inputlean[show = docs]{pro,j/F.lean}\n\\bibliography{own}\n\\end{document}\n")
     let (d, ds) ← driverBuild (tmp / "comma.tex").toString
     t s!"lean cite: a bibliography whose name holds a comma, which a list cannot name, is named \
 ({repr (ds.map (·.message))})"
-      (ds.any (fun d => d.kind == .W0110 && d.subject == some "code:bibliography") &&
+      (ds.any (fun d => d.kind == .W0110 && d.subject == some "code:bibliography-comma") &&
         listFilesOf d == #["own"] && hasStr (inkText d.body) "Cites [ash2001].")
 
-/-- leantex's own documentation: each module citing `docs/references.bib` builds as the driver
-builds it with every key it cites in its reference list, and every entry is cited somewhere. -/
+/-- The footnotes a body sets, each with whether it holds a citation. -/
+def footnotesOf (d : Ir.Doc) : Array Bool :=
+  Ir.foldBlocks (fun out _ => out) (fun out x => match x with
+    | .footnote _ body => out.push (body.any fun y => y matches .cite .. || y matches .cited ..)
+    | _ => out) #[] d.body
+
+/-- A citation sets its label in brackets and a reference list, never a footnote: in markdown, in a
+Lean file's documentation and under biblatex's bracketed commands, the twin writing no note; only
+biblatex's foot-commands in a TeX document set it in a footnote, as LaTeX does. -/
+def citeFootnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (md, _) := mdBibBuild (worksMeta ++ "Text [@a], @a says, [-@b; see @roe2020, p. 2].\n")
+    #[("works.bib", worksBib)]
+  t s!"cite notes: a markdown document's citations set no footnote ({footnotesOf md})"
+    ((footnotesOf md).isEmpty && !(citesOf md).isEmpty && !hasStr (MarkdownDoc.emit md) "[^")
+  let (lean, _) := leanCiteBuild "F.lean" "/-! Cites [a] and [@b, p. 3]. -/\n\ndef x := 1\n"
+    #[("works.bib", worksBib)]
+  t s!"cite notes: a Lean file's documentation sets no footnote ({footnotesOf lean})"
+    ((footnotesOf lean).isEmpty && !(citesOf lean).isEmpty && !hasStr (MarkdownDoc.emit lean) "[^")
+  let tex (opts call : String) : Ir.Doc := (bibResolve s!"\\documentclass\{article}\n\
+\\usepackage[{opts}]\{biblatex}\n\\addbibresource\{refs.bib}\n\\begin\{document}\n\
+Text {call} end.\n\n\\printbibliography\n\\end\{document}\n"
+    #[("refs", natbibBib), ("refs.bib", natbibBib)]).1
+  for opts in ["style=numeric", "style=authoryear"] do
+    for call in ["\\parencite{alpha2019}", "\\autocite{alpha2019}", "\\textcite{alpha2019}",
+        "\\cite{alpha2019}", "\\parencites{alpha2019}{delta2021}"] do
+      let d := tex opts call
+      t s!"cite notes: biblatex {opts} {call} sets no footnote ({footnotesOf d})"
+        ((footnotesOf d).isEmpty && !(citesOf d).isEmpty)
+    for call in ["\\footcite{alpha2019}", "\\smartcite{alpha2019}",
+        "\\footcites{alpha2019}{delta2021}"] do
+      let d := tex opts call
+      t s!"cite notes: biblatex {opts} {call} sets its citation in a footnote, as LaTeX does \
+({footnotesOf d})" (footnotesOf d == #[true])
+
+/-- leantex's own documentation: each module citing a key of `docs/references.bib` declares that file
+in its module docstring and builds through its declaration as the driver builds it, every key it
+cites in its reference list, and every entry is cited somewhere. -/
 def selfDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bib := Bib.parse (← IO.FS.readFile "docs/references.bib")
   let keys := bib.entries.map (·.key)
   t "self docs: the project bibliography parses" (bib.errors.isEmpty && !keys.isEmpty)
-  let files := (← System.FilePath.walkDir "LeanTex").filter (·.toString.endsWith ".lean")
+  let project ← IO.FS.realPath "docs/references.bib"
+  let files := ((← System.FilePath.walkDir "LeanTex") ++ (← System.FilePath.walkDir "scripts")).filter
+    (·.toString.endsWith ".lean")
+  let keySet := keys.foldl (·.insert ·) ({} : Std.HashSet String)
   let mut cited : Array String := #[]
   for f in files do
     let src ← IO.FS.readFile f
-    let has := hasStr src
-    let ks := keys.filter fun k => has ("[" ++ k ++ "]")
-    unless ks.isEmpty do
+    let ks := (Code.undeclaredCites .lean f.toString src keySet).1
+    let declared := Code.declaredBibs .lean src
+    unless ks.isEmpty && declared.isEmpty do
+      let mut own := !declared.isEmpty
+      for b in declared do
+        let at_ := (f.parent.getD ".") / b.dest
+        own := own && (← at_.pathExists) && (← IO.FS.realPath at_) == project
+      t s!"self docs: {f} declares docs/references.bib in its module docstring \
+({repr (declared.map (·.dest))})" own
       let (d, ds) ← driverBuild f.toString
       let listed := (listsOf d).flatMap (·.2)
       t s!"self docs: {f} lists every key it cites (missing {ks.filter (!listed.contains ·)})"
-        (ks.all listed.contains && !ds.any (·.kind == .W0351))
+        (ks.all listed.contains && !ds.any fun d => [DiagCode.W0351, .W0503, .W0449].contains d.kind)
       cited := cited ++ ks
   t s!"self docs: every project reference is cited (uncited {keys.filter (!cited.contains ·)})"
     (keys.all cited.contains)

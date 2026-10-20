@@ -9044,6 +9044,7 @@ private def biblatexCiteArm (name : String) (pos : Pos) (raws : Array Raw) (star
   | "Textcite" => return to "Citet"
   | "Cite" => return to (if authoryear then "Citealp" else "Citep")
   | _ =>
+    -- premise: Tests.LeanCite.citeFootnoteChecks — only these set a citation in a footnote
     let note := if name == "footcitetext" then "footnotetext" else "footnote"
     let cmd := if name == "Footcite" || name == "Smartcite" then "Citealp"
       else if name == "footfullcite" then "fullcite" else "citealp"
@@ -9079,6 +9080,7 @@ private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) 
     if i > 0 then body := body ++ sepBefore i
     body := body ++ #[.ctrl (cmdOf i) pos] ++ p
   let bare := (name == "cites" || name == "Cites") && authoryear
+  -- premise: Tests.LeanCite.citeFootnoteChecks — only these set a citation in a footnote
   let out : Array Raw :=
     if foot then #[.ctrl "footnote" pos, .group (body.push (.word "." pos)) pos]
     else if textual || bare then body

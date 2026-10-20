@@ -63,6 +63,8 @@ private structure InputLog where
   joins : Array String := #[]
   /-- Each bibliography file's keys by its path, parsed once a run. -/
   bibKeys : Array (String × Std.HashSet String) := #[]
+  /-- Each Lean file an inclusion has read the bibliography of, whose notes on it stand once. -/
+  leanBibsNoted : Array String := #[]
   /-- The surface of the document the run reads, whose reference list's reading a bibliography's
   keys follow. -/
   surface : Ir.Surface := .tex
@@ -170,9 +172,29 @@ a comma, which a list's names cannot. -/
 private def listable (found : Array LeanFactsFile.BibFile) (span : Span) :
     Array LeanFactsFile.BibFile × Array Diag :=
   let (bad, good) := found.partition (·.name.contains ',')
-  (good, bad.map fun f => Diag.of .W0110 s!"`bibliography` names '{f.name}', whose comma a \
-reference list's file names cannot hold; its entries are not read" (some span)
-    (help := "rename the file or its folder without a comma") (subject := some "code:bibliography"))
+  (good, bad.map fun f => Diag.of .W0110 s!"the bibliography '{f.name}' a module docstring declares \
+holds a comma in its name or folder, which a reference list's file names cannot hold; its entries \
+are not read" (some span)
+    (help := "rename the file or its folder without a comma")
+    (subject := some "code:bibliography-comma"))
+
+/-- The bibliography files a code file's documentation declares, read beside it with W0503 for one
+not there; where it declares none, W0503 for the citations its documentation would make into its
+project's bibliography, which is read for that alone, and that file's path. -/
+private def codeBibs (lang : Ir.CodeLang) (file text : String) (base entry : Option String := none) :
+    IO (Array LeanFactsFile.BibFile × Array Diag × Option String) := do
+  let declared := Code.declaredBibs lang text
+  if !declared.isEmpty then
+    let (found, ds) ← Host.runIO (LeanFactsFile.bibFor file (declared.map fun d => (d.dest, d.line))
+      base entry)
+    return (found, ds, none)
+  let some f ← Host.runIO (LeanFactsFile.projectBib file lang.row.project) | return (#[], #[], none)
+  let keys := (Bib.keysOf (Encoding.readMarkdown f.path f.bytes).text).foldl (·.insert ·) {}
+  let (cited, line) := Code.undeclaredCites lang file text keys
+  if cited.isEmpty then return (#[], #[], some f.path)
+  let spelled := Code.bibLineFor lang (((f.name.splitOn "/").getLast?).getD f.name) f.name
+  return (#[], #[DriverDiag.bibUndeclared f.name (Code.bibHome lang) spelled cited ⟨file, { line }⟩],
+    some f.path)
 
 /-- A bibliography file's keys, parsed once a run from its text as the document's reference list
 decodes it: under the declaration in force in a TeX document, else as UTF-8; the list's own read
@@ -221,23 +243,28 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
           Host.runIO (LeanLinks.placeOf path.toString (Code.linkTemplate l)) else pure {}
       | none => pure {}
     let entry := if ask.division then "the Lean division" else "`\\inputlean`"
-    -- A documentation view cites by its bibliography's keys, declared beside the document, else the
-    -- Lean file's project's, and the document's reference list joins the files it cites from.
-    let (found, bibDiags) ← if showing.docs then
-        Host.runIO (LeanFactsFile.bibFor path.toString showing.bibliography ask.site
-          (base := some dir.toString) (entry := some entry))
-      else pure (#[], #[])
+    -- A documentation view cites by the keys of the bibliography the Lean file declares, and the
+    -- document's reference list joins the files it cites from.
+    let (found, bibDiags, named) ← if showing.docs then
+        codeBibs .lean path.toString text (base := some dir.toString) (entry := some entry)
+      else pure (#[], #[], none)
     let (found, commaDiags) := listable found ask.site
     let keyed ← found.mapM fun f => return (f, ← keysOnce f)
     let keys := keyed.foldl (init := {}) fun ks (_, k) => k.fold (init := ks) fun acc x => acc.insert x
     let (raws, ds) := Code.includeLean path.toString text showing facts place ask.site entry
       (codeRefs found keys)
+    let noted := (← get).leanBibsNoted.contains path.toString
+    let (ds, bibDiags, commaDiags) := if noted then
+        (ds.filter (·.subject != some "code:bibliography-line"), #[], #[])
+      else (ds, bibDiags, commaDiags)
     let cited := Code.citedKeys raws
     let citing := keyed.filter fun (_, ks) => cited.any ks.contains
     modify fun log => { log with
       joins := citing.foldl (fun js (f, _) => if js.contains f.name then js else js.push f.name)
         log.joins
-      reads := log.reads ++ found.map (·.path) }
+      reads := log.reads ++ found.map (·.path) ++ named.toArray
+      leanBibsNoted := if showing.docs && !noted then log.leanBibsNoted.push path.toString
+        else log.leanBibsNoted }
     return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags)
 
 /-- `\inputlean[options]{file}`, its options read as TeX spells them. -/
@@ -522,15 +549,13 @@ public def readDocument (file : String) (bytes : ByteArray)
         | some l => if lang == .lean && showing.statements then
             Host.runIO (LeanLinks.placeOf file (Code.linkTemplate l)) else pure {}
         | none => pure {}
-      -- A page's documentation cites into its declared bibliography, else its project's.
-      let (found, bibDiags) ←
-        Host.runIO (LeanFactsFile.bibFor file showing.bibliography ⟨file, {}⟩
-          (markers := lang.row.project))
+      -- A page's documentation cites into the bibliography its documentation declares.
+      let (found, bibDiags, named) ← codeBibs lang file text
       let (found, commaDiags) := listable found ⟨file, {}⟩
       -- The keys a page cites by are the ones its reference list decodes; the list names the bytes.
       let refs := codeRefs found (found.foldl (init := {}) fun ks f =>
         (Bib.keysOf (Encoding.readMarkdown f.path f.bytes).text).foldl (·.insert ·) ks)
-      let bibRead := found.map (·.path)
+      let bibRead := found.map (·.path) ++ named.toArray
       let t ← IO.monoMsNow
       let (raws, ds) := Surface.readCode lang file text facts place refs
       if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)

@@ -1031,7 +1031,7 @@ def elabCodeFixture (n : String) (lang : Ir.CodeLang) (src : String) (dir : Stri
     (driver : Bool := false) : IO (Ir.Doc × Array Diag) := do
   let file := s!"{n}.{lang.extension}"
   let showing := Code.showingOf lang src.toList.toArray
-  if !driver && showing.bibliography.isEmpty && !(lang == .lean && showing.asks) then
+  if !driver && (Code.declaredBibs lang src).isEmpty && !(lang == .lean && showing.asks) then
     return elabCode file src
   let path := s!"{dir}/{file}"
   let read ← Input.readDocument path src.toUTF8

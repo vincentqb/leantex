@@ -7,12 +7,13 @@ import LeanTex.Core.HyphenDataDe
 import LeanTex.Core.LocaleContract
 public import LeanTex.Core.Nfc
 
+/-! Bibliography: [references.bib](../../docs/references.bib) -/
+
 namespace LeanTex.Core.Hyphen
 
 open Std
 
-/-- Liang patterns [Liang1983]: letters to inter-letter weights (odd allows a break), the exception
-dictionary, and the locale's hyphenation minima. -/
+/-- Liang patterns [Liang1983]: letters to inter-letter weights, an odd one allowing a break. -/
 public structure Patterns where
   map : HashMap String (Array Nat)
   exceptions : HashMap String (Array Nat)

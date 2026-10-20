@@ -6,7 +6,9 @@ import LeanTex.Core.Oklab
 namespace LeanTex.Core.Icc
 
 /-! An ICC profile's header, description and colour transforms ([ICC1] §7.2, §9.2, §10), read
-from its bytes. -/
+from its bytes.
+
+Bibliography: [references.bib](../../docs/references.bib) -/
 
 /-- The header fields a PDF output intent is judged by. -/
 public structure Header where
@@ -67,7 +69,7 @@ public def description? (b : ByteArray) : Option String := do
 /-! ## Colour transforms -/
 
 /-- A channel's curve over [0, 1] at 16 bits: the identity, a sampled table, or one of ICC's
-parametric functions with its s15Fixed16 parameters ([ICC1] §10.15, §10.18). -/
+parametric functions ([ICC1] §10.15, §10.18). -/
 public inductive Curve where
   | identity
   | table (samples : Array Nat)

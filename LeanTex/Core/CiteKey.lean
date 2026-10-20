@@ -2,7 +2,9 @@ module
 
 import LeanTex.Core.Nfc
 
-/-! Pandoc's citation-key grammar [Pandoc], which the markdown reader reads and the markdown twin writes. -/
+/-! Pandoc's citation-key grammar [Pandoc].
+
+Bibliography: [references.bib](../../docs/references.bib) -/
 
 namespace LeanTex.Core.CiteKey
 

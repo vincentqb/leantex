@@ -2267,7 +2267,15 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: an environment's argument sets its box separation, colour and bold label at each use, an optional one defaulted, its end code under the begin code's declarations; after the body sets the parskip to 12pt the next paragraphs stand 24pt apart, in a group setting it to 30pt 42pt apart, and after the group 24pt again; under a body parskip of 20pt a heading, a list item's second paragraph, a quote, centred text and a minipage space as under the preamble's; a frame's value ends with the frame; a table after a group setting its column gap takes the page's; this tree sets the same",
       "main's binary at bbdd0223 names both W0104, sets the paragraphs at the page's gap and carries a group's column gap on; the checks fail there",
       "the corpus built by main's binary at bbdd0223 and by this tree's: every PDF, web page and diagnostic byte-identical"]
-    state := .guarded "bbdd0223" .before .author }
+    state := .guarded "bbdd0223" .before .author },
+  { id := "R999", date := "2026-10-20"
+    what := "a code file's documentation cited into its project's bibliography, the one doc-gen4 reads for Lean and the one its project markers found for any other language, whenever nothing declared otherwise, resolving its citations against a file it never named, and a page or an inclusion declared its bibliography only in a directive or an option the languages' own documentation tools do not read"
+    pins := [check% Tests.LeanCite.leanCiteChecks, check% Tests.LeanCite.selfDocChecks,
+      check% Tests.LeanCite.citeFootnoteChecks, check% Tests.CodeDoc.docMarkupChecks]
+    accept := ["main's binary at ebed1710 on an invented Lean project whose module docstring declares nothing: its two citations set as labels with a reference list from the project's bibliography, nothing named; this tree sets them as written and names them once (W0503) with the line to declare",
+      "the code-docs train's binary at 3983dcfb on an invented Python project whose module docstring cites and declares nothing: the citation resolved against the project's bibliography; this tree sets it as written and names it once (W0503) with the module docstring's line",
+      "the corpus's lean-cite fixtures, moved from the directive and the inclusion option to the docstring's line, built by the binary at 3983dcfb and by this tree's: both PDFs and both web pages byte-identical"]
+    state := .guarded "3983dcfb" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

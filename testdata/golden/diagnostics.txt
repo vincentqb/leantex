@@ -1095,7 +1095,7 @@
   a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
   `Other`
   suggestion: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
-── W0503 (degraded) a bibliography file is not there; its entries are absent and what cites them is unresolved
+── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 ⚠ [W0503]
   '\bibliography' file 'references' is not there; the reference list is empty and every citation shows '?'
   suggestion: put the file at ./references.bib, or correct its name in \bibliography

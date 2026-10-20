@@ -10,8 +10,9 @@ import LeanTex.Core.Hex
 
 namespace LeanTex.Core.Flate
 
-/-! Bounded zlib compression and decompression ([RFC1950] wrapping [RFC1951]), and the checksums,
-content keys and PNG scanline unfiltering beside them. -/
+/-! Bounded zlib compression and decompression ([RFC1950] wrapping [RFC1951]).
+
+Bibliography: [references.bib](../../docs/references.bib) -/
 
 /-- Inflates a zlib stream into at most `maxOut` bytes, checking its header, stored lengths,
 alphabet sizes and code tables as zlib's inflate checks them; the Adler-32 trailer is not verified. -/

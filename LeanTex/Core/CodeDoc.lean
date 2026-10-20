@@ -170,8 +170,7 @@ public structure Showing where
   link : Option String := none
   /-- The facts file the document declares for the file, else the exporter's own. -/
   facts : Option String := none
-  /-- The bibliography files the document declares for the file's documentation, else its
-  project's `docs/references.bib`. -/
+  /-- The files a `bibliography` key names, which only its refusal reads. -/
   bibliography : List String := []
   /-- The style the page's citations set in, alpha where none is declared. -/
   bibStyle : Option String := none
@@ -591,6 +590,21 @@ public def showingOf (lang : Ir.CodeLang) (src : Array Char) : Showing :=
 only Lean's syntax tree gives. -/
 public def Showing.asks (s : Showing) : Bool := s.statements || s.proofs != .show
 
+/-- Where a language's documentation declares its file's bibliography, as a note names it. -/
+public def bibHome (lang : Ir.CodeLang) : String :=
+  match lang with
+  | .lean => "the module docstring, `/-! … -/`"
+  | .python => "the module docstring"
+  | .bash => "the leading comment block"
+  | .rust => "an inner doc comment, `//!`"
+  | .c | .cpp => "a Doxygen comment"
+  | .java => "a Javadoc comment"
+
+/-- The line declaring `dest`, linked by `name`, as a language's documentation tool shows a link. -/
+public def bibLineFor (lang : Ir.CodeLang) (name dest : String) : String :=
+  if lang == .java then s!"Bibliography: <a href=\"{dest}\">{name}</a>"
+  else s!"Bibliography: [{name}]({dest})"
+
 /-- The notes for options a page, or an inclusion (`page` false), cannot honour: a link with no
 statement to carry it, facts nothing reads, keys only a Lean file's page reads written for another
 language, a `decls` naming nothing, and on a page a `decls` with no statement to choose. -/
@@ -605,9 +619,13 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
     ((showKeys.filter (!["show", "bibliography", "biblio-style"].contains ·)).filter
       s.written.contains).map fun k =>
       note k "is read only on a Lean file's page" "delete it, or write it in a Lean file's directive"
-  let uncited := if lang == .lean && !page && !s.docs && s.written.contains "bibliography" then
-      [note "bibliography" "names the bibliography an inclusion's documentation cites into, and \
-this one sets its documentation as code" "write `show = docs`, or delete `bibliography`"]
+  let links := "Bibliography: " ++ ", ".intercalate ((if s.bibliography.isEmpty then ["refs.bib"]
+    else s.bibliography).map fun f =>
+      ((bibLineFor lang (((f.splitOn "/").getLast?).getD f) f).drop "Bibliography: ".length).toString)
+  let uncited := if s.written.contains "bibliography" then
+      [note "bibliography" s!"declares nothing: a code file declares its bibliography on a line of \
+{bibHome lang}" s!"write `{links}` in {bibHome lang}, each path from the file, and delete \
+`bibliography`"]
     else []
   let restyled := if lang == .lean && !page && s.written.contains "biblio-style" then
       [note "biblio-style" "names a page's citation style, and an inclusion's citations set in its \
@@ -1446,6 +1464,105 @@ public def Prose.place (pr : Prose) (p : Pos) : Pos :=
   | some (ln, col) => if p.line == 0 then p else { p with line := ln, col := col + p.col }
   | none => p
 
+/-- What a line says after `Bibliography:`, where it opens on that word in any case. -/
+public def bibAttempt? (line : String) : Option (List Char) :=
+  let t := line.trimAscii.toString
+  let word := "bibliography:"
+  if (String.ofList (t.toList.take word.length)).toLower == word then some (t.toList.drop word.length)
+  else none
+
+/-- A link destination with its `%XX` escapes decoded, as a browser resolves one, where the bytes
+are UTF-8. -/
+private def unescapeDest (dest : String) : Option String := Id.run do
+  let cs := dest.toList.toArray
+  let mut out : ByteArray := .empty
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := cs.getD i ' '
+    match (if c == '%' then Hex.value? [cs.getD (i + 1) 'x', cs.getD (i + 2) 'x'] else none) with
+    | some v =>
+      out := out.push v.toUInt8
+      i := i + 3
+    | none =>
+      out := out ++ c.toString.toUTF8
+      i := i + 1
+  return String.fromUTF8? out
+
+/-- The `.bib` files a documentation line declares as its bibliography,
+`Bibliography: [refs.bib](refs.bib)` or Javadoc's `<a href="refs.bib">`, by each local link's
+destination in order. -/
+public def bibLine? (line : String) : Option (Array String) := Id.run do
+  let some rest := bibAttempt? line | return none
+  let cs := rest.toArray
+  let mut out : Array String := #[]
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := cs.getD i ' '
+    if c == ' ' || c == '\t' || c == ',' then i := i + 1
+    else if c == '<' then
+      let anchor := "<a href=\""
+      unless String.ofList (cs.extract i (i + anchor.length)).toList == anchor do return none
+      let q := (cs.extract (i + anchor.length) cs.size).findIdx? (· == '"')
+      let some q := q.map (· + i + anchor.length) | return none
+      let shut := "</a>"
+      let gt := (cs.extract q cs.size).findIdx? (· == '>')
+      let some gt := gt.map (· + q) | return none
+      let endA := (List.range (cs.size - gt)).find? fun j =>
+        String.ofList (cs.extract (gt + j) (gt + j + shut.length)).toList == shut
+      let some endA := endA.map (· + gt) | return none
+      let some dest := unescapeDest (String.ofList (cs.extract (i + anchor.length) q).toList)
+        | return none
+      unless dest.endsWith ".bib" && !dest.any (· == ' ') && (dest.splitOn "://").length == 1 do
+        return none
+      out := out.push dest
+      i := endA + shut.length
+    else
+      let close := (cs.extract i cs.size).findIdx? (· == ']')
+      let some close := close.map (· + i) | return none
+      let paren := (cs.extract close cs.size).findIdx? (· == ')')
+      let some paren := paren.map (· + close) | return none
+      unless c == '[' && cs.getD (close + 1) ' ' == '(' && !(cs.extract (i + 1) close).contains '[' do
+        return none
+      let raw := (String.ofList (cs.extract (close + 2) paren).toList).trimAscii.toString
+      let angled := raw.startsWith "<" && raw.endsWith ">"
+      let some dest := unescapeDest (if angled then ((raw.drop 1).dropEnd 1).toString else raw)
+        | return none
+      unless dest.endsWith ".bib" && (angled || !raw.any (· == ' ')) &&
+          (dest.splitOn "://").length == 1 do
+        return none
+      out := out.push dest
+      i := paren + 1
+  return if out.isEmpty then none else some out
+
+/-- A prose's lines opening on `Bibliography:`, by index, with the files each declares, none where
+it declares none; none inside a fenced code block or indented as code. -/
+public def bibLines (pr : Prose) : Array (Nat × Option (Array String)) := Id.run do
+  let mut out : Array (Nat × Option (Array String)) := #[]
+  let mut fence : Option (Char × Nat) := none
+  for (l, k) in (pr.text.splitOn "\n").zipIdx do
+    let lead := (l.toList.takeWhile (· == ' ')).length
+    let t := l.toList.drop lead
+    let run := (t.takeWhile (· == t.headD ' ')).length
+    let fenceMark := lead < 4 && run ≥ 3 && (t.headD ' ' == '`' || t.headD ' ' == '~')
+    match fence with
+    | some (ch, n) =>
+      if fenceMark && t.headD ' ' == ch && run ≥ n && (t.drop run).all (· == ' ') then fence := none
+    | none =>
+      if fenceMark then fence := some (t.headD ' ', run)
+      else if lead < 4 && (bibAttempt? l).isSome then out := out.push (k, bibLine? l)
+  return out
+
+/-- A module docstring's prose without its bibliography lines, which set nothing. -/
+public def Prose.withoutBib (pr : Prose) : Prose :=
+  let drop := ((bibLines pr).filter (·.2.isSome)).map (·.1)
+  if drop.isEmpty then pr else
+  let ls := (pr.text.splitOn "\n").toArray
+  let keep := (List.range ls.size).filter (!drop.contains ·)
+  { text := "\n".intercalate (keep.map (ls.getD · ""))
+    lines := (keep.map (pr.lines.getD · (0, 0))).toArray }
+
 /-! ## The document -/
 
 /-- The options of a code language's listings, its language crossing as the IR's own value. -/
@@ -1531,6 +1648,65 @@ public def baseName (file : String) : String :=
   | .prose true .aboveAll => true
   | .prose _ _ | .code | .directive | .blank | .statement _ => false
 
+/-- A bibliography file a code file declares: the link's destination as written, and the source line
+declaring it. -/
+public structure BibDecl where
+  dest : String
+  line : Nat
+  deriving Repr, BEq, Inhabited
+
+/-- A documentation comment's prose at the place it stands. -/
+@[expose] public def placedProse (lang : Ir.CodeLang) (starts : Array Nat) (seg : Seg) : Prose :=
+  let place := lineCol starts seg.start
+  proseIn lang seg.text place.1 (place.2 - 1)
+
+/-- Whether a documentation comment may declare its file's bibliography: Lean's module docs, Python's
+module docstring, a shell file's leading comments, rustdoc's inner docs, and any documentation comment
+of a language none of whose comments documents its file. -/
+public def declaresBib (lang : Ir.CodeLang) (seg : Seg) : Bool :=
+  let holder (f : Ir.DocForm) : Bool := match f with
+    | .lines _ sc _ | .block _ _ sc _ => sc == .holder
+  match seg.kind with
+  | .prose module _ =>
+    match lang.row.docs with
+    | .lean | .python | .leading _ => module
+    | .comments forms =>
+      if forms.any holder then ((formOf? forms seg.text).map holder).getD false else true
+  | .code | .directive | .blank | .statement _ => false
+
+/-- The bibliography files a code file's documentation declares, in order (`bibLines`). -/
+public def declaredBibs (lang : Ir.CodeLang) (text : String) : Array BibDecl :=
+  let starts := lineStarts text.toList.toArray
+  (segmentsOf lang text).foldl (init := #[]) fun out s =>
+    if !declaresBib lang s then out else
+    let pr := placedProse lang starts s
+    (bibLines pr).foldl (init := out) fun out (k, fs) =>
+      (fs.getD #[]).foldl (init := out) fun out f => out.push ⟨f, (pr.lines.getD k (0, 0)).1⟩
+
+/-- W0110 at each line opening on `Bibliography:` that declares nothing, which sets as written: one
+in a declaring comment naming no local .bib link, and any in another documentation comment. -/
+public def bibLineNotes (lang : Ir.CodeLang) (file text : String) : Array Diag :=
+  let starts := lineStarts text.toList.toArray
+  let note (pr : Prose) (k : Nat) (what help : String) : Diag :=
+    let (line, col) := pr.lines.getD k (0, 0)
+    Diag.of .W0110 s!"a line opening on `Bibliography:` {what}; it sets as written"
+      (some ⟨file, { line, col := col + 1 }⟩) (help := help) (subject := some "code:bibliography-line")
+  (segmentsOf lang text).foldl (init := #[]) fun out s =>
+    match s.kind with
+    | .prose _ _ =>
+      let home := declaresBib lang s
+      let pr := placedProse lang starts s
+      ((bibLines pr).filter fun (_, fs) => !home || fs.isNone).foldl (init := out) fun out (k, _) =>
+        out.push (if home then note pr k "declares no bibliography, each file a link to a local \
+.bib file" s!"write `{bibLineFor lang "refs.bib" "refs.bib"}`, its path from this file"
+          else note pr k s!"declares only in {bibHome lang}" s!"move it into {bibHome lang}")
+    | .code | .directive | .blank | .statement _ => out
+
+/-- A documentation comment's prose at the place it stands, a declaring one's without its
+bibliography lines. -/
+@[expose] public def segProse (lang : Ir.CodeLang) (starts : Array Nat) (seg : Seg) : Prose :=
+  let prose := placedProse lang starts seg
+  if declaresBib lang seg then prose.withoutBib else prose
 
 /-- A loss a documentation comment's reader names, where its construct stands, its help spelled in
 the dialect's own markup. -/
@@ -1590,8 +1766,7 @@ no language set in the file's, citing by `known`, and the losses the reader name
 the heading it opens on to the document's title. -/
 @[expose] public def proseRaws (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) : Array Raw × Array Diag :=
-  let place := lineCol starts seg.start
-  let (prose, lost) := lowered lang file seg.text known (proseIn lang seg.text place.1 (place.2 - 1))
+  let (prose, lost) := lowered lang file seg.text known (segProse lang starts seg)
   let read := Md.desugar file prose.text (if lang == .lean then .lean else .docstring) (known := known)
   let raws := mapPosList prose.place #[] read.1.toList
   (if opens then (retitle raws.toList).toArray else raws,
@@ -2557,7 +2732,7 @@ it" (some request) (help := s!"name {namesOr (View.all.map (·.name))}")
     let read := docsRaws file text starts (refs.map (·.keys))
     let unsaid := (declaredFor .lean showing none).refused.map fun (name, r) =>
       refusalNote request.file request.pos name r
-    (wrap read.1, notes ++ unsaid ++ read.2)
+    (wrap read.1, notes ++ unsaid ++ bibLineNotes .lean file text ++ read.2)
   else
   match (if showing.asks || showing.decls.isSome then facts else none) with
   | none =>
@@ -2681,13 +2856,13 @@ private def keysGroup : List Raw → Option (Array Raw)
   | _ => none
 
 /-- The keys raws cite, `\nocite`'s among them, inside a group or an environment too, onto `out`. -/
-private def citedList (out : Array String) : List Raw → Array String
+private def citedList (out : Array (String × Pos)) : List Raw → Array (String × Pos)
   | [] => out
-  | .ctrl n _ :: rest =>
+  | .ctrl n p :: rest =>
     let out := if n.startsWith "cite" || n == "nocite" then
         match keysGroup rest with
         | some body => ((rawSrc body).splitOn ",").foldl (init := out) fun out k =>
-            out.push k.trimAscii.toString
+            out.push (k.trimAscii.toString, p)
         | none => out
       else out
     citedList out rest
@@ -2698,7 +2873,27 @@ termination_by l => sizeOf l
 decreasing_by raws_dec
 
 /-- The keys raws cite. -/
-public def citedKeys (raws : Array Raw) : Array String := citedList #[] raws.toList
+public def citedKeys (raws : Array Raw) : Array String := (citedList #[] raws.toList).map (·.1)
+
+/-- The keys a Lean file's documentation would cite into a bibliography holding `keys`, which it
+does not declare, each once in order, with the source line the first stands on. -/
+public def undeclaredCites (lang : Ir.CodeLang) (file text : String) (keys : Std.HashSet String) :
+    Array String × Nat :=
+  let doxygen := ((text.splitOn "cite ").drop 1).any fun t =>
+    keys.contains (String.ofList (t.toList.takeWhile fun c => c != ' ' && c != '\n' && c != '.'))
+  if (Md.docGenKeys text keys).isEmpty && !(Md.citeKeys text).any keys.contains && !doxygen then
+    (#[], 1) else
+  let starts := lineStarts text.toList.toArray
+  let raws := (segmentsOf lang text).foldl (init := #[]) fun out s =>
+    match s.kind with
+    | .prose _ _ =>
+      let read := proseRaws lang file starts (some keys) s false
+      out.append read.1
+    | .code | .directive | .blank | .statement _ => out
+  let sites := citedList #[] raws.toList
+  let cited := (sites.foldl (init := ((#[] : Array String), ({} : Std.HashSet String)))
+    fun (out, seen) (k, _) => if seen.contains k then (out, seen) else (out.push k, seen.insert k)).1
+  (cited, ((sites[0]?).map (·.2.line)).getD 1)
 
 /-- A document whose inclusions cite into the files `names`: its first reference list naming files
 reads them too, after its own, so a key both hold is set from the document's. -/
@@ -2748,12 +2943,15 @@ the preamble's declarations, the file's name the title where no description open
       (subject := some s!"code:{k}:{v}")
   let idle := showing.idle lang ⟨file, directivePos lang src⟩
   -- premise: Tests.UnusedSettings.metadataChecks — a page citing nothing reads none of these
-  let uncited := if acc.cited then #[] else
-    (#["bibliography", "biblio-style"].filter fun k => showing.written.contains k &&
-        (refs.isSome || (k == "biblio-style" && !showing.written.contains "bibliography"))).map
-      fun k => UnusedSetting.directiveDiag file k (directivePos lang src)
+  let declared := declaredBibs lang text
+  let uncited := if acc.cited || (refs.isNone && !declared.isEmpty) then #[] else
+    (if showing.written.contains "biblio-style" then
+      #[UnusedSetting.directiveDiag file "biblio-style" (directivePos lang src)] else #[]) ++
+    (if refs.isSome then (declared.map (·.line)).toList.eraseDups.toArray.map fun line =>
+      UnusedSetting.bibLineDiag file { line } else #[])
   (preamble.push (.env "document" body origin),
-    views ++ unread ++ idle ++ uncited ++ acc.diags ++ plan.2.2 ++ stray.toArray)
+    views ++ unread ++ idle ++ uncited ++ bibLineNotes lang file text ++ acc.diags ++ plan.2.2 ++
+      stray.toArray)
 
 private theorem ite_prefix (b : Bool) (x y : Array Raw) :
     (if b = true then x else y ++ x) = (if b = true then #[] else y) ++ x := by

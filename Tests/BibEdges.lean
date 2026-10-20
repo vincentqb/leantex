@@ -309,8 +309,8 @@ year = {2001}}\n".toUTF8
     return (doc, Bib.accountFront ds bds ledger.notes (Bib.refJudge spans doc))
   IO.FS.withTempDir fun dir => do
     IO.FS.writeBinFile (dir / "refs.bib") latin1
-    let (doc, all) ← build dir "-- leantex: bibliography = refs.bib\n\
-/-! See [café2001] and [ash2001]. -/\n\ndef x := 1\n"
+    let (doc, all) ← build dir "/-! See [café2001] and [ash2001].\n\n\
+Bibliography: [refs.bib](refs.bib) -/\n\ndef x := 1\n"
     let bytes := all.filter (·.kind == .W0002)
     t s!"bib encoding: the page cites the key its list holds, the other as written \
 ({keysOf doc}, {repr (inkText doc.body)})"
@@ -320,7 +320,7 @@ year = {2001}}\n".toUTF8
 ({repr (bytes.map fun d => (d.severity, d.sites, d.help))})"
       (bytes.size == 1 && bytes.all fun d => d.severity == .warning &&
         !d.help.any (hasStr · "inputenc"))
-    let (_, quiet) ← build dir "-- leantex: bibliography = refs.bib\n/-! Cites nothing. -/\n\n\
+    let (_, quiet) ← build dir "/-! Cites nothing.\n\nBibliography: [refs.bib](refs.bib) -/\n\n\
 def x := 1\n"
     t s!"bib encoding: a page citing nothing reads no list and names no bytes \
 ({repr (quiet.map (·.code))})"

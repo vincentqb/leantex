@@ -352,15 +352,22 @@ entries of the other files" span
     (help := s!"put the file at {looked}, or {drop}")
     (subject := some ("bibfile:" ++ name))
 
-/-- W0503 as a Lean page's directive, or the inclusion `entry` names, names its bibliography: the
-file is not there, so its documentation's citations stay as written and nothing is listed. -/
+/-- W0503 as a code file's documentation names its bibliography, on its page or under the inclusion
+`entry` names: the file is not there, so its documentation's citations stay as written. -/
 public def bibMissingLean (name looked : String) (span : Span) (entry : Option String) : Diag :=
-  let (names, loss) := match entry with
-    | some e => (s!"{e} names", "the included documentation's citations stay as written")
-    | none => ("the directive names",
-        "the page's citations stay as written and its reference list is empty")
-  Diag.of .W0503 s!"the bibliography file '{name}' {names} is not there; {loss}" (some span)
-    (help := s!"put the file at {looked}") (subject := some ("bibfile:" ++ name))
+  let loss := match entry with
+    | some _ => "the included documentation's citations stay as written"
+    | none => "the page's citations stay as written and its reference list is empty"
+  Diag.of .W0503 s!"the bibliography file '{name}' the documentation names is not there; {loss}"
+    (some span) (help := s!"put the file at {looked}") (subject := some ("bibfile:" ++ name))
+
+/-- W0503 as a code file's documentation cites entries of its project's bibliography, `name` from the
+file, and declares none in `home`, where the line `spelled` would. -/
+public def bibUndeclared (name home spelled : String) (keys : Array String) (span : Span) : Diag :=
+  Diag.of .W0503 s!"the documentation cites entries of '{name}', its project's bibliography, and \
+declares no bibliography; its citations stay as written" (some span)
+    (help := s!"declare it on a line of {home}: `{spelled}`")
+    (subject := some ("bibfile:" ++ name)) (detail := some (", ".intercalate keys.toList))
 
 /-- W0503 or W0424 as a markdown document's metadata names its bibliography. -/
 public def bibMissingMarkdown (among : Bool) (name looked : String) (span : Option Span)
