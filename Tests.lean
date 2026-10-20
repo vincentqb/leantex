@@ -239,6 +239,7 @@ import Tests.CompatExecution
 import Tests.HtmlTokens
 import Tests.HtmlContained
 import Tests.HtmlRead
+import Tests.PdfTextRead
 import Tests.MachineLoss
 import Tests.HtmlA11y
 import Tests.Conditionals
@@ -1098,6 +1099,13 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linkColorChecks ref oneFace
   algorithmReadChecks ref oneFace
 
+/-- The artifact text readers' blocks over the corpus: the PDF's text layer read from its bytes; a
+missing or unparsable font skips them. -/
+def textLayerChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let some fontData ← findFont | return ()
+  let .ok font := Font.parse fontData | return ()
+  Tests.pdfTextChecks ref (oneFaceOf font)
+
 /-- The covered-steps blocks: a body's covering, the dim path's colours and a pause's reach. -/
 def coveredStepsChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.CoveredSteps.bodyShareChecks ref
@@ -1359,6 +1367,7 @@ def main (args : List String) : IO UInt32 := do
   fontFaceSuiteChecks ref
   layoutSuiteChecks ref
   coveredStepsChecks ref
+  textLayerChecks ref
   mdSurfaceChecks ref
 
   let failed := (← ref.get).reverse
