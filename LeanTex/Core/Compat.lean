@@ -341,7 +341,9 @@ private def inlineListRaws (raws : Array Raw) : Array Raw := Id.run do
           match (body[j]? : Option Raw) with
           | some (.ctrl "item" ip) =>
             num := num + 1
-            if out.any fun x => !(x matches .space || x matches .par _) then
+            -- A line a heading already ended takes no second break.
+            let last := out.findRev? fun x => !(x matches .space || x matches .par _)
+            if last.isSome && !(last matches some (.ctrl "\\" _)) then
               out := out.push (.ctrl "\\" ip)
             let k := skipSpaces body (j + 1)
             let close := if body[k]? matches some (.sym '[' _) then
@@ -367,7 +369,8 @@ private def inlineListRaws (raws : Array Raw) : Array Raw := Id.run do
       else out := out.push r
     | .space | .par _ => out := out.push r
     | _ =>
-      if let some bp := breakNext then out := out.push (.ctrl "\\" bp)
+      if let some bp := breakNext then
+        unless r matches .ctrl "\\" _ do out := out.push (.ctrl "\\" bp)
       breakNext := none
       out := out.push r
   return out
@@ -2694,7 +2697,12 @@ private def noteHeadingLines (raws : Array Raw) : Array Raw := Id.run do
         if out.any ink && !(out.back?.any lineEnd) then out := out.push (.ctrl "\\" p)
         out := out ++ #[.ctrl "textbf" p, .group title p]
         let rest := raws.extract k raws.size
-        if rest.any (fun r => ink r && !lineEnd r) then out := out.push (.ctrl "\\" p)
+        -- A label or an index entry and its key set nothing, so no line follows for them alone.
+        let marks (r : Raw) : Bool := r matches .ctrl "label" _ || r matches .ctrl "index" _
+        let sets := (List.range rest.size).any fun q => (rest[q]?).any fun r =>
+          ink r && !lineEnd r && !marks r &&
+            !(r matches .group .. && q > 0 && (rest[q - 1]?).any marks)
+        if sets then out := out.push (.ctrl "\\" p)
         -- A line end the author wrote after the heading is the one already set.
         let k := skipSpaces raws k
         i := if (raws[k]? : Option Raw).any lineEnd then skipSpaces raws (k + 1) else k
@@ -10051,7 +10059,7 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
     -- A box's content is TeX's argument; a listing an expansion carried there is the elaborator's.
     for (env, vp, _) in boxListingsList (args[1]?.getD #[]).toList #[] do
       -- A box nested in a box reads one listing once.
-      let site := s!"{vp.line}:{vp.col}"
+      let site := s!"{(← get).file}:{vp.line}:{vp.col}"
       -- premise: argumentBlockChecks — a definition's text is read where a call runs it
       if vp.origins.isEmpty && !(← get).inDef && !(← get).warned.contains ("listing-arg:" ++ site) then
         sayOnce ("listing-arg:" ++ site) .W0411 (scannedListingMessage env) vp
@@ -10145,7 +10153,7 @@ better in the text")
       | .ctrl n _ => headingCommands.contains n
       | _ => false) then
     sayOnce "footnote:heading" .W0371 "a heading inside '\\footnote' is set as a bold line of the \
-note and not counted, so a numbered one leaves the headings after it a number below LaTeX's" pos
+note, outside the document's heading numbers" pos
       (help := "a footnote is one paragraph; a heading reads better in the text")
     write fun st => { st with argBlocks := some .inlineLists }
   rewriteCtrlLaterNamed name pos raws start
@@ -11766,7 +11774,7 @@ native equivalent were dropped: {dropped}" c.pos
     if let some (.group body _) := c.raws[skipSpaces c.raws c.stop]? then
       for (env, vp, _) in boxListingsList body.toList #[] do
         -- A box nested in a box reads one listing once.
-        let site := s!"{vp.line}:{vp.col}"
+        let site := s!"{(← get).file}:{vp.line}:{vp.col}"
         -- premise: argumentBlockChecks — a definition's text is read where a call runs it
         if vp.origins.isEmpty && !(← get).inDef && !(← get).warned.contains ("listing-arg:" ++ site) then
           sayOnce ("listing-arg:" ++ site) .W0411 (scannedListingMessage env) vp

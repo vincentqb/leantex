@@ -219,6 +219,14 @@ the paragraphs around it ({ls}, {ds.map (·.code)})"
     (match tls.findIdx? (hasStr · "Ka"), tls.findIdx? (hasStr · "Kb") with
      | some a, some b => b == a + 1
      | _, _ => false)
+  let (ldoc, _) := elabStr (dvDoc "" ("Text\\footnote{Intro. \\section{Ka}\\begin{itemize}\\item Kone " ++
+    "\\item Ktwo\\end{itemize}\\section{Kb} rest.} more \\footnote{Intro. \\section{Kc}\\label{s:kc}} end."))
+  let lls := (allLines (layoutOf fs ldoc)).map (lineText ·)
+  let lat (s : String) : Option Nat := lls.findIdx? (hasStr · s)
+  t s!"argument blocks: a footnote's headings and list items are lines, none empty, a label after the last ending none ({lls})"
+    ((match lat "Ka", lat "Kone", lat "Ktwo", lat "Kb", lat "rest." with
+      | some a, some o, some w, some b, some r => o == a + 1 && w == o + 1 && b == w + 1 && r == b + 1
+      | _, _, _, _, _ => false) && lat "Kc" == some (lls.size - 2))
   let (fdoc, fds) := elabStr (dvDoc "" "Text\\footnote{Before. \\section{Kqzv} note.} more.")
   let fls := (allLines (layoutOf fs fdoc)).map (lineText ·)
   let fat (s : String) : Option Nat := fls.findIdx? (hasStr · s)
