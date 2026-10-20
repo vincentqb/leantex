@@ -1177,7 +1177,8 @@ private def runtPara : String :=
 def centredRuntChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let lines (env : String) : Array Layout.LineOut :=
-    bodyLines (layoutOf oneFace (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+    bodyLines (layoutOf oneFace (elabStr ("\\documentclass{article}\n\\page{ textwidth = 312pt }\n" ++
+      "\\begin{document}\n" ++
       "\\begin{" ++ env ++ "}\n" ++ runtPara ++ "\n\\end{" ++ env ++ "}\n\\end{document}")).1)
   let words (l : Layout.LineOut) : Nat := ((lineText l).splitOn " ").filter (!·.isEmpty) |>.length
   let flush := lines "flushleft"

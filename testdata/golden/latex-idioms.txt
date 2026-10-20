@@ -1,5 +1,5 @@
 class scrartcl [paper=a5,fontsize=11pt]
-page 420x595 vmargin 39.685 hmargin 48.189 fontsize 10.959 skip tiny 636 skip scriptsize 864 skip footnotesize 1000 skip small 1091 skip normalsize 1236 skip large 1273 skip Large 1636 skip LARGE 2000 skip huge 2273 skip Huge 2727 parskip 0 plus 1pt
+page 419.528x595.276 vmargin 39.685 hmargin 48.189 fontsize 10.959 skip tiny 636 skip scriptsize 864 skip footnotesize 1000 skip small 1091 skip normalsize 1236 skip large 1273 skip Large 1636 skip LARGE 2000 skip huge 2273 skip Huge 2727 parskip 0 plus 1pt
 font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"

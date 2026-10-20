@@ -7221,6 +7221,74 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
     page := { page with hmargin := page.width * (1000 - (s : Int)) / 2000 }
   return page
 
+/-- The page at the body size its class's options or the class set, where the document declares
+none. -/
+private def classSized (record : Ir.ClassRecord) (classOptions : String) (page : PageSpec) :
+    PageSpec :=
+  if page.fontSize != ({} : PageSpec).fontSize then page else
+  let optSize := (KeyVal.items classOptions).findSome? fun o =>
+    let o := match KeyVal.entry o with
+      | ("fontsize", some v) => v
+      | (k, _) => k
+    if o.endsWith "pt" then
+      ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
+    else none
+  match optSize <|> record.fontSize with
+  | some d => { page with fontSize := d }
+  | none => page
+
+/-- typearea's `DIV` value: stripes, or 0 for its default, 2 for `calc` and 3 for `classic`. -/
+private def divValue? (v : String) : Option Nat :=
+  match v with
+  | "default" => some 0
+  | "calc" => some 2
+  | "classic" => some 3
+  | v => v.toNat?.filter (· ≥ 4)
+
+/-- A KOMA-Script switch's value turning it on. -/
+private def komaTrue (v : String) : Bool := v == "true" || v == "on" || v == "yes"
+
+/-- typearea's `BCOR` value, an absolute length. -/
+private def bcorValue? (v : String) : Option Length :=
+  (Decl.parseLength v).bind fun l => if l.em == 0 && l.ex == 0 then some l.sp else none
+
+/-- The page a class's text area sets on the tex surface along each axis no declaration claims, its
+furniture's distances with the vertical one; elsewhere an undeclared flow page takes the surface's
+text block, centred. -/
+private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surface : Ir.Surface)
+    (across down : Bool) (page : PageSpec) : PageSpec :=
+  let entries := opts.map KeyVal.entry
+  let value (k : String) : Option String :=
+    entries.findSome? fun (k', v) => if k' == k then v else none
+  let included (k : String) : Bool := entries.any fun (k', v) => k' == k && (v.all komaTrue)
+  let rule : Ir.AreaRule := match record.area, value "layout" with
+    | .sizeFile, some "book" => .book
+    | .sizeFile, some "memoir" => .memoir
+    | r, _ => r
+  let typearea := rule == .typearea
+  let input : Ir.AreaInput :=
+    { paperW := page.width, paperH := page.height, option := Ir.sizeOptionOf page.fontSize
+      baselineskip := Ir.sizeFileLeading page.fontSize 1000 "normalsize"
+      twoside := page.twoside
+      div := if typearea then ((value "DIV").bind divValue?).getD 0 else 0
+      bcor := if typearea then ((value "BCOR").bind bcorValue?).getD 0 else 0
+      headinclude := typearea && included "headinclude"
+      footinclude := typearea && included "footinclude" }
+  match surface, rule.area? input with
+  | .tex, some a =>
+    let page := { page with maxDepth := a.maxDepth }
+    let page := if across then page else
+      { page with hmargin := (page.width - a.width) / 2
+                  sideRatio := page.sideRatio <|>
+                    a.sides.map fun (l, r) => (l.units.toNat, r.units.toNat) }
+    if down then page else
+      { page with vmargin := a.top, bmargin := some (page.height - a.top - a.height)
+                  classSeps := some (a.headsep, a.footskip) }
+  | _, _ =>
+    if record.model == .flow && !across && !down then
+      { page with hmargin := (page.width - surface.textBlock) / 2 }
+    else page
+
 /-- Class options leaving a page model's page as it stands, each with why. -/
 public def classOptionsInert : List (Ir.PageModel × List (String × Compat.Inert)) :=
   let final := ("final", Compat.Inert.asWithout "the document is rendered in full, as without the \
@@ -7257,10 +7325,15 @@ public def classPaperOptions : List String := Ir.pageSizes.map (·.1 ++ "paper")
 /-- Whether a reader here reads a class option under a page model: a body size; in the flow model
 a paper size, `landscape`, `twoside` and the abstract's title-page options; in the frame model the
 slide stage, its alignment and `noamsthm`; in the face model a card standard. -/
-public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
+public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
   let sized (v : String) : Bool := v.endsWith "pt" && ((v.dropEnd 2).toString.toNat?.any (0 < ·))
   let paper (v : String) : Bool := (Ir.pageSizes.lookup v).isSome
-  match KeyVal.entry o, model with
+  match KeyVal.entry o, record.model with
+  | ("layout", some v), _ => record.area == .sizeFile && (v == "book" || v == "memoir")
+  | ("DIV", some v), _ => record.area == .typearea && (divValue? v).isSome
+  | ("BCOR", some v), _ => record.area == .typearea && (bcorValue? v).isSome
+  | ("headinclude", v), _ | ("footinclude", v), _ =>
+    record.area == .typearea && v.all fun v => komaTrue v || ["false", "off", "no"].contains v
   | ("fontsize", some v), _ => sized v
   | (k, none), .flow =>
     sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
@@ -8292,7 +8365,7 @@ private def abstractFormUnder (form : Ir.AbstractForm) (opts : List String) : Ir
 /-- The engine length tokens the preamble may read: those whose value the
 declared page or the class already fixes. -/
 private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
-    (page : PageSpec) (undeclared : Option Length := none) : Array (String × Dim.SymGlue) :=
+    (page : PageSpec) (area : PageSpec → PageSpec := id) : Array (String × Dim.SymGlue) :=
   let record := docClass.record
   let dflt : PageSpec := {}
   let opts := (KeyVal.items classOptions).toList
@@ -8320,13 +8393,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     -- The body size and `\parskip` may still change in the preamble.
     | "baselineskip" | "parskip" => false
     | _ => false
-  -- An undeclared flow page centres the text block its surface takes.
-  let classPage := classPageDefaults record opts page
-  let classPage := match undeclared with
-    | some w => if record.model == .flow then { classPage with hmargin := (classPage.width - w) / 2 }
-      else classPage
-    | none => classPage
-  (engineLengthTokensOfPage (settledPage classPage).1).filter
+  (engineLengthTokensOfPage (settledPage (area (classPageDefaults record opts page))).1).filter
     (fun kv => offered kv.1) ++ classMarginTokens record.lists
 
 
@@ -16979,7 +17046,9 @@ public structure PreState where
   classUnknown : Bool := false
   classOptions : String := ""
   page : PageSpec := {}
-  sawPage : Bool := false
+  /-- Whether a declaration places the text block across the page, and whether down it. -/
+  sawAcross : Bool := false
+  sawDown : Bool := false
   fonts : FontSpec := {}
   palette : Palette := {}
   /-- A `\pagecolor` resolved in preamble order, overlaid on the final
@@ -17485,9 +17554,13 @@ so this accepts nothing"
           (help := "codes look like 'E0333'; each names the one loss it accepts")))
   return (allow, evs)
 
-/-- The text block a flow page takes where no `\page` declares it, on the document's surface. -/
-private def undeclaredBlock (s : PreState) : Option Length :=
-  if s.sawPage then none else some (Ir.Surface.ofPath s.ctx.file).textBlock
+/-- The text area the document's class and surface set on a page so far declared, at the body size
+the class sets. -/
+private def undeclaredBlock (s : PreState) (page : PageSpec) : PageSpec :=
+  let sized := classSized s.docClass.record s.classOptions page
+  { classAreaPage s.docClass.record (KeyVal.items s.classOptions).toList
+      (Ir.Surface.ofPath s.ctx.file) s.sawAcross s.sawDown sized with
+    fontSize := page.fontSize }
 
 /-- Emits a pure step's reporting events and returns its state. -/
 private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState := do
@@ -17506,7 +17579,8 @@ private def stepPage (s : PreState) (body : Array Raw) (pos : Pos) :
   -- Only geometry keys claim the page, so a parskip alone keeps the default margin.
   ({ s with
       page := pe.1
-      sawPage := pb.1.any (fun e => (Native.PageKey.ofName? e.key).any (·.claims)) || s.sawPage },
+      sawAcross := s.sawAcross || pb.1.any (fun e => (Native.PageKey.ofName? e.key).any (·.claimsAcross))
+      sawDown := s.sawDown || pb.1.any (fun e => (Native.PageKey.ofName? e.key).any (·.claimsDown)) },
    pb.2.map .say ++ pe.2)
 
 private def stepFonts (s : PreState) (body : Array Raw) (pos : Pos) :
@@ -18985,7 +19059,6 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let sawClass := s.sawClass
   let classOptions := s.classOptions
   let mut page := s.page
-  let sawPage := s.sawPage
   let fonts := s.fonts
   let defaultBundle := s.docClass == Ir.DocClass.slides && !s.sawTheme
   -- The class's default bundle sets its section page as its theme's hook, under one the document set.
@@ -19040,19 +19113,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       (help := s!"declare \\documentclass\{article} (or \
 {", ".intercalate ((Ir.DocClass.all.filter (· != .article)).map (·.name))}) to choose it")
   let record := docClass.record
-  if page.fontSize == ({} : PageSpec).fontSize then
-    let optSize := (KeyVal.items classOptions).findSome? fun o =>
-      let o := match KeyVal.entry o with
-        | ("fontsize", some v) => v
-        | (k, _) => k
-      if o.endsWith "pt" then
-        ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
-      else none
-    match optSize with
-    | some d => page := { page with fontSize := d }
-    | none =>
-      if let some d := record.fontSize then
-        page := { page with fontSize := d }
+  page := classSized record classOptions page
   -- The class's size file sets each size's baselineskip, which size10.clo's ladder meets at 10pt.
   if record.sizeFileSkip && !s.classUnknown && page.bodySkip.isNone && page.skips.isNone &&
       sawClass then
@@ -19074,7 +19135,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   if page.parskip.isNone then
     if let some g := (classOpts.filterMap optionSkip).getLast? <|> record.parskip then
       page := { page with parskip := some g }
-  page := classPageDefaults record classOpts page
+  page := classAreaPage record classOpts (Ir.Surface.ofPath file) s.sawAcross s.sawDown
+    (classPageDefaults record classOpts page)
   if let some lost := (settledPage page).2 then
     let d := diagOf ctx .W0104 s!"the declared {lost} leaves the page no text block; the class's \
 margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "text height" then
@@ -19100,12 +19162,11 @@ margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "
           s!"class option '{o}' leaves space free after a paragraph's last line; here the last \
 line may run to the margin" none (subject := some s!"partial:\\documentclass:{key}")
           (detail := some s!"{space} free")) }
-    else unless classOptionRead record.model o || key.isEmpty do
+    else unless classOptionRead record o || key.isEmpty do
       classSay .W0104 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
-    page := { page with hmargin := (page.width - surface.textBlock) / 2
-                        webMeasure := surface != .tex || page.web.isSome }
+    page := { page with webMeasure := surface != .tex || page.web.isSome }
   if record.model != .flow && page.web.isSome then
     diag ctx .W0104 "'web' in '\\page' sets nothing: only a flowing document takes a web layout, \
 and this class's page is a fixed stage or face" none

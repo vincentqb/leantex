@@ -1,17 +1,4 @@
-% parity: a divergence probe — neither side declares a geometry, so each engine picks its own measure, and the level this reaches is recorded rather than demanded
-% diverges: default-measure
-% Divergence probe. The engine sets an undeclared article's text block from
-% a copy-fitting table; LaTeX sets it from the class default. The two are
-% different widths, so the same prose breaks into different lines. Measured
-% 2026-09-25: it stops at the census level, P2. The page is one page on
-% both sides; what moves the census is the engine hyphenating "agreement"
-% at the end of its first line, which inks a hyphen the reference, breaking
-% elsewhere, never sets. The measured delta is in the reference half's
-% header, beside the number.
-%
-% This fixture exists so that the ladder has somewhere to record a
-% divergence as a *level* instead of as a suppression. Nothing here is
-% expected to be fixed; what is expected is that the level does not fall.
+% parity: an article neither side gives a geometry, so each takes its class's text block and the same prose breaks into the same lines
 \documentclass{article}
 \fonts{ body = "Open Sans" }
 \begin{document}

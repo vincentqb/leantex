@@ -42,6 +42,7 @@ import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
 import Tests.MarkdownTables
 import Tests.MarkdownPage
+import Tests.ClassArea
 import Tests.MarkdownWarnings
 import Tests.MonoDefault
 import Tests.MarkdownCode
@@ -2412,6 +2413,13 @@ def reports : List Report := [
     pins := [check% Tests.Tabbing.checks, check% Tests.ScrExtend.checks]
     accept := ["lualatex 1.24 on invented probes: a tabbing's entries at the stops a kill line sets, its kill text nowhere, plus and minus lines a stop in and out, its rows 12pt apart; this tree sets every stop the same where no entry is wider than its stop, a wider one widening its column where LaTeX overprints the next, and the block 1.8pt higher, its first row a table's; scrextend's fontsize 12pt and its size command in the preamble set lines and lists as the 12pt class option",
       "main's binary at 1e648c76 on the same probes: the tabbing unknown (W0302), its commands unknown (W0301), every entry run together; scrextend skipped (W0103), its size command unknown; the guards fail there"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R277", date := "2026-10-20"
+    what := "every standard class set a 312pt text block an inch from the top and an inch from the foot, whatever its size option, paper or sides: an article's, report's and book's size files, memoir's and KOMA-Script's typearea (its DIV, BCOR and included head and foot) were not read, so lines, pages and folios stood away from where LaTeX sets them, the head and foot distances were the engine's, and a page held a line fewer than its text height allows"
+    pins := [check% Tests.ClassArea.classAreaChecks]
+    accept := ["lualatex 1.24 on invented probes: article, report and book at 10, 11 and 12pt on letter, A4, A5 and landscape paper, one- and two-sided; memoir at its sizes and sides; scrartcl, scrreprt and scrbook at their DIV defaults, DIV=calc, classic and 12, BCOR and an included head and foot; each text width and height within 0.3pt, each top, recto and verso margin within a point, each head and foot distance exact; a page of prose holding 46 lines in an article or a book and 44 in scrartcl, its first baseline and folio within a point of lualatex's; geometry's default body unchanged",
+      "main's binary at 1e648c76 on the same probes: a 312pt block 72pt from the top and from the foot under every class; the guards fail there",
+      "the corpus built by main's binary at 1e648c76 and by this tree's: every deck, card, poster and web page document byte-identical, the A4 resume invisibly moved by its exact paper; every article-class document's PDF and the KOMA-Script one's visibly moved to its class's text block, folio and page breaks, the web pages of those declaring no page wider by the same measure; the parity tier's undeclared article reaching its top level, the rhythm tier's first baseline and footline items met, and the typeset tier's report fixture losing its overfull lines while the stress fixture's page breaks trade a few clubs and widows"]
     state := .guarded "1e648c76" .before .author }
 ]
 

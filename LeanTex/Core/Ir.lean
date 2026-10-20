@@ -5,6 +5,7 @@ public import LeanTex.Core.Heading
 public import LeanTex.Core.ListingLang
 public import LeanTex.Core.SurfaceKind
 public import LeanTex.Core.Dim
+public import LeanTex.Core.ClassArea
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.Decl
 public import LeanTex.Core.Image
@@ -298,6 +299,11 @@ public structure PageSpec where
   headsep : Option Length := none
   /-- LaTeX's `\footskip`, as declared: from the text area's floor to the foot's baseline. -/
   footskip : Option Length := none
+  /-- The class's `\headsep` and `\footskip`, under any the document declares. -/
+  classSeps : Option (Length × Length) := none
+  /-- TeX's `\maxdepth` as the class sets it: how far a page's last line may reach below its text
+  area. -/
+  maxDepth : Length := 0
   /-- LaTeX's `\flushbottom` (`some true`) or `\raggedbottom` (`some false`);
   `none` is the class's own. -/
   flushBottom : Option Bool := none
@@ -416,7 +422,7 @@ public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texPars
 
 public def baselineSkipOf (spec : PageSpec) : Length := leadingFor spec.fontSize spec.leading
 
-/-- The text block of an undeclared letter page: 26 picas, Bringhurst's
+/-- The text block of an undeclared tex page no class area sets: 26 picas, Bringhurst's
 copy-fitting measure for a 10 pt text face. -/
 public def articleTextBlock : Length := pt 312
 
@@ -8331,16 +8337,16 @@ public inductive AbstractForm where
 (beamerinnerthemedefault.sty:325). -/
 public def abstractInset : Dim.SymLength := { em := 2000 }
 
-/-- ISO 216's A4 in PDF points, 210 × 297 mm. -/
-public def a4Page : Length × Length := (Dim.bp 595, Dim.bp 842)
+/-- ISO 216's A4, 210 × 297 mm, as LaTeX's classes set it. -/
+public def a4Page : Length × Length := (Dim.mm 210, Dim.mm 297)
 
-/-- Named page sizes: ISO 216's A4 and A5 at TeX's big-point rounding, ISO B5, and US letter,
+/-- Named page sizes as LaTeX's classes set them: ISO 216's A4 and A5, ISO B5, and US letter,
 legal and executive. -/
 public def pageSizes : List (String × (Length × Length)) :=
   [("letter", (Dim.bp 612, Dim.bp 792)),
    ("legal", (Dim.bp 612, Dim.bp 1008)),
    ("a4", a4Page),
-   ("a5", (Dim.bp 420, Dim.bp 595)),
+   ("a5", (Dim.mm 148, Dim.mm 210)),
    ("b5", (Dim.mm 176, Dim.mm 250)),
    ("executive", (Dim.bp 522, Dim.bp 756))]
 
@@ -8411,6 +8417,8 @@ public structure ClassRecord where
   /-- The web layout a flow's page takes where the document declares none: book-theme's, MyST's
   default site template. -/
   webLayout : WebLayout := .book
+  /-- Where the class's text area comes from where the document declares none. -/
+  area : AreaRule := .engine
   deriving Repr, BEq
 
 /-- The document's class, closed: a class `ofString?` does not answer never enters the IR. -/
@@ -8469,6 +8477,7 @@ résumé's floor the fluent-reading x-height at hand-held distance. -/
   | .article =>
     { model := .flow
       sizeFileSkip := true
+      area := .sizeFile
       numberHeadings := true
       measureBand := true
       pageNumbers := true }
@@ -8551,7 +8560,8 @@ calibration reads fluently; declare \
       quotationIndent := { em := 1000 }
       numberHeadings := true
       measureBand := true
-      pageNumbers := true }
+      pageNumbers := true
+      area := .typearea }
 
 /-- A document's class defaults: its class's colour row and ground depth, the
 web's row for a source that is not tex. -/

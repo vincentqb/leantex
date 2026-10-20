@@ -134,6 +134,7 @@ import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
 import Tests.MarkdownTables
 import Tests.MarkdownPage
+import Tests.ClassArea
 import Tests.MarkdownWarnings
 import Tests.MonoDefault
 import Tests.MarkdownCode
@@ -379,6 +380,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownHeadingChecks ref
   Tests.MarkdownTables.markdownTableChecks ref
   Tests.MarkdownPage.markdownPageChecks ref
+  Tests.ClassArea.classAreaChecks ref
   Tests.MarkdownWarnings.markdownWarningChecks ref
   Tests.MarkdownWarnings.markdownMonoChecks ref
   Tests.MonoDefault.monoDefaultChecks ref

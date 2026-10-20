@@ -2779,7 +2779,7 @@ def pdfCensusTable :
   ("valign", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("images", (1, 1, 4, 0, 1, 0, 1, none, ["DCTDecode", "FlateDecode"])),
   ("figures", (1, 3, 0, 2, 0, 0, 1, none, ["FlateDecode"])),
-  ("svg-figures", (1, 1, 1, 9, 0, 0, 1, none, ["FlateDecode"])),
+  ("svg-figures", (2, 1, 1, 9, 0, 0, 1, none, ["FlateDecode"])),
   ("math", (1, 1, 0, 0, 0, 0, 1, none, ["FlateDecode"])),
   ("math-alpha", (1, 1, 0, 0, 0, 0, 1, none, ["FlateDecode"])),
   ("webpage", (1, 1, 0, 0, 0, 6, 0, none, ["FlateDecode"])),

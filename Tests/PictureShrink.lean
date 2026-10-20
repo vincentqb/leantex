@@ -87,7 +87,7 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let naturalBottom := (PictureShrink.fills roomy).foldl (fun y f => match f.2.1 with
     | .rect _ fy _ fh => max y (fy + fh)
     | _ => y) 0
-  let tightGeom := { geom with pageH := naturalBottom + geom.vmargin - Dim.pt 6 }
+  let tightGeom := { geom with pageH := naturalBottom + geom.bottomMargin - Dim.pt 6 }
   let tight := layoutOf oneFace doc tightGeom
   let before := PictureShrink.labels roomy
   let after := PictureShrink.labels tight

@@ -149,7 +149,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     (pageDraws p).foldl (fun y (g, _, _) =>
       let (_, gy, _, gh) := markExtent g
       max y (gy + gh)) (p.fills.foldl (fun y f => max y (f.y + f.h)) y)) 0
-  let tightGeom := { roomyGeom with pageH := bottom + roomyGeom.vmargin - Dim.pt 4 }
+  let tightGeom := { roomyGeom with pageH := bottom + roomyGeom.bottomMargin - Dim.pt 4 }
   let picShrinkOut := DiagnosticLayoutOrigins.run fs tightGeom picShrinkDoc picShrinkSites
   let picShrinkDiags := picShrinkOut.diags.filter (·.kind == .N0200)
   t "layout origins: a picture that consumes shrink retains its opening source"

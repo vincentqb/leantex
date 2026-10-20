@@ -2115,9 +2115,9 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
 
   let (pDoc, _) := elabStr (wrap "\\page{ parskip = 12pt }\n")
   let (bDoc, _) := elabStr (wrap "")
-  t "a rhythm-only page block keeps the Bringhurst margin"
+  t "a rhythm-only page block keeps the class's margin"
     (pDoc.page.hmargin == bDoc.page.hmargin &&
-     pDoc.page.hmargin == (pDoc.page.width - Ir.articleTextBlock) / 2)
+     pDoc.page.hmargin == (pDoc.page.width - Dim.pt 345) / 2)
   let (hDoc, _) := elabStr (wrap "\\page{ hmargin = 1in }\n")
   t "declared geometry keeps every value it named"
     (hDoc.page.hmargin == Dim.inch 1)

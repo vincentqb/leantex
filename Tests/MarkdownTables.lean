@@ -349,7 +349,8 @@ the sorter reads every gadget it is handed |\n"
   IO.FS.withTempDir fun dir => do
     IO.FS.writeFile (dir / "fragment.md") (src "sorter")
     let (host, _) ← elabInputSrc (dir / "host.tex").toString
-      (dvDoc "\\usepackage{markdown}\n" "Hostwords.\n\n\\markdownInput{fragment.md}\n")
+      (dvDoc "\\usepackage{markdown}\n\\page{ textwidth = 312pt }\n"
+        "Hostwords.\n\n\\markdownInput{fragment.md}\n")
     let hlines := (bodyLines (layoutOf fonts host)).filter fun l =>
       hasGlyphRun l && !hasStr (lineText l) "Hostwords"
     let hl := host.page.hmargin

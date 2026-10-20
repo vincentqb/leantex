@@ -539,10 +539,11 @@ def lengthRow : Row :=
     (if o == "censusprobelength" then "\\newlength{\\censusprobelength}" else "") ++
       s!"\\setlength\{\\{o}}\{{sample o}}"
   let pre := "\\usepackage{natbib}\\usepackage{booktabs}\\usepackage{paracol}\\runninghead{Head words}"
-  let body := "\\begin{tabular}{|l|l|}\\hline A & B\\\\ \\hline\\hline C & D\\\\ \\hline\\end{tabular} " ++
+  -- The tables open the body, their rules and skips kept off a page break, which would discard them.
+  let tables := "\\begin{tabular}{|l|l|}\\hline A & B\\\\ \\hline\\hline C & D\\\\ \\hline\\end{tabular} " ++
     "\\begin{tabular}{ll}\\toprule A & B\\\\ \\midrule C & D\\\\ \\cmidrule(lr){1-2} E & F\\\\ " ++
-    "\\bottomrule\\end{tabular} \\fbox{Boxed} " ++
-    "$\\begin{array}{cc}a & b\\end{array}$\\begin{align}x &= y\\\\ z &= w\\end{align}" ++
+    "\\bottomrule\\end{tabular} \\fbox{Boxed}\n\n"
+  let body := "$\\begin{array}{cc}a & b\\end{array}$\\begin{align}x &= y\\\\ z &= w\\end{align}" ++
     "\\begin{picture}(10,10)\\put(0,0){\\line(1,1){5}}\\end{picture}" ++
     "\\begin{paracol}{2}Left column words.\\switchcolumn Right column words.\\end{paracol}" ++
     "Before skips.\\smallskip After small.\\medskip After medium.\\bigskip After big."
@@ -555,8 +556,8 @@ def lengthRow : Row :=
        "bibsep", "bibhang", "belowcaptionskip", "topskip", "smallskipamount", "medskipamount",
        "bigskipamount"]
     keyOf := id
-    docs := [fun o => article "" (pre ++ (o.map setting).getD "") body,
-      fun o => article "" pre body (lead := (o.map setting).getD "")] }
+    docs := [fun o => article "" (pre ++ (o.map setting).getD "") body (lead := tables),
+      fun o => article "" pre body (lead := (o.map setting).getD "" ++ tables)] }
 
 /-- The counters a document sets, before what they number. -/
 def counterRow : Row :=
@@ -915,7 +916,7 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "text block: the kernel's height stands on the page the class option settles"
     ((page a4).height == (page (doc "[a4paper]{article}" "")).height &&
       (page a4).height != (page (art "")).height && tall a4 == Dim.pt 500 &&
-      (page a4).vmargin == (page (art "")).vmargin)
+      (page a4).vmargin == (page (doc "[a4paper]{article}" "")).vmargin)
   t "text block: geometry's lone height splits the class's page"
     (geometrySplit (page (doc "[a4paper]{article}" "\\usepackage[textheight=500pt]{geometry}"))
       (Dim.pt 500))
@@ -1004,7 +1005,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "text block: a negative margin is refused, and margins leaving no block are named"
     ((elabStr (native "tmargin = -10pt")).2.any (fun d => d.code == "E0323") &&
       named (native "tmargin = 500pt, bmargin = 500pt") "vmargin" &&
-      held (native "tmargin = 500pt, bmargin = 500pt") (page (art "")).vmargin (page (art "")).vmargin)
+      held (native "tmargin = 500pt, bmargin = 500pt") ({} : Ir.PageSpec).vmargin
+        ({} : Ir.PageSpec).vmargin)
   t "text block: a placed page places to itself"
     (["\\page{ tmargin = 1in, bmargin = 2in }", "\\usepackage[textheight=500pt]{geometry}",
       "\\setlength{\\textheight}{500pt}"].all fun pre => (page (art pre)).placed == page (art pre))
@@ -1023,8 +1025,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr d.message "a ratio such as 2:3")
   t "text block: a height past the page is named and the margins stand"
     (named (native "tmargin = 1in, textheight = 900pt") "textheight" &&
-      held (native "tmargin = 1in, textheight = 900pt") (page (native "")).vmargin
-        (page (native "")).bottomMargin)
+      held (native "tmargin = 1in, textheight = 900pt") ({} : Ir.PageSpec).vmargin
+        ({} : Ir.PageSpec).bottomMargin)
   let img := "\\includegraphics[height=0.5\\textheight, alt={An invented box}]{a.png}"
   let store : Image.Store := { entries := #[{ src := "a.png"
                                               info := some { pxW := 144

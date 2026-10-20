@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 71.731 hmargin 150.583
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
 para
   text "A ragged row is padded to the grid, and the diagnostic names it rather than letting the grid drift."
 table l,l,l

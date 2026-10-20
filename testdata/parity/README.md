@@ -7,8 +7,8 @@ two vocabularies:
 - `<name>.ref.tex` — the same document in LaTeX's own vocabulary, compiled
   by `lualatex`. Geometry, body size, leading and paragraph gap are
   **declared on both sides** rather than left to either engine's defaults,
-  because the defaults are one of the things that differ (see
-  `measure.tex`, whose whole subject is that difference).
+  so a fixture tests what it names (`measure.tex` tests the defaults
+  themselves).
 - `<name>.ref.pdf` — the committed reference artifact, byte-immutable once
   committed.
 - `<name>.ref.txt` — its provenance sidecar: the content key of the
@@ -164,12 +164,5 @@ nothing is judged on its measurement alone.
 
 ## Probes that show a divergence
 
-- `measure.tex` — no geometry declared on either side, so each engine
-  chooses its own measure. leantex sets an article's text block by a
-  copy-fitting table (312 bp); LaTeX's 10 pt article on letter paper sets
-  345 pt = 343.7 bp, 10.2 % wider, so the prose rebreaks. It stops at P2:
-  the engine hyphenates a word at the end of its first line and the
-  reference, breaking elsewhere, inks no hyphen. The delta is in the
-  reference half's header beside the number, the fixture declares
-  `default-measure`, and the scoreboard records the level this reaches
-  rather than the level it "should".
+None: `measure.tex`, which leaves both sides' geometry undeclared, reaches the
+top of the ladder, each engine setting the article's own text block.

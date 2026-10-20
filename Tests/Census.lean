@@ -876,7 +876,7 @@ def censusRows4 :
       hasStr (censusText c) "sits in the line"),
     ("the figure caption ships with its number", hasStr (censusText c) "Figure 1: Three rectangles, fitted")]),
   ("svg-figures", fun _ c => [
-    ("one page", c.size == 1),
+    ("two pages", c.size == 2),
     ("the prose around the figures ships",
       hasStr (censusText c) "A chart drawn by the engine" &&
         hasStr (censusText c) "A moving figure, described" &&

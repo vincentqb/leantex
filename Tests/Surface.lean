@@ -464,7 +464,7 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\setlength{\\x}{0.5\\textwidth}\n\\begin{document}\nx\n\\end{document}")
   t "a flow class's preamble textwidth reads the measure its undeclared page takes"
     (!da.any (·.severity == .error) && !da.any (·.code == "W0107") &&
-      (xa.tokens.find? "x").map (·.width.fixed) == some (Ir.articleTextBlock / 2))
+      (xa.tokens.find? "x").map (·.width.fixed) == some (Dim.pt 345 / 2))
   let (_, db) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
     "\\setlength{\\y}{0.5\\textwidth}\nx\n\\end{document}")
   t "a body \\setlength resolves textwidth from the finished page"
@@ -1540,14 +1540,14 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabStr s!"\\documentclass[{opts}]\{article}{pre}\\begin\{document}x\\end\{document}").1.page
   t "class option a4paper sets the page size"
     (let p := pageOf "a4paper"
-     p.width == Dim.bp 595 && p.height == Dim.bp 842)
+     p.width == Dim.mm 210 && p.height == Dim.mm 297)
   t "class option letterpaper and KOMA paper= set the page size"
-    ((pageOf "letterpaper").width == Dim.bp 612 && (pageOf "paper=a5").width == Dim.bp 420)
+    ((pageOf "letterpaper").width == Dim.bp 612 && (pageOf "paper=a5").width == Dim.mm 148)
   t "class option landscape swaps the axes"
     (let p := pageOf "a4paper,landscape"
-     p.width == Dim.bp 842 && p.height == Dim.bp 595)
+     p.width == Dim.mm 297 && p.height == Dim.mm 210)
   t "a declared page wins over the class option"
-    ((pageOf "a4paper" "\\page{ size = a5 }").width == Dim.bp 420)
+    ((pageOf "a4paper" "\\page{ size = a5 }").width == Dim.mm 148)
   let classDoc (cls pre body : String) : String :=
     "\\documentclass" ++ cls ++ pre ++ "\\begin{document}" ++ body ++ "\\end{document}"
   let loud (src : String) : Array (Option String) :=
@@ -1559,7 +1559,7 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabStr src).2.any (·.subject == some "partial:\\documentclass:titlepage:maketitle")
   let komaOf (pre : String) : Ir.PageSpec := (elabStr (classDoc "{scrartcl}" pre "x")).1.page
   t "a KOMA-Script class's page is A4 unless a declaration names one, letter included"
-    ((komaOf "").height == Dim.bp 842 &&
+    ((komaOf "").height == Dim.mm 297 &&
       (komaOf "\\usepackage[letterpaper]{geometry}").height == Dim.bp 792 &&
       (komaOf "\\page{ size = letter }").height == Dim.bp 792)
   -- lualatex: a standard class's title page resets the counter only one-sided, book defaulting to
@@ -1579,7 +1579,7 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
      p.width == Dim.bp 792 && p.height == Dim.bp 612)
   t "a declared text width stands centred on the page the class settles"
     (let p := komaOf "\\usepackage[textwidth=400pt]{geometry}"
-     p.width == Dim.bp 595 && p.hmargin == (Dim.bp 595 - Dim.pt 400) / 2)
+     p.width == Dim.mm 210 && p.hmargin == (Dim.mm 210 - Dim.pt 400) / 2)
   t "titlepage=true is KOMA-Script's alone: read there, the standard classes' title page kept"
     (!(loud (classDoc "[titlepage=true]{scrartcl}" "\\title{T}" "\\maketitle x")).contains
         (some "param:documentclass:titlepage") &&
@@ -3285,7 +3285,7 @@ def declChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}hi\\end{document}"
   let (declDoc, declDs) := elabStr declSrc
   t "decl source clean" declDs.isEmpty
-  t "decl page size" (declDoc.page.width == Dim.bp 420 && declDoc.page.height == Dim.bp 595)
+  t "decl page size" (declDoc.page.width == Dim.mm 148 && declDoc.page.height == Dim.mm 210)
   t "decl margin both axes"
     (declDoc.page.vmargin == Dim.inch 1 / 2 && declDoc.page.hmargin == Dim.inch 1 / 2)
   t "decl metadata" (declDoc.info.title == some "T" && declDoc.info.author == some "A")

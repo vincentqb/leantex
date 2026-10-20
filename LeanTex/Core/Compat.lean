@@ -10789,9 +10789,14 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         (if cls.startsWith "scr" then "a4" else "letter")
     write fun st => { st with strutSkip := strut, classPt := classNormalPt cls keptItems,
                               paperInForce := some paper,
-                              -- article.cls's and report.cls's 30pt, book.cls's .35in.
+                              -- size1x.clo's 30pt; bk1x.clo's and mem1x.clo's .35in, .38in, 30pt.
                               classFootskip := if cls == "article" || cls == "report" then some "30pt"
-                                else if cls == "book" then some "0.35in" else none }
+                                else if cls == "book" || cls == "memoir" then
+                                  some (match classNormalPt cls keptItems with
+                                    | some 11 => "0.38in"
+                                    | some 12 => "30pt"
+                                    | _ => "0.35in")
+                                else none }
     let passedAll := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
       if name == cls then options.toList else []
     let given := passedAll ++ keptItems
@@ -10832,7 +10837,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         (if chapterClasses.contains cls then
           -- memoir's `\thefigure` and `\thetable` carry the chapter through the main matter.
           [if cls == "memoir" then "chapters=floats" else "chapters"] else []) ++
-        (if twoside then ["twoside"] else [])
+        (if twoside then ["twoside"] else []) ++
+        -- book.cls and memoir set their pages from their own size files.
+        (if cls == "book" || cls == "memoir" then [s!"layout={cls}"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
       -- premise: none — lualatex sets memoir alike under either option, as scripts/inert-diff.lean probes
       let memoirTitle (kv : String) : Bool := cls == "memoir" && ["titlepage", "notitlepage"].contains kv
@@ -10903,8 +10910,7 @@ the option" else "the page is one-sided, as without the option")) pos
       -- The options passed to a class before it loads are its own, before its written ones.
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList.filter (!keptItems.contains ·) else []
-      -- KOMA-Script's `titlepage=true` is read by the title page; its sides are read here, typearea
-      -- splitting a two-sided page's margins 1:2, inner to outer.
+      -- KOMA-Script's `titlepage=true` is read by the title page, its sides here.
       let sided (kv : String) : Bool :=
         kv == "oneside" || kv == "twoside" || kv == "twoside=true" || kv == "twoside=false"
       let consumed (kv : String) : Bool := koma && (sided kv || kv == "titlepage=true")
@@ -10914,7 +10920,7 @@ the option" else "the page is one-sided, as without the option")) pos
             (.asWithout (if twosideClasses.contains cls then "the pages are two-sided, as without \
 the option" else "the page is one-sided, as without the option")) pos
       let sides : Array (Native.PageKey × String) :=
-        if koma && twoside then #[(.twoside, "on"), (.hmarginratio, "1:2")] else #[]
+        if koma && twoside then #[(.twoside, "on")] else #[]
       -- KOMA-Script's report and book classes head chapters.
       let chapterOpt := if chapterClasses.contains cls && !keptItems.contains "chapters" then
         ["chapters"] else []

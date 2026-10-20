@@ -1776,7 +1776,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let firstY := geom.vmargin + body
   let three := "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc"
   let natural := firstY + 2 * (leading + pq + Dim.pt 20) + scaled body (-font.descent)
-  let tight : Layout.Geom := { geom with pageH := natural - Dim.pt 10 + geom.vmargin }
+  let tight : Layout.Geom := { geom with pageH := natural - Dim.pt 10 + geom.bottomMargin }
   t "within its shrink the page holds" (pagesOf tight three == 1)
   let ys := ysOf tight three
   t "the shrunk page moves later lines up, in proportion"
@@ -1785,7 +1785,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       ys[2]! - ys[1]! == leading + pq + Dim.pt 20 - Dim.pt 5)
   t "a shrunk page says so"
     ((layoutOf oneFace (Elab.run "t" three).1 tight).diags.any (·.code == "N0200"))
-  let tooTight : Layout.Geom := { geom with pageH := natural - Dim.pt 20 + geom.vmargin }
+  let tooTight : Layout.Geom := { geom with pageH := natural - Dim.pt 20 + geom.bottomMargin }
   t "beyond its shrink the page breaks" (pagesOf tooTight three == 2)
   t "an unshrunk page says nothing"
     (!(layoutOf oneFace (Elab.run "t" three).1 geom).diags.any (·.code == "N0200"))
@@ -2239,7 +2239,7 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom
     let lines := (out.pages[0]?.map (·.lines)).getD #[]
-    return (lines.filter fun l => l.y ≠ geom.vmargin / 2 + scale font.ascent)
+    return (lines.filter (!·.furniture))
       |>.foldl (fun acc l => match acc with
         | none => some l.y
         | some y => some (min y l.y)) none
@@ -2272,8 +2272,10 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let a := scale font.ascent
   let d := scale (-font.descent)
   let band := Layout.furnitureBand geom.vmargin (a + d) none
-  let (headY, footY) := furnYs font geom
-  t "every page ships its head and foot at the geometry's own baselines"
+  -- article.cls's `\headsep` and `\footskip`.
+  let headY := (furnYs font geom (some (Layout.furnGapOfSep (Dim.pt 25) d))).1
+  let footY := geom.pageH - geom.bottomMargin + Dim.pt 30
+  t "every page ships its head and foot at the class's own baselines"
     (out.pages.all fun p =>
       p.lines.any (fun l => l.furniture && l.y == headY) &&
       p.lines.any (fun l => l.furniture && l.y == footY))
@@ -2310,7 +2312,8 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
          dFurn.foldl max y0 - (dGeom.pageH - dGeom.bottomMargin) == Dim.pt 20
      | none => false)
   t "equal declared seps carry no note" (!dOut.diags.any (·.code == "N0021"))
-  let (nDoc, _) := elabStr (declPre "\\page{ headsep = 20pt, footskip = 30pt }")
+  let (nDoc, _) := elabStr ((declPre "\\page{ headsep = 20pt, footskip = 30pt }").replace
+    "{article}" "{resume}")
   let nOut := layoutOf oneFace nDoc
   t "differing declared seps are named as declared, once"
     ((nOut.diags.filter (·.code == "N0021")).size == 1 &&
@@ -2333,10 +2336,9 @@ def pageNumberChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let (doc, _) := elabStr src
     let geom := Layout.Geom.ofPage doc.page
     (layoutOf oneFace doc geom, geom)
-  let font := oneFace.body
   let footTexts (out : Layout.Out) (geom : Layout.Geom) (i : Nat) : Array String :=
     ((out.pages[i]?.map (·.lines)).getD #[]).filterMap fun l =>
-      if l.furniture && l.y == (furnYs font geom).2 then
+      if l.furniture && l.y > geom.pageH - geom.bottomMargin then
         some (lineText l (gapAsSpace := false))
       else none
   let threeBody := "One.\\pagebreak Two.\\pagebreak Three."
@@ -3146,13 +3148,15 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      (w0201 narrow).all fun d => (d.help.getD "").startsWith "widen")
   let (dfltDoc, _) := Elab.run "t" ("\\documentclass{article}\\begin{document}" ++
     prose ++ "\\end{document}")
-  t "default article text block is 26 picas"
-    (dfltDoc.page.width - 2 * dfltDoc.page.hmargin == Ir.articleTextBlock)
+  t "default article text block is size10.clo's 345pt"
+    (dfltDoc.page.width - 2 * dfltDoc.page.hmargin == Dim.pt 345)
   t "default article measure is in band"
     ((w0201 (layoutOf oneFace dfltDoc).diags).isEmpty)
   let (declDoc, _) := Elab.run "t"
     "\\documentclass{article}\\page{ vmargin = 0.5in }\\begin{document}x\\end{document}"
-  t "declared \\page keeps the named margins" (declDoc.page.hmargin == Dim.inch 1)
+  t "a declared \\page keeps the margins it names, the class's standing across"
+    (declDoc.page.vmargin == Dim.inch 1 / 2 &&
+      declDoc.page.width - 2 * declDoc.page.hmargin == Dim.pt 345)
   t "measure key rejects a stray value"
     ((elabStr "\\documentclass{article}\\page{ measure = loose }\\begin{document}x\\end{document}").2.any
       (·.code == "E0323"))

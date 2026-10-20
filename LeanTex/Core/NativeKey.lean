@@ -50,10 +50,16 @@ public def PageKey.listed : PageKey → Bool
     => false
   | _ => true
 
-/-- Whether the key declares the page's physical extent, and so claims the page as declared. -/
-public def PageKey.claims : PageKey → Bool
-  | .size | .width | .height | .margin | .vmargin | .hmargin | .textwidth | .textheight | .bleed
-  | .tmargin | .bmargin | .vmarginratio | .hscale | .vscale | .textheightUnder => true
+/-- Whether the key places the text block across the page, and so claims that axis as declared. -/
+public def PageKey.claimsAcross : PageKey → Bool
+  | .size | .width | .margin | .hmargin | .textwidth | .bleed | .hscale => true
+  | _ => false
+
+/-- Whether the key places the text block down the page, and so claims that axis as declared; the
+kernel's `\textheight` stands under the class's top. -/
+public def PageKey.claimsDown : PageKey → Bool
+  | .size | .height | .margin | .vmargin | .textheight | .bleed | .tmargin | .bmargin
+  | .vmarginratio | .vscale => true
   | _ => false
 
 /-- The keys of `\pdfmeta`. -/

@@ -334,7 +334,7 @@ def tokenedArticle (pre : String) : String :=
     "\\midrule C & D\\\\ \\cmidrule(lr){1-2} E & F\\\\ \\bottomrule\\end{tabular}\\end{table}\n" ++
     "\\begin{tabular}{|l|l|}\\hline A & B\\\\ \\hline\\hline C & D\\\\ \\hline\\end{tabular}\n\n" ++
     "A long line of text before a display that runs across the measure, and on.\n" ++
-    "\\begin{equation}a^2 + b^2 = c^2\\end{equation}\nshort\n\\[x\\]\n" ++
+    "\\begin{equation}a^2 + b^2 = c^2\\end{equation}\nshort\n\\begin{equation}x\\end{equation}\n" ++
     "Before skips.\\smallskip After small.\\medskip After medium.\\bigskip After big.\n" ++
     "\\begin{algorithm}\\caption{Steps}\\begin{algorithmic}[1]\\State alpha\\If{beta}\\State gamma" ++
     "\\EndIf\\end{algorithmic}\\end{algorithm}\n" ++

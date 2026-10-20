@@ -47,6 +47,8 @@ public structure Geom where
   fontSize : Length := Ir.baseFontSize
   /-- TeX's `\topskip` (TeXbook ch. 15); `none` on a frame page, which beamer sets as one box. -/
   topskip : Option Length := none
+  /-- TeX's `\maxdepth`: how far a page's last box may reach below the text area uncounted. -/
+  maxDepth : Length := 0
   parskip : SymGlue := Ir.parskipDefault Ir.baseFontSize
   /-- The `\parskip` TeX adds after a trivlist's `\topsep`: the
   declared parskip, else the standard classes' `0pt plus 1pt`. -/
@@ -779,7 +781,8 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     boxes := spec.boxes
     scale := spec.scale
     skips := spec.skipScale
-    raggedFil := spec.raggedFil }
+    raggedFil := spec.raggedFil
+    maxDepth := spec.maxDepth }
 
 /-- A picture's ink on the page: its figure, its label keys, the isometry from
 picture coordinates (y up) to layout coordinates (y down), and the leaf it paints. -/
@@ -9036,18 +9039,27 @@ private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : G
 zero rule or a fil, else none, as TeX discards glue at a page top. -/
 private def Spacing.Page.topKept (b : B) : Length := if b.anchored || b.skip.fil then b.skip.width else 0
 
+/-- The depth below a baseline the page's fit counts: a line's own only past `allow`, TeX's
+`\maxdepth` for a line, a line inside a region's inset whole. -/
+private def Spacing.Page.depthPast (b : B) (inkBelow allow : Length) : Length :=
+  if b.surfaceBottom == 0 then max 0 (inkBelow - allow) else inkBelow + b.surfaceBottom
+
+/-- How far a box with its baseline at `y` and `inkBelow` beneath reaches past `bottom`. -/
+private def Spacing.Page.overflowPast (b : B) (y inkBelow bottom allow : Length) : Length :=
+  y + b.depthPast inkBelow allow - bottom
+
 /-- The fit-or-spill skeleton bands take: `place b y consume over` sets one at `y` on a fresh
 page, within the page's shrink, under `noBreak`, or on a blank opened page where `holdsBlank`;
 else overfull where the ladder allows, else after a break, `settle` judging what stands unfitted. -/
 private def Spacing.Page.fitWith (b : B) (place : B → Length → Bool → Length → B)
     (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
-    (holdsBlank : Bool) : B :=
+    (holdsBlank : Bool) (allow : Length) : B :=
   if b.fresh then
     settle (place b (firstY b + b.surfaceTop) false 0) (firstY b + b.surfaceTop)
       (inkBelow + b.surfaceBottom)
   else
     let y := stepY b + b.surfaceTop
-    let overflow := y + inkBelow + b.surfaceBottom - bottom
+    let overflow := b.overflowPast y inkBelow bottom allow
     let above := b.pageShrink + b.skip.shrink
     if overflow ≤ above ∨ b.noBreak then
       place b y true (min overflow above)
@@ -9071,7 +9083,7 @@ private def Spacing.Page.fitCommit (b : B) (mk : Length → LineOut) (firstY ste
     (depth below : Length) (rl : Bool) (inkBelow bottom : Length)
     (notes : Array NoteBlock := #[]) : B :=
   b.fitWith (fun b y consume over => (b.commit (mk y) depth below rl consume over).attachNotes notes)
-    Spacing.Page.warnOverrun firstY stepY retryY inkBelow bottom true
+    Spacing.Page.warnOverrun firstY stepY retryY inkBelow bottom true b.geom.maxDepth
 
 /-- TeX's interline rule for the first box below `\vspace*`'s zero
 rule, from the depth saved before the rule (latex.ltx `\@vspacer`). -/
@@ -9217,7 +9229,7 @@ private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Length → LineOut
       · split
         · exact sourceBound_noteOverrun _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
         · have hs := sourceBound_spillPage b
-            (stepY b + b.surfaceTop + inkBelow + b.surfaceBottom - bottom -
+            (b.overflowPast (stepY b + b.surfaceTop) inkBelow bottom b.geom.maxDepth -
               (b.pageShrink + b.skip.shrink)) hb
           apply sourceBound_noteOverrun
           split
@@ -9259,13 +9271,13 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Length)
     (hpr : b.prevBand = .text) (hrl : ruleOnly segs = false)
     (hnn : b.notesH = 0) (hid : b.ignoreDepth = false) (htx : b.texAfter = false)
     (hop : b.opening = false)
-    (hfit : b.y + b.skip.width
+    (hfit : b.overflowPast (b.y + b.skip.width
         + firstBaseline.getD
           (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs) (segs.any Seg.isMath) (segsInk fs segs).1)
-        + b.surfaceTop
-        + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-            b.geom.leading size segs).inkBelow + b.surfaceBottom - b.bottom
+        + b.surfaceTop)
+        (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+            b.geom.leading size segs).inkBelow b.bottom b.geom.maxDepth
         ≤ b.pageShrink + b.skip.shrink) :
     (b.placeLine fs x size segs w hang ex #[] false none firstBaseline).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
@@ -15776,7 +15788,8 @@ private def placeParaWith (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : A
     (paragraphStart b j breaks)).1
 
 /-- What TeX's page builder reads where a page could end before a paragraph's line: the room below
-the line above, the glue's stretch, shrink and fills above it, and the pages already shipped. -/
+the line above, its depth counted past `\maxdepth`, the glue's stretch, shrink and fills above it,
+and the pages already shipped. -/
 private structure TurnRoom where
   room : Length
   stretch : Length
@@ -15785,7 +15798,8 @@ private structure TurnRoom where
   shipped : Nat
 
 private def Spacing.Page.turnRoom (b : B) : TurnRoom :=
-  { room := noteFloor b.bottom b.noteGap b.notesH b.noteHang - (b.y + b.prevDepth)
+  { room := noteFloor b.bottom b.noteGap b.notesH b.noteHang -
+      (b.y + if b.surfaceBottom == 0 then max 0 (b.prevDepth - b.geom.maxDepth) else b.prevDepth)
     stretch := b.pageStretch, shrink := b.pageShrink, fils := b.pageFils
     shipped := b.pages.size }
 
@@ -15837,7 +15851,8 @@ private def Spacing.Page.displayFails (b : B) (j : ParaJob) : Bool :=
     let skip := b.skip.add (if long then d.above else d.aboveShort)
     let y := b.y + skip.width + texBaselineGap d.baselineSkip b.boxDepth d.height + b.surfaceTop
     let bottom := noteFloor b.bottom b.noteGap b.notesH (b.noteHang none)
-    !b.fresh && !b.noBreak && b.pageShrink + skip.shrink < y + d.inkBelow + b.surfaceBottom - bottom
+    !b.fresh && !b.noBreak && b.pageShrink + skip.shrink <
+      b.overflowPast y d.inkBelow bottom b.geom.maxDepth
 
 /-- The breaks before which widow and club control turns the page: at each page turn the paragraph's
 lines make, the latest line at TeX's least cost (tex.web §1005), its first only off a heading; a
@@ -16923,7 +16938,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       | some _ => b.freshBaseline (h - rise) ⟨h - rise, rise, h - rise, rise⟩ lead - (h - rise)
       | none => b.geom.vmargin)
     (fun b => b.y + b.prevDepth + b.skip.width + inkClearance)
-    (fun b => b.y + b.prevDepth + inkClearance) h b0.bottom false
+    (fun b => b.y + b.prevDepth + inkClearance) h b0.bottom false 0
 
 /-- Close a title slot: its lines and fills move by `slotShift` as one
 box measured by glyph ink, and the next slot starts where it did. -/
@@ -17535,9 +17550,9 @@ private theorem landTrailing_finishPage_extends (b : B) {o : Length} {f : Bool} 
 
 private theorem fitWith_extends (b : B) (place : B → Length → Bool → Length → B)
     (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
-    (holdsBlank : Bool) (hp : ∀ b y c o, (place b y c o).pages = b.pages)
+    (holdsBlank : Bool) (allow : Length) (hp : ∀ b y c o, (place b y c o).pages = b.pages)
     (hs : ∀ b y d, (settle b y d).pages = b.pages) :
-    PagesExtend b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
+    PagesExtend b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank allow) := by
   simp only [Spacing.Page.fitWith]
   repeat' split
   all_goals first
@@ -17550,7 +17565,7 @@ private theorem fitCommit_extends (b : B) (mk : Length → LineOut)
     (inkBelow bottom : Length) (ns : Array NoteBlock) :
     PagesExtend b
       (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => rfl)
+  fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true _ (fun _ _ _ _ => rfl)
     fun _ _ _ => rfl
 
 private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
@@ -17563,12 +17578,12 @@ private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shi
 
 private theorem fitWith_noBreak (b : B) (place : B → Length → Bool → Length → B)
     (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
-    (holdsBlank : Bool)
+    (holdsBlank : Bool) (allow : Length)
     (hp : ∀ b y c o, (place b y c o).pages = b.pages ∧ (place b y c o).noBreak = b.noBreak)
     (hs : ∀ b y d, (settle b y d).pages = b.pages ∧ (settle b y d).noBreak = b.noBreak)
     (h : b.noBreak = true) :
-    (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank).pages = b.pages ∧
-      (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank).noBreak = true := by
+    (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank allow).pages = b.pages ∧
+      (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank allow).noBreak = true := by
   simp only [Spacing.Page.fitWith]
   repeat' split
   all_goals first
@@ -17580,7 +17595,7 @@ private theorem fitCommit_noBreak (b : B) (mk : Length → LineOut)
     (inkBelow bottom : Length) (ns : Array NoteBlock) (h : b.noBreak = true) :
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).pages = b.pages ∧
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).noBreak = true :=
-  fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => ⟨rfl, rfl⟩)
+  fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true _ (fun _ _ _ _ => ⟨rfl, rfl⟩)
     (fun _ _ _ => ⟨rfl, rfl⟩) h
 
 private theorem fitCommit_note_with_mark (b : B) (mk : Length → LineOut)
@@ -17598,7 +17613,7 @@ private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     PagesExtend b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
-  exact fitWith_extends b _ _ _ _ _ _ _ _
+  exact fitWith_extends b _ _ _ _ _ _ _ _ _
     (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling]) fun _ _ _ => rfl
 
 private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
@@ -17607,7 +17622,7 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
     (placePicture fs imgs b x pic leaf origin).pages = b.pages ∧
       (placePicture fs imgs b x pic leaf origin).noBreak = true := by
   simp only [placePicture]
-  exact fitWith_noBreak b _ _ _ _ _ _ _ _
+  exact fitWith_noBreak b _ _ _ _ _ _ _ _ _
     (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling])
     (fun _ _ _ => ⟨rfl, rfl⟩) h
 
@@ -17974,12 +17989,12 @@ private theorem bgStep_spillPage (b : B) (o : Length) : BgStep b (b.spillPage o)
 
 private theorem bgStep_fitWith (b : B) (place : B → Length → Bool → Length → B)
     (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
-    (holdsBlank : Bool)
+    (holdsBlank : Bool) (allow : Length)
     (hp : ∀ b y c o, (place b y c o).geom = b.geom ∧ (place b y c o).docBg = b.docBg ∧
       (place b y c o).pages = b.pages)
     (hs : ∀ b y d, (settle b y d).geom = b.geom ∧ (settle b y d).docBg = b.docBg ∧
       (settle b y d).pages = b.pages) :
-    BgStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
+    BgStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank allow) := by
   simp only [Spacing.Page.fitWith]
   repeat' split
   all_goals first
@@ -17993,7 +18008,7 @@ private theorem bgStep_fitCommit (b : B) (mk : Length → LineOut)
     (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
     (inkBelow bottom : Length) (ns : Array NoteBlock) :
     BgStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => ⟨rfl, rfl, rfl⟩)
+  bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true _ (fun _ _ _ _ => ⟨rfl, rfl, rfl⟩)
     fun _ _ _ => ⟨rfl, rfl, rfl⟩
 
 private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
@@ -18020,7 +18035,7 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     BgStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
-  exact bgStep_fitWith b _ _ _ _ _ _ _ _
+  exact bgStep_fitWith b _ _ _ _ _ _ _ _ _
     (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling])
     fun _ _ _ => ⟨rfl, rfl, rfl⟩
 
@@ -18703,9 +18718,9 @@ private theorem frameStep_warnOverrun (b : B) (y depth : Length) :
 
 private theorem frameStep_fitWith (b : B) (place : B → Length → Bool → Length → B)
     (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
-    (holdsBlank : Bool) (hp : ∀ b y c o, FrameStep b (place b y c o))
+    (holdsBlank : Bool) (allow : Length) (hp : ∀ b y c o, FrameStep b (place b y c o))
     (hs : ∀ b y d, FrameStep b (settle b y d)) :
-    FrameStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
+    FrameStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank allow) := by
   simp only [Spacing.Page.fitWith]
   split
   · exact (hp ..).trans (hs ..)
@@ -18722,7 +18737,7 @@ private theorem frameStep_fitCommit (b : B) (mk : Length → LineOut)
     (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
     (inkBelow bottom : Length) (ns : Array NoteBlock) :
     FrameStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  frameStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true
+  frameStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true _
     (fun _ _ _ _ => (frameStep_commit ..).trans (frameStep_attachNotes ..))
     fun _ _ _ => frameStep_warnOverrun ..
 
@@ -18792,7 +18807,7 @@ private theorem frameStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     FrameStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
-  exact frameStep_fitWith b _ _ _ _ _ _ _ _
+  exact frameStep_fitWith b _ _ _ _ _ _ _ _ _
     (fun _ _ _ _ => FrameStep.of_eq
       (by simp [Spacing.Page.frameStamp, Spacing.Page.pushLabels, Spacing.Page.pushSibling])
       (by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling]))
@@ -19152,9 +19167,9 @@ private theorem reflowStep_warnOverrun (b : B) (y depth : Length) :
 
 private theorem reflowStep_fitWith (b : B) (place : B → Length → Bool → Length → B)
     (settle : B → Length → Length → B) (firstY stepY retryY : B → Length) (inkBelow bottom : Length)
-    (holdsBlank : Bool) (hp : ∀ b y c o, ReflowStep b (place b y c o))
+    (holdsBlank : Bool) (allow : Length) (hp : ∀ b y c o, ReflowStep b (place b y c o))
     (hs : ∀ b y d, ReflowStep b (settle b y d)) :
-    ReflowStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank) := by
+    ReflowStep b (b.fitWith place settle firstY stepY retryY inkBelow bottom holdsBlank allow) := by
   simp only [Spacing.Page.fitWith]
   split
   · exact (hp ..).trans (hs ..)
@@ -19171,7 +19186,7 @@ private theorem reflowStep_fitCommit (b : B) (mk : Length → LineOut)
     (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
     (inkBelow bottom : Length) (ns : Array NoteBlock) :
     ReflowStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  reflowStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true
+  reflowStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true _
     (fun _ _ _ _ => (reflowStep_commit ..).trans (reflowStep_attachNotes ..))
     fun _ _ _ => reflowStep_warnOverrun ..
 
@@ -19291,7 +19306,7 @@ private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     ReflowStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
-  exact reflowStep_fitWith b _ _ _ _ _ _ _ _
+  exact reflowStep_fitWith b _ _ _ _ _ _ _ _ _
     (fun _ _ _ _ => ⟨rfl, fun _ hd => Array.mem_append_left _ hd⟩)
     fun _ _ _ => ReflowStep.refl _
 
@@ -21228,8 +21243,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let xHeight := xHeightOf fs geom.fontSize
   let tokenLen (n : String) : Option Length :=
     (doc.tokens.find? n).map fun g => (g.resolve geom.fontSize xHeight).width
-  let headsep := doc.page.headsep <|> tokenLen "headsep"
-  let footskip := doc.page.footskip <|> tokenLen "footskip"
+  let headsep := doc.page.headsep <|> tokenLen "headsep" <|> doc.page.classSeps.map (·.1)
+  let footskip := doc.page.footskip <|> tokenLen "footskip" <|> doc.page.classSeps.map (·.2)
   let gapTop := doc.page.furnitureGap <|> headsep.map (furnGapOfSep · corr)
   let gapBot := doc.page.furnitureGap <|> footskip.map (furnGapOfSep · corr)
   let latexFoot := if doc.page.furnitureGap.isSome then none else footskip
@@ -21298,9 +21313,11 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let accF := if acc.owed.any (·.fil) then
       { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
     else acc
-  -- A declared furniture-gap asymmetry that survives the reading is named.
+  -- A declared furniture-gap asymmetry that survives the reading is named, where a class's own
+  -- size file does not set the two apart.
   let preDiags := if let (some gt, some gb) := (gapTop, gapBot) then
-      if gt != gb then
+      -- premise: classAreaChecks — a class with a text area sets its head and foot apart unnamed
+      if gt != gb && (doc.docClass.record.area == .engine || doc.surface != .tex) then
         acc.diags.push (Diag.of .N0021
           (s!"header and footer gaps differ by " ++
             s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
@@ -22706,6 +22723,7 @@ public theorem flush_emits_exact (a : Pending) (r : Context) (h : Ordinary a) :
 /-- The measurements `placeLine` reads for one ordinary text line. -/
 public structure LineInput where
   origin : Length
+  /-- The depth the fit counts: the line's and its regions' past `\maxdepth`. -/
   inkBelow : Length
   floor : Length
   skip : Glue
@@ -22714,8 +22732,9 @@ public structure LineInput where
 public def input (r : Context) (b : Page) (size : Length) (segs : Array Seg) : LineInput :=
   let box := lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
-  ⟨b.y + b.textGap box (segs.any Seg.isMath) (segsInk r.fs segs).1 + b.surfaceTop, box.inkBelow,
-    Spacing.Page.bottom b - b.surfaceBottom, b.skip, b.pageShrink⟩
+  ⟨b.y + b.textGap box (segs.any Seg.isMath) (segsInk r.fs segs).1 + b.surfaceTop,
+    b.depthPast box.inkBelow b.geom.maxDepth, Spacing.Page.bottom b, b.skip,
+    b.pageShrink⟩
 
 /-- Fixed prior layout: an existing non-rule line on the page,
 with nothing pending that changes the next text line's spacing. -/
@@ -22756,12 +22775,12 @@ private theorem skip_steps (r : Context) (b : B) (gs : Array Glue)
 
 private theorem line_placement (r : Context) (b : Page) (x size : Length)
     (segs : Array Seg) (width : Length) (h : Ready b segs)
-    (hfit : b.y + b.skip.width +
+    (hfit : b.overflowPast (b.y + b.skip.width +
       (b.textGap (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-        b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop +
+        b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop)
       (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-        b.geom.leading size segs).inkBelow + b.surfaceBottom -
-      Spacing.Page.bottom b ≤ b.pageShrink + b.skip.shrink) :
+        b.geom.leading size segs).inkBelow (Spacing.Page.bottom b) b.geom.maxDepth ≤
+        b.pageShrink + b.skip.shrink) :
     shipped (Spacing.Page.placeLine r.fs b x size segs width) = shipped b ∧
     baselines (Spacing.Page.placeLine r.fs b x size segs width) =
       (baselines b).push (b.y + b.skip.width +
@@ -22797,15 +22816,15 @@ public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Leng
   let g := (flushed a r).foldl Glue.add b.skip
   have hr : Ready { b with skip := g } segs := h
   have hp := line_placement r { b with skip := g } x size segs width hr (by
-    change b.y + g.width +
+    change b.overflowPast (b.y + g.width +
       (b.textGap (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-        b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop +
+        b.geom.leading size segs) (segs.any Seg.isMath) (segsInk r.fs segs).1) + b.surfaceTop)
       (lineExtent r.fs b.geom.fontSize b.ascent b.capHeight b.descent
-        b.geom.leading size segs).inkBelow + b.surfaceBottom -
-      Spacing.Page.bottom b ≤ b.pageShrink + g.shrink
+        b.geom.leading size segs).inkBelow (Spacing.Page.bottom b) b.geom.maxDepth ≤
+        b.pageShrink + g.shrink
     unfold input at hfit
     dsimp only at hfit
-    simpa only [g, Length.sub_eq_add_neg, Length.neg_add, Length.neg_neg,
+    simpa only [g, Spacing.Page.overflowPast, Length.sub_eq_add_neg, Length.neg_add, Length.neg_neg,
       Length.add_assoc, Length.add_comm, Length.add_left_comm] using hfit)
   dsimp only [place]
   rw [skip_steps r b _ hf]
@@ -22929,10 +22948,10 @@ private def nextBaseline (fs : FontSet) (b : B) (size : Length)
 /-- Numeric fit at the next call to the placer. -/
 private def LineFits (fs : FontSet) (b : B) (size : Length)
     (segs : Array Seg) (first : Option Length) (step : Option Length := none) : Prop :=
-  nextBaseline fs b size segs first step +
+  b.overflowPast (nextBaseline fs b size segs first step)
     (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-      b.geom.leading size segs step).inkBelow + b.surfaceBottom -
-    b.bottom ≤ b.pageShrink + b.skip.shrink
+      b.geom.leading size segs step).inkBelow b.bottom b.geom.maxDepth ≤
+      b.pageShrink + b.skip.shrink
 
 private theorem ordinary_line (fs : FontSet) (b : B) (x size : Length)
     (segs : Array Seg) (w hang : Length) (expand : Int) (counted : Bool)
@@ -22953,9 +22972,9 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Length)
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
           b.geom.leading size segs step).below
         false true
-        (min (nextBaseline fs b size segs first step +
+        (min (b.overflowPast (nextBaseline fs b size segs first step)
           (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
-            b.geom.leading size segs step).inkBelow + b.surfaceBottom - b.bottom)
+            b.geom.leading size segs step).inkBelow b.bottom b.geom.maxDepth)
           (b.pageShrink + b.skip.shrink))).keepInk (lineStrutInk strut (segsInk fs segs)).2).displayState
         false (some (x + w - b.geom.hmargin)) := by
   rcases h with ⟨hc, hs, hp, hr, hn, hi, ht⟩

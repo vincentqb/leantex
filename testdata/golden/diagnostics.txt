@@ -214,6 +214,9 @@ info: '\IfPackageLoadedF': no package 'wideframe' is loaded here, so its branch 
 ── N0200 (info) page set short: its skips gave their shrink
 info: a page set short of its height: its skips gave part of their shrink [N0200]
   note: page 1: 6pt short, its skips gave 40% of their 16pt of shrink
+ℹ [N0200]
+  a page set short of its height: its skips gave part of their shrink
+  page 1: 3pt short, its skips gave 22% of their 16pt of shrink
 ── N0359 (info) a \note nested inside another note's frame is dropped, as beamer drops it
 info: a '\note' inside this note's frame is dropped: one note carries no other, as in beamer [N0359]
   note: move the inner '\note' out of the enclosing '\note', beside its frame
@@ -426,6 +429,10 @@ warning: '\draw' continues with 'parabola', outside the rendered picture subset;
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 warning: the picture is larger than the text area; it may overrun the page [W0335]
   note: 1138.11pt × 28.453pt against 312pt × 650.97pt
+⚠ [W0335]
+  the picture is larger than the text area; it may overrun the page
+  1138.11pt × 28.453pt against 345pt × 550pt
+  suggestion: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
 warning: node labels overlap: a relative placement parts node centres, not the text they set [W0336]
   note: 1 pair of labels
@@ -439,6 +446,10 @@ warning: '\multicolumn' opens no tabular cell here: its text stays in place, wit
 ── W0338 (degraded) table is wider than the measure
 warning: the table is wider than the measure [W0338]
   note: 211.2pt wider
+⚠ [W0338]
+  the table is wider than the measure
+  231pt wider
+  suggestion: narrow the p{...} column widths, or widen the text block
 ── W0340 (config) a declaration in the document body is ignored
 warning: '\page' is a declaration; in the body it is ignored [W0340]
   note: declare it in the preamble, before '\begin{document}'
@@ -495,6 +506,10 @@ warning: '\def' with a delimited parameter text is a TeX scanning program; the d
 ── W0358 (degraded) a float or box taller than the text block overruns its page
 warning: a figure or table is taller than the text block; it overruns its page [W0358]
   note: 287.178pt taller
+⚠ [W0358]
+  a figure or table is taller than the text block; it overruns its page
+  286.901pt taller
+  suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 warning: the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands [W0361]
   note: '\venuetitlebox' at t:2

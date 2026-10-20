@@ -1,5 +1,5 @@
 class article
-page 420x298.879 vmargin 71.731 hmargin 72
+page 419.528x298.879 vmargin 71.731 hmargin 72
 section 1 number "1"
   text "Numbered galley"
 para

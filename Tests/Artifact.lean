@@ -531,12 +531,13 @@ def ArtRect.overlaps (a b : ArtRect) : Bool :=
 def ArtPage.box (p : ArtPage) : ArtRect :=
   { x0 := p.media.1, y0 := p.media.2.1, x1 := p.media.2.2.1, y1 := p.media.2.2.2 }
 
-/-- The body area a geometry declares, in PDF user space; under a drawn chrome footer, beamer's
-frame from the paper's top to 4 pt above the footline's ink. -/
+/-- The body area a geometry declares, in PDF user space, its last line's depth reaching `\maxdepth`
+below it; under a drawn chrome footer, beamer's frame from the paper's top to 4 pt above the
+footline's ink. -/
 def artBodyArea (geom : Layout.Geom) (footline : Bool := false) : ArtRect :=
   { x0 := geom.bleed + geom.hmargin
     y0 := geom.bleed + (if footline then Ir.footline.raise + Ir.footline.sep
-      else geom.pageH - geom.bodyBottom)
+      else geom.pageH - geom.bodyBottom - geom.maxDepth)
     x1 := geom.bleed + geom.pageW - geom.hmargin
     y1 := geom.bleed + geom.pageH - (if footline then 0 else geom.bodyTop) }
 

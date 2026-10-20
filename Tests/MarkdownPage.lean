@@ -31,7 +31,7 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let texDoc := (elabStr (dvDoc "" prose)).1
   let width (d : Ir.Doc) : Dim.Length := d.page.width - 2 * d.page.hmargin
   t "markdown takes the markdown text block, an article its own"
-    (width mdDoc == Ir.markdownTextBlock && width texDoc == Ir.articleTextBlock)
+    (width mdDoc == Ir.markdownTextBlock && width texDoc == Dim.pt 345)
   t "a declared page geometry still keeps every value it names"
     (width (elabStr (dvDoc "\\page{ hmargin = 100pt }\n" prose)).1 == Dim.bp 612 - 2 * Dim.pt 100)
   let measureOf (d : Ir.Doc) : String :=
@@ -40,7 +40,7 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .style rules => some rules
       | _ => none)
   t "the markdown page's HTML measure is its web layout's, the tex page's its text block, in rem"
-    (hasStr (measureOf mdDoc) "--measure: calc(60ch + 7.25rem);" && hasStr (measureOf texDoc) "--measure: 31.2rem;")
+    (hasStr (measureOf mdDoc) "--measure: calc(60ch + 7.25rem);" && hasStr (measureOf texDoc) "--measure: 34.5rem;")
   let mut faces := 0
   for file in ["OpenSans-Regular.ttf", "FiraSans-Regular.otf", "SourceSerifPro-Regular.otf"] do
     let some font ← loadTestFont file | t s!"markdown page: {file} loads" false; continue
@@ -49,7 +49,7 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
     let mdOut := layoutOf fonts mdDoc
     let texOut := layoutOf fonts texDoc
     let mdLines := fullLineChars mdOut Ir.markdownTextBlock
-    let texLines := fullLineChars texOut Ir.articleTextBlock
+    let texLines := fullLineChars texOut (Dim.pt 345)
     t s!"markdown page in {font.family}: full lines set to the markdown measure ({mdLines.size})"
       (mdLines.size ≥ 8
         -- protrusion hangs a boundary glyph's edge past the measure, no more

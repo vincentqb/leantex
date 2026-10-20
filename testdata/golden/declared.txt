@@ -1,5 +1,5 @@
 class article
-page 420x595 vmargin 54 hmargin 43.2
+page 419.528x595.276 vmargin 54 hmargin 43.2
 meta title "A Declared Document"
 meta author "A. Nonymous"
 meta subject "Testing declarations"

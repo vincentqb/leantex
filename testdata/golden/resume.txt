@@ -1,5 +1,5 @@
 class resume [paper=a4, fontsize=11pt]
-page 595x842 vmargin 51.024 hmargin 62.362 fontsize 10.959 parskip 0
+page 595.276x841.89 vmargin 51.024 hmargin 62.362 fontsize 10.959 parskip 0
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
