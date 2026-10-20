@@ -11479,14 +11479,15 @@ public theorem vphantom_absorbed (fs : FontSet) (size : Length) (segs : Array Se
   unfold labelVExtent
   rw [Array.foldl_push, labelVStep_glyph_id, Array.foldl_push, labelVStep_idem]
 
-/-- The math axis's height above the baseline of text at `size`, the math face's; zero without one. -/
+/-- The math axis's height above the baseline of text at `size`, the math face's where one stands. -/
 public def textAxis (fs : FontSet) (size : Length) : Length :=
   match fs.mathFont? with
   | some (_, f, c) =>
     let base : Length := mathLen (Math.mathSize size.units.toNat fs.body.xHeightOptical
       fs.body.unitsPerEm f.xHeightOptical f.unitsPerEm : Nat)
     c.axisHeight * base / (f.unitsPerEm : Int)
-  | none => 0
+  -- cmsy10's axis_height, a quarter of the size.
+  | none => size / 4
 
 /-- Resolve a set label line once: the font band places its
 baseline and the measured glyph extent reserves its ink. -/
@@ -17115,7 +17116,7 @@ private def Spacing.Page.alignRow (b : B) (fs : FontSet) (save : ColSave) : B :=
     let mut d : Length := 0
     for k in [0:save.marks.size] do
       if let some m := save.marks[k]? then
-        if m.contributes && start m ≤ i then d := target - refs[k]! + (base - target)
+        if m.contributes && start m ≤ i then d := target - (refs[k]?.getD target) + (base - target)
     return d
   let lines := b.cur.lines.mapIdx fun i l => { l with y := l.y + dyAt (·.lines) i }
   let fills := b.cur.fills.mapIdx fun i f => { f with y := f.y + dyAt (·.fills) i }
@@ -18265,6 +18266,16 @@ private theorem matchingClose_ge (staged : Array Op) (j depth : Nat) :
     try split
     all_goals omega
 
+/-- The index of the `colClose` closing the row open at `depth`, else the end. -/
+private def matchingColClose (staged : Array Op) (j : Nat) (depth : Nat) : Nat :=
+  if h : j < staged.size then
+    match staged[j] with
+    | .colOpen _ _ => matchingColClose staged (j + 1) (depth + 1)
+    | .colClose => if depth == 1 then j else matchingColClose staged (j + 1) (depth - 1)
+    | _ => matchingColClose staged (j + 1) depth
+  else j
+termination_by staged.size - j
+
 /-- What a heading keeps of the paragraph after it: its first two
 lines as placement sets them (latex.ltx `\@afterheading`). -/
 private def keptHead (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Length :=
@@ -18293,6 +18304,12 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
     | .picture _ pic _ _ =>
       let ((_, py0), (_, py1)) := pictureBox b.geom fs imgs b.xHeight pic
       glue + inkClearance + (py1 - py0)
+    -- A row of boxes is one line, kept whole as an unbreakable box is: a trial placement's height.
+    | .colOpen _ _ =>
+      let group := staged.extract k (matchingColClose staged (k + 1) 1 + 1)
+      let trial := (group.foldl (stepStaged fs imgs) { b := { b with noBreak := true, skip := {} } }).b
+      let height := max 0 (trial.y + trial.prevDepth - b.y)
+      if b.bottom - b.geom.bodyTop < height then 0 else glue + height
     -- An unbreakable box is kept whole: its height as a trial placement below the band sets it.
     | .floatOpen =>
       let group := staged.extract (k + 1) (matchingClose staged (k + 1) 1)

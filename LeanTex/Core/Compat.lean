@@ -12730,27 +12730,6 @@ private def boxAt (rs : Array Raw) (i : Nat) :
 elaboration resolves the link names. -/
 public def linkedBoxRowMark : String := " linked box row"
 
-/-- A box's width as a share of the text width, in thousandths, where it is written as one. -/
-private def widthShare? (w : Raw) : Option Nat :=
-  match w with
-  | .group g _ =>
-    let src := (rawSrc g).trimAscii.toString
-    ["\\textwidth", "\\linewidth", "\\columnwidth"].findSome? fun unit =>
-      if src.endsWith unit then
-        let factor := (src.dropEnd unit.length).toString.trimAscii.toString
-        if factor.isEmpty then some 1000 else
-        (Decl.parseDecimal factor).map fun (m, sc) => (m * 1000 / ((max 1 sc : Nat) : Int)).toNat
-      else none
-  | _ => none
-
-/-- Whether boxes spaces part fit the line beside one another, as TeX sets them only where they
-do: each a share of the text width, together under a whole less about a space's hundredth for
-each space; a box of another width breaks the line. -/
-private def rowFits (widths : Array Raw) (spaces : Nat) : Bool :=
-  match widths.mapM widthShare? with
-  | some shares => shares.foldl (· + ·) 0 + 11 * spaces ≤ 1000
-  | none => false
-
 /-- The interword space between two boxes a space parts, cmr10's `\fontdimen2`: a third of the
 class size. -/
 private def rowSpace (classPt : Option Nat) (p : Pos) : Raw :=
@@ -12811,13 +12790,11 @@ private def boxRows (rs : Array Raw) (classPt : Option Nat := none) :
             | none => break
           match boxAt rs k with
           | some (w, c, ps, o, cp, nextk) =>
-            if fill || !space ||
-                rowFits ((cols.map (·.1)).push w) ((gaps.filter (· == 1)).size + 1) then
-              cols := cols.push (w, c, ps, cp)
-              gaps := gaps.push (if fill then 2 else if space then 1 else 0)
-              opts := opts || o
-              j := nextk
-            else break
+            -- A justified line has no stretch between rigid boxes, so TeX breaks no space there.
+            cols := cols.push (w, c, ps, cp)
+            gaps := gaps.push (if fill then 2 else if space then 1 else 0)
+            opts := opts || o
+            j := nextk
           | none => break
         if cols.size ≥ 2 then
           -- Fills alone spend the slack between every two boxes; else each gap stands as written.

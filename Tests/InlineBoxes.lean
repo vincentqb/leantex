@@ -525,7 +525,13 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let wide := layout (doc ""
     ("\\noindent\\begin{minipage}[t]{0.6\\textwidth}Bravo\\end{minipage}\n" ++
       "\\begin{minipage}[t]{0.6\\textwidth}Golf\\end{minipage}"))
-  t "box blocks: minipages a space apart that the line cannot hold stand on lines of their own"
-    (yOf wide "Bravo" < yOf wide "Golf")
+  t "box blocks: minipages a space apart stand on one line even past the measure, as TeX's rigid line"
+    (yOf wide "Bravo" == yOf wide "Golf")
+  let kept (body : String) := layout (doc ""
+    ("\\noindent Alpha\\vspace{520pt}\n\n\\section{Kqzv}\n" ++ body))
+  let mini := "\\noindent\\begin{minipage}[t]{100pt}" ++
+    String.intercalate "\\\\ " ((List.range 12).map fun k => s!"Line {k}") ++ "\\end{minipage}"
+  t s!"box blocks: a heading before a minipage the page cannot hold moves with it ({pagesWith (kept mini) "Kqzv"})"
+    (pagesWith (kept mini) "Kqzv" == pagesWith (kept mini) "Line 0")
 
 end Tests.InlineBoxes
