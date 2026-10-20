@@ -10047,9 +10047,46 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
       return some (#[], start)
     return none
 
+/-- The groups a LaTeX box command reads, its last one the content it sets in LR mode. -/
+private def lrBoxGroups? : String → Option Nat
+  | "mbox" | "fbox" | "makebox" | "framebox" => some 1
+  | "raisebox" | "colorbox" | "sbox" | "savebox" => some 2
+  | "fcolorbox" => some 3
+  | _ => none
+
+/-- The first `n` groups a control word reads from `start`, past spaces and bracketed options. -/
+private def argGroups (raws : Array Raw) (start n : Nat) : Array (Array Raw) := Id.run do
+  let mut out : Array (Array Raw) := #[]
+  let mut k := start
+  for _ in [0:raws.size] do
+    if out.size == n then break
+    k := skipSpaces raws k
+    match raws[k]? with
+    | some (.sym '[' _) =>
+      match (List.range (raws.size - k)).find? fun d => raws[k + d]? matches some (.sym ']' _) with
+      | some d => k := k + d + 1
+      | none => break
+    | some (.group g _) => out := out.push g; k := k + 1
+    | _ => break
+  return out
+
+/-- Names a list-based environment in a box command's content, which LaTeX's LR mode refuses. -/
+private def lrBoxList (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) : M Unit := do
+  let some n := lrBoxGroups? name | return
+  let env? := (argGroups raws start n).back?.bind fun g => g.findSome? fun r => match r with
+    | .env e _ _ => if blockOnlyEnvs.contains e then some e else none
+    | _ => none
+  if let some env := env? then
+    -- premise: boxBlockChecks — LaTeX stops at a list in a box's line
+    sayOnce ("lrbox:" ++ name ++ ":" ++ env) .W0455
+      s!"LaTeX refuses '\\begin\{{env}}' inside '\\{name}' as not allowed in LR mode; here the box \
+holds it as a block" pos
+      (help := s!"set it in a minipage inside the box: \\{name}\{\\begin\{minipage}\{...}...\\end\{minipage}}")
+
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if let some result ← styOptionsRequest name pos raws start then return some result
+  lrBoxList name pos raws start
   -- A style command over block content is its declaration over a group (latex.ltx `\textbf`).
   if let some decl := textStyleDecl? name then
     if (nextArgGroup raws start).any (holdsBlockEnv · blockOnlyEnvs) &&
@@ -11660,6 +11697,7 @@ native equivalent were dropped: {dropped}" c.pos
   -- hyperref's `\texorpdfstring`: the page sets its TeX string.
   | .texOrPdf => return #[.group (c.arg 0) c.pos]
   | .box => do
+    lrBoxList c.name c.pos c.raws c.stop
     -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
     if c.args.any (·.isSome) then
       sayOnce ("ctrl:" ++ c.name) .W0104

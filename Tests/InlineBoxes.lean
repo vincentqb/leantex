@@ -434,6 +434,16 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let beside := doc "" "Alpha \\fbox{\\begin{minipage}{100pt}Bravo\\end{minipage}} Charlie."
   t s!"box blocks: text beside a box holding a minipage is set apart, named once ({said beside})"
     (said beside == ["W0452"])
+  let lrLists := ["\\noindent\\fbox{\\begin{itemize}\\item Kqzv\\end{itemize}}",
+    "\\noindent\\mbox{\\begin{center}Kqzv\\end{center}}",
+    "\\noindent\\raisebox{1pt}{\\begin{quote}Kqzv\\end{quote}}",
+    "\\noindent\\colorbox{yellow}{\\begin{enumerate}\\item Kqzv\\end{enumerate}}"]
+  t s!"box blocks: a list in a box's line, which LaTeX refuses, sets its words, named once ({lrLists.map fun b => said (doc "" b)})"
+    (lrLists.all fun body => (said (doc "" body)).count "W0455" == 1 &&
+      (bodyLines (layout (doc "" body))).any fun l => hasStr (lineText l) "Kqzv")
+  let inMinipage := doc "" "\\noindent\\fbox{\\begin{minipage}{100pt}\\begin{itemize}\\item Kqzv\\end{itemize}\\end{minipage}}"
+  t "box blocks: a list in a minipage inside a box is LaTeX's own, unnamed"
+    (!(said inMinipage).contains "W0455")
   let row := fillsOf (layout (doc ""
     ("\\noindent\\fbox{\\begin{minipage}{100pt}Alpha\\end{minipage}}\\hfill" ++
       "\\fbox{\\begin{minipage}{100pt}Bravo\\end{minipage}}")))

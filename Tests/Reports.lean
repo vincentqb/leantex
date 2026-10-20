@@ -2376,6 +2376,13 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: a 2cm rule, a 2cm image lowered by half its height and a frame lowered 1cm, each in a box declaring no height or depth, leave every line 11.96pt below the one before; this tree sets the same pitch, the ink overlapping the lines around it as lualatex's does",
       "main's binary at 1e648c76 on the same probes: the lines 58.57pt, 30.22pt and 38.42pt, and 41.92pt apart; the guard fails there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R268", date := "2026-10-20"
+    what := "a list or another list-based environment, a center, a quote or a verse among them, written in a box command's content, which LaTeX refuses in LR mode, was set as a block with nothing said, or with only the text beside the box named"
+    pins := [check% Tests.InlineBoxes.boxBlockChecks]
+    accept := ["lualatex 1.24 on invented probes: an itemize, an enumerate, a description, a trivlist, a center, a flushleft, a quote, a quotation and a verse in the content of fbox and of mbox each stop the run with LaTeX's not allowed in LR mode; this tree names each once (W0455) and sets it, a list in a minipage inside the box unnamed",
+      "main's binary at 1e648c76 on the same probes: W0452 for the framed box beside text and nothing for the list, nothing at all for mbox; the guard fails there",
+      "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact and diagnostic byte-identical"]
     state := .guarded "1e648c76" .before .author }
 ]
 

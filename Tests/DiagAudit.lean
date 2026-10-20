@@ -178,6 +178,7 @@ def registry : List AuditRow :=
    ⟨.W0450, .keep, .degraded, check% Tests.BibEdges.duplicateChecks⟩,
    ⟨.W0451, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
    ⟨.W0452, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
+   ⟨.W0455, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
    ⟨.W0453, .keep, .degraded, check% Tests.CodeDoc.docMarkupChecks⟩,
    ⟨.W0454, .keep, .degraded, check% Tests.CodeDoc.docMarkupChecks⟩,
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,

@@ -757,6 +757,14 @@ warning: a documentation comment holds a tag or command its reader does not read
 ── W0454 (degraded) a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
 warning: a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked [W0454]
   note: `Other`
+⚠ [W0454]
+  a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
+  `Other`
+  suggestion: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
+── W0455 (degraded) a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block
+⚠ [W0455] - \fbox
+  LaTeX refuses '\begin{itemize}' inside '\fbox' as not allowed in LR mode; here the box holds it as a block
+  suggestion: set it in a minipage inside the box: \fbox{\begin{minipage}{...}...\end{minipage}}
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography
