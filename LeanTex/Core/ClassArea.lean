@@ -19,6 +19,8 @@ public inductive AreaRule where
   | book
   /-- memoir's `mem1x.clo`. -/
   | memoir
+  /-- letter.cls: `size1x.clo`'s block under its own fixed top and furniture distances. -/
+  | letter
   /-- KOMA-Script's typearea. -/
   | typearea
   deriving Repr, BEq, DecidableEq, Inhabited
@@ -38,13 +40,15 @@ public structure TextArea where
   maxDepth : Length
   deriving Repr, BEq, Inhabited
 
-/-- What a class's area reads: the paper, the size option (10, 11 or 12), the body's
-`\baselineskip`, the sides, and typearea's `DIV` (0 its default, 1 and 2 `calc`, 3
-`classic`), `BCOR`, and whether the head and the foot count in the text area. -/
+/-- What a class's area reads: the paper, the size option (10, 11 or 12), the body's whole points
+and `\normalsize`, its `\baselineskip`, the sides, and typearea's `DIV` (0 its default, 1 and 2
+`calc`, 3 `classic`), `BCOR`, and whether the head and the foot count in the text area. -/
 public structure AreaInput where
   paperW : Length
   paperH : Length
   option : Nat
+  points : Nat
+  size : Length
   baselineskip : Length
   twoside : Bool
   div : Nat
@@ -61,31 +65,39 @@ public def sizeOptionOf (size : Length) : Nat :=
 public def toPoint (x : Length) : Length :=
   ⟨x.units.tdiv (Dim.pt 1).units * (Dim.pt 1).units⟩
 
-/-- A size file's widest text, head height, head separation and foot skip. -/
+/-- A size file's widest text, head height, head separation and foot skip, and a class's fixed
+`\topmargin` where it sets one and whether it centres every page's block, as letter.cls does. -/
 private structure SizeFile where
   width : Length
   headheight : Length
   headsep : Length
   footskip : Length
+  topmargin : Option Length
+  centred : Bool
 
-/-- size1x.clo's, bk1x.clo's and mem1x.clo's values; memoir's width is `1.14\lxvchars` truncated
-as TeX's arithmetic leaves it. -/
+/-- size1x.clo's, bk1x.clo's and mem1x.clo's values, and letter.cls's; memoir's width is
+`1.14\lxvchars` truncated as TeX's arithmetic leaves it. -/
 private def sizeFileOf (rule : AreaRule) (option : Nat) : SizeFile :=
   let n := if option ≤ 10 then 0 else if option == 11 then 1 else 2
   let pick {α : Type} (a b c : α) : α := if n == 0 then a else if n == 1 then b else c
-  let bookSep := pick (Dim.inch 1 / 4) (Dim.inch 11 / 40) (Dim.inch 11 / 40)
-  let bookFoot := pick (Dim.inch 35 / 100) (Dim.inch 38 / 100) (Dim.pt 30)
+  -- A fraction of an inch rounded as TeX's reader rounds its decimal spelling.
+  let inches (n : Int) (d : Nat) : Length := (Dim.inch 1).ofRatioRound n d
+  let bookSep := pick (inches 25 100) (inches 275 1000) (inches 275 1000)
+  let bookFoot := pick (inches 35 100) (inches 38 100) (Dim.pt 30)
   match rule with
   | .book =>
     { width := pick (Dim.pt 345) (Dim.pt 360) (Dim.pt 390), headheight := Dim.pt 12,
-      headsep := bookSep, footskip := bookFoot }
+      headsep := bookSep, footskip := bookFoot, topmargin := none, centred := false }
   | .memoir =>
     { width := pick (Dim.pt 341) (Dim.pt 369) (Dim.pt 383),
       headheight := pick (Dim.pt 12) (Dim.pt 136 / 10) (Dim.pt 145 / 10),
-      headsep := bookSep, footskip := bookFoot }
+      headsep := bookSep, footskip := bookFoot, topmargin := none, centred := false }
+  | .letter =>
+    { width := pick (Dim.pt 345) (Dim.pt 360) (Dim.pt 390), headheight := Dim.pt 12,
+      headsep := Dim.pt 45, footskip := Dim.pt 25, topmargin := some (Dim.pt 27), centred := true }
   | _ =>
     { width := pick (Dim.pt 345) (Dim.pt 360) (Dim.pt 390), headheight := Dim.pt 12,
-      headsep := Dim.pt 25, footskip := Dim.pt 30 }
+      headsep := Dim.pt 25, footskip := Dim.pt 30, topmargin := none, centred := false }
 
 /-- The least `topskip` plus whole baselines reaching `target`, as typearea's loop sets
 `\textheight`. -/
@@ -103,38 +115,45 @@ private def sizeFileArea (f : SizeFile) (i : AreaInput) : TextArea :=
   let topskip := Dim.pt (max 10 (min 12 i.option))
   let lines := (i.paperH - Dim.inch 2 - Dim.inch 3 / 2) / i.baselineskip
   let height := i.baselineskip * lines + topskip
-  let top := toPoint ((i.paperH - Dim.inch 2 - f.headheight - f.headsep - height - f.footskip) / 2)
-  { width, height, top := Dim.inch 1 + top + f.headheight + f.headsep, sides := none,
+  let top := f.topmargin.getD
+    (toPoint ((i.paperH - Dim.inch 2 - f.headheight - f.headsep - height - f.footskip) / 2))
+  { width, height, top := Dim.inch 1 + top + f.headheight + f.headsep
+    sides := if f.centred then some (Dim.pt 1, Dim.pt 1) else none
     headsep := f.headsep, footskip := f.footskip, maxDepth := topskip / 2 }
 
-/-- Latin Modern Roman's lowercase and uppercase alphabets at a class's `\normalsize`, which
-typearea's `DIV=calc` measures (lualatex 1.24: 127.62 and 186.2pt at 10pt, 139.744 and 203.889pt at
-10.95pt, 149.892 and 218.688pt at 12pt). -/
-private def alphabets (option : Nat) : Length × Length :=
-  if option ≤ 10 then (Dim.pt 127620 / 1000, Dim.pt 186200 / 1000)
-  else if option == 11 then (Dim.pt 139744 / 1000, Dim.pt 203889 / 1000)
-  else (Dim.pt 149892 / 1000, Dim.pt 218688 / 1000)
+/-- Latin Modern Roman's alphabets at a `\normalsize`, which typearea's `DIV=calc` measures, their
+design size's scaled (lualatex 1.24: lmroman9 118.008 and 172.188pt, lmroman10 127.62 and 186.2pt,
+lmroman12 149.892 and 218.688pt). -/
+private def alphabets (size : Length) : Length × Length :=
+  let (design, lower, upper) : Length × Length × Length :=
+    if size < Dim.pt 10 then (Dim.pt 9, Dim.pt 118008 / 1000, Dim.pt 172188 / 1000)
+    else if size < Dim.pt 12 then (Dim.pt 10, Dim.pt 127620 / 1000, Dim.pt 186200 / 1000)
+    else (Dim.pt 12, Dim.pt 149892 / 1000, Dim.pt 218688 / 1000)
+  let milli (x : Length) : Int := (x * (1000 : Int)) / Dim.pt 1
+  let num : Int := milli size
+  let den : Int := milli design
+  (lower * num / den, upper * num / den)
 
 /-- typearea's `\ta@modiv`: the stripes `x` holds of `y`, at least four. -/
 private def stripes (x y : Length) : Nat :=
   if y ≤ 0 then 4 else max 4 (x / y).toNat
 
 /-- The stripes typearea's `DIV` names on a paper, its head's height and separation and its foot
-skip given: A4's table at 10, 11 and 12pt, else the good line width of `calc`, or `classic`'s from
-the paper's proportion. -/
+skip given: A4's table at 10, 11 and 12pt, else the good line width of `calc` at the body's size, or
+`classic`'s from the paper's proportion. -/
 private def divOf (i : AreaInput) (hh hs fs : Length) : Nat :=
   let hs := if i.headinclude then 0 else hh + hs
   let fs := if i.footinclude then 0 else fs
   let a4 := Dim.mm 207 ≤ i.paperW && i.paperW ≤ Dim.mm 213 && Dim.mm 294 ≤ i.paperH &&
     i.paperH ≤ Dim.mm 300
   let div := if i.div != 0 then i.div
-    else if a4 && i.option == 10 then 8 else if a4 && i.option == 11 then 10
-    else if a4 && i.option == 12 then 12 else 2
+    else if a4 && i.points == 10 then 8 else if a4 && i.points == 11 then 10
+    else if a4 && i.points == 12 then 12 else 2
   let div := if div != 3 then div
     else if i.paperW - i.bcor + hs + fs > i.paperH then 1
     else stripes i.paperH ((i.paperH - i.paperW + i.bcor) / 3)
   if div ≥ 4 then div else
-    let (lower, upper) := alphabets i.option
+    let (lower, upper) := alphabets i.size
     let good := if lower > Dim.pt 200 then lower * 253846 / 100000 + upper * 11538 / 100000
       else (lower * 66 + upper * 3) / 26
     let hblk := i.paperW - good
@@ -144,25 +163,56 @@ private def divOf (i : AreaInput) (hh hs fs : Length) : Nat :=
       stripes i.paperH ((Dim.mm 15 + hs + fs) / 3)
     else d
 
+/-- typearea's head height, head separation and foot skip: 1.25, 1.5 and 3.5 baselines. -/
+private def komaFurniture (baselineskip : Length) : Length × Length × Length :=
+  (baselineskip * 5 / 4, baselineskip * 3 / 2, baselineskip * 7 / 2)
+
 /-- typearea's area: `DIV` stripes of the paper less the binding correction, three of them the side
 margins, the top one stripe down and the height the least whole baselines the rest leaves, less an
 included head or foot. -/
 private def typeareaOf (i : AreaInput) : TextArea :=
-  let hh := i.baselineskip * 5 / 4
-  let hs := i.baselineskip * 3 / 2
-  let fs := i.baselineskip * 7 / 2
+  let (hh, hs, fs) := komaFurniture i.baselineskip
   let div := divOf i hh hs fs
   let hblk := (i.paperW - i.bcor) / (div : Int)
   let vblk := i.paperH / (div : Int)
   let head := if i.headinclude then hh + hs else 0
   let foot := if i.footinclude then fs else 0
   { width := i.paperW - i.bcor - 3 * hblk
-    height := linesReaching (i.paperH - 3 * vblk - head - foot) (Dim.pt (max 10 (min 12 i.option)))
-      i.baselineskip
+    height := linesReaching (i.paperH - 3 * vblk - head - foot) (Dim.pt i.points) i.baselineskip
     top := vblk + head
     sides := if i.twoside then some (hblk + i.bcor, 2 * hblk)
       else if i.bcor != 0 then some (hblk * 3 / 2 + i.bcor, hblk * 3 / 2) else none
-    headsep := hs, footskip := fs, maxDepth := Dim.pt (max 10 (min 12 i.option)) / 2 }
+    headsep := hs, footskip := fs, maxDepth := Dim.pt i.points / 2 }
+
+/-- The rule a LaTeX class's name selects. -/
+public def AreaRule.ofClass (cls : String) : AreaRule :=
+  if cls == "article" || cls == "report" then .sizeFile
+  else if cls == "book" then .book else if cls == "memoir" then .memoir
+  else if cls == "letter" then .letter else if cls.startsWith "scr" then .typearea else .engine
+
+/-- The rule the native article's `layout` option names, a class the compatibility layer lowers
+onto it. -/
+public def AreaRule.ofLayout? (v : String) : Option AreaRule :=
+  match v with
+  | "book" => some .book
+  | "memoir" => some .memoir
+  | "letter" => some .letter
+  | _ => none
+
+/-- The option a class's processing leaves in force among those given: the last written where it
+reads them in the document's order, as KOMA-Script does, else the last in `declared`, the order a
+standard class declares them. -/
+public def lastProcessed (userOrder : Bool) (declared given : List String) : Option String :=
+  if userOrder then given.getLast? else (declared.filter given.contains).getLast? <|> given.getLast?
+
+/-- The head separation and foot skip a class's rule sets at a size option and `\baselineskip`,
+which a page geometry places keeps. -/
+public def AreaRule.seps? (rule : AreaRule) (option : Nat) (baselineskip : Length) :
+    Option (Length × Length) :=
+  match rule with
+  | .engine => none
+  | .typearea => let (_, hs, fs) := komaFurniture baselineskip; some (hs, fs)
+  | r => let f := sizeFileOf r option; some (f.headsep, f.footskip)
 
 /-- The area a class's rule sets; `none` where the engine's page stands. -/
 public def AreaRule.area? (rule : AreaRule) (i : AreaInput) : Option TextArea :=

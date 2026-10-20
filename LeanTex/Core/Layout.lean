@@ -9056,7 +9056,7 @@ private def Spacing.Page.fitWith (b : B) (place : B → Length → Bool → Leng
     (holdsBlank : Bool) (allow : Length) : B :=
   if b.fresh then
     settle (place b (firstY b + b.surfaceTop) false 0) (firstY b + b.surfaceTop)
-      (inkBelow + b.surfaceBottom)
+      (b.depthPast inkBelow allow)
   else
     let y := stepY b + b.surfaceTop
     let overflow := b.overflowPast y inkBelow bottom allow
@@ -9065,7 +9065,7 @@ private def Spacing.Page.fitWith (b : B) (place : B → Length → Bool → Leng
       place b y true (min overflow above)
     -- A page holding nothing but its chrome holds a band: a break would ship an empty page.
     else if holdsBlank && b.holdsNothing then
-      settle (place b y true above) y (inkBelow + b.surfaceBottom)
+      settle (place b y true above) y (b.depthPast inkBelow allow)
     -- A frame the ladder stands overfull, as beamer sets it on its one page.
     else if b.overhangs (overflow - above) then
       (place b y true above).noteOverrun (overflow - above)
@@ -9073,10 +9073,10 @@ private def Spacing.Page.fitWith (b : B) (place : B → Length → Bool → Leng
       let s := b.spillPage (overflow - above)
       (if s.fresh then
         settle (place s (firstY s + s.surfaceTop) false 0) (firstY s + s.surfaceTop)
-          (inkBelow + s.surfaceBottom)
+          (s.depthPast inkBelow allow)
       else
         settle (place s (retryY s + s.surfaceTop) false 0) (retryY s + s.surfaceTop)
-          (inkBelow + s.surfaceBottom)).noteOverrun (overflow - above)
+          (s.depthPast inkBelow allow)).noteOverrun (overflow - above)
 
 /-- A line committed by `fitWith`, its notes attached where it lands. -/
 private def Spacing.Page.fitCommit (b : B) (mk : Length → LineOut) (firstY stepY retryY : B → Length)
@@ -15799,7 +15799,7 @@ private structure TurnRoom where
 
 private def Spacing.Page.turnRoom (b : B) : TurnRoom :=
   { room := noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-      (b.y + if b.surfaceBottom == 0 then max 0 (b.prevDepth - b.geom.maxDepth) else b.prevDepth)
+      (b.y + b.depthPast b.prevDepth b.geom.maxDepth)
     stretch := b.pageStretch, shrink := b.pageShrink, fils := b.pageFils
     shipped := b.pages.size }
 
@@ -17483,8 +17483,9 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let st2 := group.foldl (stepStaged fs imgs)
       { st with b := { b with noBreak := true } }
     let b2 := st2.b
-    let own := b2.y + b2.prevDepth - b2.bottom - b2.pageShrink
-    let over := b2.y + b2.prevDepth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
+    let depth := b2.depthPast b2.prevDepth b2.geom.maxDepth
+    let own := b2.y + depth - b2.bottom - b2.pageShrink
+    let over := b2.y + depth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
     let (what, shrink) := oversizeWords group
     let named : Option Diag :=
       if 0 < own then some (Diag.of .W0358
@@ -21313,11 +21314,11 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let accF := if acc.owed.any (·.fil) then
       { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
     else acc
-  -- A declared furniture-gap asymmetry that survives the reading is named, where a class's own
-  -- size file does not set the two apart.
+  -- A furniture-gap asymmetry the document declares is named, a class's own unnamed.
   let preDiags := if let (some gt, some gb) := (gapTop, gapBot) then
-      -- premise: classAreaChecks — a class with a text area sets its head and foot apart unnamed
-      if gt != gb && (doc.docClass.record.area == .engine || doc.surface != .tex) then
+      -- premise: classAreaChecks — a class's head and foot distances are no declaration
+      if gt != gb && (doc.docClass.record.area == .engine ||
+          doc.page.headsep.isSome && doc.page.footskip.isSome) then
         acc.diags.push (Diag.of .N0021
           (s!"header and footer gaps differ by " ++
             s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++

@@ -1978,9 +1978,9 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     s!"\\documentclass\{article}\n{decls}\n\\begin\{document}\n{body}\n\\end\{document}"
   let pairs : List (String × String × String) := [
     ("geometry options", wrap "\\usepackage[a4paper,margin=2cm]{geometry}" "x",
-      wrap "\\tokens{ footskip = 30pt }\\page{ size = a4, margin = 2cm }" "x"),
+      wrap "\\tokens{ headsep = 25pt, footskip = 30pt }\\page{ size = a4, margin = 2cm }" "x"),
     ("geometry command", wrap "\\usepackage{geometry}\\geometry{margin=1in}" "x",
-      wrap "\\tokens{ footskip = 30pt }\\page{ margin = 1in }" "x"),
+      wrap "\\tokens{ headsep = 25pt, footskip = 30pt }\\page{ margin = 1in }" "x"),
     ("crop cam", wrap "\\usepackage[cam]{crop}" "x",
       wrap "\\page{ marks = cut }" "x"),
     ("linespread", wrap "\\linespread{1.05}" "x", wrap "\\page{ leading = 1.05 }" "x"),

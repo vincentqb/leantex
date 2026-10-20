@@ -52,13 +52,13 @@ public def PageKey.listed : PageKey → Bool
 
 /-- Whether the key places the text block across the page, and so claims that axis as declared. -/
 public def PageKey.claimsAcross : PageKey → Bool
-  | .size | .width | .margin | .hmargin | .textwidth | .bleed | .hscale => true
+  | .size | .width | .margin | .hmargin | .textwidth | .hscale => true
   | _ => false
 
 /-- Whether the key places the text block down the page, and so claims that axis as declared; the
 kernel's `\textheight` stands under the class's top. -/
 public def PageKey.claimsDown : PageKey → Bool
-  | .size | .height | .margin | .vmargin | .textheight | .bleed | .tmargin | .bmargin
+  | .size | .height | .margin | .vmargin | .textheight | .tmargin | .bmargin
   | .vmarginratio | .vscale => true
   | _ => false
 

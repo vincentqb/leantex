@@ -231,6 +231,17 @@ private def classSizeSkip (pt : Nat) (size : String) : Int :=
 
 private def classNormalSkip (pt : Nat) : Int := classSizeSkip pt "normalsize"
 
+/-- A length's spelling: in points where three decimals read back as it, else in the nearest
+thousandths of an inch. -/
+private def lengthSpelling (x : Dim.Length) : String :=
+  let pt := s!"{x.toPtString}pt"
+  if (Decl.parseLength pt).map (·.sp) == some x then pt
+  else
+    let milli : Int := (x * (2000 : Int) + Dim.inch 1) / Dim.inch 2
+    let frac := toString (milli % 1000)
+    s!"{milli / 1000}.{String.ofList (List.replicate (3 - frac.length) '0')}{frac}in"
+
+
 /-- The point size a standard class's options set `\normalsize` at: its one size option of 10, 11
 or 12pt, else its record's size or 10pt; none past a size option of any other size. -/
 public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
@@ -247,6 +258,17 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
     | [some n] => some n
     | [] => some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
     | _ => none
+
+/-- The whole points a class's last size option sets, its record's or 10pt without one. -/
+private def classPoints (cls : String) (opts : List String) : Option Nat :=
+  let given := opts.filterMap fun o => match KeyVal.entry o with
+    | (v, none) | ("fontsize", some v) =>
+      if v.endsWith "pt" then ((v.dropEnd 2).toString.toNat?).filter (0 < ·) else none
+    | _ => none
+  match Ir.lastProcessed (Ir.AreaRule.ofClass cls == .typearea) ["10", "11", "12"]
+      (given.map toString) with
+  | some n => n.toNat?
+  | none => classNormalPt cls opts
 
 /-- Font-selection packages whose whole documented effect is
 naming families for the generic slots. -/
@@ -1048,10 +1070,12 @@ private structure St where
   /-- The named paper in force: the class's where no declaration names one, else the last geometry
   named, none once a declaration sizes the page itself. -/
   paperInForce : Option String := some "letter"
-  /-- The standard class's `\footskip`, which a page geometry places stands under. -/
-  classFootskip : Option String := none
+  /-- The class's `\headsep` and `\footskip`, which a page geometry places stands under. -/
+  classSeps : Option (Dim.Length × Dim.Length) := none
   /-- The document has declared `\footskip`, which a page geometry places then keeps. -/
   footskipSet : Bool := false
+  /-- A page geometry has carried the class's head and foot distances. -/
+  sepsCarried : Bool := false
   /-- The body's `\baselineskip` at the size in force, its group's. -/
   bodySkip : Option Int := none
   /-- The `\baselineskip` the next argument group sets at: a footnote's size, or none for a
@@ -7148,8 +7172,10 @@ block, so a scale sizes nothing") pos
   -- length a declared one replaces without a second value.
   let declaresFoot := keys.any (·.1 == .footskip)
   let stFoot ← get
-  let classFoot : Option String := stFoot.classFootskip.filter fun _ => !stFoot.footskipSet &&
-    !declaresFoot && (spelling != "\\geometry" || !keys.isEmpty)
+  let classSeps := stFoot.classSeps.filter fun _ =>
+    !stFoot.sepsCarried && (spelling != "\\geometry" || !keys.isEmpty)
+  let classFoot := classSeps.filter fun _ => !stFoot.footskipSet && !declaresFoot
+  if classSeps.isSome then write fun st => { st with sepsCarried := true }
   if declaresFoot || classFoot.isSome then write fun st => { st with footskipSet := true }
   let read := keys.foldl (init := #[]) fun acc kv => (acc.filter (·.1 != kv.1)).push kv
   -- Equal horizontal and vertical margins are the one margin.
@@ -7166,7 +7192,9 @@ block, so a scale sizes nothing") pos
   for (_, _, items) in unfit do
     for i in items do unless dropped.contains i do dropped := dropped.push i
   let native : Native.Setting := .page (fit.map fun (k, v, _) => (k, v))
-  let footSetting : Option Native.Setting := classFoot.map fun fs => .tokens #[("footskip", fs)]
+  let footSetting : Option Native.Setting := classSeps.map fun (hs, fs) =>
+    .tokens (#[("headsep", lengthSpelling hs)] ++
+      (classFoot.map fun _ => ("footskip", lengthSpelling fs)).toArray)
   if let some n := native.note? then became spelling (((footSetting.map (·.render)).getD "") ++ n) pos
   -- premise: nativeCarrierChecks — a load setting no key ships the class's page
   if read.isEmpty && dropped.isEmpty && droppedExpr.isEmpty then
@@ -10790,13 +10818,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     write fun st => { st with strutSkip := strut, classPt := classNormalPt cls keptItems,
                               paperInForce := some paper,
                               -- size1x.clo's 30pt; bk1x.clo's and mem1x.clo's .35in, .38in, 30pt.
-                              classFootskip := if cls == "article" || cls == "report" then some "30pt"
-                                else if cls == "book" || cls == "memoir" then
-                                  some (match classNormalPt cls keptItems with
-                                    | some 11 => "0.38in"
-                                    | some 12 => "30pt"
-                                    | _ => "0.35in")
-                                else none }
+                              classSeps := (classPoints cls keptItems).bind fun pt =>
+                                (Ir.AreaRule.ofClass cls).seps? pt
+                                  (Ir.sizeFileLeading (Dim.pt pt) 1000 "normalsize") }
     let passedAll := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
       if name == cls then options.toList else []
     let given := passedAll ++ keptItems
@@ -10838,8 +10862,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
           -- memoir's `\thefigure` and `\thetable` carry the chapter through the main matter.
           [if cls == "memoir" then "chapters=floats" else "chapters"] else []) ++
         (if twoside then ["twoside"] else []) ++
-        -- book.cls and memoir set their pages from their own size files.
-        (if cls == "book" || cls == "memoir" then [s!"layout={cls}"] else [])
+        -- book.cls, memoir and letter.cls set their pages from their own size files.
+        (if (Ir.AreaRule.ofLayout? cls).isSome then [s!"layout={cls}"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
       -- premise: none — lualatex sets memoir alike under either option, as scripts/inert-diff.lean probes
       let memoirTitle (kv : String) : Bool := cls == "memoir" && ["titlepage", "notitlepage"].contains kv

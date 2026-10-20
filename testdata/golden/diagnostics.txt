@@ -194,6 +194,8 @@ info: no facts for 'Tide' stand at '/p/.lake/build/leantex/Tide.facts'; its code
 ── N0100 (info) LaTeX idiom translated to its native declaration
 info: translated package geometry [N0100]
   note: \tokens{ footskip = 30pt }\page{ margin = 1in }
+ℹ [N0100] - \usepackage
+  '\usepackage{geometry}' → \tokens{ headsep = 25pt, footskip = 30pt }\page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 info: frame option 'shrink' is not modelled; ignored [N0102]
 ── N0103 (info) \paragraph short title unused: nothing consumes it yet
@@ -508,7 +510,7 @@ warning: a figure or table is taller than the text block; it overruns its page [
   note: 287.178pt taller
 ⚠ [W0358]
   a figure or table is taller than the text block; it overruns its page
-  286.901pt taller
+  283.972pt taller
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 warning: the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands [W0361]
@@ -553,6 +555,10 @@ warning: a paragraph break inside '\footnote' is set as a space [W0371]
 ── W0372 (degraded) a footnote taller than the text block overruns its page
 warning: a footnote is taller than the text block; it overruns its page [W0372]
   note: 63.053pt taller
+⚠ [W0372]
+  a footnote is taller than the text block; it overruns its page
+  60.123pt taller
+  suggestion: shorten the note, or raise the text height (\page{ vmargin = ... })
 ── W0373 (degraded) \thanks is kept inline in the title block
 warning: '\thanks' content is kept inline in the title block [W0373]
   note: a plain \footnote in the body text renders as a page footnote

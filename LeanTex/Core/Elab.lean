@@ -7169,14 +7169,19 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
   let mut page := page
   if record.model == .flow then
     if !(page.widthSized && page.heightSized) then
-      let sized := opts.findSome? fun o =>
+      let papers := opts.filterMap fun o =>
         let o := match KeyVal.entry o with
           | ("paper", some v) => v ++ "paper"
           | (k, none) => k
           | _ => o
         if o.endsWith "paper" then
-          Ir.pageSizes.lookup ((o.dropEnd "paper".length).toString)
+          let p := (o.dropEnd "paper".length).toString
+          if (Ir.pageSizes.lookup p).isSome then some p else none
         else none
+      -- article.cls declares its papers in this order.
+      let declared := ["a4", "a5", "b5", "letter", "legal", "executive"]
+      let sized := (Ir.lastProcessed (record.area != .sizeFile) declared papers).bind
+        fun p => Ir.pageSizes.lookup p
       if let some (w, h) := sized.orElse fun _ => record.trimDefault then
         page := { page with width := if page.widthSized then page.width else w
                             height := if page.heightSized then page.height else h }
@@ -7226,13 +7231,13 @@ none. -/
 private def classSized (record : Ir.ClassRecord) (classOptions : String) (page : PageSpec) :
     PageSpec :=
   if page.fontSize != ({} : PageSpec).fontSize then page else
-  let optSize := (KeyVal.items classOptions).findSome? fun o =>
+  let sizes := (KeyVal.items classOptions).toList.filterMap fun o =>
     let o := match KeyVal.entry o with
       | ("fontsize", some v) => v
       | (k, _) => k
-    if o.endsWith "pt" then
-      ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
-    else none
+    if o.endsWith "pt" then ((o.dropEnd 2).toString.toNat?).filter (· > 0) else none
+  let optSize := (Ir.lastProcessed (record.area != .sizeFile) ["10", "11", "12"]
+    (sizes.map toString)).bind (·.toNat?) |>.map fun n => Dim.pt n
   match optSize <|> record.fontSize with
   | some d => { page with fontSize := d }
   | none => page
@@ -7259,15 +7264,17 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
     (across down : Bool) (page : PageSpec) : PageSpec :=
   let entries := opts.map KeyVal.entry
   let value (k : String) : Option String :=
-    entries.findSome? fun (k', v) => if k' == k then v else none
-  let included (k : String) : Bool := entries.any fun (k', v) => k' == k && (v.all komaTrue)
-  let rule : Ir.AreaRule := match record.area, value "layout" with
-    | .sizeFile, some "book" => .book
-    | .sizeFile, some "memoir" => .memoir
+    entries.reverse.findSome? fun (k', v) => if k' == k then v else none
+  let included (k : String) : Bool :=
+    (entries.reverse.find? (·.1 == k)).any fun (_, v) => v.all komaTrue
+  let rule : Ir.AreaRule := match record.area, (value "layout").bind Ir.AreaRule.ofLayout? with
+    | .sizeFile, some r => r
     | r, _ => r
   let typearea := rule == .typearea
   let input : Ir.AreaInput :=
     { paperW := page.width, paperH := page.height, option := Ir.sizeOptionOf page.fontSize
+      points := ((page.fontSize * (2 : Int) + Dim.pt 1) / Dim.pt 2 : Int).toNat
+      size := Ir.optionNormalSize page.fontSize
       baselineskip := Ir.sizeFileLeading page.fontSize 1000 "normalsize"
       twoside := page.twoside
       div := if typearea then ((value "DIV").bind divValue?).getD 0 else 0
@@ -7329,7 +7336,7 @@ public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
   let sized (v : String) : Bool := v.endsWith "pt" && ((v.dropEnd 2).toString.toNat?.any (0 < ·))
   let paper (v : String) : Bool := (Ir.pageSizes.lookup v).isSome
   match KeyVal.entry o, record.model with
-  | ("layout", some v), _ => record.area == .sizeFile && (v == "book" || v == "memoir")
+  | ("layout", some v), _ => record.area == .sizeFile && (Ir.AreaRule.ofLayout? v).isSome
   | ("DIV", some v), _ => record.area == .typearea && (divValue? v).isSome
   | ("BCOR", some v), _ => record.area == .typearea && (bcorValue? v).isSome
   | ("headinclude", v), _ | ("footinclude", v), _ =>
@@ -19137,12 +19144,16 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       page := { page with parskip := some g }
   page := classAreaPage record classOpts (Ir.Surface.ofPath file) s.sawAcross s.sawDown
     (classPageDefaults record classOpts page)
-  if let some lost := (settledPage page).2 then
+  let settled := settledPage page
+  if let some lost := settled.2 then
     let d := diagOf ctx .W0104 s!"the declared {lost} leaves the page no text block; the class's \
 margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "text height" then
         "textheight" else "vmargin")))
     modify fun st => { st with diags := st.diags.push d }
-  page := (settledPage page).1
+  -- A vertical declaration leaving no text block gives way to the class's own top and bottom.
+  page := if settled.2.isSome then
+      classAreaPage record classOpts (Ir.Surface.ofPath file) true false settled.1
+    else settled.1
   let classSay (code : DiagCode) (o msg : String) : EM Unit := do
     let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
     modify fun st => { st with diags := st.diags.push d }

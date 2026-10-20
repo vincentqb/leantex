@@ -52,6 +52,19 @@ def lualatex : List (String × Int × Int × Int × Int × Int × Int × Int) :=
      89626, 20400, 47600),
    ("\\documentclass[headinclude,DIV=calc]{scrartcl}", 373442, 500600, 143031, 112033, 112033,
      20400, 47600),
+   ("\\documentclass[fontsize=14pt]{scrartcl}", 492065, 711000, 49709, 52721, 52721, 25500, 59500),
+   ("\\documentclass[fontsize=9pt]{scrartcl}", 298754, 425100, 140841, 149377, 149377, 16425, 38325),
+   ("\\documentclass[headinclude,headinclude=false]{scrartcl}", 418256, 595800, 84505, 89626, 89626,
+     20400, 47600),
+   ("\\documentclass{letter}", 345000, 550000, 156270, 134648, 134648, 45000, 25000),
+   ("\\documentclass[twoside]{letter}", 345000, 550000, 156270, 134648, 134648, 45000, 25000),
+   ("\\documentclass[fontsize=12pt,fontsize=10pt]{scrartcl}", 373442, 538000, 105631, 112033, 112033,
+     18000, 42000),
+   ("\\documentclass[12pt,10pt]{article}", 390000, 548500, 126270, 111270, 111270, 25000, 30000),
+   ("\\documentclass[paper=letter,paper=a4]{scrartcl}", 418256, 595800, 84505, 89626, 89626, 20400,
+     47600),
+   ("\\documentclass[a4paper,letterpaper]{article}", 345000, 550000, 125270, 134270, 134270, 25000,
+     30000),
    ("\\documentclass[letterpaper]{scrartcl}", 351026, 459800, 113567, 131635, 131635, 20400, 47600),
    ("\\documentclass[10pt,letterpaper]{scrartcl}", 307148, 406000, 132495, 153574, 153574, 18000,
      42000),
@@ -80,7 +93,7 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
       (p.classSeps.any fun (h, f) => near h hs 10 && near f fs 10)
     let out := layoutOf fonts doc
     let first := (out.pages[0]?.map (·.lines.filter (!·.furniture))).bind (·[0]?)
-    let topskip := Dim.pt (Ir.sizeOptionOf p.fontSize)
+    let topskip := Dim.pt ((p.fontSize * (2 : Int) + Dim.pt 1) / Dim.pt 2)
     t s!"{cls}: the first line stands a topskip under the block's top, at its left edge"
       (first.any fun l => (l.y - (p.vmargin + topskip)).abs ≤ Dim.pt 1 &&
         (l.x + l.hang - p.leftMargin 1).abs ≤ Dim.pt 1)
@@ -99,12 +112,16 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
     let held := ((layoutOf fonts doc).pages[0]?.map (·.lines.filter (!·.furniture))).map (·.size)
     t s!"{cls}: a page of prose holds lualatex's {lines} lines, the last one's depth below the block"
       (held == some lines)
-  let n0021 (cls : String) : Bool :=
-    let (doc, _) := Elab.run "t.tex" ("\\documentclass{" ++ cls ++ "}\\page{ headsep = 10pt, footskip = 20pt }" ++
+  let n0021 (pre : String) : Bool :=
+    let (doc, _) := Elab.run "t.tex" ("\\documentclass{article}" ++ pre ++
       "\\runninghead{Notes}\\begin{document}x\\end{document}")
     (layoutOf fonts doc).diags.any (·.code == "N0021")
-  t "a class's own head and foot distances differ unnamed, an engine page's declared ones named"
-    (!n0021 "article" && n0021 "resume")
+  t "a class's own head and foot distances differ unnamed, declared ones named"
+    (!n0021 "" && !n0021 "\\page{ headsep = 10pt }" &&
+      n0021 "\\page{ headsep = 10pt, footskip = 20pt }" &&
+      (layoutOf fonts (Elab.run "t.tex" ("\\documentclass{resume}\\tokens{ headsep = 20pt, " ++
+        "footskip = 30pt }\\runninghead{N}\\begin{document}x\\end{document}")).1).diags.any
+        (·.code == "N0021"))
   let page (src : String) : Ir.PageSpec :=
     (Elab.run "t.tex" (src ++ "\\begin{document}x\\end{document}")).1.page
   t "a declared side margin claims the page across, the class's area standing down"
@@ -119,6 +136,21 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
      near p.vmargin 125270 1000 && p.height - p.vmargin - p.bottomMargin == Dim.pt 500)
   t "a declared foot skip stands over the class's"
     ((page "\\documentclass{book}\\page{ footskip = 20pt }").footskip == some (Dim.pt 20))
+  t "a bleed claims neither axis"
+    (let p := page "\\documentclass{article}\\page{ bleed = 3mm }"
+     p.width - 2 * p.hmargin == Dim.pt 345 && near p.vmargin 125270 1000)
+  let tokensUnder (pre : String) (n : String) : Option Dim.Length :=
+    let (doc, _) := Elab.run "t.tex" (pre ++ "\\begin{document}x\\end{document}")
+    (doc.tokens.find? n).map (·.width.sp)
+  t "a page geometry places keeps the class's head and foot distances"
+    (let pre := "\\documentclass{scrartcl}\\usepackage[margin=2cm]{geometry}"
+     tokensUnder pre "headsep" == some (Dim.pt 204 / 10) &&
+       tokensUnder pre "footskip" == some (Dim.pt 476 / 10) &&
+     tokensUnder "\\documentclass[fontsize=14pt]{scrartcl}\\usepackage[margin=2cm]{geometry}"
+       "headsep" == some (Dim.pt 255 / 10))
+  t "a declared foot skip under geometry keeps the class's head separation"
+    (tokensUnder "\\documentclass{book}\\usepackage[margin=2cm,footskip=20pt]{geometry}" "headsep" ==
+      some ((Dim.inch 1).ofRatioRound 25 100))
   t "geometry's default body is its scale 0.7"
     (let p := page "\\documentclass{article}\\usepackage{geometry}"
      near (p.width - 2 * p.hmargin) 430005 300 && near (p.height - p.vmargin - p.bottomMargin) 556477 300)

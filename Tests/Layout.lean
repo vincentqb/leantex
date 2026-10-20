@@ -2312,8 +2312,7 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
          dFurn.foldl max y0 - (dGeom.pageH - dGeom.bottomMargin) == Dim.pt 20
      | none => false)
   t "equal declared seps carry no note" (!dOut.diags.any (·.code == "N0021"))
-  let (nDoc, _) := elabStr ((declPre "\\page{ headsep = 20pt, footskip = 30pt }").replace
-    "{article}" "{resume}")
+  let (nDoc, _) := elabStr (declPre "\\page{ headsep = 20pt, footskip = 30pt }")
   let nOut := layoutOf oneFace nDoc
   t "differing declared seps are named as declared, once"
     ((nOut.diags.filter (·.code == "N0021")).size == 1 &&

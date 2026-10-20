@@ -1005,8 +1005,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "text block: a negative margin is refused, and margins leaving no block are named"
     ((elabStr (native "tmargin = -10pt")).2.any (fun d => d.code == "E0323") &&
       named (native "tmargin = 500pt, bmargin = 500pt") "vmargin" &&
-      held (native "tmargin = 500pt, bmargin = 500pt") ({} : Ir.PageSpec).vmargin
-        ({} : Ir.PageSpec).vmargin)
+      held (native "tmargin = 500pt, bmargin = 500pt") (page (art "")).vmargin
+        (page (art "")).bottomMargin)
   t "text block: a placed page places to itself"
     (["\\page{ tmargin = 1in, bmargin = 2in }", "\\usepackage[textheight=500pt]{geometry}",
       "\\setlength{\\textheight}{500pt}"].all fun pre => (page (art pre)).placed == page (art pre))
@@ -1025,8 +1025,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr d.message "a ratio such as 2:3")
   t "text block: a height past the page is named and the margins stand"
     (named (native "tmargin = 1in, textheight = 900pt") "textheight" &&
-      held (native "tmargin = 1in, textheight = 900pt") ({} : Ir.PageSpec).vmargin
-        ({} : Ir.PageSpec).bottomMargin)
+      held (native "tmargin = 1in, textheight = 900pt") (page (native "")).vmargin
+        (page (native "")).bottomMargin)
   let img := "\\includegraphics[height=0.5\\textheight, alt={An invented box}]{a.png}"
   let store : Image.Store := { entries := #[{ src := "a.png"
                                               info := some { pxW := 144
