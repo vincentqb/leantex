@@ -13,14 +13,14 @@ public inductive Origin where
   | unplaced
   deriving Repr, DecidableEq
 
-/-- The source tokens a diagnostic excuses: the token its span starts at, where its loss leaves
-content absent. -/
+/-- The places a diagnostic excuses: its span's, where its loss leaves content absent. -/
 @[expose] public def Diag.piece (d : Diag) : List Span :=
   if d.kind.loss matches .dropped | .pending then d.span.toList else []
 
-/-- Whether two spans start at one place of one file, as `Pos`'s equality reads a place. -/
-@[expose] public def Span.samePlace (a b : Span) : Bool :=
-  a.file == b.file && a.pos.line == b.pos.line && a.pos.col == b.pos.col
+/-- Where a span starts: its file, line and column, as `Pos`'s equality reads a place. -/
+@[expose] public def Span.place (s : Span) : String × Nat × Nat := (s.file, s.pos.line, s.pos.col)
+
+@[expose] public def Span.samePlace (a b : Span) : Bool := a.place == b.place
 
 public theorem Span.samePlace_self (s : Span) : Span.samePlace s s = true := by
   simp [Span.samePlace]
@@ -67,7 +67,7 @@ from an excused place and the engine's marks, the marks' white space kept. -/
 /-- The characters of `s`, each from `o`. -/
 @[expose] public def chars (o : Origin) (s : String) : List (Char × Origin) := s.toList.map (·, o)
 
-/-- Whether a white-space run is open after `t`, `prior` before it. -/
+/-- Whether a white-space run is open after a text, `prior` telling whether one was before it. -/
 @[expose] public def endsOpen : Bool → List Char → Bool
   | prior, [] => prior
   | _, c :: rest => endsOpen c.isWhitespace rest
@@ -138,7 +138,7 @@ public theorem view_congr (named : List Span) {a a' b b' : List (Char × Origin)
     view named (a ++ b) = view named (a' ++ b') := by
   rw [view_append, view_append, ha, hb]
 
-/-- An engine space after an engine space reads as one. -/
+/-- A space no place locates, after another, reads as one. -/
 public theorem view_space_run (named : List Span) (a b : List (Char × Origin)) :
     view named (a ++ (' ', .unplaced) :: (' ', .unplaced) :: b) =
       view named (a ++ (' ', .unplaced) :: b) := by
@@ -158,6 +158,20 @@ public theorem keep_source (named : List Span) (s : Span) (w : String) :
       if named.any (Span.samePlace · s) then [] else w.toList := by
   cases h : named.any (Span.samePlace · s) <;>
     simp only [keep, chars, List.filterMap_map, Function.comp_def, h] <;> simp
+
+public theorem keep_engine (named : List Span) (s : String) :
+    keep named (chars .engine s) = s.toList.filter (·.isWhitespace) := by
+  simp only [keep, chars, List.filterMap_map, Function.comp_def]
+  induction s.toList with
+  | nil => rfl
+  | cons c rest ih => by_cases hc : c.isWhitespace = true <;> simp [hc, ih]
+
+public theorem keep_unplaced (named : List Span) (s : String) :
+    keep named (chars .unplaced s) = s.toList := by
+  simp only [keep, chars, List.filterMap_map, Function.comp_def]
+  induction s.toList with
+  | nil => rfl
+  | cons c rest ih => simp [ih]
 
 /-- Two spellings TeX reads alike, from one source token, read alike. -/
 public theorem view_token (named : List Span) (s : Span) {w w' : String}
@@ -377,7 +391,8 @@ and a group's or environment's body, an input's in its file; a control word sets
   | .sym c p => acc.push (if c = '~' then '\u00a0' else c, .source ⟨file, p⟩)
   | .group body _ => rawTextListOnto file acc body.toList
   | .env name body _ => rawTextListOnto ((inputEnvFile? name).getD file) acc body.toList
-  | .math _ body p => acc ++ (Text.chars (.source ⟨file, p⟩) (Ir.mathFloor (rawSrc body))).toArray
+  | .math _ body p =>
+    acc ++ (Text.chars (.source ⟨file, p⟩) (Ir.mathFloor (rawSrc (mathReading body)))).toArray
   | .verb _ v p => acc ++ (Text.chars (.source ⟨file, p⟩) v.text).toArray
   | .ctrl _ _ => acc
 

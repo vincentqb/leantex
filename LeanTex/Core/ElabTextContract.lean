@@ -42,20 +42,6 @@ theorem smartPunctAfter_canon (lead : Option Char) (s : String) :
     obtain ⟨x, hx, hs, _⟩ := smartPunct_go_canon s.toList [c]
     simp [Ir.smartPunctAfter, hx, hs]
 
-theorem keep_engine (named : List Span) (s : String) :
-    keep named (chars .engine s) = s.toList.filter (·.isWhitespace) := by
-  simp only [keep, chars, List.filterMap_map, Function.comp_def]
-  induction s.toList with
-  | nil => rfl
-  | cons c rest ih => by_cases hc : c.isWhitespace = true <;> simp [hc, ih]
-
-theorem keep_unplaced (named : List Span) (s : String) :
-    keep named (chars .unplaced s) = s.toList := by
-  simp only [keep, chars, List.filterMap_map, Function.comp_def]
-  induction s.toList with
-  | nil => rfl
-  | cons c rest ih => simp [ih]
-
 /-- Smart punctuation reads alike from either origin. -/
 theorem chars_smart (named : List Span) (o : Origin) (s : String) :
     canon (keep named (chars o (Ir.smartPunct s))) = canon (keep named (chars o s)) := by
@@ -149,7 +135,7 @@ are tokens of `src`, and once they are excused its text reads as `pre` then `src
     (st : ESt) (pre : List (Char × Origin)) : Prop :=
   ∃ added : List Span,
     run.2.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added ∧
-    (∀ s ∈ added, ∃ c, (c, .source s) ∈ Parse.rawTextList file src) ∧
+    (∀ s ∈ added, ∃ c s', Span.samePlace s s' ∧ (c, .source s') ∈ Parse.rawTextList file src) ∧
     ∀ named : List Span, (∀ s ∈ added, s ∈ named) →
       view named (locatedText run.1) = view named (pre ++ Parse.rawTextList file src)
 
@@ -157,7 +143,7 @@ private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : 
     (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
     (h : Accounts file src run st1 pre')
     (hd : st1.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added0)
-    (hd0 : ∀ s ∈ added0, ∃ c, (c, .source s) ∈ Parse.rawTextOne file r)
+    (hd0 : ∀ s ∈ added0, ∃ c s', Span.samePlace s s' ∧ (c, .source s') ∈ Parse.rawTextOne file r)
     (hview : ∀ named : List Span, (∀ s ∈ added0, s ∈ named) →
       ∀ tail, view named (pre' ++ tail) = view named (pre ++ Parse.rawTextOne file r ++ tail)) :
     Accounts file (r :: src) run st pre := by
@@ -166,10 +152,10 @@ private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : 
   · rw [hdiags, hd, List.append_assoc]
   · intro s hs
     rcases List.mem_append.mp hs with hs | hs
-    · obtain ⟨c, hc⟩ := hd0 s hs
-      exact ⟨c, by rw [Parse.rawTextList_cons]; exact List.mem_append_left _ hc⟩
-    · obtain ⟨c, hc⟩ := hsrc s hs
-      exact ⟨c, by rw [Parse.rawTextList_cons]; exact List.mem_append_right _ hc⟩
+    · obtain ⟨c, s', hp, hc⟩ := hd0 s hs
+      exact ⟨c, s', hp, by rw [Parse.rawTextList_cons]; exact List.mem_append_left _ hc⟩
+    · obtain ⟨c, s', hp, hc⟩ := hsrc s hs
+      exact ⟨c, s', hp, by rw [Parse.rawTextList_cons]; exact List.mem_append_right _ hc⟩
   · intro named hn
     rw [hv named (fun s hs => hn s (List.mem_append_right _ hs)),
       hview named (fun s hs => hn s (List.mem_append_left _ hs))]
@@ -253,7 +239,7 @@ private theorem chars_ends (sb : String) (h : sb.endsWith " " = true) :
   obtain ⟨u, hu⟩ := ends_space sb h
   exact ⟨u.map (·, .unplaced), by simp [chars, hu]⟩
 
-/-- A pending space's reading: one engine space, or none against a space already pending. -/
+/-- A pending space's reading: one space, or none against a space already pending. -/
 private theorem view_pending_space (named : List Span) (l : List (Char × Origin)) (sb : String)
     (tail : List (Char × Origin)) :
     view named ((l ++ chars .unplaced (if spaceSeps sb then sb.push ' ' else sb)) ++ tail) =
@@ -362,8 +348,19 @@ private theorem slice_body {raws body : Array Raw} {i : Nat} (h : i < raws.size)
   have := body_lt_slice' h hb
   simpa [sliceWeight] using this
 
-private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
-    (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r) :
+/-- What the spine owes at `raws`, `i`: its run accounts for the raws from `i`. -/
+private def SpineAccounts (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
+    (sb : String) (st : ESt) : Prop :=
+  Accounts ctx.file (raws.toList.drop i)
+    ((elabInlinesFrom { ctx with callSite := none, literalWhen := none } raws i acc sb).run st) st
+    (locatedText acc ++ chars .unplaced sb)
+
+/-- One step of the spine, the steps after it lighter. -/
+private theorem spine_step (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
+    (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r)
+    (ih : ∀ (ctx' : Ctx) (raws' : Array Raw) (i' : Nat) (acc' : Array Inline) (sb' : String)
+      (st' : ESt), sliceWeight raws' i' < sliceWeight raws i → (∀ r ∈ raws', PlainRaw r) →
+      SpineAccounts ctx' raws' i' acc' sb' st') :
     Accounts ctx.file (raws.toList.drop i)
       ((elabInlinesFrom { ctx with callSite := none, literalWhen := none } raws i acc sb).run st) st
       (locatedText acc ++ chars .unplaced sb) := by
@@ -379,12 +376,27 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
   clear hstep
   by_cases h : i < raws.size
   · rw [dite_eq_left h]
+    have hnext := sliceWeight_lt raws h (Nat.lt_succ_self i)
     have hx := hr raws[i] (Array.getElem_mem h)
     have hdrop : raws.toList.drop i = raws[i] :: raws.toList.drop (i + 1) := by
       have hl : i < raws.toList.length := by simpa using h
       rw [List.drop_eq_getElem_cons hl]
       simp
     rw [hdrop]
+    have hgroup : ∀ {body : Array Raw} {p : Pos}, raws[i] = .group body p →
+        sliceWeight body 0 < sliceWeight raws i := by
+      intro body p hb
+      apply slice_body h
+      rw [hb]
+      simp only [rawWeight]
+      omega
+    have henv : ∀ {name : String} {body : Array Raw} {p : Pos}, raws[i] = .env name body p →
+        sliceWeight body 0 < sliceWeight raws i := by
+      intro name body p hb
+      apply slice_body h
+      rw [hb]
+      simp only [rawWeight]
+      omega
     split
     all_goals rename_i heq
     all_goals rw [heq] at hx
@@ -392,7 +404,7 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
     all_goals rw [heq]
     case h_1.word s p =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" st hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp only [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
@@ -403,14 +415,14 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
       exact view_token named _ (wordAfter_canon _ _ _ _) _ _
     case h_2.space =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (spine_plain { ctx with macroRoles := roles } raws (i + 1) acc' _ st hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp only [Parse.rawTextOne_space]
       exact view_pending_space named _ sb' tail
     case h_3.par p =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (spine_plain { ctx with macroRoles := roles } raws (i + 1) acc' _ st hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp only [Parse.rawTextOne_par]
@@ -437,7 +449,7 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
           simpa [chars] using this.symm
     case h_4.sym p | h_5.sym p | h_6.sym p =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
-        (spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" st hr)
+        (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
@@ -446,19 +458,20 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
       have hc : c ≠ '~' := h3
       split
       · refine accounts_cons ctx.file _ _ _ st st _ _ []
-          (spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" st hr)
+          (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hr)
           (by simp) (by simp) ?_
         intro named _ tail
         simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
           locatedList_cons, chars, hc]
       · refine accounts_cons ctx.file _ _ _ st _ _ _ [⟨ctx.file, p⟩]
-          (spine_plain { ctx with macroRoles := roles } raws (i + 1) acc' sb' _ hr) ?_ ?_ ?_
+          (ih { ctx with macroRoles := roles } raws (i + 1) acc' sb' _ hnext hr) ?_ ?_ ?_
         · show (st.diags.push _).toList.flatMap Diag.piece = _
-          simp [Diag.piece, diagOf, Diag.of, Ctx.sourceSpan, DiagCode.loss, DiagCode.spec]
+          have hloss : DiagCode.E0311.loss = .dropped := rfl
+          simp [Diag.piece, diagOf, Diag.of, Ctx.sourceSpan, hloss]
         · intro s hs
           simp only [List.mem_singleton] at hs
           subst hs
-          exact ⟨c, by simp [hc]⟩
+          exact ⟨c, ⟨ctx.file, p⟩, Span.samePlace_self _, by simp [hc]⟩
         · intro named hn tail
           have hs : (⟨ctx.file, p⟩ : Span) ∈ named := hn _ (List.mem_singleton_self _)
           have := view_named named _ hs [c] (locatedText acc' ++ chars .unplaced sb') tail
@@ -468,20 +481,20 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
       rw [run_group]
       refine accounts_inner ctx.file ctx.file _ body _ _ st _ _ _ _
         (core_plain { ctx with macroRoles := roles } body st fun st =>
-          spine_plain { ctx with macroRoles := roles.enter } body 0 #[] "" st hb)
+          ih { ctx with macroRoles := roles.enter } body 0 #[] "" st (hgroup heq) hb)
         (by simp) rfl ?_
       rw [← pre_inner]
-      exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
+      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hr
     case h_10.scope body p _ =>
       have hb : ∀ r ∈ body, PlainRaw r := by assumption
       simp only [beq_self_eq_true, ↓reduceIte]
       rw [run_bind']
       refine accounts_inner ctx.file ctx.file _ body _ _ st _ _ _ _
         (core_plain { ctx with macroRoles := roles } body st fun st =>
-          spine_plain { ctx with macroRoles := roles.enter } body 0 #[] "" st hb)
+          ih { ctx with macroRoles := roles.enter } body 0 #[] "" st (henv heq) hb)
         (by simp [inputEnvFile?_scope]) rfl ?_
       rw [← pre_inner]
-      exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
+      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hr
     case h_10.input name body p f _ _ =>
       have hb : ∀ r ∈ body, PlainRaw r := by assumption
       have hf : Parse.inputEnvFile? name = some f := by assumption
@@ -501,10 +514,10 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
       let ictx : Ctx := base.enterInput name f
       refine accounts_inner ctx.file f _ body _ _ st _ _ _ _
         (core_enter ictx body st rfl rfl fun st =>
-          spine_plain { ictx with macroRoles := roles.enter } body 0 #[] "" st hb)
+          ih { ictx with macroRoles := roles.enter } body 0 #[] "" st (henv heq) hb)
         (by simp [hf]) rfl ?_
       rw [← pre_inner]
-      exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
+      exact ih { ctx with macroRoles := roles } raws (i + 1) _ "" _ hnext hr
   · simp only [h, ↓reduceDIte]
     have hdrop : raws.toList.drop i = [] := List.drop_eq_nil_of_le (by simpa using Nat.not_lt.mp h)
     rw [hdrop]
@@ -512,14 +525,20 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
     show view named (locatedText (mergeTexts (flushText acc' sb'))) = _
     rw [locatedText_mergeTexts, locatedText_flushText]
     simp
-termination_by sliceWeight raws i
-decreasing_by
-  all_goals first
-    | exact sliceWeight_lt raws h (Nat.lt_succ_self i)
-    | (apply slice_body h
-       rw [‹raws[i] = _›]
-       simp only [rawWeight]
-       omega)
+
+private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
+    (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r) :
+    SpineAccounts ctx raws i acc sb st := by
+  have key : ∀ n (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline) (sb : String)
+      (st : ESt), sliceWeight raws i = n → (∀ r ∈ raws, PlainRaw r) →
+      SpineAccounts ctx raws i acc sb st := by
+    intro n
+    induction n using Nat.strongRecOn with
+    | ind n ih =>
+      intro ctx raws i acc sb st hn hr
+      exact spine_step ctx raws i acc sb st hr fun ctx' raws' i' acc' sb' st' hlt hr' =>
+        ih _ (hn ▸ hlt) ctx' raws' i' acc' sb' st' rfl hr'
+  exact key _ ctx raws i acc sb st rfl hr
 
 /-- The plain-text arms of the inline knot conserve the source's text: once the reserved
 characters it refuses are excused, a run of words, spaces, breaks and symbols, through groups,
