@@ -17,6 +17,10 @@ runninghead
     fill
     fill
     pagenumber
+runningfoot
+  text " "
+  fill
+  fill
 meta title "Spring Bulletin"
 meta author "Harbour Rowing Club"
 setPalette
@@ -140,5 +144,6 @@ info[N0100] 83:1 translated command \noindent | detail: nothing: no paragraph ca
 info[N0100] 85:1 translated command \ul | detail: \underline
 info[N0100] 85:33 translated command \varul | detail: \underline
 info[N0100] 27:1 translated command '\ihead / \chead / \ohead' | detail: \runninghead[from = 2]{\itshape Harbour Rowing Club \hfill  \hfill \thepage}
+info[N0100] 27:1 translated command '\ifoot / \cfoot / \ofoot' | detail: \runningfoot[from = 2]{ \hfill  \hfill }
 info[N0100] 47:1 '\hypersetup' → \pdfmeta{ title = "Spring Bulletin", author = "Harbour Rowing Club" }
 info[N0100] 83:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force

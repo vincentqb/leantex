@@ -10070,8 +10070,9 @@ template around it; the engine's own {element} stands" pos
       sayOnce "partial:\\documentclass:titlepage:maketitle" .W0110
         "'\\maketitle' sets the title above the text, where the class's title page gives it a \
 page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
-      -- The title's page carries no running furniture, as the class's title page does.
-      return some (#[.ctrl Ir.titlePageBeginRole pos, .ctrl "maketitle" pos], start)
+      -- A class with chapters sets its title's page with no running furniture, as its title page.
+      if (← get).chapters then
+        return some (#[.ctrl Ir.titlePageBeginRole pos, .ctrl "maketitle" pos], start)
     return none
   | "setbeamercolor" =>
     -- A later parent declaration changes its children, so nothing is flattened here.
@@ -11625,8 +11626,11 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
         let st := if v == "fancy" && st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
         { st with headingsStyle := some (v == "scrheadings" && st.twoSided && !st.fieldsCleared)
                   fancyStyle := st.fancyStyle || v == "fancy" }
-      discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
-        s!"pagestyle:{v}" c.pos
+      if v == "fancy" then
+        became "\\pagestyle{fancy}" "fancyhdr's default fields under the declared ones, and its rule under the head" c.pos
+      else
+        discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
+          s!"pagestyle:{v}" c.pos
       return #[]
     | "plain" =>
       -- article's initial style is the centred page number in the foot.
@@ -11657,6 +11661,9 @@ declare the furniture directly")
       became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" c.pos
     -- In the body, the plain style on the page standing: no running head, the folio in the foot.
     if c.src 0 == "plain" && (← get).inDoc then return #[.ctrl Ir.plainPageRole c.pos]
+    -- A declared style on the page standing keeps its running fields, a chapter's opening included.
+    if ["fancy", "scrheadings", "headings"].contains (c.src 0) && (← get).inDoc then
+      return #[.ctrl Ir.styledPageRole c.pos]
     return #[]
   | .addBibResource => do
     -- biblatex's `\addbibresource`: a `.bib` file `\printbibliography` later prints.
@@ -15210,6 +15217,9 @@ private def flushRunning : M (Array Raw) := do
   -- Fields fancyhdr or scrlayer-scrpage declares leave a plain page, a chapter's or a title's, plain.
   if !st.head.isEmpty || !st.foot.isEmpty || cleared true || cleared false then
     out := out ++ (Native.Setting.page #[(.plainpages, "on")]).raws pos
+  -- scrlayer-scrpage's cleared styles leave no folio, a plain page's included.
+  if st.fieldsCleared && st.foot.isEmpty then
+    out := out ++ (Native.Setting.page #[(.numbers, "off")]).raws pos
   -- fancyhdr's rule under the head, `\headrulewidth` thick, 0.4pt unless redefined.
   if st.fancyStyle then
     let width := match st.binds["headrulewidth"]? with

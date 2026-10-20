@@ -145,7 +145,7 @@ def discardSites : List (String × String × String) :=
      "providecommand:zzkept"),
    ("\\providecommand{\\section}{}\n", "", "providecommand:section"),
    ("\\usepackage{babel}\n", "", "usepackage:babel"),
-   ("\\pagestyle{fancy}\n", "", "pagestyle:fancy"),
+   ("\\pagestyle{scrheadings}\n", "", "pagestyle:scrheadings"),
    ("\\fontseries{b}\n", "", "fontseries:b"),
    ("\\selectlanguage{french}\n", "", "selectlanguage:french"),
    ("\\usefonttheme{professionalfonts}\n", "", "usefonttheme"),

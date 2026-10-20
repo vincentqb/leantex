@@ -2466,6 +2466,14 @@ def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
         unless out.contains pair do out := out.push pair
   return out
 
+/-- Ninety invented sentences, enough text to run a page over. -/
+def censusFiller : String := String.join ((List.range 90).map fun i =>
+  s!"Words of an invented paragraph number {i} run on across the measure and down the page. ")
+
+/-- A document of a class, its options in the class's braces, a preamble and a body. -/
+def classDoc (cls pre body : String) : String :=
+  s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+
 /-- A census page's running furniture lines. -/
 def furnitureLines (ps : Array CensusPage) (i : Nat) : Array CensusLine :=
   (ps[i]?.map fun p => p.lines.filter (·.furniture)).getD #[]
@@ -2475,6 +2483,9 @@ def headText (ps : Array CensusPage) (i : Nat) : String :=
   (((furnitureLines ps i).foldl (fun m l => match m with
     | some (a : CensusLine) => if l.y < a.y then some l else m
     | none => some l) none).map (·.text.replace " " "")).getD ""
+
+/-- The topmost furniture texts of a census's first pages. -/
+def headTexts (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (headText ps)
 
 /-- The shipped-page census of a source laid out with `fonts`. -/
 def censusOfSrc (fonts : Font.FontSet) (src : String) : Array CensusPage :=

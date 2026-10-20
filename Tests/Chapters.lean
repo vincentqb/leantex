@@ -82,18 +82,16 @@ def chapterChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
 chapter openings on a recto, and fancyhdr's E and O fields. -/
 def twosideChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let filler := String.join ((List.range 90).map fun i =>
-    s!"Words of an invented paragraph number {i} run on across the measure and down the page. ")
-  let doc (cls pre body : String) : String :=
-    s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
-  let pages (src : String) : Array CensusPage := censusOfSrc fonts src
+  let filler := censusFiller
+  let doc := classDoc
+  let pages := censusOfSrc fonts
   let left (ps : Array CensusPage) (i : Nat) : Option Dim.Length :=
     ps[i]?.bind fun p => (p.lines.filter (!·.furniture)).foldl (fun m l => some (match m with
       | some v => min v l.x
       | none => l.x)) none
   let furniture := furnitureLines
   let head := headText
-  let heads (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (head ps)
+  let heads := headTexts
   let hm (src : String) : Dim.Length := (elabStr src).1.page.hmargin
   let bk := doc "{book}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}"
   let ps := pages bk
@@ -189,16 +187,14 @@ and its folio ({heads ps 3})"
 page at a chapter and at `\maketitle`, and KOMA-Script's `headings` style. -/
 def markChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let filler := String.join ((List.range 90).map fun i =>
-    s!"Words of an invented paragraph number {i} run on across the measure and down the page. ")
-  let doc (cls pre body : String) : String :=
-    s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
-  let pages (src : String) : Array CensusPage := censusOfSrc fonts src
+  let filler := censusFiller
+  let doc := classDoc
+  let pages := censusOfSrc fonts
   let furniture := furnitureLines
   let texts (ps : Array CensusPage) (i : Nat) : List String :=
     (((furniture ps i).qsort (·.y < ·.y)).toList.map (·.text.replace " " "")).filter (!·.isEmpty)
   let head := headText
-  let heads (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (head ps)
+  let heads := headTexts
   let pre := pages (doc "{book}" "" s!"\\chapter*\{Preface}\n\\markboth\{Preface}\{Preface}\n{filler}")
   t s!"marks: a hand-written markboth heads the pages after it ({heads pre 3})"
     (pre.size ≥ 3 && head pre 1 == "2Preface" && head pre 2 == "Preface3")

@@ -9670,7 +9670,7 @@ private inductive Op where
   before a two-sided class's chapter. -/
   | recto
   /-- The page standing sets in the plain style, as `\thispagestyle{plain}` at a chapter. -/
-  | plainPage
+  | plainPage (on : Bool)
   /-- The folio and running style declared at a boundary. -/
   | pageOpening (opening : Ir.PageOpening)
   /-- Column markers: `colOpen` saves the vertical position, `colNext`
@@ -11968,7 +11968,7 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
 private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
     (indent : Length) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
   let a := a.pageBreak
-  let a := (if r.openRight then a.pushOp .recto else a).pushOp .plainPage
+  let a := (if r.openRight then a.pushOp .recto else a).pushOp (.plainPage true)
   -- A label in the title lands where the chapter opens, as hyperref's anchor at `\refstepcounter`.
   let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
     (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
@@ -11993,7 +11993,7 @@ its baseline `2.3\baselineskip` past the page's first, and `1.725\baselineskip` 
 private def collectKomaChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
     (indent : Length) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
   let a := a.pageBreak
-  let a := (if r.openRight then a.pushOp .recto else a).pushOp .plainPage
+  let a := (if r.openRight then a.pushOp .recto else a).pushOp (.plainPage true)
   let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
     (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
   let skip := Ir.leadingFor r.geom.fontSize r.geom.leading
@@ -14137,7 +14137,7 @@ private def collectBlock (r : Rd) (a : Acc)
     if n == Ir.rectoRole then
       if r.twoSided then a.pageBreak.pushOp .recto else a
     else
-    if n == Ir.plainPageRole then a.pushOp .plainPage
+    if n == Ir.plainPageRole || n == Ir.styledPageRole then a.pushOp (.plainPage (n == Ir.plainPageRole))
     else
     if let some k := Ir.markRole? n then a.pushOp (.anchor (Ir.markAnchor k))
     else
@@ -14545,7 +14545,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩, hpp⟩, hmk⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩, hpp⟩, hsp⟩, hmk⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   have hmk' : Ir.markRole? n = none :=
@@ -14553,7 +14553,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have hst' : (r.underParskip a.tokens).styles.find? n = none := by
     rw [Spacing.Context.underParskip_styles]; exact hst
   simp only [collectBlock, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
-    hdc, hop, hpic, hre, hti, hpp, hmk', Bool.false_eq_true, ite_false]
+    hdc, hop, hpic, hre, hti, hpp, hsp, hmk', Bool.false_or, Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
     (opening : Ir.PageOpening) (indent : Length)
@@ -16759,7 +16759,7 @@ public def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
 private def stagedLabelRequests (ops : Array Op) : Array LabelAudit.Request :=
   ops.flatMap fun op => match op with
     | .picture _ pic _ origin => pictureLabelRequests origin pic
-    | .skip _ | .skipAlt _ _ | .bodyOpen _ _ | .brk | .recto | .plainPage | .pageOpening _
+    | .skip _ | .skipAlt _ _ | .bodyOpen _ _ | .brk | .recto | .plainPage _ | .pageOpening _
       | .pageStyle _ _ | .pageGround _ | .titleBar _ _ _ | .frameOpen _ _ _
       | .frameClose | .boxAnchor _ _ _ | .hrule _ _ | .tableRule _ _ _ _
       | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .regionOpen _
@@ -17227,7 +17227,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .recto =>
     if !b.noBreak && b.cur.blank && !b.pages.isEmpty && b.pageState.folio % 2 == 0 then
       b := b.finishPage b.closingOwed
-  | .plainPage => b := { b with pageState := { b.pageState with plain := true } }
+  | .plainPage on => b := { b with pageState := { b.pageState with plain := on } }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .pageGround bg => b := { b with docBg := bg, pageBg := none }
   | .pin =>
@@ -20198,7 +20198,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
       else (if verso then doc.headEven.orElse fun _ => doc.head else doc.head).map (fillMarks left right)
     let footContent : Option (Array Inline) :=
       if plainHere then none
-      else if headings && koma then some komaFolio
+      else if headings && koma && doc.foot.isNone && doc.footEven.isNone then some komaFolio
       else (if verso then doc.footEven.orElse fun _ => doc.foot else doc.foot).map
         (fillMarks left right)
     let opens := !headings || page.pageState.plain

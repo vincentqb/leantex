@@ -11436,7 +11436,8 @@ private theorem carryTokens_quiet (ctx : Ctx) (cur : Array Raw)
 /-- Whether a control is a `\pagenumbering` role: mid-paragraph it opens the page the paragraph
 starts on, as TeX ships that page after it, and leaves the paragraph whole. -/
 private def numberingRole (n : String) : Bool :=
-  (n.startsWith "pagenumbering " && (Ir.pageOpeningOfRole? n).isSome) || n == Ir.plainPageRole
+  (n.startsWith "pagenumbering " && (Ir.pageOpeningOfRole? n).isSome) || n == Ir.plainPageRole ||
+    n == Ir.styledPageRole
 
 /-- A mid-paragraph mark that changes shipout state, not structure, ahead of the open paragraph: a
 page ground's palette, or a page numbering's opening. -/
@@ -13377,7 +13378,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
     || n == Ir.trivItemRole || n == Ir.captionAtRole
-    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || (n == Ir.plainPageRole && cur.isEmpty)
+    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || ((n == Ir.plainPageRole || n == Ir.styledPageRole) && cur.isEmpty)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
@@ -13750,7 +13751,8 @@ private def pageMark? (n : String) : Option Block :=
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
   else if n == Ir.captionCloseRole || n == Ir.trivItemRole || n == Ir.captionAtRole then
     some (.role n #[])
-  else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || n == Ir.plainPageRole then
+  else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || n == Ir.plainPageRole ||
+      n == Ir.styledPageRole then
     some (.role n #[])
   else none
 

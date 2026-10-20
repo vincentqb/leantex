@@ -1099,6 +1099,9 @@ public def rectoRole : String := "page recto"
 the page carries no running head and its folio in the foot. -/
 public def plainPageRole : String := "page plain"
 
+/-- The reserved role `\thispagestyle` with a running style declares: the page keeps its fields. -/
+public def styledPageRole : String := "page styled"
+
 /-- The reserved role a hand-written `\markboth` or `\markright` stands in, by its index among the
 document's marks. -/
 public def markRole (k : Nat) : String := s!"page mark {k}"
@@ -1116,7 +1119,7 @@ public def rightMarkRole : String := "page rightmark"
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
     n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
     n == captionCloseRole || n == rectoRole || n == trivItemRole || n == captionAtRole ||
-    n == plainPageRole || (markRole? n).isSome
+    n == plainPageRole || n == styledPageRole || (markRole? n).isSome
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
