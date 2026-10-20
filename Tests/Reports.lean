@@ -2435,7 +2435,7 @@ def reports : List Report := [
       "main's binary at 1e648c76 on the same probes: 11.96pt for each spacing, the undeclared pair top-aligned, the joined and spaced minipages stacked; the guards fail there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: four PDFs move visibly (affine-lengths, alert-mark, boxes, box-sides), toward lualatex where a probe checks it, every web page visually the same and every diagnostic the same"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R270", date := "2026-10-20"
+  { id := "R276", date := "2026-10-20"
     what := "a heading before a framed box the page could not hold stayed alone at the page's foot while the box moved to the next page, where LaTeX keeps the heading with what follows it"
     pins := [check% Tests.InlineBoxes.boxBlockChecks]
     accept := ["invented probes: a section before a twelve-line framed minipage after 540pt and 560pt of space; main's binary at 1e648c76 sets the heading on page 1 and the box on page 2, this tree both on page 2, and both on page 1 after 480pt as main does; the guard fails there",
