@@ -48,9 +48,9 @@ def edefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     (ds, html)
   let (_, text) := pageOf ""
     "\\makeatletter\\edef\\pa{\\the\\tw}\\edef\\pb{\\number\\dimexpr\\bl\\relax}\\edef\\pc{\\strip@pt\\tht}\\makeatother W \\pa; N \\pb; S \\pc"
-  -- TeX rounds each step to the scaled point and prints 252.94499pt and 592035.
-  t "the, number and strip@pt print a length from its exact value, rounded once to the scaled point"
-    (hasStr text "W 252.945pt; N 592036; S 144.54")
+  -- lualatex 1.24 prints W 252.94499pt; N 592035; S 144.54.
+  t "the, number and strip@pt print a length as TeX reads and prints it"
+    (hasStr text "W 252.94499pt; N 592035; S 144.54")
   let (_, redef) := pageOf "\\newcommand\\unit{Older}\\edef\\saved{\\unit}\\renewcommand\\unit{Newer}\n"
     "Saved \\saved."
   t "an edef keeps the meaning in force where it stands, not a later one"
@@ -65,7 +65,7 @@ def edefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     ("{\\setlength{\\probe}{2in}}\\begin{minipage}{1in}\\setlength{\\probe}{3in}\\end{minipage}" ++
       "\\edef\\after{\\the\\probe}Probe \\after.")
   t "a length a group or an environment assigns is restored when it closes"
-    (hasStr lens "Probe 72.27pt.")
+    (hasStr lens "Probe 72.26999pt.")
   let (_, gset) := pageOf "\\newlength{\\probe}\\setlength{\\probe}{1in}\n"
     "{\\global\\setlength{\\probe}{2in}}\\edef\\after{\\the\\probe}Probe \\after."
   t "a length a global setlength assigns keeps its value past the group"
@@ -92,7 +92,7 @@ def edefChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
       "\\ifdim\\probe=1in \\fi\\edef\\two{\\the\\probe}\n")
     "One \\one; two \\two."
   t "a length read after the, number or a comparison keeps its value"
-    (hasStr reads "One 72.27pt.; two 72.27pt.")
+    (hasStr reads "One 72.26999pt.; two 72.26999pt.")
   let (_, kept) := pageOf
     ("\\protected\\def\\shield{X}\\edef\\held{\\shield}\\def\\shield{Y}\\edef\\shown{\\held}\n" ++
       "\\def\\late{P}\\edef\\put@{\\noexpand\\late}\\def\\late{Q}\\edef\\got{\\put@}\n")
@@ -137,7 +137,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t "the edef chain and the page attribute read with no skip"
     (codes ds .W0357 == 0 && codes ds .W0104 == 0 && codes ds .W0443 == 0 &&
       ds.all (·.severity != .error))
-  t "the boxes are the lengths in big points, exactly: a trim 1/8 in inside a 3.75 by 2.25 in medium"
+  t "the boxes are the lengths in big points: a trim 1/8 in inside a 3.75 by 2.25 in medium"
     (bytesContain pdf "/MediaBox [0 0 270 162]" && bytesContain pdf "/TrimBox [9 9 261 153]" &&
       bytesContain pdf "/BleedBox [0 0 270 162]" && !bytesContain pdf "/ArtBox")
   t "the declared boxes stand on the page's declaration"

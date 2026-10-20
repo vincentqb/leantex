@@ -1103,6 +1103,7 @@ def commandSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pathFaceChecks ref
   Tests.lstInlineChecks ref
   pointDoorChecks ref
+  texLengthChecks ref
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font

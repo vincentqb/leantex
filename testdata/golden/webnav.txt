@@ -24,7 +24,7 @@ section* 1
   text "Gathered Notes"
 para
   text "A second invented paragraph, also on every surface."
-nav label "Return to top" pin bottom right offset 1500/1000em reveal 225.844pt
+nav label "Return to top" pin bottom right offset 1500/1000em reveal 301.125pt
   para
     link "#top"
       icon "" label "Return to top"

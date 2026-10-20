@@ -504,8 +504,8 @@ private def unitScaleBase : String → Option (Length × Nat)
   | "cm" => some (inch 100, 254)
   | "mm" => some (inch 10, 254)
   | "pc" => some (pt 12, 1)
-  -- The CSS pixel: 1px = 1/96 in (CSS Values and Units 4 §6.2).
-  | "px" => some (inch 1, 96)
+  -- TeX's pixel, LuaTeX's and pdfTeX's `\pxdimen` at its default of 1bp.
+  | "px" => some (bp 1, 1)
   -- The didot point: 1157 dd = 1238 TeX pt (TeXbook ch. 10).
   | "dd" => some (inch 123800, 8361639)
   | "cc" => some (inch (12 * 123800), 8361639)
@@ -534,7 +534,7 @@ private def unitsAgree (u v : String) (num den : Int) : Bool :=
 private theorem unitScale_consistent :
     unitsAgree "pt" "bp" 7227 7200 ∧ unitsAgree "pt" "sp" 1 65536 ∧ unitsAgree "in" "bp" 1 72 ∧
     unitsAgree "pc" "pt" 1 12 ∧ unitsAgree "cm" "in" 254 100 ∧ unitsAgree "mm" "cm" 10 1 ∧
-    unitsAgree "px" "in" 96 1 ∧ unitsAgree "dd" "in" 8361639 123800 ∧ unitsAgree "cc" "dd" 1 12 := by
+    unitsAgree "px" "bp" 1 1 ∧ unitsAgree "dd" "in" 8361639 123800 ∧ unitsAgree "cc" "dd" 1 12 := by
   decide
 
 private theorem unitScale_true :
@@ -931,37 +931,61 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   | some (.scalar _ _), 1 => throw "a bare number in a length expression needs a unit"
   | _, _ => throw "malformed expression"
 
-/-- Inches per unit, exactly as the engine reads the unit everywhere (`unitScale`), a point TeX's
-1⁄72.27 in; `none` for a font-relative or unknown unit. -/
-public def unitInches (u : String) : Option Rat :=
-  (unitScale u).map fun (l, d) => l.inInches / (d : Rat)
+/-- TeX's reading of a non-negative decimal: its whole part and its fraction in 2⁻¹⁶, rounded from
+its first 17 digits (TeX §452). -/
+private def texDecimal (v : Rat) : Nat × Nat :=
+  let ip := v.floor.toNat
+  (ip, roundDecimals ((List.range 17).map fun i => ((v - ip) * 10 ^ (i + 1)).floor.toNat % 10))
 
-/-- An operand of an exact evaluation: a bare number, or a length in inches. -/
+/-- A unit's ratio to TeX's point, exactly as the engine reads the unit (`unitScale`). -/
+private def ptRatio (u : String) : Option Rat :=
+  (unitScale u).map fun (l, d) => l.toRat / ((pt 1).toRat * d)
+
+/-- The scaled points TeX reads for a decimal's parts of a unit `r` points (TeX §458). -/
+private def ratioSp (ip f : Nat) (r : Rat) : Int :=
+  let num := r.num.toNat
+  ((ip * num / r.den * 65536 + (num * f + 65536 * (ip * num % r.den)) / r.den : Nat) : Int)
+
+/-- The scaled points TeX reads for a decimal's parts times a length `x` (TeX §455). -/
+private def coefSp (ip f : Nat) (x : Int) : Int := ip * x + (x * f).tdiv 65536
+
+/-- The scaled points TeX reads for `v` of a unit: `px` as LuaTeX's `\pxdimen` of 1bp; `none` for
+a font-relative or unknown unit. -/
+private def unitSp (v : Rat) (u : String) : Option Int :=
+  let (ip, f) := texDecimal v
+  if u == "px" || u == "truepx" then (ptRatio "bp").map fun r => coefSp ip f (ratioSp 1 0 r)
+  else (ptRatio u).map (ratioSp ip f)
+
+/-- `n / d`, rounded half away from zero as `\dimexpr` divides, else truncated as `\divide`
+and calc do. -/
+private def spDiv (round : Bool) (n : Int) (d : Nat) : Int :=
+  if round then n.sign * ((2 * n.natAbs + d) / (2 * d) : Nat) else n.tdiv d
+
+/-- An operand of TeX's evaluation: a number as written, or a length in scaled points. -/
 private inductive XVal where
   | scalar (v : Rat)
-  | len (v : Rat)
+  | len (sp : Int)
 
-private def xApply (op : Char) (a b : XVal) : Option XVal :=
+private def xApply (round : Bool) (op : Char) (a b : XVal) : Option XVal :=
   match op, a, b with
   | '+', .len x, .len y => some (.len (x + y))
   | '-', .len x, .len y => some (.len (x - y))
   | '+', .scalar x, .scalar y => some (.scalar (x + y))
   | '-', .scalar x, .scalar y => some (.scalar (x - y))
-  | '*', .scalar x, .len y => some (.len (x * y))
-  | '*', .len x, .scalar y => some (.len (x * y))
+  | '*', .scalar x, .len y | '*', .len y, .scalar x => some (.len (spDiv round (y * x.num) x.den))
   | '*', .scalar x, .scalar y => some (.scalar (x * y))
-  | '/', .len x, .scalar y => if y == 0 then none else some (.len (x / y))
+  | '/', .len x, .scalar y => if y == 0 then none else some (.len (spDiv round (x * y⁻¹.num) y⁻¹.den))
   | '/', .scalar x, .scalar y => if y == 0 then none else some (.scalar (x / y))
   | _, _, _ => none
 
-private def xPop (vals : Array XVal) (op : Char) : Option (Array XVal) :=
+private def xPop (round : Bool) (vals : Array XVal) (op : Char) : Option (Array XVal) :=
   if op == 'u' then
     vals.back?.map fun x => match x with
       | .scalar v => vals.pop.push (.scalar (-v))
       | .len v => vals.pop.push (.len (-v))
   else
     match vals.back?, vals.pop.back? with
-    | some b, some a => (xApply op a b).map fun v => vals.pop.pop.push v
+    | some b, some a => (xApply round op a b).map fun v => vals.pop.pop.push v
     | _, _ => none
 
 /-- Stacks `c` after applying every stacked operator binding at least as tightly. -/
@@ -973,7 +997,7 @@ private def xPush (vals : Array XVal) (ops : Array Char) (c : Char) :
     match ops.back? with
     | some top =>
       if top != '(' && top != 'd' && opPrec top ≥ opPrec c then
-        vals ← xPop vals top
+        vals ← xPop (ops.contains 'd') vals top
         ops := ops.pop
       else break
     | none => break
@@ -990,14 +1014,14 @@ private def xClose (vals : Array XVal) (ops : Array Char) (stop : Char) :
       ops := ops.pop
       if top == stop then return (vals, ops)
       if top == '(' || top == 'd' then failure
-      vals ← xPop vals top
+      vals ← xPop (ops.contains 'd') vals top
     | none => failure
   failure
 
-/-- A length expression's exact value in inches, every unit as `unitInches` reads it and every name
-through `look`, with no rounding at any step; `none` outside the grammar `exprParse` reads or at a
-font-relative unit. -/
-public def exactLength (look : String → Option Rat) (s : String) : Option Rat := do
+/-- A length expression's value in TeX's scaled points as TeX computes it, every name through
+`look`: each term rounded as TeX reads it, a division in a `\dimexpr` rounded and one outside it
+truncated as calc's; `none` outside the grammar `exprParse` reads or at a font-relative unit. -/
+public def texLength (look : String → Option Int) (s : String) : Option Int := do
   let toks ← exprToks s.trimAscii.toString
   let mut vals : Array XVal := #[]
   let mut ops : Array Char := #[]
@@ -1011,9 +1035,11 @@ public def exactLength (look : String → Option Rat) (s : String) : Option Rat 
     | .ident n =>
       match vals.back?, prev with
       | some (.scalar v), true =>
-        match unitInches n with
-        | some u => vals := vals.pop.push (.len (v * u))
-        | none => vals := vals.pop.push (.len (v * (← look n)))
+        match unitSp v n with
+        | some x => vals := vals.pop.push (.len x)
+        | none =>
+          let (ip, f) := texDecimal v
+          vals := vals.pop.push (.len (coefSp ip f (← look n)))
       | _, true => failure
       | _, false =>
         vals := vals.push (.len (← look n))
@@ -1053,7 +1079,7 @@ public def exactLength (look : String → Option Rat) (s : String) : Option Rat 
     | some '(' => failure
     | some 'd' => ops := ops.pop
     | some top =>
-      vals ← xPop vals top
+      vals ← xPop (ops.contains 'd') vals top
       ops := ops.pop
     | none => break
   match vals.toList with

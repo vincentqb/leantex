@@ -2356,7 +2356,14 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on an invented article: a command calling two defined after it, in text and in a formula, an environment's halves calling a later command and a command reading another redefined after it set the later definitions' text; this tree sets the same, a command calling itself or its caller, a wrapper of a command's old text spelled with newcommand rather than let among them, still stopping with W0301 where TeX runs out of memory",
       "main's binary at 1e648c76 on the same probes: W0301 and the calls' text missing; the checks fail there",
       "the corpus and three private documents (two decks and a long markdown report) built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical, and every diagnostic the same"]
-    state := .guarded "1e648c76" .before .author }
+    state := .guarded "1e648c76" .before .author },
+  { id := "R999", date := "2026-10-20"
+    what := "a TeX length was read as an exact value where TeX reads it on its grid of scaled points, so the length printer printed 252.945pt where TeX prints 252.94499pt and 1in as 72.27pt where TeX prints 72.26999pt, a coefficient, a unit other than pt or a division a scaled point or more off, a calc division rounded where calc truncates; and a px was the CSS pixel where TeX's is a big point, so an image 300px wide was set 225bp wide"
+    pins := [check% texLengthChecks]
+    accept := ["lualatex 1.24 on invented probes: the printed value of 3.5truein, 1px, 1bp, 1cm, 1mm, 1dd, 1cc, 1pc, a twenty-digit third of a point, 12345sp, -1.5in, 2.5 and -0.7 times a length, five dimexpr and four calc expressions, 7.2bp, 0.1in and 25.4mm prints 252.94499pt, 1.00374pt, 1.00374pt, 28.45274pt, 2.84526pt, 1.07pt, 12.8401pt, 12.0pt, 0.33333pt, 0.18837pt, -108.405pt, 2.50934pt, -35.41199pt, 33.72585pt, 7.22697pt, -7.22697pt, 7.22696pt, -7.22696pt, 21.6809pt, 103.18503pt, 2.00748pt, -13.42992pt, 7.22699pt, 7.22743pt and 72.26997pt, and an image 300px wide is set 300bp wide; this tree prints and sets each the same",
+      "main's binary at 1e648c769 on the same probes: 18 of the 25 differ, among them 252.945pt, 0.7528pt, 1.00375pt, 28.45276pt, 2.50937pt, 7.22697pt for calc's division and 72.27pt, and the image is 225bp wide; the guards fail there",
+      "the corpus built by main's binary at 1e648c769 and by this tree's: every PDF and web page byte-identical but the web navigation fixture's page, whose reveal range of 300px reads 300pt for 225pt, visually the same"]
+    state := .guarded "1e648c769" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

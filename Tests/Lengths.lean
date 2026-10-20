@@ -95,3 +95,28 @@ def pointDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "72.27 TeX points and 72 big points are each an inch"
     (Decl.parseLength "72.27pt" == some (.ofLength (Dim.inch 1)) &&
       Decl.parseLength "72bp" == some (.ofLength (Dim.inch 1)))
+
+/-- A TeX length reads and prints as TeX reads and prints it: each term on TeX's grid of scaled
+points, a pixel a big point, a `\dimexpr` division rounded and calc's truncated. -/
+def texLengthChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- lualatex 1.24 prints each `\the` of the length set to its spelling.
+  let cases : List (String × String) :=
+    [("3.5truein", "252.94499pt"), ("1px", "1.00374pt"), ("1bp", "1.00374pt"), ("1cm", "28.45274pt"),
+     ("1mm", "2.84526pt"), ("1dd", "1.07pt"), ("1cc", "12.8401pt"), ("1pc", "12.0pt"),
+     ("0.33333333333333333333pt", "0.33333pt"), ("12345sp", "0.18837pt"), ("-1.5in", "-108.405pt"),
+     ("2.5\\lb", "2.50934pt"), ("-0.7\\la", "-35.41199pt"),
+     ("\\dimexpr\\la*2/3\\relax", "33.72585pt"), ("\\dimexpr\\la/7\\relax", "7.22697pt"),
+     ("\\dimexpr-\\la/7\\relax", "-7.22697pt"), ("\\la/7", "7.22696pt"), ("-\\la/7", "-7.22696pt"),
+     ("\\la*3/7", "21.6809pt"), ("\\dimexpr(\\la+1bp)*2\\relax", "103.18503pt"),
+     ("1bp+1bp", "2.00748pt"), ("\\la-2.25cm", "-13.42992pt"), ("7.2bp", "7.22699pt"),
+     ("0.1in", "7.22743pt"), ("25.4mm", "72.26997pt")]
+  for (spelled, printed) in cases do
+    let src := "\\documentclass{article}\n\\usepackage{calc}\n\\newlength\\la\\setlength\\la{50.58878pt}\n" ++
+      "\\newlength\\lb\\setlength\\lb{1bp}\\newlength\\lt\\setlength\\lt{" ++ spelled ++ "}\n" ++
+      "\\begin{document}\n\\edef\\x{\\the\\lt}A\\x B\n\\end{document}\n"
+    let txt := match (elabStr src).1.body with
+      | #[.para xs] => Ir.plainText xs
+      | _ => ""
+    t s!"\\the of {spelled} prints TeX's {printed} ({txt})" (txt == s!"A{printed}B")
+  t "a TeX document's pixel is a big point" (Decl.parseLength "3px" == some (.ofLength (Dim.bp 3)))

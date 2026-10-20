@@ -567,7 +567,7 @@ state, with what it replaced. -/
 private inductive CondUndo where
   | bind (n : String) (prev : Option (Option CondVal))
   | flag (n : String) (prev : Option Bool)
-  | len (n : String) (prev : Option Rat)
+  | len (n : String) (prev : Option Int)
 
 /-- Where the definition state stood when a group or environment opened. -/
 private structure CondMark where
@@ -935,7 +935,7 @@ private structure St where
   /-- Every global definition, in the order made. -/
   globals : Array (String × Option CondVal) := #[]
   /-- Every global length assignment, in the order made. -/
-  lenGlobals : Array (String × Option Rat) := #[]
+  lenGlobals : Array (String × Option Int) := #[]
   /-- Live primitive group pairs, whose save marks cross
   macro and input boundaries. -/
   primitiveScopes : Array (String × CondMark) := #[]
@@ -990,9 +990,9 @@ private structure St where
   fileTop : Bool := false
   /-- The value source each length holds as the rewrite last set it. -/
   lens : Array (String × String) := #[]
-  /-- Each allocated length's exact value in inches where the conditional pass stands, scoped as
-  TeX scopes it, and absent where the pass cannot follow its last assignment. -/
-  exactLens : Std.HashMap String Rat := {}
+  /-- Each allocated length's value in TeX's scaled points where the conditional pass stands, scoped
+  as TeX scopes it, and absent where the pass cannot follow its last assignment. -/
+  exactLens : Std.HashMap String Int := {}
   /-- The lengths an expanded `\edef` text names, read where it is defined. -/
   edefReads : Std.HashSet String := {}
   /-- The length registers the document allocates with `\newlength`, the only ones the conditional
@@ -2976,7 +2976,7 @@ private def setBind (n : String) (v : Option CondVal) : M Unit :=
 
 /-- Set length `n`'s exact value, or forget it, recording what it replaced on the save stack, and
 in the global log when `global`. -/
-private def setExactLen (n : String) (v : Option Rat) (global : Bool) : M Unit := do
+private def setExactLen (n : String) (v : Option Int) (global : Bool) : M Unit := do
   write fun st =>
     let prev := st.exactLens[n]?
     { st with undo := st.undo.push (.len n prev),
@@ -3982,38 +3982,35 @@ private def dimexprEnd : List Raw → Nat → Nat → Option Nat
   | _ :: rest, depth, i => dimexprEnd rest depth (i + 1)
 
 /-- A `\dimexpr` no `\relax` ends, read as e-TeX reads it: to the last of the raws within 32 that
-still continue its expression, and one space after a unit; its exact value in inches and the raws it
-took. -/
-private def dimexprOpen (lenOf : String → Option Rat) (rest : List Raw) : Option (Rat × Nat) := Id.run do
+still continue its expression, and one space after a unit; its scaled points and the raws it took. -/
+private def dimexprOpen (lenOf : String → Option Int) (rest : List Raw) : Option (Int × Nat) := Id.run do
   let window := (rest.take 32).takeWhile fun r => match r with
     | .space | .word .. | .sym .. => true
     | .ctrl n _ => n != "relax"
     | _ => false
-  let mut best : Option (Rat × Nat) := none
+  let mut best : Option (Int × Nat) := none
   for k in [1:window.length + 1] do
-    if let some v := Decl.exactLength lenOf (rawSrc (window.take k).toArray) then
+    if let some v := Decl.texLength lenOf (rawSrc (window.take k).toArray) then
       let unitSpace := (window[k - 1]? matches some (.word ..)) && (rest[k]? matches some .space)
       best := some (v, if unitSpace then k + 1 else k)
   return best
 
 /-- The dimen e-TeX reads after `\the`, `\number` or `\strip@pt`: a length register, or a
-`\dimexpr` over lengths and numbers up to its `\relax` or as far as it reads; its exact value in
-inches and the raws it took. -/
-private def edefDimen (lenOf : String → Option Rat) (rs : List Raw) : Option (Rat × Nat) :=
+`\dimexpr` over lengths and numbers up to its `\relax` or as far as it reads; its scaled points and
+the raws it took. -/
+private def edefDimen (lenOf : String → Option Int) (rs : List Raw) : Option (Int × Nat) :=
   let lead := (rs.takeWhile (· matches .space)).length
   match rs.drop lead with
   | .ctrl "dimexpr" _ :: rest =>
     let closed := (dimexprEnd rest 0 0).bind fun i =>
-      (Decl.exactLength lenOf (rawSrc (rest.take i).toArray)).map (·, i + 1)
+      (Decl.texLength lenOf (rawSrc (rest.take i).toArray)).map (·, i + 1)
     ((closed.orElse fun _ => dimexprOpen lenOf rest).map fun (v, used) => (v, lead + 1 + used))
   | .ctrl r _ :: _ => (lenOf r).map (·, lead + 1)
   | _ => none
 
-/-- A length as TeX prints it: its scaled points rounded half away from zero, then the fewest
-decimals that read back to them, with `pt` for `\the`, as a whole number for `\number`. -/
-private def edefPrint (cmd : String) (v : Rat) : String :=
-  let x := v * 7227 / 100 * 65536
-  let sp : Int := if x < 0 then -((-x + 1 / 2).floor) else (x + 1 / 2).floor
+/-- Scaled points as TeX prints them: the fewest decimals that read back to them, with `pt` for
+`\the`, as a whole number for `\number`. -/
+private def edefPrint (cmd : String) (sp : Int) : String :=
   let (whole, digits) := Decl.texScaledParts sp.natAbs
   let sign := if sp < 0 then "-" else ""
   let frac := String.join (digits.map toString)
@@ -4046,7 +4043,7 @@ private theorem sizeOf_drop_le (l : List Raw) : ∀ k, sizeOf (l.drop k) ≤ siz
 control after `\noexpand` stand, `\the`, `\number` and `\strip@pt` print a length or a `\dimexpr`,
 and another control is a call `call` expands. -/
 private def edefWalk (call : String → Pos → List Raw → Nat → Option (Array Raw × Nat × Nat))
-    (lenOf : String → Option Rat) (l : List Raw) (acc : Array Raw) (budget : Nat) :
+    (lenOf : String → Option Int) (l : List Raw) (acc : Array Raw) (budget : Nat) :
     Option (Array Raw × Nat) :=
   if budget == 0 then none else
   match l with
@@ -4078,7 +4075,7 @@ decreasing_by
 `defs` expands its text with its arguments bound, every definition still callable there, and a
 control `stands` names is left as written; a text past the budget, a cycle's, stays refused. -/
 private def edefExpand (defs : List (String × CondVal)) (stands : String → Bool)
-    (lenOf : String → Option Rat) (l : List Raw) (budget : Nat) : Option (Array Raw × Nat) :=
+    (lenOf : String → Option Int) (l : List Raw) (budget : Nat) : Option (Array Raw × Nat) :=
   if _h : budget = 0 then none else
   edefWalk (fun n p rest left =>
     match defs.find? (·.1 == n) with
@@ -4640,7 +4637,7 @@ pass does not run that assigns one forgets it. -/
 private def condNoteLength (raws : Array Raw) (i : Nat) (n : String) (undecided : Bool) :
     M Unit := do
   let st ← get
-  let look (m : String) : Option Rat := st.exactLens[m]?
+  let look (m : String) : Option Int := st.exactLens[m]?
   let global := (definerPrefixes raws i).contains "global"
   if lengthAssigns.contains n || lengthArith.contains n then
     let some target := lengthTarget raws i | return
@@ -4648,10 +4645,10 @@ private def condNoteLength (raws : Array Raw) (i : Nat) (n : String) (undecided 
       write fun st => { st with newLengths := st.newLengths.insert target }
       setExactLen target (if undecided then none else some 0) true
     else if st.newLengths.contains target then
-      let operand : Option Rat := match raws[skipSpaces raws (skipSpaces raws (i + 1) + 1)]? with
-        | some (.group v _) => Decl.exactLength look (rawSrc v)
+      let operand : Option Int := match raws[skipSpaces raws (skipSpaces raws (i + 1) + 1)]? with
+        | some (.group v _) => Decl.texLength look (rawSrc v)
         | _ => none
-      let value : Option Rat := if undecided then none else match n with
+      let value : Option Int := if undecided then none else match n with
         | "setlength" => operand
         | "addtolength" => (look target).bind fun old => operand.map (old + ·)
         | _ => none

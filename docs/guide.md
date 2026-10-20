@@ -146,11 +146,10 @@ lengths the document allocates with `\newlength` are read, followed through
 `\setlength` and `\addtolength`; one that another assignment changes, or code
 the engine does not run may change, is not read (but for a bare assignment
 opening a brace group, `{\len-1in …}`, which reads as an argument), and
-anything else the expansion meets is named and the definition skipped. Lengths are exact, each unit
-read as its standard defines it (a `pt` is TeX's 1/72.27 in, a `bp`
-1/72 in), and `\the` prints them in TeX points rounded once:
-`\the` of `3.5truein` prints `252.945pt`, where TeX,
-rounding each step, prints `252.94499pt`. A `\pdfvariable pageattr{…}` (or
+anything else the expansion meets is named and the definition skipped. Lengths
+read and print as TeX reads and prints them, each term on its grid of scaled
+points, a `\dimexpr` division rounded and calc's truncated: `\the` of
+`3.5truein` prints `252.94499pt`, and a `px` is TeX's pixel, a big point. A `\pdfvariable pageattr{…}` (or
 `\pdfpageattr`) assignment, in a `shipout/before` hook or not, writes its
 `/TrimBox`, `/BleedBox`, `/ArtBox` and `/CropBox` on every page, each inside
 the paper, the last assignment standing as in TeX, and names any other

@@ -1116,7 +1116,7 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the pin is fixed positioning at the declared corner and offset"
     (has page "position: fixed; bottom: 1.5em; right: 1.5em")
   t "the declared reveal range rides as a custom property, in points"
-    (has page "--reveal-range: 225pt")
+    (has page "--reveal-range: 300pt")
   t "the reveal ships its declarative form, and only that"
     (has page "@supports (animation-timeline: scroll())" &&
       has page "@keyframes ltx-reveal")
