@@ -80,6 +80,8 @@ public import LeanTex.Core.InputContract
 public import LeanTex.Core.GroupContract
 public import LeanTex.Core.Elab
 public import LeanTex.Core.ElabRegistryContract
+public import LeanTex.Core.TextAccount
+public import LeanTex.Core.ElabTextContract
 public import LeanTex.Core.TitleContract
 public import LeanTex.Core.ControlContract
 public import LeanTex.Core.PictureContract

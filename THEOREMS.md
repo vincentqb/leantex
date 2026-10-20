@@ -14,42 +14,41 @@ only on the document, the fonts and the output name. Resemblance to lualatex is 
 tiers measure that. In Lean terms, over the stages `Cli.Driver.build` runs:
 
 ```lean
--- One run of file f with bytes b, font environment E (the host's faces and cfg.fontDirs) and
--- configuration cfg; the driver answers each host question the pure stages ask.
-src                 ← Input.readDocument f b      -- decode, Surface.read, includes, execution
-p                   := Elab.prepareExecuted f src.executed
-(doc, dElab, spans) := Elab.runPrepared f p src.diags metric wd
-dFront              := Bib.accountFront (dElab ++ dSty) dBib notes refs
-doc'                := passes doc  -- Input.resolveBibliography, FigureAlt.titled,
-                                   -- Ir.resolveMathAlphas, Ir.squeezeFrames, Layout.pdfView
-fitted              := Layout.runFitted geom fs pats doc' imgs
-pdf                 := Pdf.writeChecked geom fs fitted.out.pages doc'.info imgs …
-(html, dHtml)       := HtmlDoc.emit cfg doc'
-md                  := MarkdownDoc.emit doc' bibName
-D                   := every diagnostic the run reports: each phase's batch through
-                       Diag.resolveAll (Diag.forOutputs outs batch), and the refusals Ui.diag prints
--- The driver elaborates again when list notes renumber, a settled face measures a label
--- otherwise, or a picture withdraws; doc and dFront above are the run that ships.
+-- One run of file f with bytes b, the host's faces E and configuration cfg (its font directories
+-- among them); the driver answers each host question the pure stages ask.
+src             ← Input.readDocument f b      -- decode, Surface.read, includes, execution
+p               := Elab.prepareExecuted f src.executed  -- with the listing replies, once fulfilled
+(doc₀, dElab, spans) := Elab.runPrepared f p earlier metric wd  -- the last call on its path
+dFront          := Bib.accountFront (dElab ++ dSty) dBib notes refs
+doc             := FigureAlt.titled t (Input.resolveBibliography f doc₀ …).1, then the doc
+                   buildFontSet returns (Ir.resolveMathAlphas), the one every backend reads
+fitted          := Layout.runFitted geom fs pats doc imgs;  pdf := Pdf.writeChecked … doc …
+tree            := Struct.ofDoc (Layout.pdfView doc)   -- Ir.keepFor "pdf"
+(html, dHtml)   := prepareHtml f hcfg { doc with body := Ir.squeezeFrames doc.body sq } natives
+md              := MarkdownDoc.emit doc bibName
+D               := every diagnostic the run reports: each phase's batch through
+                   Diag.resolveAll (Diag.forOutputs outs batch), and the refusals Ui.diag prints
+-- earlier is src.diags, and src.diags ++ listingDiags once listings are highlighted. The driver
+-- elaborates again when list notes renumber, a picture withdraws or a settled face measures a
+-- label otherwise; doc₀ is the last elaboration on the path taken. The remeasure and the HTML
+-- withdraw elaborations, and resolveMathAlphas there, drop their diagnostics today (U112).
 
--- A text is its characters, each with its origin: a byte of a source file, or generated.
-inductive Origin | source (file : String) (offset : Nat) | generated
-srcText ex : List (Char × Origin) := Parse.rawText ex.raws         -- the executed text slots
-irText doc : List (Char × Origin) := Ir.foldDoc located [] doc      -- Ir.plainText's characters,
-  -- each under its innermost .located span; erased, Ir.blocksText doc.body, then each
-  -- Ir.furnitureInlines region's Ir.plainText
-text A     : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks
-lost D A   : List Diag :=
-  (Diag.forOutputs #[A.output] D).filter (·.kind.loss ∈ [.dropped, .pending])
-named D A  : Set Origin := ⋃ {(Diag.piece d).origins | d ∈ lost D A}
-keep P t   : String := String.mk ((t.filter fun (_, o) => o ∉ P ∧ o ≠ .generated).map (·.1))
+-- A text is its characters, each from the source token a span starts at, or the engine's.
+inductive Origin | source (span : Span) | generated
+srcText A ex : List (Char × Origin) := Parse.rawText f ex.raws  -- less other targets' slots
+irText doc   : List (Char × Origin)  -- Ir.locatedText over the body's and furniture's inlines
+text A       : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks
+lost D A     : Array Diag :=
+  (Diag.forOutputs #[A.output] D).filter fun d => d.kind.loss matches .dropped | .pending
+named D A    : List Span := (lost D A).toList.flatMap Diag.piece
 
 theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) :
     let r := compile cfg src E      -- the stages above; src is f and every file the run reads
     ((∀ d ∈ r.D, ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606, .E0607]) →
       r.shipped = r.emitted) ∧
     (∀ A ∈ r.shipped,
-      Text.norm (keep (named r.D A) (text A)) = Text.norm (keep (named r.D A) (srcText r.ex)) ∧
-      ((lost r.D A).map (·.piece)).Pairwise Disjoint) ∧
+      Text.view (named r.D A) (text A) = Text.view (named r.D A) (srcText A r.ex) ∧
+      ((lost r.D A).toList.map Diag.piece).Pairwise List.Disjoint) ∧
     (PdfCensus.census r.pdf).isOk ∧
     HtmlDoc.scripts r.html ⊆ {HtmlDoc.deckScript} ∪ r.boundaryText ∧  -- the file read, if declared
     ∀ cfg', cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
@@ -57,13 +56,19 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
       ∀ A ∈ r.shipped, A ∈ r'.shipped → r'.bytes A = r.bytes A
 -- A result exists because every stage is total and terminates. Only dropped and pending losses
 -- excuse text: an error or a warning the default run shows, a repeat its shown line counts
--- (Diag.foldRepeats), or a loss the document accepts. srcText is read after execution, so
--- decoding, lexing, includes and execution owe the same equation from the source bytes (U111).
--- Text.norm: NFC, a white-space run as one space, TeX's ligature and quote spellings as the
--- characters they set, a line-end hyphen joined.
+-- (Diag.foldRepeats), or a loss the document accepts; W0311, degraded, still replaces a
+-- frame title's text, owed reclassified or excused by its piece (U111). srcText is read after
+-- execution, so decoding, lexing, includes and execution owe the same equation from the source
+-- bytes (U111); Ir.keepFor drops a block aimed at another target with no diagnostic, so srcText A
+-- leaves those slots out, owed with the per-target view (U111).
+-- Text.view P t: the characters Text.keep P keeps (each source character outside the excused
+-- tokens P, and the engine's white space), read through Text.norm: TeX's punctuation spellings
+-- as one (Text.canon) and a white-space run as one space (Text.squash); NFC and glyph ligatures
+-- are the backends' to read back (U110).
 -- Composition, for each artifact A: surface ∘ elaboration ∘ passes gives
--- keep (named dFront A) (irText doc') = keep (named dFront A) (srcText ex); each backend gives
--- keep (named D A) (text A) = keep (named D A) (irText doc'); the accounting gives
+-- Text.view (named dFront A) (irText doc) = Text.view (named dFront A) (srcText A ex); each
+-- backend gives Text.view (named D A) (text A) = Text.view (named D A) (irText doc), the PDF
+-- through Ir.keepFor "pdf" and the page through Ir.squeezeFrames; the accounting gives
 -- src.diags ⊆ dFront ⊆ D, up to site counts and demotion, so named dFront A ⊆ named D A.
 ```
 
@@ -71,10 +76,10 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 |---|---|---|
 | A result | No declaration is marked partial or unsafe (`bannedWord`, `scripts/ProofAudit.lean`). | owed (U72): `partialReachChecks`; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between` |
 | Ships unless stopped | tested: `machineLossChecks` | owed (U37): `DiagCode.error_iff_fatal`, its writer-stopping causes widened to the output name's and publication's refusals |
-| Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `read_tex_exact`, `Code.segmentsOf_source_exact`, `Md.desugar_vocabulary_mem`, `elabBlocks_input_exact`, `markdownInput_blocks_text`, `rewriteCtrl_accounts` | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
-| Elaboration and IR passes | `Ir.mapInlines_text`, `Ir.mapBlocks_text`, `Ir.numberFloats_text`, `Ir.markDisplay_text`, `Struct.ofDoc_text`, `texGroup_scope_id` | owed (U111): `Parse.rawText`, `Diag.piece`, `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
+| Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `Code.segmentsOf_source_exact`; by unfolding: `read_tex_exact`; supporting, no text step: `Md.desugar_vocabulary_mem` (the vocabulary a desugaring lowers into), `rewriteCtrl_accounts` (an empty rewrite paid by a diagnostic or a state write) | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
+| Elaboration and IR passes | the model: `Parse.rawText`, `Ir.locatedText` (`Ir.locatedText_erased`), `Diag.piece`, `Text.view` (`Text.view_congr`); the inline knot's plain-text arms (words, spaces, paragraph breaks, symbols with E0311's refusals, groups, declaration scopes and input wrappers): `Elab.elabInlines_plain_text`; an include standing as its own block sequence: `elabBlocks_input_exact`, `markdownInput_blocks_text`; supporting, no text step of the driver's: `Ir.mapInlines_text` and `Ir.mapBlocks_text` (for a leaf keeping `Ir.plainTextOne`), `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` (declaration scope) | owed (U111): the inline knot's other arms, `Elab.elabInlines_ctrl_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`; owed (U111): the block knot, `Elab.elabBlocks_text_accounts` over `Ir.locatedBlocks`; owed (U111): `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
 | Accounting: every loss reaches D once | `Elab.runPrepared_reports_contract`, `Elab.accountFront_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | owed (U112): `Driver.build_reports_contract` |
-| PDF text layer | `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
+| PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
 | HTML page text | `escapeText_spec`, `mathml_glyphs_agree` | owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts` |
 | Markdown twin | `rowLine_cells_exact` | owed (U49): `MarkdownDoc.escape_read_id`; owed (U110): `MarkdownDoc.emit_text_accounts` |
 | Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; tested: `htmlContainedCorpusChecks` | owed (U113): `HtmlDoc.emit_scripts_mem` |
@@ -92,15 +97,22 @@ Three gaps keep the composition open:
   Modules: `scripts/ProofAudit.lean`, `LeanTex/Core/Elab.lean` and the loops' own, most in
   `LeanTex/Core/Layout.lean`.
 - Elaboration conservation: for each artifact A, through execution, both of Elab's knots and the
-  driver's IR passes, keep (named dFront A) (irText doc') = keep (named dFront A) (srcText ex), the
-  pieces of distinct diagnostics disjoint, and execution keeps the decoded source's text slots the
-  same way. srcText reads the executed surface's text slots, each argument a control's registry
-  signature types as text, with its offsets; a diagnostic's piece is the source range its loss
-  covers, where a span holds only its start today. owed (U111): `Parse.rawText`, `Diag.piece`,
-  `Compat.executeInputs_text_accounts`, `Elab.runPrepared_text_accounts`,
-  `Driver.passes_text_accounts`. Modules: `LeanTex/Core/Parse.lean`, `LeanTex/Core/Compat.lean`,
-  `LeanTex/Core/Elab.lean`, `LeanTex/Core/Diag.lean`, `LeanTex/Core/InputContract.lean`,
-  `LeanTex/Cli/Input.lean`, `LeanTex/Cli/Driver.lean`.
+  driver's IR passes, Text.view (named dFront A) (irText doc) = Text.view (named dFront A) (srcText
+  A ex), the pieces of distinct diagnostics disjoint, and execution keeps the decoded source's text
+  slots the same way. The decomposition follows the knots: an arm accounts for its raws
+  (Elab.Accounts) when the diagnostics it adds name only tokens of those raws and, their pieces
+  excused, the text it appends reads as theirs; arms compose along the spine (`Text.view_congr`), a
+  group's or a scope's inner run standing for its body. The plain-text arms of the inline knot are
+  proved (`Elab.elabInlines_plain_text`). `Parse.rawText` reads a group's text whatever control
+  precedes it, so the control arms owe its signature-typed slots, a `\label` or `\ref` key, a length
+  or a file name being no text; a diagnostic's piece is the token its span starts at, so a loss
+  covering more owes its range. owed (U111): `Elab.elabInlines_ctrl_text`,
+  `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`,
+  `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`, `Elab.elabBlocks_text_accounts`,
+  `Ir.locatedBlocks`, `Compat.executeInputs_text_accounts`, `Elab.runPrepared_text_accounts`,
+  `Driver.passes_text_accounts`. Modules: `LeanTex/Core/ElabTextContract.lean`,
+  `LeanTex/Core/TextAccount.lean`, `LeanTex/Core/Elab.lean`, `LeanTex/Core/Compat.lean`,
+  `LeanTex/Core/Diag.lean`, `LeanTex/Cli/Input.lean`, `LeanTex/Cli/Driver.lean`.
 - Artifact text: a model of what a viewer extracts, against which each backend's census is proved.
   For the PDF, PDF 2.0's text extraction: content-stream strings through each font's ToUnicode map
   in marked-content order, Artifact content generated, origins from the structure tree's marked
@@ -136,6 +148,7 @@ Three gaps keep the composition open:
 | Termination | Owed: elaboration terminates. No declaration is marked partial and both knots recurse on lexicographic measures the kernel checks, but do-notation repeat loops still compile to a partial combinator. | owed (U72): a semantic lint over reachable constants, the repeat loops rewritten |
 | Macro visibility | Owed: a call resolves to the definition visible at that point. | owed (U77): `lookupUser_latest_exact` |
 | Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
+| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers and outside a command's call, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal naming one token of that source; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike. | `Elab.elabInlines_plain_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_ctrl_text`, `Elab.elabBlocks_text_accounts` |
 | Group scope | A group's end, block or inline, restores the declaration state its start held, with the global assignments logged inside replayed over it; with none logged, a group, an environment holding block content and a braced group of block content with no paragraph end inside each leave the state as they found it. | `texGroup_scope_id`, `elabBlocks_env_scope_id`, `elabBlocks_group_scope_id`; by unfolding: `texGroup_scope_exact`, `inlineGroup_scope_exact` |
 
 ## IR

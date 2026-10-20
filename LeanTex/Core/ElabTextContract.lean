@@ -1,0 +1,523 @@
+module
+
+public import LeanTex.Core.TextAccount
+public import LeanTex.Core.Elab
+
+import all LeanTex.Core.Ir
+import all LeanTex.Core.Elab
+import all LeanTex.Core.Parse
+import all LeanTex.Core.Diag
+
+namespace LeanTex.Core.Text
+
+/-- Smart punctuation keeps the spelling and the white space it reads, after what it has set. -/
+theorem smartPunct_go_canon (l prev : List Char) :
+    ∃ x, Ir.smartPunct.go l prev = prev.reverse ++ x ∧ canon x = canon l ∧
+      x.filter (·.isWhitespace) = l.filter (·.isWhitespace) := by
+  fun_induction Ir.smartPunct.go l prev with
+  | case1 prev => exact ⟨[], by simp, by simp, by simp⟩
+  | _ =>
+    rename_i ih
+    obtain ⟨x, hx, hs, hw⟩ := ih
+    refine ⟨_ :: x, by rw [hx, List.reverse_cons, List.append_assoc]; rfl, ?_, ?_⟩
+    · simp only [canon, List.flatMap_cons] at hs ⊢
+      rw [hs]
+      all_goals first
+        | (split <;> simp [spell])
+        | simp [spell]
+    · simp only [List.filter_cons, hw]
+      all_goals split <;> simp_all [Char.isWhitespace]
+
+theorem smartPunct_canon (s : String) :
+    canon (Ir.smartPunct s).toList = canon s.toList ∧
+      (Ir.smartPunct s).toList.filter (·.isWhitespace) = s.toList.filter (·.isWhitespace) := by
+  obtain ⟨x, hx, hs, hw⟩ := smartPunct_go_canon s.toList []
+  simp [Ir.smartPunct, hx, hs, hw]
+
+theorem smartPunctAfter_canon (lead : Option Char) (s : String) :
+    canon (Ir.smartPunctAfter lead s).toList = canon s.toList := by
+  cases lead with
+  | none => exact (smartPunct_canon s).1
+  | some c =>
+    obtain ⟨x, hx, hs, _⟩ := smartPunct_go_canon s.toList [c]
+    simp [Ir.smartPunctAfter, hx, hs]
+
+theorem keep_generated (named : List Span) (s : String) :
+    keep named (chars .generated s) = s.toList.filter (·.isWhitespace) := by
+  simp only [keep, chars, List.filterMap_map, Function.comp_def]
+  induction s.toList with
+  | nil => rfl
+  | cons c rest ih => by_cases hc : c.isWhitespace = true <;> simp [hc, ih]
+
+/-- Smart punctuation reads alike from either origin. -/
+theorem chars_smart (named : List Span) (o : Origin) (s : String) :
+    canon (keep named (chars o (Ir.smartPunct s))) = canon (keep named (chars o s)) := by
+  cases o with
+  | source sp =>
+    simp only [keep_source]
+    split
+    · rfl
+    · exact (smartPunct_canon s).1
+  | generated =>
+    rw [keep_generated, keep_generated, (smartPunct_canon s).2]
+
+end LeanTex.Core.Text
+
+namespace LeanTex.Core.Elab
+
+open Text Ir Parse
+
+private theorem punctuationInline_canon (named : List Span) (o : Origin) (s : String) :
+    canon (keep named (locatedOne o (punctuationInline false none s))) =
+      canon (keep named (locatedOne o (.text s))) := by
+  unfold punctuationInline
+  simp only [Bool.false_eq_true, ↓reduceIte]
+  split
+  · rfl
+  · simp only [locatedOne_text]
+    exact chars_smart named o s
+
+private theorem mapSmartTextList_exact (acc : Array Inline) (l : List Inline) :
+    mapSmartTextList none acc l = acc ++ (l.map (mapSmartText none)).toArray := by
+  induction l generalizing acc with
+  | nil => simp [mapSmartTextList]
+  | cons x rest ih => simp [mapSmartTextList, ih]
+
+mutual
+
+private theorem mapSmartText_canon (named : List Span) (o : Origin) (x : Inline) :
+    canon (keep named (locatedOne o (mapSmartText none x))) =
+      canon (keep named (locatedOne o x)) := by
+  match x with
+  | .text s => exact punctuationInline_canon named o s
+  | .role n inner =>
+    simp only [mapSmartText, locatedOne_role, mapSmartTextList_exact, Array.empty_append]
+    exact mapSmartTextList_canon named o inner.toList
+  | .located sp inner =>
+    simp only [mapSmartText, locatedOne_located, mapSmartTextList_exact, Array.empty_append]
+    exact mapSmartTextList_canon named _ inner.toList
+  | .math .. | .formula .. | .styled .. | .colored .. | .link .. | .label .. | .ref ..
+  | .decorated .. | .boxed .. | .fill | .hspace .. | .rule .. | .pageNumber | .pageCount
+  | .linebreak .. | .strut .. | .italicCorr .. | .onSteps .. | .altSteps .. | .image ..
+  | .icon .. | .cite .. | .cited .. | .footnote .. => rfl
+
+private theorem mapSmartTextList_canon (named : List Span) (o : Origin) :
+    ∀ l : List Inline, canon (keep named (locatedList o (l.map (mapSmartText none)))) =
+      canon (keep named (locatedList o l))
+  | [] => rfl
+  | x :: rest => by
+    simp only [List.map_cons, locatedList_cons, keep_append, canon_append]
+    rw [mapSmartText_canon named o x, mapSmartTextList_canon named o rest]
+
+end
+
+/-- Smart punctuation over a level's text reads as the text. -/
+theorem view_mapSmartText (named : List Span) (xs : Array Inline) :
+    view named (locatedText (xs.map (mapSmartText none))) = view named (locatedText xs) := by
+  simp only [view, norm, locatedText, Array.toList_map]
+  rw [mapSmartTextList_canon]
+
+/-- The raws the plain-text arms of the inline knot read: words, spaces, paragraph breaks and
+symbols, whatever expansion marks them, and groups, declaration scopes and input wrappers of
+them. -/
+public inductive PlainRaw : Parse.Raw → Prop
+  | word (s : String) (p : Pos) : PlainRaw (Parse.Raw.word s p)
+  | space : PlainRaw Parse.Raw.space
+  | par (p : Pos) : PlainRaw (Parse.Raw.par p)
+  | sym (c : Char) (p : Pos) : PlainRaw (Parse.Raw.sym c p)
+  | group (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw r) →
+      PlainRaw (Parse.Raw.group body p)
+  | scope (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw r) →
+      PlainRaw (Parse.Raw.env Parse.scopeEnv body p)
+  | input (name file : String) (body : Array Raw) (p : Pos) :
+      Parse.inputEnvFile? name = some file → (∀ r ∈ body, PlainRaw r) →
+      PlainRaw (Parse.Raw.env name body p)
+
+/-- An inline run accounts for the source text `src` after `pre`: the pieces its diagnostics add
+are tokens of `src`, and once they are excused its text reads as `pre` then `src`. -/
+@[expose] public def Accounts (file : String) (src : List Raw) (run : Array Inline × ESt)
+    (st : ESt) (pre : List (Char × Origin)) : Prop :=
+  ∃ added : List Span,
+    run.2.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added ∧
+    (∀ s ∈ added, ∃ c, (c, .source s) ∈ Parse.rawTextList file src) ∧
+    ∀ named : List Span, (∀ s ∈ added, s ∈ named) →
+      view named (locatedText run.1) = view named (pre ++ Parse.rawTextList file src)
+
+private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : Array Inline × ESt)
+    (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
+    (h : Accounts file src run st1 pre')
+    (hd : st1.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added0)
+    (hd0 : ∀ s ∈ added0, ∃ c, (c, .source s) ∈ Parse.rawTextOne file r)
+    (hview : ∀ named : List Span, (∀ s ∈ added0, s ∈ named) →
+      ∀ tail, view named (pre' ++ tail) = view named (pre ++ Parse.rawTextOne file r ++ tail)) :
+    Accounts file (r :: src) run st pre := by
+  obtain ⟨added, hdiags, hsrc, hv⟩ := h
+  refine ⟨added0 ++ added, ?_, ?_, ?_⟩
+  · rw [hdiags, hd, List.append_assoc]
+  · intro s hs
+    rcases List.mem_append.mp hs with hs | hs
+    · obtain ⟨c, hc⟩ := hd0 s hs
+      exact ⟨c, by rw [Parse.rawTextList_cons]; exact List.mem_append_left _ hc⟩
+    · obtain ⟨c, hc⟩ := hsrc s hs
+      exact ⟨c, by rw [Parse.rawTextList_cons]; exact List.mem_append_right _ hc⟩
+  · intro named hn
+    rw [hv named (fun s hs => hn s (List.mem_append_right _ hs)),
+      hview named (fun s hs => hn s (List.mem_append_left _ hs))]
+    simp only [Parse.rawTextList_cons, List.append_assoc]
+
+private theorem locatedText_flushText (acc : Array Inline) (sb : String) :
+    locatedText (flushText acc sb) = locatedText acc ++ chars .generated sb := by
+  unfold flushText
+  split
+  · rename_i h
+    have : sb = "" := by simpa using h
+    subst this
+    simp [chars]
+  · simp [locatedText_push]
+
+private theorem locatedText_split (acc : Array Inline) (k : Nat) :
+    locatedText acc = locatedText (acc.extract 0 k) ++ locatedText (acc.extract k acc.size) := by
+  rw [← locatedText_append, Array.extract_append_extract]
+  have : acc.extract 0 (max k acc.size) = acc := by
+    rw [Array.extract_eq_self_iff]
+    omega
+  simp [this]
+
+private theorem closeMacroRuns_located (acc : Array Inline) (runs : List MacroRun) :
+    locatedText (closeMacroRuns macroRunInlines acc runs) = locatedText acc := by
+  induction runs generalizing acc with
+  | nil => rfl
+  | cons run rest ih =>
+    simp only [closeMacroRuns]
+    rw [ih]
+    split
+    · rw [locatedText_split acc run.start, locatedText_append]
+      simp [macroRunInlines, locatedText, locatedList_cons]
+    · rfl
+
+private theorem moveMacroRuns_located (active : Array MacroRun) (desired : List MacroOrigin)
+    (acc : Array Inline) (pending : Bool) :
+    locatedText (moveMacroRuns macroRunInlines active desired acc pending).2 = locatedText acc := by
+  simp only [moveMacroRuns, closeMacroRuns_located]
+
+private theorem step_located (c : Bool) (roles roles' : MacroRoles) (acc acc2 : Array Inline)
+    (sb : String) (h : locatedText acc2 = locatedText (flushText acc sb)) :
+    locatedText (if c then (roles, acc, sb) else (roles', acc2, "")).2.1 ++
+        chars .generated (if c then (roles, acc, sb) else (roles', acc2, "")).2.2 =
+      locatedText acc ++ chars .generated sb := by
+  cases c <;> simp [h, locatedText_flushText]
+
+/-- Moving the macro runs at a token only wraps what is set under roles. -/
+private theorem inlineMacroStep_located (roles : MacroRoles) (raw : Option Raw)
+    (acc : Array Inline) (sb : String) (following : List MacroOrigin) :
+    locatedText (inlineMacroStep roles raw acc sb following).2.1 ++
+        chars .generated (inlineMacroStep roles raw acc sb following).2.2 =
+      locatedText acc ++ chars .generated sb := by
+  unfold inlineMacroStep
+  dsimp only
+  exact step_located _ _ _ _ _ _ (moveMacroRuns_located _ _ _ _)
+
+private theorem inlineMacroAt_located (roles : MacroRoles) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) :
+    locatedText (inlineMacroAt roles raws i acc sb).2.1 ++
+        chars .generated (inlineMacroAt roles raws i acc sb).2.2 =
+      locatedText acc ++ chars .generated sb :=
+  inlineMacroStep_located _ _ _ _ _
+
+private theorem ends_space (t : String) (h : t.endsWith " " = true) :
+    ∃ u, t.toList = u ++ [' '] := by
+  have h' : t.toSlice.endsWith " " = true := by rw [String.endsWith_toSlice]; exact h
+  rw [String.Slice.endsWith_string_iff] at h'
+  obtain ⟨u, hu⟩ := h'
+  exact ⟨u, by simpa using hu.symm⟩
+
+private theorem view_space_after (named : List Span) (x tail : List (Char × Origin))
+    (h : ∃ y, x = y ++ [(' ', .generated)]) :
+    view named (x ++ (' ', .generated) :: tail) = view named (x ++ tail) := by
+  obtain ⟨y, rfl⟩ := h
+  simpa only [List.append_assoc, List.cons_append, List.nil_append] using
+    view_space_run named y tail
+
+private theorem chars_ends (sb : String) (h : sb.endsWith " " = true) :
+    ∃ y, chars .generated sb = y ++ [(' ', .generated)] := by
+  obtain ⟨u, hu⟩ := ends_space sb h
+  exact ⟨u.map (·, .generated), by simp [chars, hu]⟩
+
+private theorem chars_push (o : Origin) (sb : String) (c : Char) :
+    chars o (sb.push c) = chars o sb ++ [(c, o)] := by
+  simp [chars]
+
+/-- A pending space's reading: one engine space, or none against a space already pending. -/
+private theorem view_pending_space (named : List Span) (l : List (Char × Origin)) (sb : String)
+    (tail : List (Char × Origin)) :
+    view named ((l ++ chars .generated (if spaceSeps sb then sb.push ' ' else sb)) ++ tail) =
+      view named (l ++ chars .generated sb ++ [(' ', .generated)] ++ tail) := by
+  split
+  · simp [chars, List.append_assoc]
+  · rename_i hs
+    have he : sb.endsWith " " = true := by simpa [spaceSeps] using hs
+    have := view_space_after named (l ++ chars .generated sb) tail
+      (by obtain ⟨y, hy⟩ := chars_ends sb he; exact ⟨l ++ y, by simp [hy]⟩)
+    simpa [chars] using this.symm
+
+private theorem inputEnvFile?_scope : Parse.inputEnvFile? Parse.scopeEnv = none := by
+  simp [Parse.inputEnvFile?, Parse.scopeEnv]
+
+private theorem inputEnvFile?_mode : Parse.inputEnvFile? Parse.modeEnv = none := by
+  simp [Parse.inputEnvFile?, Parse.modeEnv]
+
+private theorem core_plain (ctx : Ctx) (raws : Array Raw) (st : ESt)
+    (h : ∀ st, Accounts ctx.file (raws.toList.drop 0)
+      ((elabInlinesFrom { { ctx with macroRoles := ctx.macroRoles.enter } with
+        callSite := none, literalWhen := none } raws 0 #[] "").run st) st
+      (locatedText #[] ++ chars .generated "")) :
+    Accounts ctx.file raws.toList
+      ((elabInlinesCore { ctx with callSite := none, literalWhen := none } raws).run st) st [] := by
+  have hrun : (elabInlinesCore { ctx with callSite := none, literalWhen := none } raws).run st =
+      (if ctx.literalText then
+        ((elabInlinesFrom { { ctx with macroRoles := ctx.macroRoles.enter } with
+          callSite := none, literalWhen := none } raws 0 #[] "").run st).1
+      else ((elabInlinesFrom { { ctx with macroRoles := ctx.macroRoles.enter } with
+          callSite := none, literalWhen := none } raws 0 #[] "").run st).1.map (mapSmartText none),
+        ((elabInlinesFrom { { ctx with macroRoles := ctx.macroRoles.enter } with
+          callSite := none, literalWhen := none } raws 0 #[] "").run st).2) := by
+    rw [elabInlinesCore]
+    rfl
+  rw [hrun]
+  obtain ⟨new, hd, hk, hv⟩ := h st
+  simp only [List.drop_zero] at hk hv
+  refine ⟨new, hd, hk, fun named hn => ?_⟩
+  have := hv named hn
+  simp only [locatedText_empty, chars_empty, List.nil_append] at this
+  dsimp only
+  split
+  · exact this
+  · rw [view_mapSmartText]
+    exact this
+
+private theorem accounts_inner (file innerFile : String) (r : Raw) (body : Array Raw)
+    (src : List Raw) (run : Array Inline × ESt) (st stI st1 : ESt) (pre : List (Char × Origin))
+    (inner : Array Inline) (hI : Accounts innerFile body.toList (inner, stI) st [])
+    (hr : Parse.rawTextOne file r = Parse.rawTextList innerFile body.toList)
+    (hst : st1.diags = stI.diags) (h : Accounts file src run st1 (pre ++ locatedText inner)) :
+    Accounts file (r :: src) run st pre := by
+  obtain ⟨newI, hdI, hkI, hvI⟩ := hI
+  refine accounts_cons file r src run st st1 pre _ newI h (by rw [hst]; exact hdI) ?_ ?_
+  · intro s hs
+    rw [hr]
+    exact hkI s hs
+  · intro named hn tail
+    rw [hr, List.append_assoc, List.append_assoc]
+    have hv := hvI named hn
+    simp only [List.nil_append] at hv
+    exact view_congr named rfl (view_congr named hv rfl)
+
+private theorem run_group (base : Palette) (act : EM (Array Inline)) (k : Array Inline → EM α)
+    (st : ESt) :
+    ((do let x ← inlineGroup base act; k x) : EM α).run st =
+      (k (act.run st).1).run
+        { (act.run st).2 with scope := st.scope.restore base (act.run st).2.scope } :=
+  rfl
+
+private theorem run_bind' (act : EM β) (k : β → EM α) (st : ESt) :
+    ((do let x ← act; k x) : EM α).run st = (k (act.run st).1).run (act.run st).2 :=
+  rfl
+
+private theorem pre_inner (acc inner : Array Inline) (sb : String) :
+    locatedText (flushText acc sb ++ inner) ++ chars .generated "" =
+      locatedText acc ++ chars .generated sb ++ locatedText inner := by
+  simp [locatedText_append, locatedText_flushText]
+
+/-- The context an input wrapper's body reads in, before its call site and selector are cleared. -/
+@[reducible] private def inputCtx (ctx : Ctx) (name file : String) : Ctx :=
+  { ctx with file := file, kept := ctx.kept || Parse.isKeptInput name,
+             owned := Compat.ownsInput ctx.owned ctx.file name }
+
+private theorem wordAfter_canon (ctx : Ctx) (acc : Array Inline) (sb w : String) :
+    canon (wordAfter ctx acc sb w).toList = canon w.toList := by
+  unfold wordAfter
+  split
+  · rfl
+  · split
+    · exact smartPunctAfter_canon _ _
+    · rfl
+
+private theorem slice_body {raws body : Array Raw} {i : Nat} (h : i < raws.size)
+    (hb : rawWeightList body.toList < rawWeight raws[i]) :
+    sliceWeight body 0 < sliceWeight raws i := by
+  have := body_lt_slice' h hb
+  simpa [sliceWeight] using this
+
+private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
+    (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r) :
+    Accounts ctx.file (raws.toList.drop i)
+      ((elabInlinesFrom { ctx with callSite := none, literalWhen := none } raws i acc sb).run st) st
+      (locatedText acc ++ chars .generated sb) := by
+  rw [elabInlinesFrom]
+  have hstep := inlineMacroAt_located
+    ({ ctx with callSite := none, literalWhen := none } : Ctx).macroRoles raws i acc sb
+  generalize inlineMacroAt
+    ({ ctx with callSite := none, literalWhen := none } : Ctx).macroRoles raws i acc sb = state
+    at hstep ⊢
+  rcases state with ⟨roles, acc', sb'⟩
+  dsimp only at hstep ⊢
+  rw [← hstep]
+  clear hstep
+  by_cases h : i < raws.size
+  · rw [dite_eq_left h]
+    have hx := hr raws[i] (Array.getElem_mem h)
+    have hdrop : raws.toList.drop i = raws[i] :: raws.toList.drop (i + 1) := by
+      have hl : i < raws.toList.length := by simpa using h
+      rw [List.drop_eq_getElem_cons hl]
+      simp
+    rw [hdrop]
+    split
+    all_goals rename_i heq
+    all_goals rw [heq] at hx
+    all_goals cases hx
+    all_goals rw [heq]
+    case h_1.word s p =>
+      refine accounts_cons ctx.file _ _ _ st st _ _ []
+        (spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" st hr)
+        (by simp) (by simp) ?_
+      intro named _ tail
+      simp only [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
+        locatedOne_located, locatedOne_text, locatedList_cons, locatedList_nil,
+        Parse.rawTextOne_word, Option.map_none, Option.getD_none, List.append_nil,
+        List.append_assoc, chars_empty]
+      rw [← List.append_assoc (locatedText acc'), ← List.append_assoc (locatedText acc')]
+      exact view_token named _ (wordAfter_canon _ _ _ _) _ _
+    case h_2.space =>
+      refine accounts_cons ctx.file _ _ _ st st _ _ []
+        (spine_plain { ctx with macroRoles := roles } raws (i + 1) acc' _ st hr)
+        (by simp) (by simp) ?_
+      intro named _ tail
+      simp only [Parse.rawTextOne_space]
+      exact view_pending_space named _ sb' tail
+    case h_3.par p =>
+      refine accounts_cons ctx.file _ _ _ st st _ _ []
+        (spine_plain { ctx with macroRoles := roles } raws (i + 1) acc' _ st hr)
+        (by simp) (by simp) ?_
+      intro named _ tail
+      simp only [Parse.rawTextOne_par]
+      split
+      · simp [chars, List.append_assoc]
+      · rename_i hs
+        unfold needsSep at hs
+        split at hs
+        · rename_i hsb
+          have hsb' : sb' = "" := by simpa using hsb
+          subst hsb'
+          split at hs
+          · rename_i t hb
+            have he : t.endsWith " " = true := by simpa using hs
+            obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.mp hb
+            obtain ⟨y, hy⟩ := chars_ends t he
+            have := view_space_after named (locatedText (ys.push (.text t))) tail
+              ⟨locatedText ys ++ y, by simp [locatedText_push, hy]⟩
+            simpa [chars] using this.symm
+          · simp at hs
+        · have he : sb'.endsWith " " = true := by simpa using hs
+          have := view_space_after named (locatedText acc' ++ chars .generated sb') tail
+            (by obtain ⟨y, hy⟩ := chars_ends sb' he; exact ⟨locatedText acc' ++ y, by simp [hy]⟩)
+          simpa [chars] using this.symm
+    case h_4.sym p | h_5.sym p | h_6.sym p =>
+      refine accounts_cons ctx.file _ _ _ st st _ _ []
+        (spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" st hr)
+        (by simp) (by simp) ?_
+      intro named _ tail
+      simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
+        locatedList_cons, chars]
+    case h_7.sym c p h1 h2 h3 =>
+      have hc : c ≠ '~' := h3
+      split
+      · refine accounts_cons ctx.file _ _ _ st st _ _ []
+          (spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" st hr)
+          (by simp) (by simp) ?_
+        intro named _ tail
+        simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
+          locatedList_cons, chars, hc]
+      · refine accounts_cons ctx.file _ _ _ st _ _ _ [⟨ctx.file, p⟩]
+          (spine_plain { ctx with macroRoles := roles } raws (i + 1) acc' sb' _ hr) ?_ ?_ ?_
+        · show (st.diags.push _).toList.flatMap Diag.piece = _
+          simp [Diag.piece, diagOf, Diag.of, Ctx.sourceSpan, DiagCode.loss, DiagCode.spec]
+        · intro s hs
+          simp only [List.mem_singleton] at hs
+          subst hs
+          exact ⟨c, by simp [hc]⟩
+        · intro named hn tail
+          have hs : (⟨ctx.file, p⟩ : Span) ∈ named := hn _ (List.mem_singleton_self _)
+          have := view_named named _ hs [c] (locatedText acc' ++ chars .generated sb') tail
+          simpa [hc, List.append_assoc] using this.symm
+    case h_9.group body p _ =>
+      have hb : ∀ r ∈ body, PlainRaw r := by assumption
+      rw [run_group]
+      refine accounts_inner ctx.file ctx.file _ body _ _ st _ _ _ _
+        (core_plain { ctx with macroRoles := roles } body st fun st =>
+          spine_plain { ctx with macroRoles := roles.enter } body 0 #[] "" st hb)
+        (by simp) rfl ?_
+      rw [← pre_inner]
+      exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
+    case h_10.scope body p _ =>
+      have hb : ∀ r ∈ body, PlainRaw r := by assumption
+      simp only [beq_self_eq_true, ↓reduceIte]
+      rw [run_bind']
+      refine accounts_inner ctx.file ctx.file _ body _ _ st _ _ _ _
+        (core_plain { ctx with macroRoles := roles } body st fun st =>
+          spine_plain { ctx with macroRoles := roles.enter } body 0 #[] "" st hb)
+        (by simp [inputEnvFile?_scope]) rfl ?_
+      rw [← pre_inner]
+      exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
+    case h_10.input name body p f _ _ =>
+      have hb : ∀ r ∈ body, PlainRaw r := by assumption
+      have hf : Parse.inputEnvFile? name = some f := by assumption
+      have hs : (name == Parse.scopeEnv) = false := by
+        rw [beq_eq_false_iff_ne]
+        rintro rfl
+        rw [inputEnvFile?_scope] at hf
+        cases hf
+      have hmode : (name == Parse.modeEnv) = false := by
+        rw [beq_eq_false_iff_ne]
+        rintro rfl
+        rw [inputEnvFile?_mode] at hf
+        cases hf
+      simp only [hs, hmode, hf, Bool.false_eq_true, ↓reduceIte]
+      rw [run_bind']
+      refine accounts_inner ctx.file f _ body _ _ st _ _ _ _
+        (core_plain (inputCtx { ctx with macroRoles := roles } name f) body st fun st =>
+          spine_plain { inputCtx { ctx with macroRoles := roles } name f with
+            macroRoles := roles.enter } body 0 #[] "" st hb)
+        (by simp [hf]) rfl ?_
+      rw [← pre_inner]
+      exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
+  · simp only [h, ↓reduceDIte]
+    have hdrop : raws.toList.drop i = [] := List.drop_eq_nil_of_le (by simpa using Nat.not_lt.mp h)
+    rw [hdrop]
+    refine ⟨[], by rw [List.append_nil]; rfl, by simp, fun named _ => ?_⟩
+    show view named (locatedText (mergeTexts (flushText acc' sb'))) = _
+    rw [locatedText_mergeTexts, locatedText_flushText]
+    simp
+termination_by sliceWeight raws i
+decreasing_by
+  all_goals first
+    | exact sliceWeight_lt raws h (Nat.lt_succ_self i)
+    | (apply slice_body h
+       rw [‹raws[i] = _›]
+       simp only [rawWeight]
+       omega)
+
+/-- The plain-text arms of the inline knot conserve the source's text: once the reserved
+characters it refuses are excused, a run of words, spaces, breaks and symbols, through groups,
+declaration scopes and input wrappers, reads as its source. -/
+public theorem elabInlines_plain_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
+    (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
+    (hr : ∀ r ∈ raws, PlainRaw r) :
+    Accounts ctx.file raws.toList ((elabInlines ctx raws).run st) st [] := by
+  have hctx : ctx = { ctx with callSite := none, literalWhen := none } := by
+    cases ctx
+    simp_all
+  rw [elabInlines, hctx]
+  exact core_plain ctx raws st fun st =>
+    spine_plain { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] "" st hr
+
+end LeanTex.Core.Elab
