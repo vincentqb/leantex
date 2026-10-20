@@ -77,38 +77,57 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The export's spellings, against the committed answer.
   let spells (name : String) (want : Array String) : IO Unit :=
     t s!"statements: {name} reads {want} ({formulasOf facts name})" (formulasOf facts name == want)
-  spells "Tide.height_double" #["\\forall rise,{}", "n\\in \\mathbb {N},", "\\operatorname {height}(rise,{}",
-    "2\\cdot {}", "n)={}", "2\\cdot {}", "\\operatorname {height}(rise,{}", "n)"]
-  spells "Tide.height_pos" #["0<{}", "rise\\to {}", "0<{}", "n\\to {}", "0<{}",
-    "\\operatorname {height}(rise,{}", "n)"]
-  spells "Tide.exists_step" #["\\exists n\\in \\mathbb {N},", "n+{}", "2={}", "5"]
-  spells "Tide.le_or_gt" #["\\forall a,{}", "b\\in \\mathbb {N},", "a\\leq {}", "b\\lor {}", "b<{}", "a"]
-  spells "Tide.swap_and" #["\\forall p,{}", "q\\in \\operatorname {Prop},", "p\\land {}",
-    "q\\leftrightarrow {}", "q\\land {}", "p"]
-  spells "Tide.not_both" #["\\forall p\\in \\operatorname {Prop},", "\\lnot (p\\land \\lnot p)"]
-  spells "Tide.neg_neg'" #["\\forall z\\in \\mathbb {Z},", "-(-z)={}", "z"]
-  spells "Tide.pow_succ'" #["\\forall a,{}", "n\\in \\mathbb {N},", "a^{n+1}={}", "a^{n}\\cdot {}", "a"]
-  spells "Tide.div_mod" #["\\forall a,{}", "b\\in \\mathbb {N},", "b\\cdot {}", "(a/b)+{}", "a\\bmod {}",
-    "b={}", "a"]
-  spells "Tide.total" #["\\operatorname {total}:", "\\operatorname {Add}(α)\\to {}", "α\\to {}",
-    "\\operatorname {List}(α)\\to {}", "α"]
-  spells "Tide.strict_hyp" #["(\\forall n\\in \\mathbb {N},n=0)\\to {}", "\\operatorname {False}"]
-  spells "Tide.imp_iff" #["\\forall p,{}", "q\\in \\operatorname {Prop},", "p\\to {}", "(q\\leftrightarrow q)"]
-  spells "Tide.depth_val" #["\\operatorname {depth}={}", "7"]
-  spells "Tide.holds_ex" #["\\operatorname {holds}(\\exists n\\in \\mathbb {N},n=0)"]
-  spells "Tide.fixes" #["\\forall f\\in (\\mathbb {N}\\to \\mathbb {N}),", "f(0)={}", "0\\to {}",
-    "f(f(0))={}", "0"]
-  spells "Tide.iff_nest" #["\\forall p\\in \\operatorname {Prop},", "p\\leftrightarrow {}",
-    "(p\\leftrightarrow \\operatorname {True})"]
-  spells "Tide.same" #["\\operatorname {same}:", "\\forall α\\in \\operatorname {Type}u,", "α\\to {}", "α"]
-  spells "Tide.pos_ne" #["n>{}", "0\\to {}", "n\\neq {}", "0"]
-  spells "Tide.nz" #["\\forall n\\in \\mathbb {N},", "\\operatorname {NeZero}(n)\\to {}", "n\\neq {}", "0"]
-  spells "Tide.dep_hyp" #["\\forall n\\in \\mathbb {N},", "(h:0<n)\\to {}", "\\operatorname {Fin.val}(",
-    "\\operatorname {Fin.mk}(0,{}", "h))={}", "0"]
-  spells "Tide.nested_dep" #["\\forall f\\in (\\forall n\\in \\mathbb {N},n>0\\to \\mathbb {N}),",
-    "(\\forall n\\in \\mathbb {N},(h:n>0)\\to f(n,h)=n)\\to {}", "f(1,{}", "\\operatorname {Nat.one\\_pos})={}",
-    "1"]
-  spells "Tide.chars_len" #["\\operatorname {String.length}(\\text {\"a\\textasciitilde b\\textasciicircum c\\textbackslash \\textbackslash d\\textbackslash n\\textbackslash t\\textbackslash \"\\textbraceleft \\textbraceright \\textunderscore \\#\\textdollar \\%\\&\"})={}", "17"]
+  spells "Tide.height_double" #["\\forall \\mathit {rise},{}", "\\mathit {n}:\\mathbb {N},",
+    "\\mathrm {height}\\  \\mathit {rise}\\  (\\mathrm {2}\\cdot \\mathit {n})={}",
+    "\\mathrm {2}\\cdot {}", "\\mathrm {height}\\  \\mathit {rise}\\  \\mathit {n}"]
+  spells "Tide.height_pos" #["\\mathrm {0}<{}", "\\mathit {rise}\\to {}", "\\mathrm {0}<{}",
+    "\\mathit {n}\\to {}", "\\mathrm {0}<{}",
+    "\\mathrm {height}\\  \\mathit {rise}\\  \\mathit {n}"]
+  spells "Tide.exists_step" #["\\exists \\mathit {n}:\\mathbb {N},", "\\mathit {n}+{}",
+    "\\mathrm {2}={}", "\\mathrm {5}"]
+  spells "Tide.le_or_gt" #["\\forall \\mathit {a},{}", "\\mathit {b}:\\mathbb {N},",
+    "\\mathit {a}\\leq {}", "\\mathit {b}\\lor {}", "\\mathit {b}<{}", "\\mathit {a}"]
+  spells "Tide.swap_and" #["\\forall \\mathit {p},{}", "\\mathit {q}:\\mathrm {Prop},",
+    "\\mathit {p}\\land {}", "\\mathit {q}\\leftrightarrow {}", "\\mathit {q}\\land {}",
+    "\\mathit {p}"]
+  spells "Tide.not_both" #["\\forall \\mathit {p}:\\mathrm {Prop},",
+    "\\lnot (\\mathit {p}\\land \\lnot \\mathit {p})"]
+  spells "Tide.neg_neg'" #["\\forall \\mathit {z}:\\mathbb {Z},", "-(-\\mathit {z})={}",
+    "\\mathit {z}"]
+  spells "Tide.pow_succ'" #["\\forall \\mathit {a},{}", "\\mathit {n}:\\mathbb {N},",
+    "\\mathit {a}^{\\mathit {n}+\\mathrm {1}}={}", "\\mathit {a}^{\\mathit {n}}\\cdot {}",
+    "\\mathit {a}"]
+  spells "Tide.div_mod" #["\\forall \\mathit {a},{}", "\\mathit {b}:\\mathbb {N},",
+    "\\mathit {b}\\cdot {}", "(\\mathit {a}/\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
+    "\\mathit {b}={}", "\\mathit {a}"]
+  spells "Tide.total" #["\\mathrm {total}:", "\\mathrm {Add}", "\\mathit {α}\\to {}",
+    "\\mathit {α}\\to {}", "\\mathrm {List}", "\\mathit {α}\\to {}", "\\mathit {α}"]
+  spells "Tide.strict_hyp" #["(\\forall \\mathit {n}:\\mathbb {N},\\mathit {n}=\\mathrm {0})\\to {}",
+    "\\mathrm {False}"]
+  spells "Tide.imp_iff" #["\\forall \\mathit {p},{}", "\\mathit {q}:\\mathrm {Prop},",
+    "\\mathit {p}\\to {}", "(\\mathit {q}\\leftrightarrow \\mathit {q})"]
+  spells "Tide.depth_val" #["\\mathrm {depth}={}", "\\mathrm {7}"]
+  spells "Tide.holds_ex" #["\\mathrm {holds}",
+    "(\\exists \\mathit {n}:\\mathbb {N},\\mathit {n}=\\mathrm {0})"]
+  spells "Tide.fixes" #["\\forall \\mathit {f}:(\\mathbb {N}\\to \\mathbb {N}),",
+    "\\mathit {f}\\  \\mathrm {0}={}", "\\mathrm {0}\\to {}",
+    "\\mathit {f}\\  (\\mathit {f}\\  \\mathrm {0})={}", "\\mathrm {0}"]
+  spells "Tide.iff_nest" #["\\forall \\mathit {p}:\\mathrm {Prop},",
+    "\\mathit {p}\\leftrightarrow {}", "(\\mathit {p}\\leftrightarrow \\mathrm {True})"]
+  spells "Tide.same" #["\\mathrm {same}:", "\\forall \\mathit {α}:\\mathrm {Type}\\  \\mathit {u},",
+    "\\mathit {α}\\to {}", "\\mathit {α}"]
+  spells "Tide.pos_ne" #["\\mathit {n}>{}", "\\mathrm {0}\\to {}", "\\mathit {n}\\neq {}",
+    "\\mathrm {0}"]
+  spells "Tide.nz" #["\\forall \\mathit {n}:\\mathbb {N},", "\\mathrm {NeZero}",
+    "\\mathit {n}\\to {}", "\\mathit {n}\\neq {}", "\\mathrm {0}"]
+  spells "Tide.dep_hyp" #["\\forall \\mathit {n}:\\mathbb {N},",
+    "(\\mathit {h}:\\mathrm {0}<\\mathit {n})\\to {}",
+    "(\\mathrm {Fin.mk}\\  \\mathrm {0}\\  \\mathit {h}).\\mathrm {val}={}", "\\mathrm {0}"]
+  spells "Tide.nested_dep" #["\\forall \\mathit {f}:(\\forall \\mathit {n}:\\mathbb {N},\\mathit {n}>\\mathrm {0}\\to \\mathbb {N}),",
+    "(\\forall \\mathit {n}:\\mathbb {N},(\\mathit {h}:\\mathit {n}>\\mathrm {0})\\to \\mathit {f}\\  \\mathit {n}\\  \\mathit {h}=\\mathit {n})\\to {}",
+    "\\mathit {f}\\  \\mathrm {1}\\  \\mathrm {Nat.one\\_pos}={}", "\\mathrm {1}"]
+  spells "Tide.chars_len" #["\\text {\"a\\textasciitilde b\\textasciicircum c\\textbackslash \\textbackslash d\\textbackslash n\\textbackslash t\\textbackslash \"\\textbraceleft \\textbraceright \\textunderscore \\#\\textdollar \\%\\&\"}.\\mathrm {length}={}",
+    "\\mathrm {17}"]
   let exImplicit := app "Exists" [app "Nat" [], .lam "n" .explicit (app "Nat" [])
     (.pi "m" .implicit false (app "Nat" []) (app "LE.le" [app "Nat" [], app "instLENat" [], var 0, var 1]))]
   let exDecl : LeanFacts.Decl :=
@@ -117,7 +136,8 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: an implicit binder inside an existential's body is a quantifier there, not hidden"
     (((LeanStatement.statementMath facts exDecl exImplicit).map fun (m, _) =>
         Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList)) ==
-      #["\\exists n\\in \\mathbb {N},", "\\forall m\\in \\mathbb {N},", "m\\leq {}", "n"])
+      #["\\exists \\mathit {n}:\\mathbb {N},", "\\forall \\mathit {m}:\\mathbb {N},",
+          "\\mathit {m}\\leq {}", "\\mathit {n}"])
   let mathOf (ty : LeanFacts.Term) : Array String :=
     (LeanStatement.statementMath facts { exDecl with type := some ty } ty).map fun (m, _) =>
       Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList)
@@ -125,36 +145,39 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: an instance binder at the top is a hypothesis, never hidden"
     (mathOf (.pi "α" .explicit false typeSort (.pi "inst" .inst false (app "Inhabited" [var 0])
         (app "Nonempty" [var 1]))) ==
-      #["\\forall α\\in \\operatorname {Type},", "\\operatorname {Inhabited}(α)\\to {}",
-        "\\operatorname {Nonempty}(α)"])
+      #["\\forall \\mathit {α}:\\mathrm {Type},", "\\mathrm {Inhabited}", "\\mathit {α}\\to {}",
+          "\\mathrm {Nonempty}", "\\mathit {α}"])
   t "statements: an implicit binder the rest of the statement never names is shown, not hidden"
     (mathOf (.pi "α" .implicit false typeSort (.pi "a" .implicit false (var 0)
-        (app "Nonempty" [var 1]))) == #["α\\to {}", "\\operatorname {Nonempty}(α)"] &&
+        (app "Nonempty" [var 1]))) == #["\\mathit {α}\\to {}", "\\mathrm {Nonempty}", "\\mathit {α}"] &&
       mathOf (.pi "x" .implicit false (app "Empty" []) (app "False" [])) ==
-        #["\\operatorname {Empty}\\to {}", "\\operatorname {False}"])
-  t "statements: membership sets its element first, a constant outside the table by its name"
-    ((formulasOf facts "Tide.mem_cons").toList.drop 2 == ["x\\in {}", "\\operatorname {List.cons}(x,{}", "xs)"])
+        #["\\mathrm {Empty}\\to {}", "\\mathrm {False}"])
+  t "statements: membership sets its element first, a list's cons as Lean writes it"
+    ((formulasOf facts "Tide.mem_cons").toList.drop 2 ==
+      ["\\mathit {x}\\in {}", "\\mathit {x}::{}", "\\mathit {xs}"])
   t "statements: a word space follows a quantifier's head and a definition's name alone"
     (facts.decls.all fun d => (spacedFormulasOf facts d.name).all fun (f, spaced) =>
-      spaced == (f.endsWith "," || f.endsWith ":"))
+      (f.endsWith "," || f.endsWith ":") → spaced)
   -- The table, where no core file reaches.
   t "statements: the number sets are blackboard letters"
     (["Nat", "Int", "Rat", "Real", "Complex"].map (fun c => texOf (app c []) []) ==
       ["\\mathbb {N}", "\\mathbb {Z}", "\\mathbb {Q}", "\\mathbb {R}", "\\mathbb {C}"])
   t "statements: a sum inside a product is parenthesized, a product inside a sum is not"
     (texOf (app "HMul.hMul" [app "HAdd.hAdd" [var 0, var 1], var 2]) ["c", "b", "a"] ==
-        "(c+b)\\cdot a" &&
-      texOf (app "HAdd.hAdd" [app "HMul.hMul" [var 0, var 1], var 2]) ["c", "b", "a"] == "c\\cdot b+a")
+        "(\\mathit {c}+\\mathit {b})\\cdot \\mathit {a}" &&
+      texOf (app "HAdd.hAdd" [app "HMul.hMul" [var 0, var 1], var 2]) ["c", "b", "a"] ==
+        "\\mathit {c}\\cdot \\mathit {b}+\\mathit {a}")
   t "statements: either side of an equivalence that is one is parenthesized"
     (texOf (app "Iff" [app "Iff" [var 3, var 2], app "Iff" [var 1, var 0]]) ["d", "c", "b", "a"] ==
-      "(a\\leftrightarrow b)\\leftrightarrow (c\\leftrightarrow d)")
+      "(\\mathit {a}\\leftrightarrow \\mathit {b})\\leftrightarrow (\\mathit {c}\\leftrightarrow \\mathit {d})")
   t "statements: an argument a constant's binders mark implicit is hidden"
-    (texOf (app "f" [app "Nat" [], var 0]) ["x"] [("f", #[.implicit, .explicit])] == "\\operatorname {f}(x)")
-  t "statements: a binder among several arguments is parenthesized"
+    (texOf (app "f" [app "Nat" [], var 0]) ["x"] [("f", #[.implicit, .explicit])] ==
+      "\\mathrm {f}\\  \\mathit {x}")
+  t "statements: a function among several arguments is parenthesized"
     (texOf (app "g" [.lam "x" .explicit (app "Nat" []) (var 0), var 0]) ["y"] ==
-      "\\operatorname {g}((x\\mapsto x),y)")
+      "\\mathrm {g}\\  (\\mathit {x}\\mapsto \\mathit {x})\\  \\mathit {y}")
   t "statements: a name mathematics cannot spell sets as text, subscript digits lower, TeX's own characters escaped"
-    (texOf (var 0) ["x₁"] == "x_{1}" && texOf (var 0) ["«odd name»"] == "\\text {«odd name»}" &&
+    (texOf (var 0) ["x₁"] == "\\mathit {x}_{1}" && texOf (var 0) ["«odd name»"] == "\\text {«odd name»}" &&
       texOf (.apps (.str "a%b$c") []) [] == "\\text {\"a\\%b\\textdollar c\"}")
   t "statements: a string sets as Lean writes it, its quotes and control characters escaped"
     (texOf (.apps (.str "q\"\n\x01") []) [] ==
@@ -162,10 +185,10 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: a sort one level up sets as a type of that level, as Lean shows it"
     ((["0", "1", "2", "u + 1", "u + 2", "(max u v) + 1", "u", "max u v"].map fun l =>
         texOf (.apps (.sort l) []) []) ==
-      ["\\operatorname {Prop}", "\\operatorname {Type}", "\\operatorname {Type}1",
-       "\\operatorname {Type}u", "\\operatorname {Type}(\\text {u + 1})",
-       "\\operatorname {Type}\\text {(max u v)}", "\\operatorname {Sort}u",
-       "\\operatorname {Sort}(\\text {max u v})"])
+      ["\\mathrm {Prop}", "\\mathrm {Type}", "\\mathrm {Type}\\  \\mathrm {1}",
+       "\\mathrm {Type}\\  \\mathit {u}", "\\mathrm {Type}\\  (\\text {u + 1})",
+       "\\mathrm {Type}\\  \\text {(max u v)}", "\\mathrm {Sort}\\  \\mathit {u}",
+       "\\mathrm {Sort}\\  (\\text {max u v})"])
   t "statements: a constant shows relative to its declaration's namespace unless two would show alike"
     (LeanStatement.shownNames "A.B.thm" #["A.B.f", "A.g"] "A.B.f" == "f" &&
       LeanStatement.shownNames "A.B.thm" #["A.B.f", "A.g"] "A.g" == "g" &&

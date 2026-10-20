@@ -181,9 +181,11 @@ private def mathAlphaLegacyAliasChecks (ref : IO.Ref (List String))
       check ref (formula ++ " preserves default/explicit text PDF scalars")
         (a.pdf.size == 1 &&
           (a.pdf[0]?.map fun (_, text, _, _) => text) == some expected)
-      check ref (formula ++ " preserves default/explicit text MathML faces")
-        (mathTextLeavesList #[] a.leaves.toList ==
-          expected.toList.toArray.map fun c => (String.singleton c, css))
+      -- A run of letters is one token, as a word, its line kept.
+      let runs := (expected.toList.splitBy fun a b => a.isAlpha && b.isAlpha).toArray.map fun r =>
+        (String.ofList r, if r.length > 1 then css ++ "; " ++ MathMl.keepLineCss else css)
+      check ref (formula ++ " preserves default/explicit text MathML faces, a run of letters one token")
+        (mathTextLeavesList #[] a.leaves.toList == runs)
 
 /-- An alias selects the observed Greek range, the selected face paints those glyphs, the PDF
 decodes to those scalars, and MathML agrees. -/

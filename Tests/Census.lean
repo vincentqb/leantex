@@ -1480,10 +1480,13 @@ def censusCodeRows :
     let lead := Ir.leadingFor g.fontSize g.leading
     let hyp := linesFrom c "Theorem (Ebb.none_all). If"
     let swap := linesFrom c "Theorem (Ebb.swap)."
-    let both := linesFrom c "Theorem (Ebb.both_all). Both"
-    [("one page", c.size == 1),
+    let both := linesFrom c "Theorem (Ebb.both_all)."
+    let bounds := (c.toList.flatMap (·.lines.toList)).dropWhile
+      (!hasStr ·.text "Theorem (Ebb.crate_bounds).")
+    let opening (w : String) : Option CensusLine := bounds.find? (·.text.startsWith w)
+    [("two pages", c.size == 2),
      ("a quantified hypothesis stands a step in under its condition, the conclusion back at its margin",
-       linesStepAt step hyp 1 "for every natural number" 1 && linesStepAt step hyp 2 "then False." 0),
+       linesStepAt step hyp 1 "for every" 1 && linesStepAt step hyp 2 "then False." 0),
      ("a laid-out paragraph's lines stand a leading apart, no gap between them, the head's taller faces aside",
        match hyp[0]?, hyp[1]?, hyp[2]? with
        | some a, some b, some d =>
@@ -1492,9 +1495,16 @@ def censusCodeRows :
      ("an equivalence a quantifier holds stands a step in, each of its compound sides a step further",
        linesStepAt step swap 1 "both" 2 && linesStepAt step swap 2 "if and only if" 1 &&
          linesStepAt step swap 3 "both" 2),
-     ("a conjunction's quantified first side stands a step in, its last side running on at its margin",
-       linesStepAt step both 1 "for every natural number" 1 &&
-         linesStepAt step both 2 "and there is a natural number" 0)]),
+     ("a conjunction of quantified statements sets as a numbered list right of the head's margin, each item a sentence",
+       match both[0]?, both[1]?, both[2]? with
+       | some h, some a, some b =>
+         a.text.startsWith "1. For every" && b.text.startsWith "2. There is" && a.x == b.x &&
+           h.x < a.x && a.text.endsWith "." && b.text.endsWith "."
+       | _, _, _ => false),
+     ("three clauses number 1 to 3, the second's own two (a) and (b) a level in",
+       match opening "1.", opening "2.", opening "(a)", opening "(b)", opening "3." with
+       | some a, some b, some i, some j, some d => a.x == b.x && b.x == d.x && b.x < i.x && b.x < j.x
+       | _, _, _, _, _ => false)]),
   ("code-python", fun _ c => [
     ("one page", c.size == 1),
     ("the file's name ships first, as its title", shipsAbove c "code-python.py" "Kettle timings."),

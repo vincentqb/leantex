@@ -291,20 +291,24 @@ elsewhere among the leading comments is not read, and the run says so:
 
 A Lean file's directive may also say what its page shows: `show = math, code`
 sets each top-level declaration's statement as mathematics above its code,
-**Theorem** (`Tide.height_double`). ∀ rise, n ∈ ℕ, height(rise, 2 · n) = 2 ·
-height(rise, n); `show = code, math` sets it after the code, `show = math` sets
+**Theorem** (`Tide.height_double`). ∀ rise, n : ℕ, height rise (2 · n) = 2 ·
+height rise n; `show = code, math` sets it after the code, `show = math` sets
 the statements alone, and `decls = height, height_double` chooses which. The
 default is `show = code`. leantex never runs Lean: a statement is Lean's own,
 read from the file's facts, which the exporter writes, a small Lake package in
 this repository's `export/` directory that the file's project requires and runs
 before leantex reads the file (see below). Each elaborated type sets through one
-notation table (arithmetic, relations, logic, existence, ℕ ℤ ℚ ℝ ℂ and
-numerals), each outermost implicit binder the rest of the statement refers to
-hidden, an instance binder and a binder whose type is a proposition set as
-hypotheses, every implicit argument hidden, a string as Lean writes it, and
-every other constant upright by its name; a line may break after each operator
-of a statement's top level, between the names a quantifier binds, and after each
-comma of an application's arguments, with no change to the spacing. A theorem
+notation table (arithmetic, relations, logic, existence, `×`, `::`, ℕ ℤ ℚ ℝ ℂ and
+numerals) and Lean's own notation for the rest: application by juxtaposition,
+`f x (g y)`, and field notation, `xs.length`, where the facts name the binder it
+reads (facts an older exporter wrote set `List.length xs`). Each outermost
+implicit binder the rest of the statement refers to hides, an instance binder
+and a binder whose type is a proposition set as hypotheses, every implicit
+argument hides, and a string sets as Lean writes it. A variable sets as one
+italic word and a constant or numeral upright, both in the body's face, the
+symbols in the math face; a line may break after each operator of a statement's
+top level, between the names a quantifier binds, and between the arguments of an
+application standing alone, never inside a parenthesis. A theorem
 Lean holds unproved, or that rests on one, is marked so; a statement Lean
 elaborated around an error is not set, and a page that shows math alone sets
 that declaration's code in its place. A file whose page asks for statements and
@@ -349,53 +353,59 @@ for a copy of what the exporter wrote; `facts` with no statement or folded proof
 to read it for is named and ignored.
 
 `show = prose` says each statement in words instead, its terms as formulas:
-**Theorem** (`Tide.le_or_gt`). For all natural numbers a and b, either a is at
-most b or b is less than a. A binder reads as a quantifier over its type's noun
-(natural number, integer, rational, real or complex number, proposition, type,
-else an element of the type), but an outermost implicit one the rest refers to,
-which hides, consecutive ones over one noun as one, plural; a binder whose type
-is a proposition, or an instance one, as a hypothesis, `if …, then …`; `∃` as
-there is; `∧ ∨ ↔ ¬` as both … and, either … or, if and only if, and it is not
-the case that; `= ≠ < ≤ > ≥ ∣ ∈` as is equal to, is not equal to, is less than,
-is at most, is greater than, is at least, divides and is an element of; every
-other proposition stays a formula. Indentation groups what the words do not, as
-a written proof lays out a statement: a part whose end nothing else would mark
-stands as a block, its lines a step in from the block around it and the lines
-after it back at that block's indent, all at the paragraph's leading, a comma
-or full stop that closes the block ending its last line. A quantifier's, an
-existential's or a conditional's scope runs to the end of the block it stands
+**Theorem** (`Tide.le_or_gt`). For all a, b : ℕ, either a ≤ b or b < a. A
+quantifier binds typed groups, `x : T`, consecutive binders joining one
+quantifier (for all xs : List ℕ and n : ℕ), a binder predicate its relation
+(`∀ x ∈ S` as for every x ∈ S), and an outermost implicit binder the rest refers
+to hides; a binder whose type is a proposition, or an instance one, reads as a
+hypothesis, `if …, then …`; `∃` as there is or there are; `∨ ↔ ¬` as either …
+or, if and only if, and it is not the case that. A relation stays a formula. Two
+plain statements a conjunction joins read A and B; any other conjunction sets as
+a numbered list, each conjunct an item, a sentence of its own with its full
+stop, a conjunction an item holds a list one level in, and a quantifier opening
+a list ends on a colon; where an operand holds it, a hypothesis or one side of
+an equivalence, it reads both … and. Indentation groups what the words do not,
+as a written proof lays out a statement: a part whose end nothing else would
+mark stands as a block, its lines a step in from the block around it and the
+lines after it back at that block's indent, all at the paragraph's leading, a
+comma or full stop that closes the block ending its last line. A quantifier's,
+an existential's or a conditional's scope runs to the end of the block it stands
 in, so one that more of its sentence follows is a block, as a hypothesis or a
 first side is. An equivalence is a block wherever it stands below the
-sentence's top; its first side is a block where it is more than a formula or a
-plain relation, one whose words hold none of `and`, `or`, `if`, `then`, `both`
-and `either`, and its second side then too where it is, so the two stand alike.
-A negation, conjunction or disjunction as a conjunction's or a disjunction's
-first side or as a hypothesis before another, and a relation that is not plain
-where more of its sentence follows it, are blocks too, for the eye:
+sentence's top or an item's; its first side is a block where it is more than a
+formula or a plain relation, one whose words hold none of `and`, `or`, `if`,
+`then`, `both` and `either`, and its second side then too where it is, so the
+two stand alike. A negation, conjunction or disjunction as a conjunction's or a
+disjunction's first side or as a hypothesis before another, and a relation that
+is not plain where more of its sentence follows it, are blocks too, for the eye:
 
 ```text
 Theorem (Tide.strict_hyp). If
-    for every natural number n, n is equal to 0,
+    for every n : ℕ, n = 0,
 then False.
 ```
 
-The web page sets the same lines, and bounds each scope with a parenthesis at
-either end, out of sight, which a braille display, a copy and a screen reader
-set to say parentheses read; a tagged PDF's lines carry the same parentheses in
-their replacement text. The markdown twin opens each line after the first with
-a hard break and an em and an en space for each step. The words, with their
-blocks' bounds, parse back to the statement they say, implicit arguments hidden
-as in the math view. A declaration whose type is no proposition, or a statement
-the words cannot say (a hypothesis the rest names, a `let`), is set as
-mathematics, once on a page that also shows the math view, and the run says so.
+The web page sets the same lines and lists, and bounds each scope with a
+parenthesis at either end, out of sight, which a braille display, a copy and a
+screen reader set to say parentheses read; a tagged PDF's lines carry the same
+parentheses in their replacement text, and its lists are lists. The markdown
+twin opens each line after the first with a hard break and an em and an en space
+for each step, and sets each list as a numbered list. The words, with their
+blocks' bounds and their items' marks, parse back to the statement they say,
+implicit arguments hidden as in the math view. A declaration whose type is no
+proposition, or a statement the words cannot say (a hypothesis the rest names, a
+`let`), is set as mathematics, once on a page that also shows the math view, and
+the run says so.
 A directive may give a constant its own words, `#k` standing for its k-th
 explicit argument:
 `phrase.Tide.height = "the height after #2 steps of #1"` says its terms, and a
 phrase that opens with a slot, `phrase.Calm = "#1 is calm"`, its propositions,
-each in place of the core wording of its kind. The run names each phrase it does
-not take (for no constant, or several, a second for one constant, for a
-connective, with other slots than the explicit arguments, with a comma, a
-parenthesis, a brace, a quote or a full stop standing alone, or words that would
+each in place of its constant's formula; a relation of the table one of whose
+terms takes a phrase sets its symbol between the words, as `n = the height after
+2 steps of n`. The run names each phrase it does not take (for no constant, or
+several, a second for one constant, for a connective, with other slots than the
+explicit arguments, with a comma, a colon, a parenthesis, a brace, a quote or a
+full stop standing alone, or words that would
 not read back) and each no sentence on the page uses, as on a page that says
 nothing in words. Views combine in the order given, as `show = prose, code`,
 `show = code, prose` or `show = math, prose, code`.

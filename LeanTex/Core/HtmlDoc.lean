@@ -256,7 +256,7 @@ public def engineClasses : List String :=
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
    "frame-body-start", "group", "icon", "lines", "lines-line", "lines-mark", "lines-scope",
-   "math", "math-display", "nopadl", "nopadr", "note", "outline", "picture", "progress",
+   "math", "math-display", "math-tie", "nopadl", "nopadr", "note", "outline", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "step-hide", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
@@ -6276,6 +6276,8 @@ white-space: nowrap; }\n" ++
       some (doc.page.skipScale, doc.page.leading, doc.page.fontSize) else none) ++
   -- the resolved math face; the stack behind it serves a page with no shipped face
   "math, .math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
+  -- an inline formula and the punctuation after it, which a browser would wrap between, as one
+  ".math-tie { white-space: nowrap; }\n" ++
   -- a display's skips are the block boundary's, never the formula's margin
   ".display { text-align: center; }\n" ++
   -- a numbered display: the tag on the right edge, centred on the formula (amsmath)
@@ -9851,6 +9853,39 @@ end
 /-- A page's figures numbered apart, so no two share an id. -/
 public def numberFigures (body : Array Node) : Array Node := (numberFiguresList 0 #[] body.toList).1
 
+/-- Whether a character closes a phrase, so no line opens on it. -/
+private def closesPhrase (c : Char) : Bool := ".,;:!?)]".contains c
+
+mutual
+
+-- conserves: none — a regrouping of a formula with the punctuation after it, no content
+/-- Each inline formula and the closing punctuation a text opens with right after it, as one span
+no line breaks inside, in document order. -/
+private def tieMathOne : Node → Node
+  | .elem tag attrs kids =>
+    if tag == "math" || tag == "pre" || tag == "code" then .elem tag attrs kids
+    else .elem tag attrs (tieMathList #[] kids.toList)
+  | .text s => .text s
+  | .style s => .style s
+  | .script a s => .script a s
+
+private def tieMathList (acc : Array Node) : List Node → Array Node
+  | [] => acc
+  | .elem "math" attrs kids :: .text t :: rest =>
+    let p := String.ofList (t.toList.takeWhile closesPhrase)
+    let r := String.ofList (t.toList.drop p.length)
+    if p.isEmpty || attrs.contains ("display", "block") then
+      tieMathList ((acc.push (.elem "math" attrs kids)).push (.text t)) rest
+    else
+      let tied := acc.push (.elem "span" #[("class", "math-tie")] #[.elem "math" attrs kids, .text p])
+      tieMathList (if r.isEmpty then tied else tied.push (.text r)) rest
+  | x :: rest => tieMathList (acc.push (tieMathOne x)) rest
+
+end
+
+/-- A page with each inline formula tied to the punctuation closing after it. -/
+public def tieMath (body : Array Node) : Array Node := tieMathList #[] body.toList
+
 /-- The first stage name no earlier stage carries: `name`, then `name (2)`, `name (3)`, and so
 on. -/
 private def claimName (named : NameClaim.Claims .parenthesized) (name : String) :
@@ -10626,7 +10661,7 @@ retitle them apart, or link to the numbered anchor")
       #[("class", "deck-progress"), ("aria-hidden", "true")])
   body := body ++ deckScriptNodes (doc.docClass == .slides)
   -- figures numbered apart before the anchors are judged, and landmarks named apart
-  body := nameNavsApart (numberFigures body)
+  body := tieMath (nameNavsApart (numberFigures body))
   let facts := pageFacts.list none {} body.toList
   -- premise: slideLabelChecks — these routes ship with the constant script
   let routes := if facts.deck then

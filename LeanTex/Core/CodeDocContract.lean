@@ -397,7 +397,7 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
   have step : ∀ (st : Array Raw × Bool) (mn : Array LeanNotation.Math × Bool), Adm true st.1 →
       Adm true (displayStep pos st mn).1 := by
     intro st mn h
-    refine adm_push (adm_append h ?_) (formulaRaw_adm pos mn.1)
+    refine adm_push (adm_append h ?_) (formulaRaw_adm pos _)
     split
     · intro r hr; simp at hr; subst hr; rfl
     · exact breakRaws_adm pos
@@ -416,21 +416,29 @@ private theorem leafRaws_adm (pos : Pos) (l : LeanProse.Leaf) : Adm true (leafRa
   | nil => intro r hr; simp [leafRaws] at hr
   | cons m rest =>
     simp only [leafRaws]
-    have h : ∀ (l : List (Array LeanNotation.Math)) (acc : Array Raw), Adm true acc →
-        Adm true (l.foldl (fun acc q => (acc ++ breakRaws pos).push (formulaRaw pos q)) acc) := by
+    have h : ∀ (l : List (Array LeanNotation.Math)) (acc : Array Raw × Bool), Adm true acc.1 →
+        Adm true (l.foldl (fun (acc : Array Raw × Bool) q =>
+          ((acc.1 ++ (if acc.2 then #[.space] else breakRaws pos)).push
+            (formulaRaw pos (LeanStatement.unspaced q).1), (LeanStatement.unspaced q).2)) acc).1 := by
       intro l
       induction l with
       | nil => intro acc h; exact h
       | cons q _ ih =>
         intro acc h
-        exact ih _ (adm_push (adm_append h (breakRaws_adm pos)) (formulaRaw_adm pos q))
-    exact h rest _ (by intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos m)
+        refine ih _ (adm_push (adm_append h ?_) (formulaRaw_adm pos _))
+        split
+        · intro r hr; simp at hr; subst hr; rfl
+        · exact breakRaws_adm pos
+    exact h rest _ (by intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos _)
 
 private theorem tokRaws_adm (pos : Pos) (opening : Bool) (t : LeanProse.Tok LeanProse.Leaf) :
     Adm true (tokRaws pos opening t).1 := by
   unfold tokRaws
   split
-  · intro r hr; simp at hr; subst hr; rfl
+  · split
+    · intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos _
+    · intro r hr; simp at hr; subst hr; rfl
+  · exact leafRaws_adm pos _
   · exact leafRaws_adm pos _
   all_goals intro r hr; simp at hr
 
@@ -441,93 +449,216 @@ private theorem adm_lines (body : Array Raw) (p : Pos) (h : Adm b body) :
   exact ⟨by simp [vocabulary, Md.vocabulary],
     (admitsList_iff _ _).mpr fun x hx => h x (by simpa using hx)⟩
 
-private theorem closeBlock_adm (pos : Pos) (l : List (Array Raw)) (h : ∀ a ∈ l, Adm b a) :
-    ∀ a ∈ closeBlock pos l, Adm b a := by
-  unfold closeBlock
+/-- A numbered list over admitted raws is admitted. -/
+private theorem adm_enumerate (body : Array Raw) (p : Pos) (h : Adm b body) :
+    (voc b).admits (.env "enumerate" body p) = true := by
+  simp only [Md.Vocab.admits, Bool.and_eq_true]
+  exact ⟨by simp [vocabulary, Md.vocabulary],
+    (admitsList_iff _ _).mpr fun x hx => h x (by simpa using hx)⟩
+
+private theorem adm_word (w : String) (p : Pos) : Adm b #[.word w p] := by
+  intro r hr; simp at hr; subst hr; rfl
+
+private theorem adm_pop {a : Array Raw} (h : Adm b a) : Adm b a.pop := by
+  intro r hr
+  rw [← Array.mem_toList_iff, Array.toList_pop] at hr
+  exact h r (Array.mem_toList_iff.mp (List.dropLast_subset _ hr))
+
+private theorem stopped_adm (pos : Pos) (raws : Array Raw) (h : Adm b raws) :
+    Adm b (stopped pos raws) := by
+  fun_induction stopped pos raws with
+  | case1 raws n inner p hb _ _ ih =>
+    have hm := h _ (Array.mem_of_back? hb)
+    simp only [Md.Vocab.admits, Bool.and_eq_true] at hm
+    have hin : Adm b inner := fun x hx => ((admitsList_iff _ _).mp hm.2) x (by simpa using hx)
+    refine adm_push (adm_pop h) ?_
+    simp only [Md.Vocab.admits, Bool.and_eq_true]
+    exact ⟨hm.1, (admitsList_iff _ _).mpr fun x hx => ih hin x (by simpa using hx)⟩
+  | case2 => exact adm_push h rfl
+  | case3 => exact adm_push h rfl
+
+/-- A frame whose raws are all admitted. -/
+private def FAdm (f : Frame) : Prop := Adm true f.out ∧ Adm true f.cur
+
+private theorem raws_adm (f : Frame) (pos : Pos) (h : FAdm f) : Adm true (f.raws pos) := by
+  unfold Frame.raws
+  split
+  · exact h.1
+  · split
+    · exact adm_push h.1 (adm_lines _ _ h.2)
+    · exact adm_append h.1 h.2
+
+private theorem itemRaws_adm (f : Frame) (pos : Pos) (h : FAdm f) : Adm true (f.itemRaws pos) := by
+  unfold Frame.itemRaws
+  refine raws_adm _ pos ⟨h.1, ?_⟩
+  dsimp only
+  split
+  · exact h.2
+  · exact stopped_adm pos _ h.2
+
+private theorem closeInto_adm (pos : Pos) (inner outer : Frame) (hi : FAdm inner)
+    (ho : FAdm outer) : FAdm (closeInto pos inner outer) := by
+  unfold closeInto
+  split
+  · exact ⟨ho.1, adm_push ho.2 (adm_lines _ _ hi.2)⟩
+  · exact ⟨adm_append (adm_push ho.1 (by simp [Md.Vocab.admits, vocabulary, Md.vocabulary]))
+      (itemRaws_adm inner pos hi), ho.2⟩
+  · exact ⟨adm_append (adm_push ho.1 (by simp [Md.Vocab.admits, vocabulary, Md.vocabulary]))
+      (itemRaws_adm inner pos hi), ho.2⟩
+  · exact ⟨adm_push (raws_adm outer pos ho) (adm_enumerate _ _ hi.1), by intro r hr; simp at hr⟩
+
+private theorem closeTop_adm (pos : Pos) (l : List Frame) (h : ∀ f ∈ l, FAdm f) :
+    ∀ f ∈ closeTop pos l, FAdm f := by
+  unfold closeTop
   split
   · rename_i inner outer rest
-    intro a ha
-    simp only [List.mem_cons] at ha h
-    rcases ha with rfl | ha
-    · exact adm_push (h outer (by simp)) (adm_lines inner pos (h inner (by simp)))
-    · exact h a (by simp [ha])
+    intro f hf
+    simp only [List.mem_cons] at hf h
+    rcases hf with rfl | hf
+    · exact closeInto_adm pos inner outer (h inner (by simp)) (h outer (by simp))
+    · exact h f (by simp [hf])
   all_goals exact h
+
+private theorem empty_adm (k : FrameKind) : FAdm (Frame.empty k) :=
+  ⟨by intro r hr; simp [Frame.empty] at hr, by intro r hr; simp [Frame.empty] at hr⟩
+
+private theorem openItem_adm (pos : Pos) (l : List Frame) (h : ∀ f ∈ l, FAdm f) :
+    ∀ f ∈ openItem pos l, FAdm f := by
+  unfold openItem
+  split
+  · rename_i f rest
+    split
+    · intro g hg
+      simp only [List.mem_cons] at hg
+      rcases hg with rfl | rfl | hg
+      · exact empty_adm _
+      · exact empty_adm _
+      · exact h g (by simp [hg])
+    · split
+      · split
+        · rename_i l more
+          intro g hg
+          simp only [List.mem_cons] at hg
+          rcases hg with rfl | rfl | hg
+          · exact empty_adm _
+          · exact closeInto_adm pos f l (h f (by simp)) (h l (by simp))
+          · exact h g (by simp [hg])
+        · exact h
+      · exact h
+  · exact h
 
 private theorem gap_adm (c : Bool) : Adm b (if c then (#[] : Array Raw) else #[.space]) := by
   split
   · intro r hr; simp at hr
   · intro r hr; simp at hr; subst hr; rfl
 
+private theorem relAttach_adm (pos : Pos) (cur : Array Raw) (t : LeanProse.Tok LeanProse.Leaf)
+    (h : Adm true cur) : ∀ c, relAttach? pos cur t = some c → Adm true c := by
+  intro c hc
+  unfold relAttach? at hc
+  split at hc
+  · split at hc
+    · rename_i g body p _ hb
+      simp only [Option.some.injEq] at hc
+      subst hc
+      have hm := h _ (Array.mem_of_back? hb)
+      simp only [Md.Vocab.admits, Bool.and_eq_true] at hm
+      refine adm_push (adm_pop h) ?_
+      simp only [Md.Vocab.admits, Bool.and_eq_true, Array.toList_append, mathAdmitsList_append]
+      exact ⟨hm.1, hm.2, by simpa using listRaws_adm pos _ #[] (by simp [Md.Vocab.mathAdmitsList])⟩
+    · cases hc
+  all_goals cases hc
+
 private theorem pushTok_adm (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf)
-    (h : ∀ a ∈ acc.1, Adm true a) : ∀ a ∈ (pushTok pos acc t).1, Adm true a := by
+    (h : ∀ f ∈ acc.1, FAdm f) : ∀ f ∈ (pushTok pos acc t).1, FAdm f := by
   obtain ⟨stack, o, ls⟩ := acc
   cases stack with
   | nil =>
-    intro a ha
-    simp only [pushTok, List.mem_singleton] at ha
-    subst ha
-    exact tokRaws_adm pos o t
+    intro f hf
+    simp only [pushTok, List.mem_singleton] at hf
+    subst hf
+    exact ⟨(empty_adm .top).1, tokRaws_adm pos o t⟩
   | cons top rest =>
-    intro a ha
-    simp only [pushTok, List.mem_cons] at ha h
-    rcases ha with rfl | ha
-    · exact adm_append (adm_append (h _ (Or.inl rfl)) (gap_adm _)) (tokRaws_adm pos o t)
-    · exact h a (Or.inr ha)
+    intro f hf
+    simp only [pushTok] at hf
+    split at hf
+    · simp only [List.mem_cons] at hf h
+      rcases hf with rfl | hf
+      · exact h top (Or.inl rfl)
+      · exact h f (Or.inr hf)
+    · split at hf
+      · rename_i cur hcur
+        simp only [List.mem_cons] at hf h
+        rcases hf with rfl | hf
+        · exact ⟨(h top (Or.inl rfl)).1, relAttach_adm pos _ t (h top (Or.inl rfl)).2 _ hcur⟩
+        · exact h f (Or.inr hf)
+      · simp only [List.mem_cons] at hf h
+        rcases hf with rfl | hf
+        · refine ⟨(h top (Or.inl rfl)).1, adm_append (adm_append (h top (Or.inl rfl)).2 ?_)
+            (tokRaws_adm pos o t)⟩
+          split
+          · intro r hr; simp at hr
+          · split
+            · exact breakRaws_adm pos
+            · intro r hr; simp at hr; subst hr; rfl
+        · exact h f (Or.inr hf)
 
 private theorem sentenceStep_adm (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf)
-    (h : ∀ a ∈ acc.1, Adm true a) : ∀ a ∈ (sentenceStep pos acc t).1, Adm true a := by
+    (h : ∀ f ∈ acc.1, FAdm f) : ∀ f ∈ (sentenceStep pos acc t).1, FAdm f := by
   unfold sentenceStep
   split
-  · intro a ha
-    simp only [List.mem_cons] at ha
-    rcases ha with rfl | ha
-    · intro r hr; simp at hr
-    · exact h a ha
-  · exact closeBlock_adm pos acc.1 h
+  · intro f hf
+    simp only [List.mem_cons] at hf
+    rcases hf with rfl | hf
+    · exact empty_adm _
+    · exact h f hf
+  · exact openItem_adm pos acc.1 h
+  · unfold closeBlock
+    split
+    · split
+      · exact closeTop_adm pos _ (closeTop_adm pos _ h)
+      · exact closeTop_adm pos _ h
+    · exact closeTop_adm pos _ h
   all_goals exact pushTok_adm pos acc _ h
 
 private theorem closeAll_adm (pos : Pos) :
-    ∀ (l : List (Array Raw)), (∀ a ∈ l, Adm b a) → Adm b (closeAll pos l)
+    ∀ (l : List Frame), (∀ f ∈ l, FAdm f) → Adm true (closeAll pos l)
   | inner :: outer :: rest, h => by
     rw [closeAll]
     refine closeAll_adm pos _ ?_
-    intro a ha
-    simp only [List.mem_cons] at ha h
-    rcases ha with rfl | ha
-    · exact adm_push (h outer (by simp)) (adm_lines inner pos (h inner (by simp)))
-    · exact h a (by simp [ha])
-  | [top], h => by rw [closeAll]; exact h top (by simp)
+    intro f hf
+    simp only [List.mem_cons] at hf h
+    rcases hf with rfl | hf
+    · exact closeInto_adm pos inner outer (h inner (by simp)) (h outer (by simp))
+    · exact h f (by simp [hf])
+  | [top], h => by rw [closeAll]; exact raws_adm top pos (h top (by simp))
   | [], _ => by rw [closeAll]; intro r hr; simp at hr
 termination_by l => l.length
 
-private theorem sentenceRaws_adm (pos : Pos) (toks : List (LeanProse.Tok LeanProse.Leaf)) :
-    Adm true (sentenceRaws pos toks) := by
+private theorem sentenceRaws_adm (pos : Pos) (head : Array Raw) (hh : Adm true head)
+    (toks : List (LeanProse.Tok LeanProse.Leaf)) : Adm true (sentenceRaws pos head toks) := by
   unfold sentenceRaws
   refine closeAll_adm pos _ ?_
   have hfold : ∀ (l : List (LeanProse.Tok LeanProse.Leaf)) (acc : SentenceAcc),
-      (∀ a ∈ acc.1, Adm true a) → ∀ a ∈ (l.foldl (sentenceStep pos) acc).1, Adm true a := by
+      (∀ f ∈ acc.1, FAdm f) → ∀ f ∈ (l.foldl (sentenceStep pos) acc).1, FAdm f := by
     intro l
     induction l with
     | nil => intro acc h; exact h
     | cons t _ ih => intro acc h; exact ih _ (sentenceStep_adm pos acc t h)
   refine hfold _ _ ?_
-  intro a ha
-  simp only [List.mem_cons, List.not_mem_nil, or_false] at ha
-  subst ha
-  intro r hr; simp at hr
+  intro f hf
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hf
+  subst hf
+  exact ⟨(empty_adm .top).1, hh⟩
 
 private theorem wordsRaws_adm (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf)
     (pos : Pos) (link : Option String) : Adm true (wordsRaws d s pos link) := by
-  have hbody := adm_append (adm_push (r := .space) (headRaws_adm d pos link) rfl)
-    (sentenceRaws_adm pos (LeanProse.render s))
+  have hbody := sentenceRaws_adm pos _ (headRaws_adm d pos link) (LeanProse.render s)
   intro r hr
   simp only [wordsRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
   subst hr
   simp only [Md.Vocab.admits, Bool.and_eq_true]
-  refine ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx => ?_⟩
-  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
-  subst hx
-  exact adm_lines _ pos hbody
+  exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx => hbody x (by simpa using hx)⟩
 
 private theorem viewPara_adm (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
     (withMath : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) (v : View) :

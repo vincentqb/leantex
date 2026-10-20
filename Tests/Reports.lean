@@ -2454,6 +2454,13 @@ def reports : List Report := [
     pins := [check% Tests.ItemRefs.checks]
     accept := ["lualatex 1.24 on an invented article: references to items show 1, 1a, 1(a)i and 2 through three levels, (a) for an enumitem label and for its ref key, A under a redefined theenumi, and the section's 1 for an itemize item, and a newlist list numbered as the enumerate it copies under its own setlist label; this tree shows the same",
       "main's binary at 1e648c76 on the same article: 1 for each; the guard fails there"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R277", date := "2026-10-20"
+    what := "a Lean theorem said in words read as a long run of nested words: each binder as every element x of a type, each relation spelled out (is equal to, is at most), a conjunction as both … and both …, its nesting shown by indentation that fell back to the margin, a multi-letter variable as math italic letters set apart in a serif math face beside a sans body, an application as f(…) breaking after its opening parenthesis, a projection as Prod.fst(…), and the statement an inline paragraph"
+    pins := [check% Tests.LeanProseReading.readingChecks, check% Tests.LeanProse.leanProseChecks,
+      check% Tests.LeanStatements.leanStatementChecks, thm% LeanProse.parse_render_exact]
+    accept := ["main's binary at 1e648c76 on an invented file of three clauses, the second of two: every element, is at most, both … and both, f(…) and Prod.fst(…), the guards failing there; this tree sets typed groups (for all cs : List Crate and cap : ℕ), symbols (c.weight ≤ c.weight + cap), the clauses as a numbered list and the second's as (a) and (b) a level in, each wrapped line under its item's text, variables as italic words and constants upright in the body's face, f x y, field notation and ×, in the PDF and on the web page at a wide and a narrow measure",
+      "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF byte-identical but the Lean prose fixture's; every web page's stylesheet gains one rule and every web page is visually the same but that fixture's and the box fixture's, whose lowered url tilde, a formula of one operator, now sets with no space either side, as its PDF does"]
     state := .guarded "1e648c76" .before .author }
 ]
 

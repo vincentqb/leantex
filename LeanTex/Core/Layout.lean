@@ -13522,6 +13522,7 @@ private inductive LabelMeet where
 
 private def labelMeet : Block → LabelMeet
   | .para c => if Ir.anchorsOnly c then .waits else .carries
+  | .lines ls => if ls.isEmpty then .waits else .carries
   | .spaced _ body => if body.isEmpty then .waits else .carries
   | .center body => if (Ir.displayContent? body).isSome then .settles else .carries
   | .verbatim .. | .ragged .. | .quote .. | .link .. | .list .. | .columns .. => .carries
@@ -13890,6 +13891,8 @@ private def collectItem (r : Rd) (a : Acc)
         { collectBlock { r with inLabel := true } { a with outerMarkers := outer.push mark }
             (.list ordered spacing items) indent with
           outerMarkers := #[] }
+      -- A laid-out paragraph's first line is the item's first line, as a paragraph's is.
+      | .lines ls, true => collectBlock { r with labels := outer.push mark } a (.lines ls) indent
       | b, true =>
         -- A listing's first code line is the item's first line, as its `\everypar` sets the label.
         if b.opensInLabel || b matches .verbatim .. then
@@ -14052,7 +14055,8 @@ private def collectLaid (r : Rd) (a : Acc) (lines : List LaidLine) (indent : Len
   | [] => a
   | l :: rest =>
     let step := Ir.linesStep.resolve r.geom.fontSize r.xHeight
-    collectLaid r (collectParaBlock r a l.content (indent + (l.depth : Int) * step)) rest indent
+    collectLaid { r with labels := #[] } (collectParaBlock r a l.content (indent + (l.depth : Int) * step))
+      rest indent
 
 private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Length) : Acc :=

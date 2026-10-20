@@ -347,6 +347,76 @@ def cancelWithMetric (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : Canc
     else cancelNode mk disp mark spec struck vals shown
   | none => cancelNode mk disp mark spec struck vals shown
 
+/-- A text-styled letter's token, an `mi` whose style sets a text face, by its attributes and
+letter. -/
+@[expose] public def letterOf? : Html.Node → Option (Array (String × String) × Char)
+  | .elem t attrs kids =>
+    match kids.toList with
+    | [.text s] =>
+      match s.toList with
+      | [c] =>
+        if t == "mi" && attrs.any (fun (k, v) => k == "style" && (v.splitOn "font-family").length > 1)
+        then some (attrs, c) else none
+      | _ => none
+    | _ => none
+  | .text _ | .style _ | .script _ _ => none
+
+/-- The letters of one style at the start of `l`, and the tokens past them. -/
+@[expose] public def spanLetters (attrs : Array (String × String)) : List Html.Node → List Char × List Html.Node
+  | n :: rest =>
+    match letterOf? n with
+    | some (a, c) =>
+      if a == attrs then
+        let r := spanLetters attrs rest
+        (c :: r.1, r.2)
+      else ([], n :: rest)
+    | none => ([], n :: rest)
+  | [] => ([], [])
+
+public theorem spanLetters_len (attrs : Array (String × String)) :
+    ∀ l : List Html.Node, (spanLetters attrs l).2.length ≤ l.length
+  | [] => by simp [spanLetters]
+  | n :: rest => by
+    have ih := spanLetters_len attrs rest
+    unfold spanLetters
+    split
+    · split
+      · simp only [List.length_cons]; omega
+      · simp
+    · simp
+
+/-- A word's token: its letters under one style, keeping its line. -/
+@[expose] public def wordToken (attrs : Array (String × String)) (cs : List Char) : Html.Node :=
+  .elem "mi" (attrs.map fun (k, v) => if k == "style" then (k, v ++ "; " ++ keepLineCss) else (k, v))
+    #[.text (String.ofList cs)]
+
+/-- Consecutive text-styled letters of one style as one token, so a word reads as one. -/
+@[expose] public def joinList : List Html.Node → List Html.Node
+  | [] => []
+  | n :: rest =>
+    match letterOf? n with
+    | some (a, c) =>
+      match h : spanLetters a rest with
+      | ([], _) => n :: joinList rest
+      | (d :: ds, after) =>
+        have : after.length < rest.length + 1 := by
+          have := spanLetters_len a rest
+          rw [h] at this
+          simp only at this; omega
+        wordToken a (c :: d :: ds) :: joinList after
+    | none => n :: joinList rest
+termination_by l => l.length
+
+/-- A list's tokens, a word of text-styled letters as one. -/
+@[expose] public def joinLetters (nodes : Array Html.Node) : Array Html.Node :=
+  (joinList nodes.toList).toArray
+
+/-- A relation colon's spacing, TeX's thick space each side outside scripts, which MathML's
+operator dictionary spaces as punctuation. -/
+def relColon (cls : MathClass) (c : Char) (st : MathStyle) : Array (String × String) :=
+  if cls == .rel && c == ':' && st.rank ≥ 2 then #[("lspace", "0.277778em"), ("rspace", "0.277778em")]
+  else #[]
+
 mutual
 
 /-- The MathML children of a math list, one element per item, onto `acc`;
@@ -379,7 +449,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
     -- A lone scalar never stretches: only `\left`/`\right` grow a delimiter.
     let tag := leafTag cls c
     .elem tag (if tag == "mi" then #[("mathvariant", "normal")]
-        else if tag == "mo" then #[("stretchy", "false")] else #[])
+        else if tag == "mo" then #[("stretchy", "false")] ++ relColon cls c mk.style else #[])
       #[.text (charText c)]
   | .styled style c =>
     -- Chromium honours no non-`normal` `mathvariant`, so a text style's axes ride on CSS.
@@ -398,7 +468,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
   | .word s =>
     .elem "mi" ((if s.length == 1 then #[("mathvariant", "normal")] else #[]).push
       ("style", keepLineCss)) #[.text s]
-  | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
+  | .list body => .elem "mrow" #[] (joinLetters (listNodes mk disp none #[] body))
   | .alpha _ _ body =>
     -- An unresolved alphabet is an `merror` around its content.
     .elem "merror" #[] (listNodes mk disp none #[] body)
@@ -492,11 +562,18 @@ def rowsNodes (mk : Marks) (disp : Bool) (kind : GridKind) (acc : Array Html.Nod
 
 end
 
+/-- A formula's lone operator set with no space either side, as TeX spaces only between atoms. -/
+@[expose] public def bareOp (ns : Array Html.Node) : Array Html.Node :=
+  match ns.toList with
+  | [.elem t attrs kids] =>
+    if t == "mo" then #[.elem t (attrs ++ #[("lspace", "0"), ("rspace", "0")]) kids] else ns
+  | _ => ns
+
 /-- One formula's children: its list in the formula's own style. -/
 public def formulaKids (display : Bool) (body : MList) (mk : Marks := {}) :
     Array Html.Node :=
-  listNodes { mk with style := if display then .display false else .text false }
-    display none #[] body
+  bareOp (listNodes { mk with style := if display then .display false else .text false }
+    display none #[] body)
 
 /-- One formula as its `math` element, `display="block"` for display math; `extra` carries the
 backend's attributes. -/
@@ -766,6 +843,82 @@ theorem accentNode_chars (mark : Char) (stretch : Bool) (body : Array Html.Node)
 
 mutual
 
+theorem letterOf?_shape {n : Html.Node} {a : Array (String × String)} {c : Char}
+    (h : letterOf? n = some (a, c)) :
+    ∃ kids s, n = .elem "mi" a kids ∧ kids.toList = [.text s] ∧ s.toList = [c] ∧
+      a.any (fun (k, v) => k == "style" && (v.splitOn "font-family").length > 1) = true := by
+  unfold letterOf? at h
+  split at h
+  · rename_i t attrs kids
+    split at h
+    · rename_i s hk
+      split at h
+      · rename_i c' hs
+        split at h
+        · rename_i hc
+          simp only [Bool.and_eq_true, beq_iff_eq] at hc
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact ⟨kids, s, by rw [hc.1], hk, hs, hc.2⟩
+        · cases h
+      · cases h
+    · cases h
+  all_goals cases h
+
+theorem letterOf?_chars {n : Html.Node} {a : Array (String × String)} {c : Char}
+    (h : letterOf? n = some (a, c)) (acc : Array Char) : nodeChars acc n = acc.push c := by
+  obtain ⟨kids, s, rfl, hk, hs, -⟩ := letterOf?_shape h
+  simp [nodeChars, hk, nodeListChars, pushChars, hs]
+
+theorem spanLetters_chars (attrs : Array (String × String)) :
+    ∀ (l : List Html.Node) (acc : Array Char),
+      nodeListChars acc l = nodeListChars (pushChars acc (spanLetters attrs l).1)
+        (spanLetters attrs l).2
+  | [], acc => by simp [spanLetters, pushChars, nodeListChars]
+  | n :: rest, acc => by
+    unfold spanLetters
+    split
+    · rename_i a c hl
+      split
+      · simp only [nodeListChars, letterOf?_chars hl]
+        rw [spanLetters_chars attrs rest (acc.push c)]
+        rfl
+      · simp [pushChars]
+    · simp [pushChars]
+
+theorem joinList_chars (l : List Html.Node) : ∀ (acc : Array Char),
+    nodeListChars acc (joinList l) = nodeListChars acc l := by
+  fun_induction joinList l with
+  | case1 => intro acc; simp [nodeListChars]
+  | case2 _ _ _ _ _ _ _ ih =>
+    intro acc; simp only [nodeListChars]; rw [ih]
+  | case3 n rest a c hl d ds after h _ ih =>
+    intro acc
+    have hs := spanLetters_chars a rest (acc.push c)
+    rw [h] at hs
+    simp only [nodeListChars, letterOf?_chars hl]
+    rw [ih, hs]
+    simp [wordToken, nodeChars, pushChars, nodeListChars]
+  | case4 _ _ _ ih =>
+    intro acc; simp only [nodeListChars]; rw [ih]
+
+theorem spanLetters_suffix (attrs : Array (String × String)) :
+    ∀ l : List Html.Node, ∃ pre, l = pre ++ (spanLetters attrs l).2
+  | [] => ⟨[], by simp [spanLetters]⟩
+  | n :: rest => by
+    obtain ⟨pre, hpre⟩ := spanLetters_suffix attrs rest
+    unfold spanLetters
+    split
+    · split
+      · exact ⟨n :: pre, by simp only [List.cons_append, ← hpre]⟩
+      · exact ⟨[], rfl⟩
+    · exact ⟨[], rfl⟩
+
+theorem joinLetters_chars (ns : Array Html.Node) (c : Array Char) :
+    nodeListChars c (joinLetters ns).toList = nodeListChars c ns.toList := by
+  simp only [joinLetters, List.toList_toArray]
+  exact joinList_chars _ c
+
 theorem listNodes_chars (mk : Marks) (disp : Bool) :
     ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node) (c : Array Char),
       nodeListChars c (listNodes mk disp ink acc ml).toList
@@ -816,8 +969,8 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
     exact pushChars_charText c ch
   | .word _, c => by simp only [nucNode]; split <;> rfl
   | .list body, c => by
-    show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
-    rw [listNodes_chars mk disp none body #[] c]
+    show nodeListChars c (joinLetters (listNodes mk disp none #[] body)).toList = listChars c body
+    rw [joinLetters_chars, listNodes_chars mk disp none body #[] c]
     rfl
   | .alpha _ _ body, c => by
     show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
@@ -937,11 +1090,21 @@ end
 
 /-- The MathML projection drops no glyph and invents none: its leaf text is the glyph-text fold of
 the math list, which `mathmlChecks` holds to the PDF census, overline excepted. -/
+theorem bareOp_chars (ns : Array Html.Node) (c : Array Char) :
+    nodeListChars c (bareOp ns).toList = nodeListChars c ns.toList := by
+  unfold bareOp
+  split
+  · rename_i t attrs kids h
+    split
+    · simp only [h, nodeListChars, nodeChars]
+    · rfl
+  · rfl
+
 public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
   simp only [formula, formulaKids, nodeChars]
-  rw [listNodes_chars _ display none body #[] #[]]
+  rw [bareOp_chars, listNodes_chars _ display none body #[] #[]]
   rfl
 
 /-- The in-context row paints the same glyph text as the root. -/
@@ -949,7 +1112,7 @@ public theorem formulaRow_glyphs_agree (display : Bool) (extra : Array (String �
     (body : MList) (mk : Marks) :
     nodeChars #[] (formulaRow display extra body mk) = listChars #[] body := by
   simp only [formulaRow, formulaKids, nodeChars]
-  rw [listNodes_chars _ display none body #[] #[]]
+  rw [bareOp_chars, listNodes_chars _ display none body #[] #[]]
   rfl
 
 /-- The projection of the shared alphabet pass: MathML leaf text is the resolved list's glyph
@@ -1142,6 +1305,33 @@ theorem cancelWithMetric_tagFree (mk : Marks) (disp : Bool) (mark : CancelMark)
 
 end
 
+theorem joinList_tagFree (p : String → Bool) (l : List Html.Node)
+    (h : tagFreeList p l = true) : tagFreeList p (joinList l) = true := by
+  fun_induction joinList l with
+  | case1 => rfl
+  | case2 _ _ _ _ _ _ _ ih =>
+    simp only [tagFreeList, Bool.and_eq_true] at h ⊢
+    exact ⟨h.1, ih h.2⟩
+  | case3 n rest a c hl d ds after hs _ ih =>
+    simp only [tagFreeList, Bool.and_eq_true] at h ⊢
+    obtain ⟨kids, w, rfl, -, -, -⟩ := letterOf?_shape hl
+    obtain ⟨pre, hpre⟩ := spanLetters_suffix a rest
+    rw [hs] at hpre
+    simp only at hpre
+    rw [hpre, tagFreeList_append, Bool.and_eq_true] at h
+    refine ⟨?_, ih h.2.2⟩
+    have h1 := h.1
+    simp only [tagFree, Bool.and_eq_true, Bool.not_eq_true'] at h1
+    simp [wordToken, tagFree, tagFreeList, h1.1]
+  | case4 _ _ _ ih =>
+    simp only [tagFreeList, Bool.and_eq_true] at h ⊢
+    exact ⟨h.1, ih h.2⟩
+
+theorem joinLetters_tagFree (p : String → Bool) (ns : Array Html.Node)
+    (h : tagFreeList p ns.toList = true) : tagFreeList p (joinLetters ns).toList = true := by
+  simp only [joinLetters, List.toList_toArray]
+  exact joinList_tagFree p _ h
+
 private theorem alphaFree_cons {x : MItem} {rest : MList}
     (h : (MList.cons x rest).alphaFree = true) : x.alphaFree = true ∧ rest.alphaFree = true := by
   simpa [MList.alphaFree] using h
@@ -1208,8 +1398,8 @@ theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t =
   | .list body, hm => by
     simp only [nucNode, tagFree, hp "mrow" (by simp [contentTags]), Bool.not_false,
       Bool.true_and]
-    exact listNodes_tagFree p hp mk disp none body #[]
-      (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl
+    exact joinLetters_tagFree p _ (listNodes_tagFree p hp mk disp none body #[]
+      (fun h => by simpa [MNucleus.alphaFree] using hm h) rfl)
   | .alpha _ _ body, hm => by
     have hne : p "merror" = false := by
       cases h : p "merror" with
@@ -1305,9 +1495,20 @@ theorem rowsNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t
 end
 
 /-- A fact of the artifact: a formula's content holds no `math` element. -/
+theorem bareOp_tagFree (p : String → Bool) (ns : Array Html.Node) :
+    tagFreeList p (bareOp ns).toList = tagFreeList p ns.toList := by
+  unfold bareOp
+  split
+  · rename_i t attrs kids h
+    split
+    · simp only [h, tagFreeList, tagFree]
+    · rfl
+  · rfl
+
 public theorem formulaKids_mathFree_contract (display : Bool) (body : MList) (mk : Marks) :
-    tagFreeList (· == "math") (formulaKids display body mk).toList = true :=
-  listNodes_tagFree (· == "math") (contentTags_beq_false (by simp [contentTags]))
+    tagFreeList (· == "math") (formulaKids display body mk).toList = true := by
+  rw [formulaKids, bareOp_tagFree]
+  exact listNodes_tagFree (· == "math") (contentTags_beq_false (by simp [contentTags]))
     _ _ none body #[] (fun h => by simp at h) rfl
 
 /-- A fact of the artifact: a formula's root is its tree's only root. -/
@@ -1327,8 +1528,9 @@ public theorem formulaRow_mathFree_contract (display : Bool) (extra : Array (Str
 `merror`. -/
 public theorem formula_merrorFree_contract (display : Bool) (body : MList) (mk : Marks)
     (h : body.alphaFree = true) :
-    tagFreeList (· == "merror") (formulaKids display body mk).toList = true :=
-  listNodes_tagFree (· == "merror") (contentTags_beq_false (by simp [contentTags]))
+    tagFreeList (· == "merror") (formulaKids display body mk).toList = true := by
+  rw [formulaKids, bareOp_tagFree]
+  exact listNodes_tagFree (· == "merror") (contentTags_beq_false (by simp [contentTags]))
     _ _ none body #[] (fun _ => h) rfl
 
 /-- Whether a style's last declaration is `keepLineCss`, the one CSS reads last. -/
@@ -1485,6 +1687,42 @@ theorem cancelWithMetric_held (mk : Marks) (disp : Bool) (mark : CancelMark)
 theorem delimMo_held (c : Char) : linesHeld (delimMo c) = true :=
   charText_held _ _ c
 
+theorem wordToken_held (a : Array (String × String)) (cs : List Char)
+    (h : a.any (fun (k, v) => k == "style" && (v.splitOn "font-family").length > 1) = true) :
+    linesHeld (wordToken a cs) = true := by
+  simp only [Array.any_eq_true, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨j, hj, hk, -⟩ := h
+  simp only [wordToken, linesHeld, Bool.or_eq_true]
+  left
+  simp only [keepsLine, Array.any_eq_true, Bool.and_eq_true, beq_iff_eq]
+  refine ⟨j, by simpa using hj, ?_⟩
+  simp only [Array.getElem_map, hk, ↓reduceIte, true_and]
+  exact keepsValue_tint _ _ (by simp [keepsValue])
+
+theorem joinList_held (l : List Html.Node) (h : linesHeldList l = true) :
+    linesHeldList (joinList l) = true := by
+  fun_induction joinList l with
+  | case1 => rfl
+  | case2 _ _ _ _ _ _ _ ih =>
+    simp only [linesHeldList, Bool.and_eq_true] at h ⊢
+    exact ⟨h.1, ih h.2⟩
+  | case3 n rest a c hl d ds after hs _ ih =>
+    simp only [linesHeldList, Bool.and_eq_true] at h ⊢
+    obtain ⟨kids, w, rfl, -, -, hany⟩ := letterOf?_shape hl
+    obtain ⟨pre, hpre⟩ := spanLetters_suffix a rest
+    rw [hs] at hpre
+    simp only at hpre
+    rw [hpre, linesHeldList_append, Bool.and_eq_true] at h
+    exact ⟨wordToken_held a _ hany, ih h.2.2⟩
+  | case4 _ _ _ ih =>
+    simp only [linesHeldList, Bool.and_eq_true] at h ⊢
+    exact ⟨h.1, ih h.2⟩
+
+theorem joinLetters_held (ns : Array Html.Node) (h : linesHeldList ns.toList = true) :
+    linesHeldList (joinLetters ns).toList = true := by
+  simp only [joinLetters, List.toList_toArray]
+  exact joinList_held _ h
+
 mutual
 
 theorem listNodes_held (mk : Marks) (disp : Bool) :
@@ -1530,7 +1768,7 @@ theorem nucNode_held (mk : Marks) (disp : Bool) (cls : MathClass) :
     split <;> simp [linesHeld, keepsLine, keepsValue]
   | .list body => by
     simp only [nucNode, linesHeld]
-    rw [listNodes_held mk disp none body #[] rfl, Bool.or_true]
+    rw [joinLetters_held _ (listNodes_held mk disp none body #[] rfl), Bool.or_true]
   | .alpha _ _ body => by
     simp only [nucNode, linesHeld]
     rw [listNodes_held mk disp none body #[] rfl, Bool.or_true]
@@ -1594,9 +1832,24 @@ end
 
 /-- A fact of the artifact: a formula sets every text run longer than one scalar under a style
 keeping its line, as TeX sets a word in one box. -/
+theorem bareOp_held (ns : Array Html.Node) (h : linesHeldList ns.toList = true) :
+    linesHeldList (bareOp ns).toList = true := by
+  unfold bareOp
+  split
+  · rename_i t attrs kids hl
+    split
+    · rw [hl] at h
+      simp only [linesHeldList, Bool.and_true, linesHeld, Bool.or_eq_true] at h
+      simp only [linesHeldList, Bool.and_true, linesHeld, Bool.or_eq_true]
+      rcases h with h | h
+      · left; simp only [keepsLine, Array.any_append, Bool.or_eq_true] at h ⊢; exact Or.inl h
+      · exact Or.inr h
+    · exact h
+  · exact h
+
 public theorem formulaKids_linesHeld_contract (display : Bool) (body : MList) (mk : Marks) :
     linesHeldList (formulaKids display body mk).toList = true :=
-  listNodes_held _ display none body #[] rfl
+  bareOp_held _ (listNodes_held _ display none body #[] rfl)
 
 /-- A fact of the artifact: a formula's `math` element keeps the line of every text run it sets. -/
 public theorem formula_linesHeld_contract (display : Bool) (extra : Array (String × String))

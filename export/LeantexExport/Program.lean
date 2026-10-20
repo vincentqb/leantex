@@ -88,6 +88,21 @@ def mask (acc : String) : Expr → String
   | .mdata _ b => mask acc b
   | _ => acc
 
+/-- The leading binder Lean's generalized field notation reads a constant's receiver from: its first
+explicit binder, where that binder's type applies the constant's namespace and no binder before
+it has such a type. -/
+def fieldOf (c : Name) (ty : Expr) : MetaM (Option Nat) := do
+  let .str base _ := c | return none
+  if base.isAnonymous || base == `Function then return none
+  Meta.forallTelescope ty fun params _ => do
+    for h : i in [0:params.size] do
+      let d ← params[i].fvarId!.getDecl
+      if d.userName == `motive then return none
+      let ofBase := d.type.cleanupAnnotations.getAppFn.isConstOf base
+      if d.binderInfo.isExplicit then return if ofBase then some i else none
+      if ofBase then return none
+    return none
+
 def kindOf (env : Environment) (n : Name) : ConstantInfo → Option String
   | .thmInfo _ => some "theorem"
   | .defnInfo _ => if Meta.isInstanceCore env n || env.isProjectionFn n then none else some "def"
@@ -269,7 +284,12 @@ run_cmd do
         s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}],\"proof\":{spanText w.val}}")
   for c in consts.toList do
     if let some ci := env.find? c then
-      lines := lines.push s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"}"
+      let field ← liftTermElabM <| try fieldOf c ci.type catch _ => pure none
+      let fieldPart := match field with
+        | some i => s!",\"field\":{i}"
+        | none => ""
+      lines := lines.push
+        s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"{fieldPart}}"
   for (a, b) in read do
     lines := lines.push s!"\{\"command\":{spanText (some (a, b))},\"text\":{jstr (between textLines a b)}}"
   lines := lines.push s!"\{\"leantex-lean-export-end\":{decls}}"

@@ -4,7 +4,7 @@ meta title "Laid-out statements"
 section* 0
   text "Laid-out statements"
 para
-  text "Invented statements whose scopes the prose view sets as indented blocks."
+  text "Invented statements whose scopes the prose view sets as indented blocks and whose clauses it sets as numbered lists."
 verbatim language lean4
   "namespace Ebb"
 para
@@ -24,20 +24,20 @@ role trivlist-env
         italicCorr maybe
         text "). If"
       line 1
-        text "for every natural number "
-        formula inline "n"
-          ord:𝑛
+        text "for every "
+        formula inline "\\mathit {n}:\\mathbb {N}"
+          ord:alpha:it{ord:𝑛} rel:: ord:alpha:bb{ord:𝑁}
         text ", "
-        formula inline "n"
-          ord:𝑛
-        text " is equal to "
-        formula inline "0"
-          ord:0
+        formula inline "\\mathit {n}={}"
+          ord:alpha:it{ord:𝑛} rel:= ord:{}
+        hspace 0pt
+        formula inline "\\mathrm {0}"
+          ord:alpha:rm{ord:0}
         text ","
       line 0
         text "then "
-        formula inline "\\operatorname {False}"
-          op:"False"
+        formula inline "\\mathrm {False}"
+          ord:alpha:rm{ord:𝐹 ord:𝑎 ord:𝑙 ord:𝑠 ord:𝑒}
         text "."
 verbatim language lean4
   "theorem none_all (h : forall n : Nat, n = 0) : False :="
@@ -57,22 +57,19 @@ role trivlist-env
           italicCorr maybe
           text "Ebb.iff_after"
         italicCorr maybe
-        text "). For all propositions "
-        formula inline "p"
-          ord:𝑝
-        text " and "
-        formula inline "q"
-          ord:𝑞
+        text "). For all "
+        formula inline "\\mathit {p},\\mathit {q}:\\mathrm {Prop}"
+          ord:alpha:it{ord:𝑝} punct:, ord:alpha:it{ord:𝑞} rel:: ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
         text ", if "
-        formula inline "p"
-          ord:𝑝
+        formula inline "\\mathit {p}"
+          ord:alpha:it{ord:𝑝}
         text ", then"
       line 1
-        formula inline "q"
-          ord:𝑞
+        formula inline "\\mathit {q}"
+          ord:alpha:it{ord:𝑞}
         text " if and only if "
-        formula inline "q"
-          ord:𝑞
+        formula inline "\\mathit {q}"
+          ord:alpha:it{ord:𝑞}
         text "."
 verbatim language lean4
   "theorem iff_after (p q : Prop) (_hp : p) : q <-> q := Iff.rfl"
@@ -91,29 +88,26 @@ role trivlist-env
           italicCorr maybe
           text "Ebb.swap"
         italicCorr maybe
-        text "). For all propositions "
-        formula inline "p"
-          ord:𝑝
-        text " and "
-        formula inline "q"
-          ord:𝑞
+        text "). For all "
+        formula inline "\\mathit {p},\\mathit {q}:\\mathrm {Prop}"
+          ord:alpha:it{ord:𝑝} punct:, ord:alpha:it{ord:𝑞} rel:: ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
         text ","
       line 2
         text "both "
-        formula inline "p"
-          ord:𝑝
+        formula inline "\\mathit {p}"
+          ord:alpha:it{ord:𝑝}
         text " and "
-        formula inline "q"
-          ord:𝑞
+        formula inline "\\mathit {q}"
+          ord:alpha:it{ord:𝑞}
       line 1
         text "if and only if"
       line 2
         text "both "
-        formula inline "q"
-          ord:𝑞
+        formula inline "\\mathit {q}"
+          ord:alpha:it{ord:𝑞}
         text " and "
-        formula inline "p"
-          ord:𝑝
+        formula inline "\\mathit {p}"
+          ord:alpha:it{ord:𝑝}
         text "."
 verbatim language lean4
   "theorem swap (p q : Prop) : And p q <-> And q p := And.comm"
@@ -130,15 +124,15 @@ role trivlist-env
           italicCorr maybe
           text "Ebb.neg_all"
         italicCorr maybe
-        text "). It is not the case that for every natural number "
-        formula inline "n"
-          ord:𝑛
+        text "). It is not the case that for every "
+        formula inline "\\mathit {n}:\\mathbb {N}"
+          ord:alpha:it{ord:𝑛} rel:: ord:alpha:bb{ord:𝑁}
         text ", "
-        formula inline "n"
-          ord:𝑛
-        text " is equal to "
-        formula inline "0"
-          ord:0
+        formula inline "\\mathit {n}={}"
+          ord:alpha:it{ord:𝑛} rel:= ord:{}
+        hspace 0pt
+        formula inline "\\mathrm {0}"
+          ord:alpha:rm{ord:0}
         text "."
 verbatim language lean4
   "theorem neg_all : Not (forall n : Nat, n = 0) :="
@@ -156,28 +150,32 @@ role trivlist-env
           italicCorr maybe
           text "Ebb.both_all"
         italicCorr maybe
-        text "). Both"
-      line 1
-        text "for every natural number "
-        formula inline "n"
-          ord:𝑛
-        text ", "
-        formula inline "0"
-          ord:0
-        text " is at most "
-        formula inline "n"
-          ord:𝑛
-      line 0
-        text "and there is a natural number "
-        formula inline "m"
-          ord:𝑚
-        text " such that "
-        formula inline "m"
-          ord:𝑚
-        text " is equal to "
-        formula inline "m"
-          ord:𝑚
-        text "."
+        text ")."
+    list ordered
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {n}:\\mathbb {N}"
+            ord:alpha:it{ord:𝑛} rel:: ord:alpha:bb{ord:𝑁}
+          text ", "
+          formula inline "\\mathrm {0}\\leq {}"
+            ord:alpha:rm{ord:0} rel:≤ ord:{}
+          hspace 0pt
+          formula inline "\\mathit {n}"
+            ord:alpha:it{ord:𝑛}
+          text "."
+      item
+        para
+          text "There is "
+          formula inline "\\mathit {m}:\\mathbb {N}"
+            ord:alpha:it{ord:𝑚} rel:: ord:alpha:bb{ord:𝑁}
+          text " such that "
+          formula inline "\\mathit {m}={}"
+            ord:alpha:it{ord:𝑚} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathit {m}"
+            ord:alpha:it{ord:𝑚}
+          text "."
 verbatim language lean4
   "theorem both_all : And (forall n : Nat, 0 <= n) (exists m : Nat, m = m) :="
   "  And.intro Nat.zero_le (Exists.intro 0 rfl)"
@@ -194,38 +192,448 @@ role trivlist-env
           italicCorr maybe
           text "Ebb.chain"
         italicCorr maybe
-        text "). For all natural numbers "
-        formula inline "a"
-          ord:𝑎
-        text ", "
-        formula inline "b"
-          ord:𝑏
-        text " and "
-        formula inline "c"
-          ord:𝑐
+        text "). For all "
+        formula inline "\\mathit {a},\\mathit {b},\\mathit {c}:\\mathbb {N}"
+          ord:alpha:it{ord:𝑎} punct:, ord:alpha:it{ord:𝑏} punct:, ord:alpha:it{ord:𝑐} rel:: ord:alpha:bb{ord:𝑁}
         text ", if "
-        formula inline "a"
-          ord:𝑎
-        text " is at most "
-        formula inline "b"
-          ord:𝑏
+        formula inline "\\mathit {a}\\leq {}"
+          ord:alpha:it{ord:𝑎} rel:≤ ord:{}
+        hspace 0pt
+        formula inline "\\mathit {b}"
+          ord:alpha:it{ord:𝑏}
         text " and "
-        formula inline "b"
-          ord:𝑏
-        text " is at most "
-        formula inline "c"
-          ord:𝑐
+        formula inline "\\mathit {b}\\leq {}"
+          ord:alpha:it{ord:𝑏} rel:≤ ord:{}
+        hspace 0pt
+        formula inline "\\mathit {c}"
+          ord:alpha:it{ord:𝑐}
         text ", then "
-        formula inline "a"
-          ord:𝑎
-        text " is at most "
-        formula inline "c"
-          ord:𝑐
+        formula inline "\\mathit {a}\\leq {}"
+          ord:alpha:it{ord:𝑎} rel:≤ ord:{}
+        hspace 0pt
+        formula inline "\\mathit {c}"
+          ord:alpha:it{ord:𝑐}
         text "."
 verbatim language lean4
   "theorem chain (a b c : Nat) (h1 : a <= b) (h2 : b <= c) : a <= c :="
   "  Nat.le_trans h1 h2"
   ""
+  "structure Crate where"
+  "  id : Nat"
+  "  weight : Nat"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.Heavy"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {Heavy}:"
+        ord:alpha:rm{ord:𝐻 ord:𝑒 ord:𝑎 ord:𝑣 ord:𝑦} rel::
+      text " "
+      formula inline "\\mathrm {Crate}\\to {}"
+        ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {Prop}"
+        ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
+verbatim language lean4
+  "def Heavy (c : Crate) : Prop := 0 < c.weight"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.ledger"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {ledger}:"
+        ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑑 ord:𝑔 ord:𝑒 ord:𝑟} rel::
+      text " "
+      formula inline "\\mathrm {List}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡}
+      text " "
+      formula inline "\\mathrm {Crate}\\to {}"
+        ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {String}\\to {}"
+        ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {List}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡}
+      text " "
+      formula inline "(\\mathrm {String}\\times \\mathbb {N})\\to {}"
+        open:( ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔} bin:× ord:alpha:bb{ord:𝑁} close:) rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {List}\\  \\mathrm {String}\\times {}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔} bin:× ord:{}
+      hspace 0pt
+      formula inline "\\mathbb {N}"
+        ord:alpha:bb{ord:𝑁}
+verbatim language lean4
+  "def ledger (cs : List Crate) (_bin : String) (_log : List (String × Nat)) :"
+  "    List String × Nat :="
+  "  ([], cs.length)"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.labelOf"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {labelOf}:"
+        ord:alpha:rm{ord:𝑙 ord:𝑎 ord:𝑏 ord:𝑒 ord:𝑙 ord:𝑂 ord:𝑓} rel::
+      text " "
+      formula inline "\\mathrm {Crate}\\to {}"
+        ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {String}"
+        ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔}
+verbatim language lean4
+  "def labelOf (c : Crate) : String := toString c.id"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.FairSwap"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {FairSwap}:"
+        ord:alpha:rm{ord:𝐹 ord:𝑎 ord:𝑖 ord:𝑟 ord:𝑆 ord:𝑤 ord:𝑎 ord:𝑝} rel::
+      text " "
+      formula inline "\\mathrm {String}\\to {}"
+        ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {List}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡}
+      text " "
+      formula inline "(\\mathrm {String}\\times \\mathbb {N})\\to {}"
+        open:( ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔} bin:× ord:alpha:bb{ord:𝑁} close:) rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {List}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡}
+      text " "
+      formula inline "\\mathrm {Crate}\\to {}"
+        ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {Crate}\\to {}"
+        ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {Crate}\\to {}"
+        ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {Prop}"
+        ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
+verbatim language lean4
+  "def FairSwap (_bin : String) (_log : List (String × Nat)) (_cs : List Crate)"
+  "    (c d : Crate) : Prop :="
+  "  c.id = d.id"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.samples"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {samples}:"
+        ord:alpha:rm{ord:𝑠 ord:𝑎 ord:𝑚 ord:𝑝 ord:𝑙 ord:𝑒 ord:𝑠} rel::
+      text " "
+      formula inline "\\mathbb {N}\\to {}"
+        ord:alpha:bb{ord:𝑁} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {List}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡}
+      text " "
+      formula inline "\\mathrm {Bool}"
+        ord:alpha:rm{ord:𝐵 ord:𝑜 ord:𝑜 ord:𝑙}
+verbatim language lean4
+  "def samples (_n : Nat) : List Bool := []"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.allSet"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {allSet}:"
+        ord:alpha:rm{ord:𝑎 ord:𝑙 ord:𝑙 ord:𝑆 ord:𝑒 ord:𝑡} rel::
+      text " "
+      formula inline "\\mathrm {Bool}\\to {}"
+        ord:alpha:rm{ord:𝐵 ord:𝑜 ord:𝑜 ord:𝑙} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {Bool}"
+        ord:alpha:rm{ord:𝐵 ord:𝑜 ord:𝑜 ord:𝑙}
+verbatim language lean4
+  "def allSet (b : Bool) : Bool := b"
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "Ebb.weightOdds"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {weightOdds}:"
+        ord:alpha:rm{ord:𝑤 ord:𝑒 ord:𝑖 ord:𝑔 ord:ℎ ord:𝑡 ord:𝑂 ord:𝑑 ord:𝑑 ord:𝑠} rel::
+      text " "
+      formula inline "\\mathbb {N}\\to {}"
+        ord:alpha:bb{ord:𝑁} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathbb {N}"
+        ord:alpha:bb{ord:𝑁}
+verbatim language lean4
+  "def weightOdds (n : Nat) : Nat := n"
+para
+  text "Three clauses over typed parameters, a witness pair and an identity of lengths."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.ledger_summary"
+        italicCorr maybe
+        text "). For all "
+        formula inline "\\mathit {cs}:\\mathrm {List}\\  \\mathrm {Crate}"
+          ord:alpha:it{ord:𝑐 ord:𝑠} rel:: ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒}
+        text ", "
+        formula inline "\\mathit {bin}:\\mathrm {String}"
+          ord:alpha:it{ord:𝑏 ord:𝑖 ord:𝑛} rel:: ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔}
+        text " and "
+        formula inline "\\mathit {log}:\\mathrm {List}\\  (\\mathrm {String}\\times \\mathbb {N})"
+          ord:alpha:it{ord:𝑙 ord:𝑜 ord:𝑔} rel:: ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 open:( ord:alpha:rm{ord:𝑆 ord:𝑡 ord:𝑟 ord:𝑖 ord:𝑛 ord:𝑔} bin:× ord:alpha:bb{ord:𝑁} close:)
+        text ":"
+    list ordered
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {c}\\in {}\\mathit {cs}"
+            ord:alpha:it{ord:𝑐} rel:∈ ord:{} ord:alpha:it{ord:𝑐 ord:𝑠}
+          text ", either "
+          formula inline "\\mathit {c}"
+            ord:alpha:it{ord:𝑐}
+          text " is heavy or "
+          formula inline "\\mathit {c}.\\mathrm {weight}={}"
+            ord:alpha:it{ord:𝑐} ord:. ord:alpha:rm{ord:𝑤 ord:𝑒 ord:𝑖 ord:𝑔 ord:ℎ ord:𝑡} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {0}"
+            ord:alpha:rm{ord:0}
+          text "."
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {tag}\\in {}(\\mathrm {ledger}\\  \\mathit {cs}\\  \\mathit {bin}\\  \\mathit {log}).\\mathrm {fst}"
+            ord:alpha:it{ord:𝑡 ord:𝑎 ord:𝑔} rel:∈ ord:{} open:( ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑑 ord:𝑔 ord:𝑒 ord:𝑟} mu:6 ord:alpha:it{ord:𝑐 ord:𝑠} mu:6 ord:alpha:it{ord:𝑏 ord:𝑖 ord:𝑛} mu:6 ord:alpha:it{ord:𝑙 ord:𝑜 ord:𝑔} close:) ord:. ord:alpha:rm{ord:𝑓 ord:𝑠 ord:𝑡}
+          text ", there are "
+          formula inline "\\mathit {c},\\mathit {d}:\\mathrm {Crate}"
+            ord:alpha:it{ord:𝑐} punct:, ord:alpha:it{ord:𝑑} rel:: ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒}
+          text " such that "
+          formula inline "\\mathit {tag}={}"
+            ord:alpha:it{ord:𝑡 ord:𝑎 ord:𝑔} rel:= ord:{}
+          hspace 0pt
+          text "the label of "
+          formula inline "\\mathit {d}"
+            ord:alpha:it{ord:𝑑}
+          text " and "
+          formula inline "\\mathrm {FairSwap}"
+            ord:alpha:rm{ord:𝐹 ord:𝑎 ord:𝑖 ord:𝑟 ord:𝑆 ord:𝑤 ord:𝑎 ord:𝑝}
+          text " "
+          formula inline "\\mathit {bin}"
+            ord:alpha:it{ord:𝑏 ord:𝑖 ord:𝑛}
+          text " "
+          formula inline "\\mathit {log}"
+            ord:alpha:it{ord:𝑙 ord:𝑜 ord:𝑔}
+          text " "
+          formula inline "(\\mathrm {List.take}\\  \\mathrm {2}\\  \\mathit {cs})"
+            open:( ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡 ord:. ord:𝑡 ord:𝑎 ord:𝑘 ord:𝑒} mu:6 ord:alpha:rm{ord:2} mu:6 ord:alpha:it{ord:𝑐 ord:𝑠} close:)
+          text " "
+          formula inline "\\mathit {c}"
+            ord:alpha:it{ord:𝑐}
+          text " "
+          formula inline "\\mathit {d}"
+            ord:alpha:it{ord:𝑑}
+          text "."
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {n}:\\mathbb {N}"
+            ord:alpha:it{ord:𝑛} rel:: ord:alpha:bb{ord:𝑁}
+          text ", if "
+          formula inline "\\mathrm {1}\\leq {}"
+            ord:alpha:rm{ord:1} rel:≤ ord:{}
+          hspace 0pt
+          formula inline "\\mathit {n}"
+            ord:alpha:it{ord:𝑛}
+          text ", then "
+          formula inline "(\\mathrm {samples}\\  \\mathit {n}).\\mathrm {length}={}"
+            open:( ord:alpha:rm{ord:𝑠 ord:𝑎 ord:𝑚 ord:𝑝 ord:𝑙 ord:𝑒 ord:𝑠} mu:6 ord:alpha:it{ord:𝑛} close:) ord:. ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑛 ord:𝑔 ord:𝑡 ord:ℎ} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {List.countP}\\  \\mathrm {allSet}\\  (\\mathrm {samples}\\  \\mathit {n})\\cdot {}"
+            ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡 ord:. ord:𝑐 ord:𝑜 ord:𝑢 ord:𝑛 ord:𝑡 ord:𝑃} mu:6 ord:alpha:rm{ord:𝑎 ord:𝑙 ord:𝑙 ord:𝑆 ord:𝑒 ord:𝑡} mu:6 open:( ord:alpha:rm{ord:𝑠 ord:𝑎 ord:𝑚 ord:𝑝 ord:𝑙 ord:𝑒 ord:𝑠} mu:6 ord:alpha:it{ord:𝑛} close:) bin:⋅ ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {weightOdds}\\  \\mathit {n}"
+            ord:alpha:rm{ord:𝑤 ord:𝑒 ord:𝑖 ord:𝑔 ord:ℎ ord:𝑡 ord:𝑂 ord:𝑑 ord:𝑑 ord:𝑠} mu:6 ord:alpha:it{ord:𝑛}
+          text "."
+verbatim language lean4
+  "theorem ledger_summary (cs : List Crate) (bin : String)"
+  "    (log : List (String × Nat)) :"
+  "    And (forall c, Membership.mem cs c -> Or (Heavy c) (c.weight = 0))"
+  "      (And (forall tag, Membership.mem (ledger cs bin log).1 tag -> exists c d,"
+  "          And (tag = labelOf d) (FairSwap bin log (cs.take 2) c d))"
+  "        (forall n, 1 <= n ->"
+  "          (samples n).length = (samples n).countP allSet * weightOdds n)) := by"
+  "  refine And.intro (fun c _ => ?_) (And.intro (fun tag h => ?_) (fun n _ => ?_))"
+  "  · unfold Heavy; omega"
+  "  · simp [ledger] at h"
+  "  · simp [samples]"
+para
+  text "Three clauses, the second of two clauses its own."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.crate_bounds"
+        italicCorr maybe
+        text "). For all "
+        formula inline "\\mathit {cs}:\\mathrm {List}\\  \\mathrm {Crate}"
+          ord:alpha:it{ord:𝑐 ord:𝑠} rel:: ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 ord:alpha:rm{ord:𝐶 ord:𝑟 ord:𝑎 ord:𝑡 ord:𝑒}
+        text " and "
+        formula inline "\\mathit {cap}:\\mathbb {N}"
+          ord:alpha:it{ord:𝑐 ord:𝑎 ord:𝑝} rel:: ord:alpha:bb{ord:𝑁}
+        text ":"
+    list ordered
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {c}\\in {}\\mathit {cs}"
+            ord:alpha:it{ord:𝑐} rel:∈ ord:{} ord:alpha:it{ord:𝑐 ord:𝑠}
+          text ", "
+          formula inline "\\mathit {c}.\\mathrm {weight}\\leq {}"
+            ord:alpha:it{ord:𝑐} ord:. ord:alpha:rm{ord:𝑤 ord:𝑒 ord:𝑖 ord:𝑔 ord:ℎ ord:𝑡} rel:≤ ord:{}
+          hspace 0pt
+          formula inline "\\mathit {c}.\\mathrm {weight}+{}"
+            ord:alpha:it{ord:𝑐} ord:. ord:alpha:rm{ord:𝑤 ord:𝑒 ord:𝑖 ord:𝑔 ord:ℎ ord:𝑡} bin:+ ord:{}
+          hspace 0pt
+          formula inline "\\mathit {cap}"
+            ord:alpha:it{ord:𝑐 ord:𝑎 ord:𝑝}
+          text "."
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {c}\\in {}\\mathit {cs}"
+            ord:alpha:it{ord:𝑐} rel:∈ ord:{} ord:alpha:it{ord:𝑐 ord:𝑠}
+          text ":"
+        role in-paragraph
+          list ordered
+            item
+              para
+                text "For every "
+                formula inline "\\mathit {k}<{}\\mathit {c}.\\mathrm {id}"
+                  ord:alpha:it{ord:𝑘} rel:< ord:{} ord:alpha:it{ord:𝑐} ord:. ord:alpha:rm{ord:𝑖 ord:𝑑}
+                text ", "
+                formula inline "\\mathit {k}+{}"
+                  ord:alpha:it{ord:𝑘} bin:+ ord:{}
+                hspace 0pt
+                formula inline "\\mathrm {1}\\leq {}"
+                  ord:alpha:rm{ord:1} rel:≤ ord:{}
+                hspace 0pt
+                formula inline "\\mathit {c}.\\mathrm {id}"
+                  ord:alpha:it{ord:𝑐} ord:. ord:alpha:rm{ord:𝑖 ord:𝑑}
+                text "."
+            item
+              para
+                text "There is "
+                formula inline "\\mathit {m}:\\mathbb {N}"
+                  ord:alpha:it{ord:𝑚} rel:: ord:alpha:bb{ord:𝑁}
+                text " such that "
+                formula inline "\\mathit {m}={}"
+                  ord:alpha:it{ord:𝑚} rel:= ord:{}
+                hspace 0pt
+                formula inline "\\mathit {c}.\\mathrm {weight}+{}"
+                  ord:alpha:it{ord:𝑐} ord:. ord:alpha:rm{ord:𝑤 ord:𝑒 ord:𝑖 ord:𝑔 ord:ℎ ord:𝑡} bin:+ ord:{}
+                hspace 0pt
+                formula inline "\\mathit {cap}"
+                  ord:alpha:it{ord:𝑐 ord:𝑎 ord:𝑝}
+                text "."
+      item
+        para
+          formula inline "\\mathit {cs}.\\mathrm {length}\\leq {}"
+            ord:alpha:it{ord:𝑐 ord:𝑠} ord:. ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑛 ord:𝑔 ord:𝑡 ord:ℎ} rel:≤ ord:{}
+          hspace 0pt
+          formula inline "\\mathit {cs}.\\mathrm {length}+{}"
+            ord:alpha:it{ord:𝑐 ord:𝑠} ord:. ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑛 ord:𝑔 ord:𝑡 ord:ℎ} bin:+ ord:{}
+          hspace 0pt
+          formula inline "\\mathit {cap}"
+            ord:alpha:it{ord:𝑐 ord:𝑎 ord:𝑝}
+          text "."
+verbatim language lean4
+  "theorem crate_bounds (cs : List Crate) (cap : Nat) :"
+  "    And (forall c, Membership.mem cs c -> c.weight <= c.weight + cap)"
+  "      (And (forall c, Membership.mem cs c ->"
+  "          And (forall k : Nat, k < c.id -> k + 1 <= c.id)"
+  "            (exists m : Nat, m = c.weight + cap))"
+  "        (cs.length <= cs.length + cap)) :="
+  "  And.intro (fun _ _ => Nat.le_add_right _ _)"
+  "    (And.intro (fun _ _ => And.intro (fun _ hk => hk) (Exists.intro _ rfl))"
+  "      (Nat.le_add_right _ _))"
+  ""
   "end Ebb"
 -- diagnostics
-(none)
+warning[W0415] 32:1 words cannot say 'Ebb.Heavy', which is no proposition; it is set as mathematics
+warning[W0415] 34:1 words cannot say 'Ebb.ledger', which is no proposition; it is set as mathematics
+warning[W0415] 38:1 words cannot say 'Ebb.labelOf', which is no proposition; it is set as mathematics
+warning[W0415] 40:1 words cannot say 'Ebb.FairSwap', which is no proposition; it is set as mathematics
+warning[W0415] 44:1 words cannot say 'Ebb.samples', which is no proposition; it is set as mathematics
+warning[W0415] 46:1 words cannot say 'Ebb.allSet', which is no proposition; it is set as mathematics
+warning[W0415] 48:1 words cannot say 'Ebb.weightOdds', which is no proposition; it is set as mathematics

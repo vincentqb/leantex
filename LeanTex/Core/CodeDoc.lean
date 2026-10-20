@@ -2095,66 +2095,186 @@ public def displayRaws (d : LeanFacts.Decl) (formulas : Array (Array LeanNotatio
     (pos : Pos) (link : Option String := none) : Array Raw :=
   #[.env "flushleft" (formulas.foldl (displayStep pos) (headRaws d pos link, true)).1 pos]
 
-/-- A leaf's formulas as inline mathematics, a line free to break between them. -/
+/-- A leaf's formulas as inline mathematics, a line free to break between them: at a word space
+where a formula ends on a space, else at a bare break. -/
 public def leafRaws (pos : Pos) : LeanProse.Leaf → Array Raw
   | [] => #[]
-  | m :: rest => rest.foldl (fun acc q => (acc ++ breakRaws pos).push (formulaRaw pos q))
-      #[formulaRaw pos m]
+  | m :: rest =>
+    (rest.foldl (fun (acc : Array Raw × Bool) q =>
+      ((acc.1 ++ (if acc.2 then #[.space] else breakRaws pos)).push
+        (formulaRaw pos (LeanStatement.unspaced q).1), (LeanStatement.unspaced q).2))
+      (#[formulaRaw pos (LeanStatement.unspaced m).1], (LeanStatement.unspaced m).2)).1
+
+/-- A binder group as one formula, which no line breaks: its names with commas between and a colon
+before its bound, or a binder predicate's relation alone. -/
+public def groupLeaf (g : LeanProse.Group LeanProse.Leaf) : LeanProse.Leaf :=
+  let whole (l : LeanProse.Leaf) : Array LeanNotation.Math := l.foldl (· ++ ·) #[]
+  if g.pred then [whole g.bound] else
+    let names := g.names.foldl (fun (acc : Array LeanNotation.Math) n =>
+      (if acc.isEmpty then acc else acc.push (.word ",")) ++ whole n) #[]
+    [(names.push (.word ":")).append (whole g.bound)]
 
 /-- A token's raws, its word capitalized while the sentence still opens, and whether it still
-opens after it: past a block's bounds it does. -/
+opens after it: past a block's bounds and a list item's mark it does. -/
 public def tokRaws (pos : Pos) (opening : Bool) : LeanProse.Tok LeanProse.Leaf → Array Raw × Bool
-  | .w s => (#[.word (if opening then s.capitalize else s) pos], false)
+  | .w s => match LeanProse.relGlyph? s with
+    | some g => (#[formulaRaw pos g], false)
+    | none => (#[.word (if opening then s.capitalize else s) pos], false)
   | .leaf l => (leafRaws pos l, false)
-  | .indent | .dedent => (#[], opening)
+  | .bind g => (leafRaws pos (groupLeaf g), false)
+  | .indent | .dedent | .item => (#[], opening)
 
-/-- A sentence's raws so far: each open block's, innermost first, whether the sentence still opens,
+/-- What a frame of a sentence holds: the whole sentence, set as lines; a list item's run of text; a
+block a run indents; or a list's items, set as a numbered list. -/
+public inductive FrameKind where
+  | top
+  | run
+  | lines
+  | list
+  deriving BEq, Repr, Inhabited
+
+/-- An open frame: its kind, the block raws it has set, the text it is setting, whether that text
+holds a block, whether a list just closed in it, and whether its text just ended on a relation's
+symbol. -/
+public structure Frame where
+  kind : FrameKind
+  out : Array Raw
+  cur : Array Raw
+  laid : Bool
+  afterList : Bool
+  afterRel : Bool
+  deriving Inhabited
+
+/-- A frame of `kind` holding nothing. -/
+public def Frame.empty (kind : FrameKind) : Frame := ⟨kind, #[], #[], false, false, false⟩
+
+/-- Text whose last raw is a formula with a relation's symbol `t` ending it, so no line breaks
+before the symbol, where it is one. -/
+public def relAttach? (pos : Pos) (cur : Array Raw) (t : LeanProse.Tok LeanProse.Leaf) :
+    Option (Array Raw) :=
+  match t with
+  | .w s =>
+    match LeanProse.relGlyph? s, cur.back? with
+    | some g, some (.math false body p) =>
+      some (cur.pop.push (.math false (body ++ LeanStatement.Math.listRaws pos #[]
+        (g.push (.arg [])).toList) p))
+    | _, _ => none
+  | .leaf _ | .bind _ | .indent | .dedent | .item => none
+
+/-- A sentence's raws so far: each open frame, innermost first, whether the sentence still opens,
 and whether a line just began. -/
-public abbrev SentenceAcc := List (Array Raw) × Bool × Bool
+public abbrev SentenceAcc := List Frame × Bool × Bool
 
-/-- A block's raws closed into the one around it as a nested lines environment. -/
-public def closeBlock (pos : Pos) : List (Array Raw) → List (Array Raw)
-  | inner :: outer :: rest => (outer.push (.env Parse.linesEnv inner pos)) :: rest
+/-- Raws with a full stop after their last text, inside the block they end with where they do. -/
+public def stopped (pos : Pos) (raws : Array Raw) : Array Raw :=
+  match h : raws.back? with
+  | some (.env n inner p) =>
+    if n == Parse.linesEnv then
+      have : sizeOf inner < sizeOf raws := by
+        have hm := Array.mem_of_back? h
+        have := Array.sizeOf_lt_of_mem hm
+        simp only [Raw.env.sizeOf_spec] at this
+        omega
+      raws.pop.push (.env n (stopped pos inner) p)
+    else raws.push (.word "." pos)
+  | _ => raws.push (.word "." pos)
+termination_by sizeOf raws
+
+/-- A run's raws: the blocks it set, then its text, as a lines environment where it is the whole
+sentence's or holds a block. -/
+public def Frame.raws (f : Frame) (pos : Pos) : Array Raw :=
+  if f.cur.isEmpty then f.out
+  else if f.kind == .top || f.laid then f.out.push (.env Parse.linesEnv f.cur pos)
+  else f.out ++ f.cur
+
+/-- A list item's raws: its run's, closed by a full stop where it ends with text. -/
+public def Frame.itemRaws (f : Frame) (pos : Pos) : Array Raw :=
+  { f with cur := if f.cur.isEmpty then f.cur else stopped pos f.cur }.raws pos
+
+/-- A frame closed into the one around it: a block into its text, a list item into its list, and a
+list as a numbered list after the text before it. -/
+public def closeInto (pos : Pos) (inner outer : Frame) : Frame :=
+  match inner.kind with
+  | .lines => { outer with cur := outer.cur.push (.env Parse.linesEnv inner.cur pos), laid := true }
+  | .top | .run => { outer with out := (outer.out.push (.ctrl "item" pos)) ++ inner.itemRaws pos }
+  | .list =>
+    { outer with out := outer.raws pos |>.push (.env "enumerate" inner.out pos), cur := #[],
+                 laid := false, afterList := true }
+
+/-- The innermost frame closed into the next. -/
+public def closeTop (pos : Pos) : List Frame → List Frame
+  | inner :: outer :: rest => closeInto pos inner outer :: rest
   | [top] => [top]
   | [] => []
 
-/-- A word or leaf onto the innermost open block's raws, after a word space but at a line's start or
-where it joins. -/
+/-- A block's end: the innermost frame closed, and where that is a list's last item, the list with
+it. -/
+public def closeBlock (pos : Pos) (l : List Frame) : List Frame :=
+  match l with
+  | f :: _ :: _ :: _ => if f.kind == .run then closeTop pos (closeTop pos l) else closeTop pos l
+  | _ => closeTop pos l
+
+/-- A list item's start: the block just opened becomes a list, and each item a run of its own after
+the one before closes. -/
+public def openItem (pos : Pos) : List Frame → List Frame
+  | f :: rest =>
+    if f.kind == .lines && f.cur.isEmpty && f.out.isEmpty then
+      Frame.empty .run :: Frame.empty .list :: rest
+    else if f.kind == .run then
+      match rest with
+      | l :: more => Frame.empty .run :: closeInto pos f l :: more
+      | [] => [f]
+    else f :: rest
+  | [] => []
+
+/-- A word or leaf onto the innermost frame's text, after a word space but at a line's start, where
+it joins, or past a relation's symbol, which ends the formula before it and a bare break follows; a
+closing word just after a list is dropped, the list's items each closing themselves. -/
 public def pushTok (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf) :
     SentenceAcc :=
-  let gap : Array Raw := if acc.2.2 || t.joins then #[] else #[.space]
   let r := tokRaws pos acc.2.1 t
   match acc.1 with
-  | top :: rest => ((top ++ gap ++ r.1) :: rest, r.2, false)
-  | [] => ([r.1], r.2, false)
+  | f :: rest =>
+    if f.afterList && t.joins then ({ f with afterList := false } :: rest, acc.2.1, acc.2.2)
+    else match relAttach? pos f.cur t with
+      | some cur => ({ f with cur, afterList := false, afterRel := true } :: rest, false, false)
+      | none =>
+        let gap : Array Raw := if acc.2.2 || t.joins || f.cur.isEmpty then #[]
+          else if f.afterRel then breakRaws pos else #[.space]
+        ({ f with cur := f.cur ++ gap ++ r.1, afterList := false, afterRel := false } :: rest,
+          r.2, false)
+  | [] => ([{ Frame.empty .top with cur := r.1 }], r.2, false)
 
-/-- One token onto a sentence's raws: a block's start opens a nested lines environment and its end
-closes it. -/
+/-- One token onto a sentence's raws: a block's start opens a frame, an item's mark opens a list's
+item, and a block's end closes the innermost frame, a list's last item and the list with it. -/
 public def sentenceStep (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf) :
     SentenceAcc :=
   match t with
-  | .indent => (#[] :: acc.1, acc.2.1, true)
+  | .indent => (Frame.empty .lines :: acc.1, acc.2.1, true)
+  | .item => (openItem pos acc.1, true, true)
   | .dedent => (closeBlock pos acc.1, acc.2.1, true)
-  | .w _ | .leaf _ => pushTok pos acc t
+  | .w _ | .leaf _ | .bind _ => pushTok pos acc t
 
-/-- The raws of every block a sentence leaves open, closed into the sentence's own. -/
-public def closeAll (pos : Pos) : List (Array Raw) → Array Raw
-  | inner :: outer :: rest => closeAll pos ((outer.push (.env Parse.linesEnv inner pos)) :: rest)
-  | [top] => top
+/-- Every frame a sentence leaves open closed into the one around it, and the sentence's raws. -/
+public def closeAll (pos : Pos) : List Frame → Array Raw
+  | inner :: outer :: rest => closeAll pos (closeInto pos inner outer :: rest)
+  | [top] => top.raws pos
   | [] => #[]
 termination_by l => l.length
 
-/-- A sentence's tokens as text, its opening word capitalized, each leaf as inline mathematics, a
-word space between tokens but where they join, and each block a nested lines environment. -/
-public def sentenceRaws (pos : Pos) (toks : List (LeanProse.Tok LeanProse.Leaf)) : Array Raw :=
-  closeAll pos (toks.foldl (sentenceStep pos) ([#[]], true, true)).1
+/-- A sentence's tokens as text after `head`, each formula inline mathematics, each block a lines
+environment and each list a numbered list of capitalized sentences. -/
+public def sentenceRaws (pos : Pos) (head : Array Raw) (toks : List (LeanProse.Tok LeanProse.Leaf)) :
+    Array Raw :=
+  closeAll pos (toks.foldl (sentenceStep pos)
+    ([{ Frame.empty .top with cur := head }], true, head.isEmpty)).1
 
 /-- The paragraph a declaration's statement sets as in words, ragged right: its head, then its
-sentence in its lines, each block indented a step, a line free to break between words. -/
+sentence, each block a lines environment indented a step and each list a numbered list, a line free
+to break between words. -/
 public def wordsRaws (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf) (pos : Pos)
     (link : Option String := none) : Array Raw :=
-  #[.env "flushleft" #[.env Parse.linesEnv
-    ((headRaws d pos link).push .space ++ sentenceRaws pos (LeanProse.render s)) pos] pos]
+  #[.env "flushleft" (sentenceRaws pos (headRaws d pos link) (LeanProse.render s)) pos]
 
 /-- Why a declaration's statement is not set, when it is not. -/
 private def unset? (d : LeanFacts.Decl) : Option String :=

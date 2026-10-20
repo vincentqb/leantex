@@ -95,6 +95,8 @@ public structure Facts where
   errors : Nat
   decls : Array Decl
   binders : Array (String × Array Binder)
+  /-- The leading binder Lean's field notation reads each constant's receiver from, where it has one. -/
+  fields : Array (String × Nat) := #[]
   failed : Array Failed := #[]
   commands : Array Command := #[]
   deriving Repr, BEq, Inhabited
@@ -222,7 +224,10 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let bs ← mask.toList.mapM fun ch => match binderOf? ch with
       | some b => Except.ok b
       | none => Except.error "an unknown binder"
-    return { facts with binders := facts.binders.push (c, bs.toArray) }
+    let fields := match j.getObjValAs? Nat "field" with
+      | .ok k => facts.fields.push (c, k)
+      | .error _ => facts.fields
+    return { facts with binders := facts.binders.push (c, bs.toArray), fields }
   | .error _, .ok name =>
     let some kind := kindOf? (← j.getObjValAs? String "kind") | throw "an unknown kind"
     let range ← j.getObjValAs? (Array Json) "range"

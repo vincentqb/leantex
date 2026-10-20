@@ -63,11 +63,11 @@
 {"const":"instMulNat","binders":""}
 {"const":"instOfNatNat","binders":"d"}
 {"const":"Int","binders":""}
-{"const":"Lean.Name.num","binders":"dd"}
+{"const":"Lean.Name.num","binders":"dd","field":0}
 {"const":"LE.le","binders":"icdd"}
 {"const":"instLENat","binders":""}
-{"const":"Fin.val","binders":"id"}
-{"const":"Lean.Name.str","binders":"dd"}
+{"const":"Fin.val","binders":"id","field":1}
+{"const":"Lean.Name.str","binders":"dd","field":0}
 {"const":"List.cons","binders":"idd"}
 {"const":"Lean.Name.anonymous","binders":""}
 {"const":"instNatPowNat","binders":""}
@@ -89,7 +89,7 @@
 {"const":"LT.lt","binders":"icdd"}
 {"const":"True","binders":""}
 {"const":"Nat.instDiv","binders":""}
-{"const":"String.length","binders":"d"}
+{"const":"String.length","binders":"d","field":0}
 {"const":"Function.const","binders":"iddd"}
 {"const":"Nonempty","binders":"d"}
 {"const":"instAddNat","binders":""}
@@ -101,7 +101,7 @@
 {"const":"instLTNat","binders":""}
 {"const":"NeZero","binders":"icd"}
 {"const":"OfNat.ofNat","binders":"idc"}
-{"const":"Nat.succ","binders":"d"}
+{"const":"Nat.succ","binders":"d","field":0}
 {"const":"Eq","binders":"idd"}
 {"const":"Not","binders":"d"}
 {"const":"Neg.neg","binders":"icd"}

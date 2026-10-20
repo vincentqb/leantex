@@ -424,10 +424,11 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bracedShows := Code.showingOfEntries .lean (Decl.splitEntries braced) true
   let (phrased, phrasedTakenDs) := docOf (incl braced (some facts))
   let phrasedLines := codePageLines fonts phrased
+  let phrasedText := " ".intercalate (phrasedLines.toList.map (·.2))
   t s!"views: a phrase a division or a braced inclusion declares is taken, its braces not its words ({repr (divisionShows.map (·.phrases))})"
     (divisionShows == [bracedShows] &&
       !phrasedTakenDs.any (·.kind == .W0416) &&
-      phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1) &&
+      (phrasedText.splitOn "the height after").length > 1 &&
       !phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1 &&
         l.any fun c => c == '{' || c == '}'))
   let (strange, strangeDs) := docOf (incl "caption = x, proofs = folded" none)

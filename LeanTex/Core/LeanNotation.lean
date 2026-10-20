@@ -11,7 +11,7 @@ namespace LeanTex.Core.LeanNotation
 /-- The controls a statement's mathematics writes. -/
 public inductive MathCtrl where
   | forAll | exist | mem | to | mapsto | cdot | bmod | mid | neq | leq | geq | land | lor
-  | lnot | iff | mathbb | operatorname | text | underscore
+  | lnot | iff | times | mathbb | mathit | mathrm | mathtt | operatorname | text | space | underscore
   | textunderscore | textbraceleft | textbraceright | textdollar | tilde | caret | backslash
   | hash | percent | amp
   deriving Repr, BEq, DecidableEq, Inhabited
@@ -33,9 +33,14 @@ public inductive MathCtrl where
   | .lor => "lor"
   | .lnot => "lnot"
   | .iff => "leftrightarrow"
+  | .times => "times"
   | .mathbb => "mathbb"
+  | .mathit => "mathit"
+  | .mathrm => "mathrm"
+  | .mathtt => "mathtt"
   | .operatorname => "operatorname"
   | .text => "text"
+  | .space => " "
   | .underscore => "_"
   | .textunderscore => "textunderscore"
   | .textbraceleft => "textbraceleft"
@@ -51,7 +56,8 @@ public inductive MathCtrl where
 /-- Every control, as the vocabulary admits them. -/
 @[expose] public def MathCtrl.all : List MathCtrl :=
   [.forAll, .exist, .mem, .to, .mapsto, .cdot, .bmod, .mid, .neq, .leq, .geq, .land, .lor,
-   .lnot, .iff, .mathbb, .operatorname, .text, .underscore, .textunderscore, .textbraceleft,
+   .lnot, .iff, .times, .mathbb, .mathit, .mathrm, .mathtt, .operatorname, .text, .space,
+   .underscore, .textunderscore, .textbraceleft,
    .textbraceright, .textdollar, .tilde, .caret, .backslash, .hash, .percent, .amp]
 
 public theorem MathCtrl.mem_all (c : MathCtrl) : c ∈ MathCtrl.all := by
@@ -130,6 +136,8 @@ public structure Notation where
    ⟨"Or", .ctrl .lor, .infix 30 .right⟩,
    ⟨"Not", .ctrl .lnot, .prefix 40⟩,
    ⟨"Exists", .ctrl .exist, .binder⟩,
+   ⟨"Prod", .ctrl .times, .infix 35 .right⟩,
+   ⟨"List.cons", .word "::", .infix 67 .right⟩,
    ⟨"Nat", .bb "N", .constant⟩,
    ⟨"Int", .bb "Z", .constant⟩,
    ⟨"Rat", .bb "Q", .constant⟩,

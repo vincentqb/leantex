@@ -12,9 +12,11 @@ namespace LeanTex.Core.LeanStatement
 
 open LeanTex.Core.Parse LeanTex.Core.LeanFacts LeanTex.Core.LeanNotation
 
-/-- What the renderer reads a constant by: its leading binders and the name it shows as. -/
+/-- What the renderer reads a constant by: its leading binders, the one its field notation reads
+the receiver from, and the name it shows as. -/
 public structure Lookup where
   binders : String → Option (Array Binder)
+  field : String → Option Nat := fun _ => none
   shown : String → String
   collectionFirst : Bool
 
@@ -23,14 +25,17 @@ formulas it sets as where a line may break after each operator of its top-level 
 public structure Rendered where
   math : Array Math
   prec : Nat
-  /-- The names, the type and the rest of a leading `∀ names ∈ type, rest`. -/
+  /-- The names, the type and the rest of a leading `∀ names : type, rest`. -/
   group : Option (Array (Array Math) × Array Math × Array Math) := none
   /-- The formulas, none for a term that sets as one. -/
   chain : List (Array Math) := []
   deriving Inhabited
 
-/-- The precedence of an atom, an application or anything delimited. -/
+/-- The precedence of an atom or anything delimited. -/
 public def atomPrec : Nat := 100
+
+/-- The precedence of an application `f x`, tighter than any operator's. -/
+public def appPrec : Nat := 90
 
 private def subscriptDigit? (c : Char) : Option Char :=
   if 0x2080 ≤ c.val && c.val ≤ 0x2089 then some (Char.ofNat (c.toNat - 0x2080 + '0'.toNat)) else none
@@ -89,16 +94,20 @@ private def withSubscript (base : Array Math) (digits : List Char) : Array Math 
 /-- A name set as text, for one mathematics cannot spell. -/
 private def textName (s : String) : Array Math := #[.ctrl .text, .arg (spelled true s.toList).toList]
 
-/-- A bound variable's name, its trailing subscript digits a subscript. -/
+/-- A bound variable's name as one italic word of the text face, its trailing subscript digits a
+subscript. -/
 public def varMath (s : String) : Array Math :=
   match nameParts? s with
-  | some (base, subs) => withSubscript (spelled false base) subs
+  | some (base, subs) => withSubscript #[.ctrl .mathit, .arg (spelled false base).toList] subs
   | none => textName s
 
-/-- A constant's name, upright. -/
+/-- The alphabet a constant's name sets in. -/
+public def constFace : MathCtrl := .mathrm
+
+/-- A constant's name as one upright word of the text face. -/
 public def opMath (s : String) : Array Math :=
   match nameParts? s with
-  | some (base, subs) => withSubscript #[.ctrl .operatorname, .arg (spelled false base).toList] subs
+  | some (base, subs) => withSubscript #[.ctrl constFace, .arg (spelled false base).toList] subs
   | none => textName s
 
 private def glyphMath : Glyph → Array Math
@@ -142,34 +151,24 @@ private def commaJoin (acc : Array Math) : List (Array Math) → Array Math
   | [x] => acc ++ x
   | x :: rest => commaJoin ((acc ++ x).push (.word ",")) rest
 
-/-- Arguments' formulas in order, a comma ending each argument's last but the final one's. -/
-private def argPieces : List (List (Array Math)) → List (Array Math)
+/-- Formulas each but the last ending on a space. -/
+private def spaced : List (Array Math) → List (Array Math)
   | [] => []
-  | [last] => last
-  | a :: rest => (endWith (opEnd #[.word ","]) a).append (argPieces rest)
+  | [x] => [x]
+  | x :: rest => x.push (.ctrl .space) :: spaced rest
 
-/-- Formulas with `lead` before the first, or standing alone before a first argument that breaks
-itself. -/
-private def openWith (lead : Array Math) (first : List (Array Math)) :
-    List (Array Math) → List (Array Math)
-  | [] => [lead]
-  | x :: rest => if first.length > 1 then lead :: x :: rest else (lead ++ x) :: rest
-
-/-- A head applied to its shown arguments, `f(a, b)`, a line free to break after each comma, and
-after the parenthesis where the first argument breaks itself. -/
+/-- A head applied to its shown arguments by juxtaposition, `f a b`, each compound argument
+parenthesized, a line free to break after each space. -/
 private def applied (head : Array Math) (args : List Rendered) : Rendered :=
-  let guarded := if args.length < 2 then args.map (·.math) else args.map (paren · 1)
   if args.isEmpty then atom head
   else
-    let min := if args.length < 2 then 0 else 1
-    let parts := args.map (piecesAt · min)
-    let inner := endWith #[.word ")"] (argPieces parts)
-    { math := (commaJoin (head.push (.word "(")) guarded).push (.word ")"), prec := atomPrec
-      chain := openWith (head.push (.word "(")) (parts.headD []) inner }
+    let parts := args.map (paren · atomPrec)
+    { math := parts.foldl (fun acc a => (acc.push (.ctrl .space)).append a) head, prec := appPrec
+      chain := spaced (head :: parts) }
 
 /-- A universe level as Lean spells it, parenthesized where it has more than one word. -/
 private def levelMath (level : String) : Array Math :=
-  if !level.contains ' ' then spelled false level.toList
+  if !level.contains ' ' then (if level.all Char.isDigit then opMath level else varMath level)
   else if level.startsWith "(" && level.endsWith ")" then textName level
   else ((#[.word "("] : Array Math) ++ textName level).push (.word ")")
 
@@ -188,9 +187,9 @@ private def sortMath (level : String) : Array Math :=
   match level.toNat?, below? level with
   | some 0, _ => opMath "Prop"
   | some 1, _ => opMath "Type"
-  | some (n + 1), _ => (opMath "Type").push (.word (toString n))
-  | none, some b => (opMath "Type").append (levelMath b)
-  | none, none => (opMath "Sort").append (levelMath level)
+  | some (n + 1), _ => ((opMath "Type").push (.ctrl .space)).append (opMath (toString n))
+  | none, some b => ((opMath "Type").push (.ctrl .space)).append (levelMath b)
+  | none, none => ((opMath "Sort").push (.ctrl .space)).append (levelMath level)
 
 /-- The explicit arguments among a constant's arguments, by its leading binders. -/
 public def shownArgs {β : Type} (lk : Lookup) (c : String) (args : List β) : List β :=
@@ -198,9 +197,25 @@ public def shownArgs {β : Type} (lk : Lookup) (c : String) (args : List β) : L
   | some bs => (args.zipIdx.filter fun (_, k) => (bs[k]?.map Binder.shows).getD true).map (·.1)
   | none => args
 
-/-- A binder group `∀ names ∈ type,`. -/
+/-- The explicit arguments among a constant's arguments but the one at `i`. -/
+public def otherArgs {β : Type} (lk : Lookup) (c : String) (i : Nat) (args : List β) : List β :=
+  let shows (k : Nat) : Bool := match lk.binders c with
+    | some bs => (bs[k]?.map Binder.shows).getD true
+    | none => true
+  (args.zipIdx.filter fun (_, k) => k != i && shows k).map (·.1)
+
+/-- A constant's field notation on its receiver, `x.f`, the field its name's last part. -/
+private def fieldHead (recv : Rendered) (c : String) : Array Math :=
+  ((paren recv atomPrec).push (.word ".")).append (opMath ((c.splitOn ".").getLastD c))
+
+/-- An operand's formulas beside an operator: its chain where it is an operator's, an application
+whole. -/
+private def sidePieces (r : Rendered) (min : Nat) : List (Array Math) :=
+  if r.prec == appPrec then [paren r min] else piecesAt r min
+
+/-- A binder group `∀ names : type,`. -/
 public def forallHead (names : Array (Array Math)) (type : Array Math) : Array Math :=
-  ((commaJoin #[.ctrl .forAll] names.toList).push (.ctrl .mem)).append type |>.push (.word ",")
+  ((commaJoin #[.ctrl .forAll] names.toList).push (.word ":")).append type |>.push (.word ",")
 
 /-- `a ⋆ b` from its two sides and glyph. -/
 private def around (left : Array Math) (g : Glyph) (right : Array Math) : Array Math :=
@@ -246,14 +261,15 @@ public def render (lk : Lookup) (ctx : List String) : Term → Rendered
     let rest := (render lk (n :: ctx) body).math
     { math := ((((opMath "let").append (varMath n)).push (.word ":")).push (.word "=")
         |>.append value |>.push (.word ";") |>.append rest), prec := 0 }
-  | .proj s i e => applied (opMath s!"{s}.{i + 1}") [render lk ctx e]
+  | .proj _ i e => atom (((paren (render lk ctx e) atomPrec).push (.word ".")).append
+      (opMath (toString (i + 1))))
 
 public def renderList (lk : Lookup) (ctx : List String) (acc : Array Rendered) :
     List Term → Array Rendered
   | [] => acc
   | t :: rest => renderList lk ctx (acc.push (render lk ctx t)) rest
 
-/-- A binder notation `⋆ x ∈ T, P` over its last argument, when that is `fun x : T => P`. -/
+/-- A binder notation `⋆ x : T, P` over its last argument, when that is `fun x : T => P`. -/
 public def renderBinder? (lk : Lookup) (ctx : List String) (h : Head) :
     List Term → Option Rendered
   | [] => none
@@ -264,7 +280,7 @@ public def renderBinder? (lk : Lookup) (ctx : List String) (h : Head) :
       | .notation g .binder =>
         let ty := paren (render lk ctx t) 51
         let rest := (render lk (n :: ctx) body).math
-        some { math := ((glyphMath g).append (varMath n) |>.push (.ctrl .mem) |>.append ty
+        some { math := ((glyphMath g).append (varMath n) |>.push (.word ":") |>.append ty
           |>.push (.word ",") |>.append rest), prec := 0 }
       | .notation _ _ | .name _ => none
     | .bvar _ | .sort _ | .nat _ | .str _ | .other _ => none
@@ -277,7 +293,7 @@ public def renderApps (lk : Lookup) (ctx : List String) (h : Head) (args : List 
   match h with
   | .bvar i => applied (varMath (ctx[i]?.getD "?")) args
   | .sort l => applied (sortMath l) args
-  | .nat n => applied #[.word (toString n)] args
+  | .nat n => applied (opMath (toString n)) args
   | .str s => applied (textName s.quote) args
   | .other w => applied (opMath w) args
   | .const c =>
@@ -288,21 +304,25 @@ public def renderApps (lk : Lookup) (ctx : List String) (h : Head) (args : List 
         | .left => (p, p + 1)
         | .right => (p + 1, p)
         | .none => (p + 1, p + 1)
-      let right := piecesAt y r
       { math := around (paren x l) g (paren y r), prec := p
-        chain := chainOf (piecesAt x l) (glyphMath g) right }
+        chain := chainOf (sidePieces x l) (glyphMath g) (sidePieces y r) }
     | .notation g (.swapped p), [first, second] =>
       let (coll, elem) := if lk.collectionFirst then (first, second) else (second, first)
-      let right := piecesAt coll (p + 1)
       { math := around (paren elem (p + 1)) g (paren coll (p + 1)), prec := p
-        chain := chainOf (piecesAt elem (p + 1)) (glyphMath g) right }
+        chain := chainOf (sidePieces elem (p + 1)) (glyphMath g) (sidePieces coll (p + 1)) }
     | .notation g (.prefix p), [x] => { math := (glyphMath g).append (paren x (p + 1)), prec := p }
     | .notation _ .power, [x, y] =>
       { math := (paren x atomPrec).push (.sup y.math.toList), prec := 75 }
     | .notation g .constant, [] => atom (glyphMath g)
     | .notation _ .numeral, [x] => x
     | .notation _ _, _ => applied (opMath (lk.shown c)) shown
-    | .name _, _ => applied (opMath (lk.shown c)) shown
+    | .name _, _ =>
+      match lk.field c with
+      | some i =>
+        match args[i]? with
+        | some recv => applied (fieldHead recv c) (otherArgs lk c i args)
+        | none => applied (opMath (lk.shown c)) shown
+      | none => applied (opMath (lk.shown c)) shown
 
 end
 
@@ -335,7 +355,7 @@ public def chunksOf (lk : Lookup) (ctx : List String) (afterArrow spine : Bool) 
   | .apps (.const c) [ty, .lam n b dom body] =>
     match shownOf c with
     | .notation g .binder =>
-      let opening := (((glyphMath g).append (varMath n)).push (.ctrl .mem)).append
+      let opening := (((glyphMath g).append (varMath n)).push (.word ":")).append
         (paren (render lk ctx dom) 51) |>.push (.word ",")
       .head opening :: chunksOf lk (n :: ctx) false false body
     | .notation _ _ | .name _ =>
@@ -344,16 +364,16 @@ public def chunksOf (lk : Lookup) (ctx : List String) (afterArrow spine : Bool) 
   | t => (piecesAt (render lk ctx t) (if afterArrow then 25 else 0)).map Chunk.formula
 
 /-- A group's formulas: `∀` and each name but the last with its comma, a line free to break after
-each, then the last name `∈ T,`, which a word space follows. -/
+each, then the last name `: T,`, which a word space follows. -/
 private def groupFormulas (names : Array (Array Math)) (type : Array Math) :
     Array (Array Math × Bool) :=
   names.zipIdx.map fun (n, i) =>
     let lead : Array Math := if i == 0 then #[.ctrl .forAll] else #[]
-    if i + 1 == names.size then ((((lead ++ n).push (.ctrl .mem)).append type).push (.word ","), true)
+    if i + 1 == names.size then ((((lead ++ n).push (.word ":")).append type).push (.word ","), true)
     else (opEnd ((lead ++ n).push (.word ",")), false)
 
 /-- A statement's chunks as formulas after `acc`, each with whether a word space follows it:
-consecutive quantified variables of one type as one group `∀ a, b ∈ T,`. -/
+consecutive quantified variables of one type as one group `∀ a, b : T,`. -/
 public def mergeBinders (acc : Array (Array Math × Bool)) : List Chunk → Array (Array Math × Bool)
   | [] => acc
   | .formula m :: rest => mergeBinders (acc.push (m, false)) rest
@@ -390,8 +410,13 @@ public def shownNames (decl : String) (consts : Array String) (c : String) : Str
 /-- What a declaration's statement reads its constants by, from the file's facts. -/
 public def lookupOf (facts : Facts) (d : Decl) (type : Term) : Lookup :=
   { binders := fun c => (facts.binders.find? (·.1 == c)).map (·.2)
+    field := fun c => (facts.fields.find? (·.1 == c)).map (·.2)
     shown := shownNames d.name (type.consts #[])
     collectionFirst := facts.collectionFirst }
+
+/-- A formula without the space it ends on, and whether it ended on one. -/
+public def unspaced (m : Array Math) : Array Math × Bool :=
+  if m.back? == some (.ctrl .space) then (m.pop, true) else (m, false)
 
 /-- A declaration's statement as formulas, each with whether a word space, rather than a bare
 break, follows it: a declaration whose type is no proposition opens on its name and a colon. -/
@@ -399,7 +424,8 @@ public def statementMath (facts : Facts) (d : Decl) (type : Term) : Array (Array
   let lk := lookupOf facts d type
   let opening : Array (Array Math × Bool) := if d.prop then #[] else
     #[((opMath ((d.name.splitOn ".").getLastD d.name)).push (.word ":"), true)]
-  mergeBinders opening (chunksOf lk [] false true type)
+  (mergeBinders opening (chunksOf lk [] false true type)).map fun (m, spaced) =>
+    ((unspaced m).1, spaced || (unspaced m).2)
 
 mutual
 

@@ -23,12 +23,12 @@ def phrasedTable (_ : Unit) : Table :=
 past the blocks it opens in, capitalized. -/
 def sentenceWords (s : Stmt Leaf) : List String :=
   let toks := (render s).filter fun
-    | .indent | .dedent => false
-    | .w _ | .leaf _ => true
+    | .indent | .dedent | .item => false
+    | .w _ | .leaf _ | .bind _ => true
   let capital := match toks with
     | .w _ :: _ => true
     | _ => false
-  match toks.filterMap (fun | .w w => some w | .leaf _ | .indent | .dedent => none) with
+  match toks.filterMap (fun | .w w => some w | .leaf _ | .bind _ | .indent | .dedent | .item => none) with
   | w :: rest => (if capital then w.capitalize else w) :: rest
   | [] => []
 
@@ -101,7 +101,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       declare two [("height", "the height after #2 steps, of #1")] == #[.shape] &&
       declare two [("height", "the height after #2 steps . of #1")] == #[.shape] &&
       declare two [("height", "the height of #1")] == #[.arity 1 2] &&
-      declare two [("height", "#1 is at most #2")] == #[.clash])
+      declare two [("height", "#1 = #2")] == #[.clash])
   let below := (tableFor (factsWith #[("LE.le", #[.implicit, .implicit, .explicit, .explicit])])
     [("LE.le", "#1 is below #2")]).table
   t "prose: a declared phrase replaces the core table's for its constant, after the rest"
@@ -113,14 +113,16 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     (declare #[("And", #[.explicit, .explicit])] [("And", "#1 as well as #2")] == #[.connective] &&
       declare #[("Exists", #[.implicit, .explicit])] [("Exists", "some #1 exists")] == #[.connective])
   -- Only a proposition is said in words.
+  let leafTex (l : Leaf) : String :=
+    " ".intercalate (l.map fun m => Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList))
   let axiomDecl : LeanFacts.Decl := { theoremAt "Tide.cap" 1 (.pi "a" .explicit false
     (.apps (.const "Nat") []) (.apps (.const "Nat") [])) with kind := .axiom, prop := false }
   let propDef : LeanFacts.Decl := { theoremAt "Tide.zero_self" 1 (selfEq 0) with kind := .definition }
   let eqFacts := factsWith eqBinders
   t "prose: a declaration whose type is no proposition is not said in words, whatever its kind, and one whose type is one is"
     (proseOf eqFacts core axiomDecl (axiomDecl.type.getD (selfEq 0)) == .error .notProp &&
-      ((proseOf eqFacts core propDef (selfEq 0)).toOption.map (showToks leafWord ∘ render) ==
-        some "0 is equal to 0."))
+      ((proseOf eqFacts core propDef (selfEq 0)).toOption.map (showToks leafTex ∘ render) ==
+        some "\\mathrm {0}={} \\mathrm {0}."))
   t "prose: an answer whose declaration does not say whether its type is a proposition is refused"
     ((LeanFacts.decode ("{\"leantex-lean-export\":2,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
       "{\"name\":\"a\",\"module\":\"\",\"kind\":\"theorem\",\"range\":[1,0,1,1],\"head\":[1,0]," ++
@@ -131,10 +133,8 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       [.apps (.const "Nat") [], .apps (.bvar 0) [], .apps (.bvar 0) []]))
   t "prose: a quantifier over a name another binds again stays apart"
     ((proseOf eqFacts core (theoremAt "Tide.again" 1 shadowed) shadowed).toOption.map
-      (showToks leafWord ∘ render) ==
-      some "for every natural number a, for every natural number a, a is equal to a.")
-  let leafTex (l : Leaf) : String :=
-    " ".intercalate (l.map fun m => Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList))
+      (showToks leafTex ∘ render) ==
+      some "for every \\mathit {a} : \\mathbb {N}, for every \\mathit {a} : \\mathbb {N}, \\mathit {a}={} \\mathit {a}.")
   let relFacts := factsWith (eqBinders.push ("LE.le", #[.implicit, .implicit, .explicit, .explicit]))
   let sayTex (ty : LeanFacts.Term) : Option String :=
     (proseOf relFacts core (theoremAt "Tide.t" 1 ty) ty).toOption.map (showToks leafTex ∘ render)
@@ -145,19 +145,19 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "prose: an instance binder at the top is a hypothesis, as below it"
     (sayTex (.pi "α" .explicit false typeSort (.pi "inst" .inst false (app "Inhabited" [var 0])
         (app "Nonempty" [var 1]))) ==
-      some "for every type α, if \\operatorname {Inhabited}(α), then \\operatorname {Nonempty}(α).")
+      some "for every \\mathit {α} : \\mathrm {Type}, if \\mathrm {Inhabited}\\ \\mathit {α}, then \\mathrm {Nonempty}\\ \\mathit {α}.")
   t "prose: an implicit binder the rest of the statement never names is said, not hidden"
     (sayTex (.pi "α" .implicit false typeSort (.pi "a" .implicit false (var 0)
-        (app "Nonempty" [var 1]))) == some "for every element a of α, \\operatorname {Nonempty}(α)." &&
+        (app "Nonempty" [var 1]))) == some "for every \\mathit {a} : \\mathit {α}, \\mathrm {Nonempty}\\ \\mathit {α}." &&
       sayTex (.pi "x" .implicit false (app "Empty" []) (app "False" [])) ==
-        some "for every element x of \\operatorname {Empty}, \\operatorname {False}.")
+        some "for every \\mathit {x} : \\mathrm {Empty}, \\mathrm {False}.")
   t "prose: inside an existential an implicit binder is a quantifier and an instance one a hypothesis"
     (sayTex (app "Exists" [natT, .lam "n" .explicit natT (.pi "m" .implicit false natT
         (app "LE.le" [natT, app "instLENat" [], var 0, var 1]))]) ==
-        some "there is a natural number n such that for every natural number m, m is at most n." &&
+        some "there is \\mathit {n} : \\mathbb {N} such that for every \\mathit {m} : \\mathbb {N}, \\mathit {m}\\leq {} \\mathit {n}." &&
       sayTex (app "Exists" [typeSort, .lam "α" .explicit typeSort (.pi "inst" .inst false
         (app "Inhabited" [var 0]) (app "Nonempty" [var 1]))]) ==
-        some "there is a type α such that if \\operatorname {Inhabited}(α), then \\operatorname {Nonempty}(α).")
+        some "there is \\mathit {α} : \\mathrm {Type} such that if \\mathrm {Inhabited}\\ \\mathit {α}, then \\mathrm {Nonempty}\\ \\mathit {α}.")
   -- Every note's words, under a long name, as the voice lint holds a witness's.
   let long : LeanFacts.Decl := theoremAt "Tide.inhabited_nonempty" 1 (selfEq 0)
   let notes := ([.unknown, .ambiguous, .twice, .shape, .arity 1 2, .clash, .connective, .unused,
@@ -208,30 +208,30 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
         (paragraphOf mathLines label == some para)
   let words (name : String) (ws : String) : Bool :=
     (paragraphOf lines s!"Theorem ({name})").any (inOrder · (ws.splitOn " "))
-  t "prose: a plural existential, a type's noun, an order relation and an instance hypothesis below the top read as words"
-    (words "Tide.ordered_pair" "There are natural numbers and such that is less than" &&
-      words "Tide.ge_zero" "For every natural number is at least" &&
-      words "Tide.refl_any" "For every type for every element of is equal to" &&
-      words "Tide.inhabited_nonempty" "If for every type if Inhabited then Nonempty , then True.")
+  t "prose: a plural existential, typed groups, order and equality symbols and an instance hypothesis below the top read in order"
+    (words "Tide.ordered_pair" "There are such that <" &&
+      words "Tide.ge_zero" "For every ≥" &&
+      words "Tide.refl_any" "For all Type and =" &&
+      words "Tide.inhabited_nonempty" "If for every Type, if Inhabited then Nonempty then True.")
   t "prose: no sentence leaves a line past the measure"
     (!out.diags.any (·.kind == .W0005))
   t "prose: a theorem Lean holds unproved is marked so in words too"
     (lines.any fun (_, ink) => ink.startsWith "Theorem (Tide.unfinished, unproved). For every")
-  t "prose: a quantifier over names of one type is one, plural, its last name after 'and'"
+  t "prose: a quantifier over names of one type is one group, plural, its names with commas between"
     ((paragraphOf lines "Theorem (Tide.long_sum)").any fun p =>
-      p.startsWith "Theorem (Tide.long_sum). For all natural numbers" && (p.splitOn " and ").length ≥ 2)
+      p.startsWith "Theorem (Tide.long_sum). For all" && (p.splitOn ",").length ≥ 18)
   -- The web page: words as text, every formula as MathML.
   let (oneDoc, _) := readAs "show = prose, decls = le_or_gt"
   let oneSentence := ((said.find? (·.1.name == "Tide.le_or_gt")).bind fun (_, r) => r.toOption)
   let pieces := (oneSentence.map fun s => ((render s).filterMap fun
     | .leaf l => some l.length
-    | .w _ | .indent | .dedent => none).sum).getD 0
+    | .bind _ => some 1
+    | .w _ | .indent | .dedent | .item => none).sum).getD 0
   let nodes := (docNodesOf oneDoc).toList
   let maths := (elemNodesList (· == "math") #[] nodes).size
   let textOf := nodeTextList "" nodes
   t s!"prose: the web page sets each formula of a sentence as MathML and its words as text ({maths} of {pieces})"
-    (pieces > 0 && maths == pieces && inOrder textOf ["For all natural numbers", "and", "either",
-      "is at most", "or", "is less than"])
+    (pieces > 0 && maths == pieces && inOrder textOf ["For all", "either", "or"])
   -- Placements.
   let after := codePageLines fonts (readAs "show = code, prose").1
   t "prose: code before prose sets each sentence after its declaration's last line"
@@ -281,10 +281,10 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     found.all Option.isSome && decide ((found.filterMap id).Pairwise (· < ·))
   t s!"prose: on adjacent declarations a view after the code stands before the next declaration's views ({adjacentLines "math, code, prose"})"
     (rising (adjacentLines "math, code, prose") ["Theorem (aa). 0 = 0", "code theorem aa : 0 = 0 := rfl",
-        "Theorem (aa). 0 is equal to 0.", "Theorem (bb). 1 = 1", "code theorem bb : 1 = 1 := rfl",
-        "Theorem (bb). 1 is equal to 1.", "Theorem (cc). 2 = 2"] &&
-      rising (adjacentLines "prose, code, math") ["Theorem (aa). 0 is equal to 0.",
-        "code theorem aa : 0 = 0 := rfl", "Theorem (aa). 0 = 0", "Theorem (bb). 1 is equal to 1.",
+        "Theorem (aa). 0 = 0.", "Theorem (bb). 1 = 1", "code theorem bb : 1 = 1 := rfl",
+        "Theorem (bb). 1 = 1.", "Theorem (cc). 2 = 2"] &&
+      rising (adjacentLines "prose, code, math") ["Theorem (aa). 0 = 0.",
+        "code theorem aa : 0 = 0 := rfl", "Theorem (aa). 0 = 0", "Theorem (bb). 1 = 1.",
         "code theorem bb : 1 = 1 := rfl", "Theorem (bb). 1 = 1"])
   -- A statement words cannot say sets once, as the math view sets it, wherever that view stands.
   t "prose: on a page that shows the math view too, a statement words cannot say sets once"
@@ -312,7 +312,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     "phrase.Tide.holds = \"#1 holds\"")).1
   t "prose: a declared phrase says its constant's terms, and a declared relation its propositions"
     ((paragraphOf phrased "Theorem (Tide.height_double)").any (fun p =>
-        inOrder p ["For all natural numbers", "the height after", "steps of", "is equal to"]) &&
+        inOrder p ["For all", "the height after", "steps of", "="]) &&
       (paragraphOf phrased "Theorem (Tide.holds_ex)").any (fun p => inOrder p ["holds."]))
   let (_, unusedDs) := readAs ("show = prose, code, phrase.Nat.succ = \"#1 plus one\", " ++
     "phrase.Tide.height = \"#1 rises over #2 steps\", phrase.Tide.holds = \"#1 holds\"")
@@ -326,7 +326,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
         some "code:phrase:height"] &&
       (refusedDs.filter (·.kind == .W0416)).all (fun d => d.span.any (·.pos.line == 1)) &&
       (paragraphOf (codePageLines fonts refusedDoc) "Theorem (Tide.height_double)").any fun p =>
-        inOrder p ["For all natural numbers", "height(", "is equal to"])
+        inOrder p ["For all", "height", "="])
   let (_, unshownDs) := readAs "show = math, code, phrase.height = \"the height of #1 and #2\""
   let (_, pyDs) := Surface.readCode .python "t.py" "# leantex: phrase.x = \"the x of #1\"\nx = 1\n" none
   t "prose: a phrase on a page that says nothing in words is named and not used"

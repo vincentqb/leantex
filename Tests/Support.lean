@@ -3434,8 +3434,13 @@ def layoutLines {α : Type} (l : List (Tok α)) : Array (Nat × List (Tok α)) :
     match t with
     | .indent => (acc.1 + 1, #[], flush acc)
     | .dedent => (acc.1 - 1, #[], flush acc)
-    | .w _ | .leaf _ => (acc.1, acc.2.1.push t, acc.2.2)
+    | .item => (acc.1, #[], flush acc)
+    | .w _ | .leaf _ | .bind _ => (acc.1, acc.2.1.push t, acc.2.2)
   flush (l.foldl step (0, #[], #[]))
+
+/-- A binder group as text: its names, a colon and its bound, or a predicate's relation alone. -/
+def groupText {α : Type} (f : α → String) (g : Group α) : String :=
+  if g.pred then f g.bound else ", ".intercalate (g.names.map f) ++ " : " ++ f g.bound
 
 /-- One line's tokens as text, a space between two but where they join. -/
 def tokLineText {α : Type} (f : α → String) (l : List (Tok α)) : String :=
@@ -3443,7 +3448,8 @@ def tokLineText {α : Type} (f : α → String) (l : List (Tok α)) : String :=
     let text := match t with
       | .w s => s
       | .leaf a => f a
-      | .indent | .dedent => ""
+      | .bind g => groupText f g
+      | .indent | .dedent | .item => ""
     ((if acc.2 || t.joins then acc.1 else acc.1.push ' ') ++ text, false)) ("", true)).1
 
 /-- The tokens as text in their lines, four spaces of indent for each step of depth. -/
@@ -3458,19 +3464,22 @@ def randTerm (tb : Table) (s : UInt64) : Term Leaf × UInt64 :=
   | some (_, p) => (.phrase p ((List.range p.arity).map fun i => wordLeaf s!"t{i}"), s)
   | none => (.leaf (wordLeaf s!"u{k}"), s)
 
-/-- A random binder: a number set's noun, a proposition's, or an element of a type, over one to
-three names. -/
-def randBinder (s : UInt64) : Binder Leaf × UInt64 :=
-  let (k, s) := rand s (numberNouns.length + 2)
+/-- A random binder group: one to three names of a type, or a binder predicate's relation. -/
+def randGroup (i : Nat) (s : UInt64) : Group Leaf × UInt64 :=
+  let (k, s) := rand s 4
   let (more, s) := rand s 3
-  let names := (List.range more).map fun i => wordLeaf s!"y{i}"
-  let pick (one many : List String) : List String := if more == 0 then one else many
-  match numberNouns[k]? with
-  | some (_, one, many) => (⟨pick one many, wordLeaf "x", names, none⟩, s)
-  | none =>
-    if k == numberNouns.length then (⟨pick ["proposition"] ["propositions"], wordLeaf "p", names,
-      none⟩, s)
-    else (⟨pick ["element"] ["elements"], wordLeaf "x", names, some (wordLeaf "T")⟩, s)
+  let names := (List.range (more + 1)).map fun j => wordLeaf s!"x{i}{j}"
+  if k == 0 then (⟨[wordLeaf s!"x{i}"], wordLeaf s!"x{i}∈S", true⟩, s)
+  else (⟨names, wordLeaf s!"T{k}", false⟩, s)
+
+/-- A random binder: one to three groups. -/
+def randBinder (s : UInt64) : Binder Leaf × UInt64 :=
+  let (n, s) := rand s 3
+  let (g, s) := randGroup 0 s
+  let (more, s) := (List.range n).foldl (fun (acc : List (Group Leaf) × UInt64) i =>
+    let (h, s) := randGroup (i + 1) acc.2
+    (acc.1 ++ [h], s)) ([], s)
+  (⟨g, more⟩, s)
 
 /-- A random statement of depth at most `d` over a table's relations and phrases. -/
 def randStmt (tb : Table) : Nat → UInt64 → Stmt Leaf × UInt64
