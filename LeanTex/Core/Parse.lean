@@ -328,8 +328,6 @@ private def operandNext (acc : Array Raw) : Bool :=
   match rs with
   | r :: rest => reads r || ((r matches .ctrl ..) && (rest.head?.map reads).getD false)
   | [] => false
-  /-- The definition bodies' groups open at or below this frame, which no `\end` crosses. -/
-  guards : Nat := 0
 
 /-- The definers whose two body groups are token lists. -/
 public def envDefiners : List String := Definer.tokenListEnvs
