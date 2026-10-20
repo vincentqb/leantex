@@ -64,10 +64,9 @@ example (alphabet : MathAlphabet) (c : Char) :
     alphabet.sourceRangeOf .sym c = alphabet.rangeOf c :=
   MathAlphabet.sourceRangeOf_sym_exact alphabet c
 
-example (room : Bool) (input : CancelIn) :
-    (cancelGeom .to room input).polys.size ≤ 2 := by
-  rw [cancelGeom_to_polys_exact]
-  split <;> simp
+example (w t : Int) :
+    ((cancelVector w t).run, (cancelVector w t).rise) ∈ cancelVectorSlopes :=
+  cancelVector_slope_mem w t
 
 example (display : Bool) (extra : Array (String × String)) (body : MList)
     (marks : MathMl.Marks) :

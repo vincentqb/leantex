@@ -1,297 +1,238 @@
 /-
-LuaLaTeX (cancel.sty over FiraMath) against leantex placement for `\cancel`/`\cancelto` over an
-invented matrix: room within [0.40, 2.50], the value right of and above the strike.
-Usage: lake build leantex ScriptsModules && lake env lean --run scripts/cancel-diff.lean [--report | --selftest]
+The cancellation oracle: lualatex against leantex's PDF and Chromium page on scripts/CancelProbe's
+invented probe, read off colour-coded rasters into testdata/oracles/cancel-anchors.txt.
+Usage: lake build leantex ScriptsModules && lake env lean --run scripts/cancel-diff.lean [--report | --selftest | --leantex <binary>]
 -/
-import LeanTex
+import scripts.CancelProbe
+import scripts.Playwright
 import scripts.ToolDump
 
-open LeanTex.Core
+open CancelProbe
 
-/-- A Poppler word box, coordinates in micro-points (1/72 in ÷ 1e6). -/
-structure WordBox where
-  text : String
-  x0 : Int
-  y0 : Int
-  x1 : Int
-  y1 : Int
-  deriving Repr, BEq, Inhabited
+/-- The raster resolution the PDFs are read at. -/
+def dpi : Nat := 600
 
-/-- Every non-empty word box in a Poppler `-bbox` dump; cancel.sty's rules surface as
-empty words and are dropped. -/
-def parseWords (xml : String) : Array WordBox := Id.run do
-  let mut out : Array WordBox := #[]
-  for raw in xml.splitOn "\n" do
-    let line := raw.trimAscii.toString
-    if line.startsWith "<word " then
-      match (attrOf line "xMin").bind microPt, (attrOf line "yMin").bind microPt,
-          (attrOf line "xMax").bind microPt, (attrOf line "yMax").bind microPt with
-      | some x0, some y0, some x1, some y1 =>
-        let t := wordText line
-        unless t.isEmpty do out := out.push { text := t, x0, y0, x1, y1 }
-      | _, _, _, _ => pure ()
-  return out
+/-- A pixel's colour class: the strike's red, the value's blue, or dark operand ink. -/
+inductive Paint where
+  | mark
+  | value
+  | operand
+  | none
+  deriving BEq
 
-/-- The mathematical-italic scalar an ASCII letter maps to in math mode (italic h at
-U+210E); a digit stays itself. -/
-def mathItalic (c : Char) : String :=
-  let u := c.toNat
-  if c == 'h' then "ℎ"
-  else if 'a'.toNat ≤ u && u ≤ 'z'.toNat then
-    String.singleton (Char.ofNat (0x1D44E + (u - 'a'.toNat)))
-  else if 'A'.toNat ≤ u && u ≤ 'Z'.toNat then
-    String.singleton (Char.ofNat (0x1D434 + (u - 'A'.toNat)))
-  else String.singleton c
+def classify (r g b : Nat) : Paint :=
+  if r ≥ 150 && g + 80 ≤ r && b + 80 ≤ r then .mark
+  else if b ≥ 150 && r + 60 ≤ b && g + 60 ≤ b then .value
+  else if r < 120 && g < 120 && b < 120 && max r (max g b) ≤ min r (min g b) + 40 then .operand
+  else .none
 
-def mathItalicStr (s : String) : String :=
-  String.join (s.toList.map mathItalic)
+def grow (box : Option Ink) (x y : Int) : Option Ink :=
+  match box with
+  | none => some ⟨x, y, x, y⟩
+  | some b => some ⟨min b.left x, min b.top y, max b.right x, max b.bottom y⟩
 
-/-- One case of the invented matrix: the struck source and its expected Poppler text, the
-neighbour, the `\cancelto` value, display style and thick rules. -/
-structure Case where
-  label : String
-  cmd : String
-  struck : String
-  struckWord : String
-  neighbour : String
-  value : Option String
-  display : Bool
-  thick : Bool
-  deriving Inhabited
+/-- The three ink boxes of a binary PPM (P6, maxval 255). -/
+def ppmBoxes (bytes : ByteArray) : Except String (Option Ink × Option Ink × Option Ink) := do
+  -- The header is four whitespace-separated tokens.
+  let mut i := 0
+  let mut toks : Array String := #[]
+  let mut cur := ""
+  while toks.size < 4 && i < bytes.size do
+    let c := Char.ofNat bytes[i]!.toNat
+    i := i + 1
+    if c.isWhitespace then
+      if !cur.isEmpty then
+        toks := toks.push cur
+        cur := ""
+    else cur := cur.push c
+  let #["P6", ws, hs, "255"] := toks | throw "not a P6 PPM with maxval 255"
+  let some w := ws.toNat? | throw "bad width"
+  let some h := hs.toNat? | throw "bad height"
+  if bytes.size < i + 3 * w * h then throw "truncated PPM"
+  let mut mark : Option Ink := none
+  let mut value : Option Ink := none
+  let mut operand : Option Ink := none
+  for y in [0:h] do
+    for x in [0:w] do
+      let o := i + 3 * (y * w + x)
+      match classify bytes[o]!.toNat bytes[o+1]!.toNat bytes[o+2]!.toNat with
+      | .mark => mark := grow mark x y
+      | .value => value := grow value x y
+      | .operand => operand := grow operand x y
+      | .none => pure ()
+  return (mark, value, operand)
 
-def mkCase (label cmd struck struckWord neighbour : String) (value : Option String)
-    (display thick : Bool := false) : Case :=
-  { label, cmd, struck, struckWord, neighbour, value, display, thick }
+/-- The browser side, run by node with Playwright in `PW_MODULE`: each formula of the page shot
+at four device pixels per CSS pixel with the others hidden, its colour classes' ink boxes read off
+the shot. -/
+def probeJs : String := r#"
+const pw = require(process.env.PW_MODULE);
+(async () => {
+  const b = await pw.chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+  const p = await b.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 4 });
+  await p.goto('file://' + process.argv[2], { waitUntil: 'load' });
+  await p.evaluate(() => document.fonts.ready);
+  const maths = await p.$$('math');
+  for (const [i, m] of maths.entries()) {
+    // Only this formula paints, shot with three ems around its box for what overhangs it.
+    const fs = await m.evaluate(e => parseFloat(getComputedStyle(e).fontSize));
+    await p.evaluate((i) => document.querySelectorAll('math').forEach((e, k) =>
+      e.style.visibility = k === i ? 'visible' : 'hidden'), i);
+    await m.scrollIntoViewIfNeeded();
+    const r = await m.boundingBox();
+    const pad = 3 * fs;
+    const shot = await p.screenshot({ type: 'png', clip: { x: Math.max(0, r.x - pad),
+      y: Math.max(0, r.y - pad), width: r.width + 2 * pad, height: r.height + 2 * pad } });
+    const boxes = await p.evaluate(async (src) => {
+      const img = new Image(); img.src = 'data:image/png;base64,' + src; await img.decode();
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const box = { mark: null, value: null, operand: null };
+      const grow = (k, x, y) => { const q = box[k];
+        box[k] = q ? [Math.min(q[0], x), Math.min(q[1], y), Math.max(q[2], x), Math.max(q[3], y)] : [x, y, x, y]; };
+      for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+        const o = 4 * (y * c.width + x), r = d[o], gr = d[o + 1], bl = d[o + 2];
+        if (r >= 150 && gr + 80 <= r && bl + 80 <= r) grow('mark', x, y);
+        else if (bl >= 150 && r + 60 <= bl && gr + 60 <= bl) grow('value', x, y);
+        else if (r < 120 && gr < 120 && bl < 120 && Math.max(r, gr, bl) <= Math.min(r, gr, bl) + 40) grow('operand', x, y);
+      }
+      return box;
+    }, shot.toString('base64'));
+    const f = (q) => q ? q.join(' ') : '-';
+    console.log(['math', Math.round(fs * 4), f(boxes.mark), f(boxes.value), f(boxes.operand)].join('\t'));
+  }
+  await b.close();
+})().catch(e => { console.error(String(e.message).split('\n')[0]); process.exit(1); });
+"#
 
-/-- Every cancellation flavour over narrow, wide and tall struck content, then display and
-thick-rule variants of the wide arrow. -/
-def cases : List Case :=
-  let shapes := [("narrow", "v", mathItalicStr "v"),
-    ("wide", "abcd", mathItalicStr "abcd"), ("tall", "\\int", "∫")]
-  ["cancel", "bcancel", "xcancel", "cancelto"].flatMap (fun cmd =>
-    shapes.map fun (label, struck, word) =>
-      mkCase s!"{cmd}-{label}" cmd struck word "Z"
-        (if cmd == "cancelto" then some "7" else none)) ++
-  [ mkCase "display" "cancelto" "abcd" (mathItalicStr "abcd") "Z" (some "7") true
-  , mkCase "thick" "cancelto" "abcd" (mathItalicStr "abcd") "Z" (some "7") false true ]
+def inkOf (s : String) : Option Ink := do
+  let [l, t, r, b] := (s.splitOn " ").filterMap String.toInt? | none
+  return ⟨l, t, r, b⟩
 
-def bodyOf (c : Case) : String :=
-  let mark := match c.value with
-    | some v => s!"\\{c.cmd}\{{v}}\{{c.struck}}"
-    | none => s!"\\{c.cmd}\{{c.struck}}"
-  -- A `\quad` keeps the neighbour a separate word; it cancels in the room difference.
-  let inner := s!"{mark}\\quad {c.neighbour}"
-  if c.display then s!"\\[ {inner} \\]" else s!"$ {inner} $"
+/-- One `math` line of the browser probe: em, mark, value, operand. -/
+def parseMathLine (line : String) : Option Boxes := do
+  let ["math", em, m, v, o] := line.splitOn "\t" | none
+  return { em := ← em.toInt?, mark := ← inkOf m, value := inkOf v, operand := ← inkOf o }
 
-def optStr (c : Case) (room : Bool) : String :=
-  String.intercalate "," ((if room then ["makeroom"] else ["overlap"]) ++
-    (if c.thick then ["thicklines"] else []))
+def run (cmd : String) (args : Array String) (cwd : System.FilePath := ".")
+    (env : Array (String × Option String) := #[]) : IO IO.Process.Output :=
+  IO.Process.output { cmd, args, cwd, env }
 
-/-- The LuaLaTeX source: unicode-math over the corpus FiraMath face, cancel with the
-case's options, the mark in pure red. -/
-def luaSource (fontDir : String) (c : Case) (room : Bool) : String :=
-  "\\documentclass{article}\n\\usepackage{fontspec}\n\\usepackage{unicode-math}\n" ++
-  s!"\\setmainfont\{FiraSans-Regular.otf}[Path={fontDir}/]\n" ++
-  s!"\\setmathfont\{FiraMath-Regular.otf}[Path={fontDir}/]\n" ++
-  "\\usepackage{xcolor}\n" ++
-  s!"\\usepackage[{optStr c room}]\{cancel}\n" ++
-  "\\definecolor{markink}{HTML}{FF0000}\n" ++
-  "\\renewcommand{\\CancelColor}{\\color{markink}}\n" ++
-  "\\pagestyle{empty}\n\\begin{document}\n" ++ bodyOf c ++ "\n\\end{document}\n"
+/-- Each page's boxes in a PDF of `pages` pages, the em being 10 pt at `dpi`. -/
+def pdfBoxes (pdf : System.FilePath) (pages : Nat) (work : System.FilePath) :
+    IO (Except String (Array Boxes)) := do
+  let em : Int := (10 * dpi * 100 / 7227 : Nat)
+  let mut out : Array Boxes := #[]
+  for n in [1:pages+1] do
+    let stem := work / s!"page{n}"
+    let r ← run "pdftoppm" #["-r", toString dpi, "-f", toString n, "-l", toString n,
+      "-singlefile", pdf.toString, stem.toString]
+    if r.exitCode != 0 then return .error s!"pdftoppm exited {r.exitCode} on {pdf} page {n}"
+    let ppm := stem.addExtension "ppm"
+    let bytes ← IO.FS.readBinFile ppm
+    IO.FS.removeFile ppm
+    match ppmBoxes bytes with
+    | .error e => return .error s!"{pdf} page {n}: {e}"
+    | .ok (some mark, value, some operand) => out := out.push { em, mark, value, operand }
+    | .ok _ => return .error s!"{pdf} page {n}: no strike or no operand ink"
+  return .ok out
 
-/-- The leantex source: the same FiraMath face through `\fonts`, the same
-cancel options and mark colour. -/
-def leanSource (fontDir : String) (c : Case) (room : Bool) : String :=
-  "\\documentclass{article}\n" ++
-  s!"\\fonts\{ dir = \"{fontDir}\", body = \"Fira Sans\", math = \"Fira Math\" }\n" ++
-  "\\usepackage{xcolor}\n" ++
-  s!"\\usepackage[{optStr c room}]\{cancel}\n" ++
-  "\\definecolor{markink}{HTML}{FF0000}\n" ++
-  "\\renewcommand{\\CancelColor}{\\color{markink}}\n" ++
-  "\\begin{document}\n" ++ bodyOf c ++ "\n\\end{document}\n"
-
-def runTool (cmd : String) (args : Array String) (cwd : System.FilePath) :
-    IO IO.Process.Output := do
-  IO.Process.output { cmd, args, cwd }
-
-/-- The three glyph boxes a case exposes: the struck content, the value (`\cancelto`), and
-the following atom; `none` when Poppler could not isolate exactly the expected words. -/
-structure Boxes where
-  struck : WordBox
-  neighbour : WordBox
-  value : Option WordBox
-  deriving Repr, Inhabited
-
-def isolate (c : Case) (words : Array WordBox) : Option Boxes := do
-  -- Exact glyph text ignores the arrowhead, the page number and empty mark words.
-  let unique (text : String) : Option WordBox :=
-    match (words.filter (·.text == text)).toList with
-    | [w] => some w
-    | _ => none
-  let struck ← unique c.struckWord
-  let neighbour ← unique (mathItalicStr c.neighbour)
-  match c.value with
-  | some v =>
-    let value ← unique v
-    return { struck, neighbour, value := some value }
-  | none => return { struck, neighbour, value := none }
-
-/-- Whether two reserved advances agree in micro-points: within the ratio band for a
-positive reference, within cancel.sty v2.2's 2pt line extension for a zero one. -/
-def roomAgreement (reference engine : Int) : Bool :=
-  0 ≤ reference && 0 ≤ engine &&
-    if reference == 0 then engine ≤ 2000000
-    else 400 * reference ≤ 1000 * engine && 1000 * engine ≤ 2500 * reference
-
-def selftest : IO UInt32 := do
-  let xml := "<page>\n<word xMin=\"1.000000\" yMin=\"5.000000\" xMax=\"3.000000\" \
-yMax=\"7.000000\">𝑎𝑏</word>\n<word xMin=\"4.000000\" yMin=\"5.000000\" xMax=\"5.000000\" \
-yMax=\"7.000000\">𝑍</word>\n<word xMin=\"3.200000\" yMin=\"2.000000\" xMax=\"3.800000\" \
-yMax=\"3.000000\">7</word>\n<word xMin=\"1.500000\" yMin=\"5.500000\" xMax=\"2.500000\" \
-yMax=\"6.500000\"></word>\n</page>"
-  let ws := parseWords xml
-  let expected : Array WordBox :=
-    #[{ text := "𝑎𝑏", x0 := 1000000, y0 := 5000000, x1 := 3000000, y1 := 7000000 },
-      { text := "𝑍", x0 := 4000000, y0 := 5000000, x1 := 5000000, y1 := 7000000 },
-      { text := "7", x0 := 3200000, y0 := 2000000, x1 := 3800000, y1 := 3000000 }]
-  let wsOk := ws == expected
-  let c := mkCase "t" "cancelto" "ab" "𝑎𝑏" "Z" (some "7")
-  let iso := isolate c ws
-  let isoOk := match iso with
-    | some b => b.struck.text == "𝑎𝑏" && b.neighbour.text == "𝑍" &&
-        (b.value.map (·.text)) == some "7"
-    | none => false
-  -- Each expected glyph word must appear exactly once; unrelated words are irrelevant.
-  let missingOk := ws.all fun w => (isolate c (ws.filter (·.text != w.text))).isNone
-  let uniqueOk := ws.all fun w => (isolate c (ws.push w)).isNone
-  let unrelatedOk := (isolate c (ws.push { text := ":", x0 := 0, y0 := 0, x1 := 1, y1 := 1 })).isSome
-  let escapedOk := wordText "<word>&amp;lt; &lt; &gt; &amp;</word>" == "&lt; < > &"
-  -- Unicode's italic h lives in Letterlike Symbols, not the plane-1 run.
-  let mapOk := mathItalic 'a' == "𝑎" && mathItalic 'h' == "ℎ" &&
-    mathItalic 'Z' == "𝑍" && mathItalic '7' == "7"
-  let roomOk := roomAgreement 0 0 && roomAgreement 0 2000000 &&
-    !roomAgreement 0 2000001 && !roomAgreement 0 (-1) &&
-    !roomAgreement (-1) 0 && !roomAgreement 1000000 0 &&
-    roomAgreement 1000000 400000 && roomAgreement 1000000 2500000 &&
-    !roomAgreement 1000000 399999 && !roomAgreement 1000000 2500001
-  if wsOk && isoOk && missingOk && uniqueOk && unrelatedOk && escapedOk && mapOk && roomOk then
-    IO.println "cancel-diff --selftest: all passed"
-    return 0
-  IO.eprintln s!"cancel-diff --selftest: FAIL words={wsOk} isolate={isoOk} missing={missingOk} unique={uniqueOk} unrelated={unrelatedOk} escaped={escapedOk} map={mapOk} room={roomOk}"
-  return 1
-
-/-- A ratio `a / b` in per-mille, or none when `b` is zero. -/
-def ratioMille (a b : Int) : Option Int :=
-  if b == 0 then none else some (a * 1000 / b)
+def selftest : IO UInt32 := Scoreboard.tierSelftest "cancel-diff" fun no => do
+  no "classify: pure red, blue and black" (classify 255 0 0 == .mark &&
+    classify 0 0 255 == .value && classify 20 20 20 == .operand && classify 250 250 245 == .none)
+  no "classify: a grey antialiased edge is neither colour" (classify 180 160 160 == .none)
+  let ppm := "P6\n3 2\n255\n".toUTF8 ++ ByteArray.mk #[255,255,255, 255,0,0, 255,255,255,
+    0,0,255, 255,255,255, 10,10,10]
+  no "ppm: boxes of each class"
+    (match ppmBoxes ppm with
+     | .ok (some m, some v, some o) => m == ⟨1, 0, 1, 0⟩ && v == ⟨0, 1, 0, 1⟩ && o == ⟨2, 1, 2, 1⟩
+     | _ => false)
+  no "ppm: a truncated raster is refused" ((ppmBoxes ("P6\n3 2\n255\n".toUTF8)).toOption.isNone)
+  no "browser line: read back"
+    ((parseMathLine "math\t64\t1 2 30 40\t-\t5 6 25 35").any fun b =>
+      b.em == 64 && b.value.isNone && b.mark == ⟨1, 2, 30, 40⟩)
+  let a : Anchors :=
+    { left := -10, bottom := 5, right := 20, top := 0, valueX := some 30, valueY := some 40 }
+  no "row: renders and parses back" (parseRow (renderRow "x-mk" "pdf" a) == some ("x-mk", "pdf", a))
+  no "gap: the largest anchor difference"
+    (a.gap { a with right := 70 } == some 50 && (a.gap { a with valueX := none }).isNone)
+  no "judge: a case passes within tolerance and fails past it"
+    (judge #[("x", "pdf", a), ("x", "lualatex", { a with top := 100 })] "pdf" "lualatex" 100
+        == (1, 1) &&
+      judge #[("x", "pdf", a), ("x", "lualatex", { a with top := 101 })] "pdf" "lualatex" 100
+        == (0, 1))
 
 def main (args : List String) : IO UInt32 := do
-  if args.contains "--selftest" then return ← selftest
-  let reportOnly := args.contains "--report"
-  let root ← IO.currentDir
-  let leantex := root / ".lake" / "build" / "bin" / "leantex"
-  unless ← leantex.pathExists do
+  if args.contains "--selftest" then return (← selftest)
+  let own : System.FilePath := ".lake" / "build" / "bin" / "leantex"
+  let other := match args.dropWhile (· != "--leantex") with
+    | _ :: p :: _ => some (System.FilePath.mk p)
+    | _ => none
+  let reportOnly := args.contains "--report" || other.isSome
+  unless ← (other.getD own).pathExists do
     IO.eprintln "cancel-diff: build leantex first (lake build leantex)"
     return 2
-  let work := root / ".lake" / "cancel-diff"
-  if ← work.pathExists then IO.FS.removeDirAll work
-  IO.FS.createDirAll work
-  let fontDir := (root / "testdata" / "corpus" / "fonts").toString
-  for (cmd, probe) in [("lualatex", #["--version"]), ("pdftotext", #["-v"])] do
-    if (← toolVersion cmd probe root) == "unavailable" then
+  let leantex ← IO.FS.realPath (other.getD own)
+  for (cmd, probe) in [("lualatex", #["--version"]), ("pdftoppm", #["-v"]), ("node", #["--version"])] do
+    if (← toolVersion cmd probe ".") == "unavailable" then
       IO.eprintln s!"cancel-diff: {cmd} not available — untested"
       return 2
-  IO.println "cancel-diff: cancellation placement, LuaLaTeX (cancel.sty) vs leantex"
-  IO.println "  shared face: FiraMath / Fira Sans (repository corpus)"
-  IO.println "  room: [0.40, 2.50] × positive reference; 0–2pt when reference adds none"
-  IO.println s!"  lualatex: {← toolVersion "lualatex" #["--version"] root}"
-  IO.println s!"  poppler:  {← toolVersion "pdftotext" #["-v"] root}"
-
-  let measure (tag : String) (c : Case) (room : Bool)
-      (src : String) (buildLua : Bool) : IO (Option Boxes) := do
-    let stem := s!"{c.label}-{if room then "mk" else "ov"}-{tag}"
-    let dir := work / stem
-    IO.FS.createDirAll dir
-    let tex := dir / "m.tex"
-    IO.FS.writeFile tex src
-    let pdf := dir / "m.pdf"
-    if buildLua then
-      let a := #["-interaction=nonstopmode", "-halt-on-error",
-        s!"-output-directory={dir}", tex.toString]
-      let _ ← runTool "lualatex" a root
-      let r ← runTool "lualatex" a root
-      if r.exitCode != 0 then return none
-    else
-      let r ← runTool leantex.toString #[tex.toString, "-o", pdf.toString] root
-      if r.exitCode != 0 then return none
-    let bbox := dir / "m.bbox"
-    let r ← runTool "pdftotext" #["-bbox", pdf.toString, bbox.toString] root
-    if r.exitCode != 0 then return none
-    return isolate c (parseWords (← IO.FS.readFile bbox))
-
-  let mut failed := false
-  let mut cross := 0
-  let mut crossFail := 0
-  for c in cases do
-    IO.println s!"\n{c.label}  (\\{c.cmd}, struck={c.struck}, {if c.display then "display" else "text"}{if c.thick then ", thick" else ""})"
-    let build (buildLua : Bool) (room : Bool) : IO (Option Boxes) :=
-      measure (if buildLua then "lua" else "lean") c room
-        ((if buildLua then luaSource else leanSource) fontDir c room) buildLua
-    let engines := [("lualatex", true), ("leantex", false)]
-    let mut effects : List (String × Int) := []
-    let mut rises : List (String × Int) := []
-    let mut dxs : List (String × Int) := []
-    for (ename, isLua) in engines do
-      let mk ← build isLua true
-      let ov ← build isLua false
-      match mk, ov with
-      | some mb, some ob =>
-        let gapMk := mb.neighbour.x0 - mb.struck.x0
-        let gapOv := ob.neighbour.x0 - ob.struck.x0
-        let g1 := gapMk ≥ gapOv
-        unless g1 do failed := true
-        effects := effects ++ [(ename, gapMk - gapOv)]
-        IO.println s!"  {ename}: neighbour gap makeroom {pointMicro gapMk} pt, overlap {pointMicro gapOv} pt [G1 room {if g1 then "PASS" else "FAIL"}]"
-        match mb.value with
-        | some v =>
-          let dx := v.x0 - mb.struck.x1
-          let rise := mb.struck.y0 - v.y0
-          let g2 := dx > 0
-          let g3 := rise > 0
-          unless g2 && g3 do failed := true
-          dxs := dxs ++ [(ename, dx)]
-          rises := rises ++ [(ename, rise)]
-          IO.println s!"    value dx {pointMicro dx} pt [G2 right {if g2 then "PASS" else "FAIL"}], rise {pointMicro rise} pt [G3 above {if g3 then "PASS" else "FAIL"}]"
-        | none => pure ()
-      | _, _ =>
-        failed := true
-        IO.println s!"  {ename}: could not isolate struck/neighbour/value boxes [FAIL]"
-    match effects.lookup "lualatex", effects.lookup "leantex" with
-    | some l, some e =>
-      cross := cross + 1
-      let ok := roomAgreement l e
-      unless ok do crossFail := crossFail + 1
-      let comparison := match ratioMille e l with
-        | some r => s!"{r}‰ [400, 2500]"
-        | none => s!"{pointMicro e} pt [0, 2]"
-      IO.println s!"    room agreement: {comparison} [{if ok then "PASS" else "FAIL"}]"
-    | _, _ => pure ()
-    -- Value rise and dx are evidence only: the engines choose different slopes.
-    let ratioLine (name : String) (m : List (String × Int)) : IO Unit := do
-      match m.lookup "lualatex", m.lookup "leantex" with
-      | some l, some e =>
-        match ratioMille e l with
-        | some r =>
-          IO.println s!"    {name} leantex/lualatex = {r}‰ (evidence)"
-        | none => IO.println s!"    {name}: lualatex baseline zero (evidence)"
-      | _, _ => pure ()
-    ratioLine "value rise" rises
-    ratioLine "value dx" dxs
-  IO.println s!"\ncancel-diff: {cross} gated room comparisons, {crossFail} out of band"
-  if reportOnly then
-    IO.println "cancel-diff: report only (no gate)"
-    return 0
-  if failed || crossFail > 0 then
-    IO.eprintln "cancel-diff: FAIL"
-    return 1
-  IO.println "cancel-diff: PASS"
+  let some (module, chromium) ← findChromium "node"
+    | IO.eprintln "cancel-diff: no Playwright module launches Chromium — untested"; return 2
+  let work : System.FilePath := ".lake" / "cancel-diff"
+  if ← work.pathExists then IO.FS.removeDirAll work
+  IO.FS.createDirAll work
+  let fontDir := (← IO.FS.realPath ("testdata" / "corpus" / "fonts")).toString
+  let key ← match ← buildKey leantex with
+    | .ok k => pure k
+    | .error e => IO.eprintln s!"cancel-diff: {e}"; return 1
+  let js := work / "probe.js"
+  IO.FS.writeFile js probeJs
+  let mut rows : Array String := #[]
+  let pages := cases.length
+  for (tag, opt) in rooms do
+    let tex := work / s!"lua-{tag}.tex"
+    IO.FS.writeFile tex (luaSource fontDir opt)
+    let r ← run "lualatex" #["-interaction=nonstopmode", "-halt-on-error",
+      s!"-output-directory={work}", tex.toString]
+    if r.exitCode != 0 then
+      IO.eprintln s!"cancel-diff: lualatex failed on {tex}"; return 1
+    let lua ← pdfBoxes (work / s!"lua-{tag}.pdf") pages work
+    let pdf ← pdfBoxes (probeDir / s!"lean-{tag}.pdf") pages work
+    let html ← run "node" #[js.toString, (← IO.FS.realPath (probeDir / s!"lean-{tag}.html")).toString]
+      (env := #[("PW_MODULE", some module)])
+    if html.exitCode != 0 then
+      IO.eprintln s!"cancel-diff: the browser probe failed: {html.stderr.trimAscii}"; return 1
+    let web := ((html.stdout.splitOn "\n").filterMap parseMathLine).toArray
+    match lua, pdf with
+    | .ok lua, .ok pdf =>
+      if lua.size != pages || pdf.size != pages || web.size != pages then
+        IO.eprintln s!"cancel-diff: {tag}: {lua.size}, {pdf.size} and {web.size} cases measured, \
+{pages} expected"
+        return 1
+      for (c, k) in cases.zipIdx do
+        let label := s!"{c.label}-{tag}"
+        for (engine, b) in [("lualatex", lua[k]!), ("pdf", pdf[k]!), ("html", web[k]!)] do
+          rows := rows.push (renderRow label engine b.anchors)
+    | .error e, _ | _, .error e => IO.eprintln s!"cancel-diff: {e}"; return 1
+  let parsed := rows.filterMap parseRow
+  let (pp, pn) := judge parsed "pdf" "lualatex" pdfTolerance
+  let (hp, hn) := judge parsed "html" "pdf" htmlTolerance
+  let (lp, ln) := judge parsed "html" "lualatex" htmlTolerance
+  for r in rows do IO.println s!"  {r}"
+  IO.println s!"cancel-diff: pdf within {pdfTolerance}‰ em of lualatex: {pp}/{pn}; \
+html within {htmlTolerance}‰ of pdf: {hp}/{hn}; html within {htmlTolerance}‰ of lualatex: {lp}/{ln}"
+  if reportOnly then return 0
+  let lv ← toolVersion "lualatex" #["--version"] "."
+  let pv ← toolVersion "pdftoppm" #["-v"] "."
+  let text := "# generated by scripts/cancel-diff.lean — do not hand-edit; regenerate: \
+lake env lean --run scripts/cancel-diff.lean\n" ++
+    s!"tools: {lv.trimAscii}; {pv.trimAscii}; chromium {chromium} (playwright {← moduleVersion module})\n" ++
+    s!"src-key: {key}\n" ++
+    "# <case>-<room> <engine> <left> <bottom> <right> <top> <valueX> <valueY>, thousandths of an em: \
+the strike's ink edges past the operand's, the value's left past its right and bottom above its bottom\n" ++
+    String.intercalate "\n" rows.toList ++ "\n"
+  IO.FS.writeFile oraclePath text
+  IO.println s!"cancel-diff: wrote {oraclePath}"
   return 0

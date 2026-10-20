@@ -113,14 +113,16 @@ private def zeroExtentWitness (fonts : Font.FontSet) (room : Bool) (value : Math
 private def advanceAgrees (w : Witness) : Bool :=
   (advance w.em w.node).any (near w.em · w.nativeAdvance)
 
+/-- The value's placement after the operand's measured advance, as both browsers read it. -/
 private def targetAgrees (w : Witness) : Bool := (do
-  let value ← (nodeKids w.node)[1]?
+  let body ← (nodeKids w.node)[1]?
+  let value ← (nodeKids w.node)[2]?
+  let pen ← offset w.em body
   let placement ← offset w.em value
   let first ← w.glyphs.find? (fun (g : ShippedGlyph) => g.scalar == '0')
-  return near w.em placement.chromiumX (first.x.units - w.origin) &&
-    near w.em placement.firefoxX (first.x.units - w.origin) &&
-    near w.em placement.y (w.baseline - first.y.units) &&
-    near w.em placement.advance 0).getD false
+  return near w.em (pen.advance + placement.chromiumX) (first.x.units - w.origin) &&
+    near w.em (pen.advance + placement.firefoxX) (first.x.units - w.origin) &&
+    near w.em placement.y (w.baseline - first.y.units)).getD false
 
 /-- The top and bottom of the shipped line's one zero-width math strut, cancellation's reservation. -/
 private def reservation (w : Witness) : Option (Int × Int) := do
@@ -160,7 +162,7 @@ private def targetSpacePen (fonts : Font.FontSet) (source : String) :
   return (anchor.size.units, (right - left).units)
 
 private def targetSpaceAdvance (w : Witness) : Option (Int × Int) := do
-  let placed ← (nodeKids w.node)[1]?
+  let placed ← (nodeKids w.node)[2]?
   let styled ← (nodeKids placed)[0]?
   let em ← readEm w.em (nodeCss "font-size" styled)
   let spaces := elemNodesOne (· == "mspace") #[] styled
@@ -223,9 +225,6 @@ def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
           (targetAgrees w)
         check ref s!"cancel wide {options}/{style}: native neighbour advance"
           (advanceAgrees w)
-        if options == "overlap" then
-          check ref s!"cancel wide {options}/{style}: target starts left of origin"
-            ((w.glyphs.find? (·.scalar == '0')).any (·.x.units < w.origin))
     for target in ["", "\\color{red}", "{}", "\\,", "\\!", "\\color{red}\\,"] do
       match witness fonts options "$" "x" target "$" with
       | .error err => check ref s!"cancel empty {options}/{target}: {err}" false
@@ -236,7 +235,7 @@ def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
           (advanceAgrees w)
         check ref s!"cancel empty {options}/{target}: empty to-value node retained"
           ((nodeKids w.node).size == 3 &&
-            (MathMl.nodeChars #[] ((nodeKids w.node)[1]!)).isEmpty)
+            (MathMl.nodeChars #[] ((nodeKids w.node)[2]!)).isEmpty)
         if ["\\,", "\\!", "\\color{red}\\,"].contains target then
           check ref s!"cancel spacing {options}/{target}: native height ignores spacing"
             (empty.any fun e => (reservation e).any fun expected =>

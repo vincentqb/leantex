@@ -651,8 +651,8 @@ def field (line key : String) : Option String :=
 /-- The tiers the scoreboard expects; a name here missing its baseline or producer is a
 fault. -/
 def declaredTiers : List String :=
-  ["codedoc", "commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
-   "htmla11y", "htmlreader", "mdtwin", "palette-oracle", "parity", "pdf-native", "purity",
+  ["cancel", "codedoc", "commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost",
+   "external", "htmla11y", "htmlreader", "mdtwin", "palette-oracle", "parity", "pdf-native", "purity",
    "rhythm", "schemes", "svg-native", "textlayer", "tikz-native", "typeset"]
 
 /-- The declared tiers not landed yet, whose absence reports `missing`; the selftest fails

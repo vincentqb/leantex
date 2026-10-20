@@ -2228,7 +2228,7 @@ structure ShippedGlyph where
   leading : Option Dim.Length
   decorations : Layout.Decorations
   ground : Option Ir.Color
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 /-- Body glyphs in paint order, every `ShippedGlyph` field kept. -/
 def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do

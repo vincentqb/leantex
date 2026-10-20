@@ -989,11 +989,11 @@ public def CancelSpec.ofOptions (opts : List String) : CancelSpec × List String
   (declared.foldl (fun s o => if opts.contains o then apply s o else s) {},
    opts.filter (!declared.contains ·))
 
-/-- What a cancel mark's geometry reads, in sp: the overbar rule and gap, the struck box, and a
-`\cancelto` value's advance and measured ink. -/
+/-- What a cancel mark's geometry reads, in base units: the stroke width, the struck box, a
+`\cancelto` value's advance and measured ink, and the text-size MATH parameters its superscript
+reads. -/
 public structure CancelIn where
   rule : Int
-  gap : Int
   w : Int
   top : Int
   bot : Int
@@ -1002,7 +1002,9 @@ public structure CancelIn where
   vright : Int := 0
   vtop : Int := 0
   vbot : Int := 0
-  space : Int := 0
+  axis : Int := 0
+  supDrop : Int := 0
+  supUp : Int := 0
   deriving Repr, BEq, Inhabited
 
 /-- A measured target paints only when both axes have nonzero extent. -/
@@ -1021,487 +1023,239 @@ public structure CancelMetric where
   bodyRight : Int
   deriving Repr, BEq, Inhabited
 
-/-- The mark box `(x0, y0, x1, y1)` from the construct's origin, both axes ordered. -/
-public def CancelIn.box (i : CancelIn) (room : Bool) : Int × Int × Int × Int :=
-  let x0 := if room then 0 else -i.gap
-  let x1 := x0 + i.w + 2 * i.gap
-  let y0 := i.bot - i.gap
-  let y1 := i.top + i.gap
-  (min x0 x1, min y0 y1, max x0 x1, max y0 y1)
+/-- TeX's point in base units, the unit cancel.sty states its lengths in. -/
+public def cancelPt : Int := 406400
 
-public theorem CancelIn.box_bounds_contract (i : CancelIn) (room : Bool) :
-    (i.box room).1 ≤ (i.box room).2.2.1 ∧
-    (i.box room).2.1 ≤ (i.box room).2.2.2 := by
-  simp only [box]
-  omega
+public theorem cancelPt_exact : cancelPt = (Dim.pt 1).units := by decide
 
-/-- A diagonal's length, to the sp below. -/
-public def cancelDiag (w h : Int) : Int :=
-  Int.ofNat (Nat.sqrt (w.toNat * w.toNat + h.toNat * h.toNat))
+/-- A tenth of a point, for cancel.sty's fractional lengths. -/
+public def cancelTenths (n : Int) : Int := n * cancelPt / 10
 
-/-- A strike: the band `rule` wide on the box's rising or falling diagonal, cut by its edges. -/
-public def cancelBand (rising : Bool) (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
-  let w := x1 - x0
-  let h := y1 - y0
-  let l := cancelDiag w h
-  let dx := min w (rule * l / (2 * h))
-  let dy := min h (rule * l / (2 * w))
-  if rising then
-    #[(x0, y0), (x0 + dx, y0), (x1, y1 - dy), (x1, y1), (x1 - dx, y1), (x0, y0 + dy)]
+/-- cancel.sty's stroke widths, `\thinlines` and `\thicklines`. -/
+public def cancelRule (thick : Bool) : Int := cancelTenths (if thick then 8 else 4)
+
+/-- The line10 arrowhead: depth from tip to back and half the back's width. -/
+public def cancelHeadDepth : Int := 397 * cancelPt / 100
+
+public def cancelHeadHalf : Int := 149 * cancelPt / 100
+
+/-- A `\cancel` stroke as cancel.sty v2.2's `\@can@slash` draws it: slope as run and rise, and
+its horizontal extent, picked by the struck box's aspect. -/
+public def cancelSlash (w t : Int) : Nat × Nat × Int :=
+  let p := cancelPt
+  let ww := max w (2 * p)
+  let tt := max t (6 * p)
+  if tt < ww then
+    let w8 := max ww (8 * p)
+    let (run, rise) : Nat × Nat := match (5 * tt / w8).toNat with
+      | 0 => (6, 1) | 1 => (4, 1) | 2 => (2, 1) | 3 => (4, 3) | _ => (1, 1)
+    (run, rise, w8 + 2 * p)
   else
-    #[(x0, y1), (x0, y1 - dy), (x1 - dx, y0), (x1, y0), (x1, y0 + dy), (x0 + dx, y1)]
+    let t8 := max tt (8 * p) + 2 * p
+    match (5 * ww / t8).toNat with
+    | 0 => (1, 6, 16 * t8 / 100)
+    | 1 => (1, 4, t8 / 4)
+    | 2 => (1, 2, t8 / 2)
+    | 3 => (3, 4, 3 * t8 / 4)
+    | _ => (1, 1, t8)
 
-public theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
-    (hr : 0 ≤ rule) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
-    ∀ p ∈ cancelBand rising x0 y0 x1 y1 rule,
-      x0 ≤ p.1 ∧ p.1 ≤ x1 ∧ y0 ≤ p.2 ∧ p.2 ≤ y1 := by
-  intro p hp
-  simp only [cancelBand] at hp
-  have hl : 0 ≤ cancelDiag (x1 - x0) (y1 - y0) := Int.natCast_nonneg _
-  generalize cancelDiag (x1 - x0) (y1 - y0) = l at hl hp
-  have hq1 : 0 ≤ rule * l / (2 * (y1 - y0)) :=
-    Int.ediv_nonneg (Int.mul_nonneg hr hl) (by omega)
-  have hq2 : 0 ≤ rule * l / (2 * (x1 - x0)) :=
-    Int.ediv_nonneg (Int.mul_nonneg hr hl) (by omega)
-  generalize rule * l / (2 * (y1 - y0)) = q1 at hq1 hp
-  generalize rule * l / (2 * (x1 - x0)) = q2 at hq2 hp
-  cases rising <;> simp only [Bool.false_eq_true, ite_false, ite_true, List.mem_toArray,
-    List.mem_cons, List.not_mem_nil, or_false] at hp <;>
-    rcases hp with h | h | h | h | h | h <;> subst h <;> simp only <;> omega
+/-- cancel.sty's `\line` slopes, as run and rise. -/
+public def cancelSlashSlopes : List (Nat × Nat) :=
+  [(6, 1), (4, 1), (2, 1), (4, 3), (1, 1), (1, 6), (1, 4), (1, 2), (3, 4)]
 
-/-- Where a cancel mark's parts stand from the construct's origin on the baseline. -/
+public theorem cancelSlash_slope_mem (w t : Int) :
+    ((cancelSlash w t).1, (cancelSlash w t).2.1) ∈ cancelSlashSlopes := by
+  unfold cancelSlash
+  dsimp only
+  split
+  · split <;> simp [cancelSlashSlopes]
+  · split <;> simp [cancelSlashSlopes]
+
+/-- A `\cancelto` vector as cancel.sty v2.2's `\@cancelto` sets it: slope as run and rise, the
+horizontal extent `len` its head included, the invisible lead `back` before it, and the value's
+kern and lift past the tip. -/
+public structure CancelVector where
+  run : Nat
+  rise : Nat
+  len : Int
+  back : Int
+  kern : Int
+  lift : Int
+  deriving Repr, BEq, Inhabited
+
+public def cancelVector (w t : Int) : CancelVector :=
+  let p := cancelPt
+  let ww := max w (2 * p)
+  let tt := max t (4 * p)
+  let wide (add : Int) := max (ww + add * p) (9 * p) + p
+  if tt < ww then
+    match (5 * tt / ww).toNat with
+    | 0 | 1 => ⟨4, 1, wide 5, 3 * p, cancelTenths 13, 2 * p⟩
+    | 2 => ⟨4, 2, wide 4, 3 * p, cancelTenths 13, 2 * p⟩
+    | 3 => ⟨4, 3, wide 3, 3 * p, cancelTenths 8, 2 * p⟩
+    | _ => ⟨1, 1, wide 2, 3 * p, cancelTenths 3, 3 * p⟩
+  else
+    let t3 := tt + 3 * p
+    let t6 := t3 + 3 * p
+    match (5 * ww / t3).toNat with
+    | 0 | 1 => ⟨1, 4, t6 / 4, cancelTenths 8, cancelTenths (-12), 4 * p⟩
+    | 2 => ⟨1, 2, t6 / 2, cancelTenths 12, cancelTenths (-7), 4 * p⟩
+    | 3 => ⟨3, 4, 3 * t6 / 4, cancelTenths 15, cancelTenths (-2), cancelTenths 35⟩
+    | _ => ⟨1, 1, t6, 2 * p, cancelTenths 3, 3 * p⟩
+
+/-- cancel.sty's `\vector` slopes, as run and rise. -/
+public def cancelVectorSlopes : List (Nat × Nat) :=
+  [(4, 1), (4, 2), (4, 3), (1, 1), (1, 4), (1, 2), (3, 4)]
+
+public theorem cancelVector_slope_mem (w t : Int) :
+    ((cancelVector w t).run, (cancelVector w t).rise) ∈ cancelVectorSlopes := by
+  unfold cancelVector
+  dsimp only
+  split
+  · split <;> simp [cancelVectorSlopes]
+  · split <;> simp [cancelVectorSlopes]
+
+public theorem cancelVector_run_pos (w t : Int) : 0 < (cancelVector w t).run := by
+  unfold cancelVector
+  dsimp only
+  split
+  · split <;> simp
+  · split <;> simp
+
+/-- A segment's length, to the base unit below. -/
+public def cancelLength (dx dy : Int) : Int :=
+  Int.ofNat (Nat.sqrt (dx.natAbs * dx.natAbs + dy.natAbs * dy.natAbs))
+
+/-- A stroke `rule` wide on the centre line from `p` to `q`, square-ended. -/
+public def cancelBand (p q : Int × Int) (rule : Int) : Array (Int × Int) :=
+  let dx := q.1 - p.1
+  let dy := q.2 - p.2
+  let l := max 1 (cancelLength dx dy)
+  let nx := -dy * rule / (2 * l)
+  let ny := dx * rule / (2 * l)
+  #[(p.1 + nx, p.2 + ny), (q.1 + nx, q.2 + ny), (q.1 - nx, q.2 - ny), (p.1 - nx, p.2 - ny)]
+
+/-- An arrowhead at `q` pointing away from `p`, line10's depth and back. -/
+public def cancelHead (p q : Int × Int) : Array (Int × Int) :=
+  let dx := q.1 - p.1
+  let dy := q.2 - p.2
+  let l := max 1 (cancelLength dx dy)
+  let bx := q.1 - dx * cancelHeadDepth / l
+  let by_ := q.2 - dy * cancelHeadDepth / l
+  #[q, (bx + dy * cancelHeadHalf / l, by_ - dx * cancelHeadHalf / l),
+    (bx - dy * cancelHeadHalf / l, by_ + dx * cancelHeadHalf / l)]
+
+/-- The shaft's end: the head's back, or the tail where the head is the whole arrow. -/
+public def cancelHeadBack (p q : Int × Int) : Int × Int :=
+  let dx := q.1 - p.1
+  let dy := q.2 - p.2
+  let l := max 1 (cancelLength dx dy)
+  if l ≤ cancelHeadDepth then p
+  else (q.1 - dx * cancelHeadDepth / l, q.2 - dy * cancelHeadDepth / l)
+
+/-- Where a cancel mark's parts stand from the construct's origin on the baseline: the struck
+box's shift, each stroke's centre line, the polygons painting them, the value's origin and the
+advance. -/
 public structure CancelGeom where
   shift : Int
+  strokes : Array ((Int × Int) × (Int × Int))
   polys : Array (Array (Int × Int))
   valueX : Int := 0
   valueY : Int := 0
   advance : Int
   deriving Repr, BEq, Inhabited
 
-/-- The shared base centre of the head and shaft: four rules behind the tip along the diagonal. -/
-def cancelBase (x0 y0 x1 y1 rule : Int) : Int × Int :=
-  let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
-  (x1 - 4 * rule * (x1 - x0) / l, y1 - 4 * rule * (y1 - y0) / l)
+/-- A `\cancel` stroke centred on the struck box, rising or falling at cancel.sty's slope. -/
+public def cancelSlashStroke (i : CancelIn) (shift : Int) (rising : Bool) :
+    (Int × Int) × (Int × Int) :=
+  let (run, rise, len) := cancelSlash i.w (i.top - i.bot)
+  let r := len * rise / run
+  let x0 := (2 * shift + i.w - len) / 2
+  let y0 := (i.top + i.bot - r) / 2
+  if rising then ((x0, y0), (x0 + len, y0 + r)) else ((x0, y0 + r), (x0 + len, y0))
 
-/-- `\cancelto`'s arrowhead: four rules deep and three wide, wings perpendicular at the base. -/
-public def cancelHead (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
-  let w := x1 - x0
-  let h := y1 - y0
-  let l := max 1 (cancelDiag w h)
-  let (bx, by_) := cancelBase x0 y0 x1 y1 rule
-  #[(x1, y1), (bx - 3 * rule * h / (2 * l), by_ + 3 * rule * w / (2 * l)),
-    (bx + 3 * rule * h / (2 * l), by_ - 3 * rule * w / (2 * l))]
+/-- cancel.sty's `\@cancelto` row: the vector box's left edge, the struck box's shift and the
+advance, overlapping its neighbours or making room. -/
+public def cancelToRow (i : CancelIn) (v : CancelVector) (room : Bool) : Int × Int × Int :=
+  if room then
+    let tail := v.kern + i.vw
+    let col := max (v.back + v.len + tail) (i.w + tail)
+    (-v.back + (col - (v.back + v.len + tail)) / 2, -v.back + (col - i.w - tail) / 2,
+      col - v.back)
+  else ((i.w - v.back - v.len) / 2, 0, i.w)
 
-/-- The arrow's shaft: the rising band from the box's bottom-left corner to the head's base. -/
-public def cancelShaft (x0 y0 x1 y1 rule : Int) : Array (Int × Int) :=
-  let w := x1 - x0
-  let h := y1 - y0
-  let l := max 1 (cancelDiag w h)
-  let dx := min w (rule * l / (2 * h))
-  let dy := min h (rule * l / (2 * w))
-  let (bx, by_) := cancelBase x0 y0 x1 y1 rule
-  let sx := rule * h / (2 * l)
-  let sy := rule * w / (2 * l)
-  if (l - 4 * rule) * l ≥ dx * w && (l - 4 * rule) * l ≥ dy * h then
-    #[(x0, y0), (x0 + dx, y0), (bx + sx, by_ - sy), (bx - sx, by_ + sy),
-      (x0, y0 + dy)]
-  else #[]
-
-public theorem cancelHead_shape_exact (x0 y0 x1 y1 rule : Int) :
-    let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
-    let head := cancelHead x0 y0 x1 y1 rule
-    let a := head[1]'(by simp [head, cancelHead])
-    let b := head[2]'(by simp [head, cancelHead])
-    head[0]? = some (x1, y1) ∧
-    a.1 + b.1 = 2 * (x1 - 4 * rule * (x1 - x0) / l) ∧
-    a.2 + b.2 = 2 * (y1 - 4 * rule * (y1 - y0) / l) ∧
-    b.1 - a.1 = 2 * (3 * rule * (y1 - y0) / (2 * l)) ∧
-    a.2 - b.2 = 2 * (3 * rule * (x1 - x0) / (2 * l)) := by
-  simp only [cancelHead, cancelBase]
-  exact ⟨rfl, by dsimp; omega, by dsimp; omega, by dsimp; omega, by dsimp; omega⟩
-
-/-- The union of the diagonal endpoints' box and the full head's vertices. -/
-public def cancelEnvelope (x0 y0 x1 y1 rule : Int) : Int × Int × Int × Int :=
-  let head := cancelHead x0 y0 x1 y1 rule
-  let a := head[1]'(by simp [head, cancelHead])
-  let b := head[2]'(by simp [head, cancelHead])
-  (min x0 (min a.1 b.1), min y0 (min a.2 b.2),
-    max x1 (max a.1 b.1), max y1 (max a.2 b.2))
-
-public theorem cancelHead_between (x0 y0 x1 y1 rule : Int) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
-    let e := cancelEnvelope x0 y0 x1 y1 rule
-    ∀ p ∈ cancelHead x0 y0 x1 y1 rule,
-      e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
-  dsimp only
-  intro p hp
-  simp only [cancelHead, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hp
-  rcases hp with rfl | rfl | rfl <;> dsimp [cancelEnvelope, cancelHead] <;> omega
-
-public theorem cancelShaft_between (x0 y0 x1 y1 rule : Int) (hr : 0 ≤ rule)
-    (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
-    let e := cancelEnvelope x0 y0 x1 y1 rule
-    ∀ p ∈ cancelShaft x0 y0 x1 y1 rule,
-      e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
-  dsimp only
-  let l := max 1 (cancelDiag (x1 - x0) (y1 - y0))
-  have hl : 0 < l := by dsimp [l]; omega
-  have cap (v : Int) (hv : 0 ≤ v) :
-      0 ≤ rule * v / (2 * l) ∧ rule * v / (2 * l) ≤ 3 * rule * v / (2 * l) := by
-    have hn : 0 ≤ rule * v := Int.mul_nonneg hr hv
-    refine ⟨Int.ediv_nonneg hn (by omega), Int.ediv_le_ediv (by omega) ?_⟩
-    rw [Int.mul_assoc]
-    omega
-  have hx := cap (y1 - y0) (by omega)
-  have hy := cap (x1 - x0) (by omega)
-  have dx := Int.ediv_nonneg (Int.mul_nonneg hr (Int.le_of_lt hl))
-    (show 0 ≤ 2 * (y1 - y0) by omega)
-  have dy := Int.ediv_nonneg (Int.mul_nonneg hr (Int.le_of_lt hl))
-    (show 0 ≤ 2 * (x1 - x0) by omega)
-  intro p hp
-  simp only [cancelShaft] at hp
-  split at hp
-  · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hp
-    rcases hp with rfl | rfl | rfl | rfl | rfl <;>
-      dsimp [cancelEnvelope, cancelHead] <;> dsimp [l] at * <;> omega
-  · exact (Array.not_mem_empty p hp).elim
-
-/-- Nearest integer to `n / (2 * step)`. -/
-private def roundRay (n step : Int) : Int := (n + step) / (2 * step)
-
-private theorem roundRay_between (n step : Int) (h : 0 < step) :
-    -step ≤ 2 * step * roundRay n step - n ∧
-    2 * step * roundRay n step - n ≤ step := by
-  have hmod := Int.emod_nonneg (n + step) (show 2 * step ≠ 0 by omega)
-  have hlt := Int.emod_lt_of_pos (n + step) (show 0 < 2 * step by omega)
-  have he := Int.emod_add_mul_ediv (n + step) (2 * step)
-  unfold roundRay
-  omega
-
-/-- The origin of a measured ink rectangle past a ray's tip: its centre on the forward ray, one
-near edge the clearance beyond the tip. -/
-public def inkRayOrigin (dx dy gap left bottom right top : Int) : Int × Int :=
-  let g := max 0 gap
-  if dy ≤ 0 ∨ (0 < dx ∧ (right - left + 2 * g) * dy ≤ (top - bottom + 2 * g) * dx) then
-    let step := max 1 dx
-    (g - left, roundRay ((right - left + 2 * g) * dy - step * (top + bottom)) step)
-  else
-    let step := max 1 dy
-    (roundRay ((top - bottom + 2 * g) * dx - step * (right + left)) step, g - bottom)
-
-public theorem inkRayOrigin_axis_exact (dx dy gap left bottom right top : Int) :
-    let o := inkRayOrigin dx dy gap left bottom right top;
-    o.1 + left = max 0 gap ∨ o.2 + bottom = max 0 gap := by
-  dsimp [inkRayOrigin]
-  split <;> simp
-
-public theorem inkRayOrigin_between (dx dy gap left bottom right top : Int)
-    (hx : 0 ≤ dx) (hy : 0 ≤ dy) :
-    let o := inkRayOrigin dx dy gap left bottom right top;
-    -(max dx dy) ≤ dx * (2 * o.2 + top + bottom) - dy * (2 * o.1 + right + left) ∧
-    dx * (2 * o.2 + top + bottom) - dy * (2 * o.1 + right + left) ≤ max dx dy := by
-  dsimp [inkRayOrigin]
-  split
-  next h =>
-    by_cases hz : dx = 0
-    · have hyz : dy = 0 := by omega
-      simp [hz, hyz]
-    · have hpos : 0 < dx := by omega
-      have hm : max 1 dx = dx := by omega
-      rw [hm]
-      have key := roundRay_between
-        ((right - left + 2 * max 0 gap) * dy - dx * (top + bottom)) dx hpos
-      simp only [Int.mul_add, Int.mul_sub, Int.add_mul, Int.sub_mul,
-        Int.mul_comm right dy, Int.mul_comm left dy, Int.mul_comm (max 0 gap) dy,
-        Int.mul_assoc, Int.mul_left_comm dy 2, Int.mul_left_comm dx 2] at *
-      omega
-  next h =>
-    have hpos : 0 < dy := by omega
-    have hm : max 1 dy = dy := by omega
-    rw [hm]
-    have key := roundRay_between
-      ((top - bottom + 2 * max 0 gap) * dx - dy * (right + left)) dy hpos
-    simp only [Int.mul_add, Int.mul_sub, Int.add_mul, Int.sub_mul,
-      Int.mul_comm top dx, Int.mul_comm bottom dx, Int.mul_comm (max 0 gap) dx,
-      Int.mul_assoc, Int.mul_left_comm dy 2, Int.mul_left_comm dx 2] at *
-    omega
-
-private theorem roundRay_le (n step k : Int) (hs : 0 < step) (hn : n ≤ 2 * step * k) :
-    roundRay n step ≤ k := by
-  rw [roundRay, Int.ediv_le_iff_le_mul (by omega)]
-  simp only [Int.mul_comm k (2 * step), Int.mul_assoc] at *
-  omega
-
-private theorem roundRay_center_nonneg (n d s : Int) (hd : 0 < d)
-    (hn : 0 ≤ n + d * s) : 0 ≤ 2 * roundRay n d + s := by
-  have hl := Int.emod_lt_of_pos (n + d) (by omega : 0 < 2 * d)
-  have he := Int.emod_add_mul_ediv (n + d) (2 * d)
-  have hr : -d < 2 * d * roundRay n d - n := by
-    unfold roundRay
-    omega
-  by_cases hc : 0 ≤ 2 * roundRay n d + s
-  · exact hc
-  have hc' : 2 * roundRay n d + s ≤ -1 := by omega
-  have ht := Int.mul_le_mul_of_nonneg_left hc' (show 0 ≤ d by omega)
-  simp only [Int.mul_add, Int.mul_neg, Int.mul_one, ← Int.mul_assoc, Int.mul_comm d 2] at ht
-  omega
-
-private theorem roundRay_translation_exact (n step k : Int) (hs : 0 < step) :
-    roundRay (n - 2 * step * k) step = roundRay n step - k := by
-  unfold roundRay
-  have he : n - 2 * step * k + step = n + step - (2 * step) * k := by omega
-  rw [he, Int.sub_mul_ediv_left _ _ (by omega)]
-
-public theorem inkRayOrigin_translation_exact (dx dy gap left bottom right top sx sy : Int) :
-    inkRayOrigin dx dy gap (left + sx) (bottom + sy) (right + sx) (top + sy) =
-      let o := inkRayOrigin dx dy gap left bottom right top;
-      (o.1 - sx, o.2 - sy) := by
-  have hw : right + sx - (left + sx) = right - left := by omega
-  have hh : top + sy - (bottom + sy) = top - bottom := by omega
-  dsimp [inkRayOrigin]
-  rw [hw, hh]
-  split
-  · have he : (right - left + 2 * max 0 gap) * dy - max 1 dx * (top + sy + (bottom + sy)) =
-        (right - left + 2 * max 0 gap) * dy - max 1 dx * (top + bottom) - 2 * max 1 dx * sy := by
-      simp only [Int.mul_add, Int.mul_assoc]
-      omega
-    rw [he, roundRay_translation_exact _ _ _ (by omega)]
-    apply Prod.ext <;> dsimp; omega
-  · have he : (top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + sx + (left + sx)) =
-        (top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + left) - 2 * max 1 dy * sx := by
-      simp only [Int.mul_add, Int.mul_assoc]
-      omega
-    rw [he, roundRay_translation_exact _ _ _ (by omega)]
-    apply Prod.ext <;> dsimp; omega
-
-public theorem inkRayOrigin_clears_between (dx dy gap left bottom right top : Int)
-    (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :
-    let o := inkRayOrigin dx dy gap left bottom right top;
-    (o.1 + left = max 0 gap ∧ o.2 + bottom ≤ max 0 gap) ∨
-    (o.2 + bottom = max 0 gap ∧ o.1 + left ≤ max 0 gap) := by
-  dsimp [inkRayOrigin]
-  split
-  next h =>
-    apply Or.inl
-    refine ⟨by omega, ?_⟩
-    have hs : 0 < max 1 dx := by omega
-    have hi : (right - left + 2 * max 0 gap) * dy ≤ (top - bottom + 2 * max 0 gap) * max 1 dx := by
-      rcases h with hz | ⟨hp, hc⟩
-      · have hd : dy = 0 := by omega
-        rw [hd, Int.mul_zero]
-        exact Int.mul_nonneg (by omega) (by omega)
-      · have hm : max 1 dx = dx := by omega
-        rwa [hm]
-    have hn : (right - left + 2 * max 0 gap) * dy - max 1 dx * (top + bottom) ≤
-        2 * max 1 dx * (max 0 gap - bottom) := by
-      simp only [Int.add_mul, Int.sub_mul, Int.mul_add, Int.mul_sub,
-        Int.mul_comm top (max 1 dx), Int.mul_comm bottom (max 1 dx),
-        Int.mul_comm (max 0 gap) (max 1 dx), Int.mul_assoc] at *
-      omega
-    have := roundRay_le _ _ _ hs hn
-    omega
-  next h =>
-    apply Or.inr
-    refine ⟨by omega, ?_⟩
-    have hp : 0 < dy := by omega
-    have hm : max 1 dy = dy := by omega
-    rw [hm]
-    have hi : (top - bottom + 2 * max 0 gap) * dx ≤ (right - left + 2 * max 0 gap) * dy := by
-      by_cases hx0 : dx = 0
-      · rw [hx0, Int.mul_zero]
-        exact Int.mul_nonneg (by omega) hy
-      · omega
-    have hn : (top - bottom + 2 * max 0 gap) * dx - dy * (right + left) ≤
-        2 * dy * (max 0 gap - left) := by
-      simp only [Int.add_mul, Int.sub_mul, Int.mul_add, Int.mul_sub,
-        Int.mul_comm right dy, Int.mul_comm left dy, Int.mul_comm (max 0 gap) dy,
-        Int.mul_assoc] at *
-      omega
-    have := roundRay_le _ _ _ hp hn
-    omega
-
-public theorem inkRayOrigin_forward_between (dx dy gap left bottom right top : Int)
-    (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :
-    let o := inkRayOrigin dx dy gap left bottom right top;
-    0 ≤ 2 * o.1 + left + right ∧
-    2 * o.1 + left + right ≤ right - left + 2 * max 0 gap ∧
-    0 ≤ 2 * o.2 + bottom + top ∧
-    2 * o.2 + bottom + top ≤ top - bottom + 2 * max 0 gap := by
-  have hc := inkRayOrigin_clears_between dx dy gap left bottom right top hx hy hw hh
-  have hnonneg :
-      0 ≤ 2 * (inkRayOrigin dx dy gap left bottom right top).1 + left + right ∧
-      0 ≤ 2 * (inkRayOrigin dx dy gap left bottom right top).2 + bottom + top := by
-    dsimp [inkRayOrigin]
-    split
-    · have hp : 0 ≤ (right - left + 2 * max 0 gap) * dy :=
-        Int.mul_nonneg (by omega) hy
-      have key := roundRay_center_nonneg
-        ((right - left + 2 * max 0 gap) * dy - max 1 dx * (top + bottom))
-        (max 1 dx) (top + bottom) (by omega) (by omega)
-      constructor <;> omega
-    · have hp : 0 ≤ (top - bottom + 2 * max 0 gap) * dx :=
-        Int.mul_nonneg (by omega) hx
-      have key := roundRay_center_nonneg
-        ((top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + left))
-        (max 1 dy) (right + left) (by omega) (by omega)
-      constructor <;> omega
-  dsimp only at hc ⊢
-  rcases hc with h | h <;> omega
-
-/-- Reserve a measured horizontal interval and both logical endpoints: a common translation and
-the total width. -/
-public def inkRoom (left right advance : Int) : Int × Int :=
-  let pad := max 0 (-min left advance)
-  (pad, pad + max 0 (max right advance))
-
-public theorem inkRoom_covers (left right advance : Int) :
-    let r := inkRoom left right advance;
-    0 ≤ r.1 ∧ 0 ≤ r.1 + left ∧ r.1 + right ≤ r.2 ∧
-    0 ≤ r.1 + advance ∧ r.1 + advance ≤ r.2 ∧ 0 ≤ r.2 := by
-  dsimp [inkRoom]
-  omega
-
-/-- The `\cancelto` value's attachment in the mark's coordinates, anchored by its measured ink. -/
-public def CancelIn.valueOrigin (i : CancelIn) (room : Bool) : Int × Int :=
-  let b := i.box room
-  let o := inkRayOrigin (b.2.2.1 - b.1) (b.2.2.2 - b.2.1) i.gap
-    i.vleft i.vbot i.vright i.vtop
-  (b.2.2.1 + o.1, b.2.2.2 + o.2)
-
-/-- A cancel mark laid out: strikes corner to corner, the arrowhead at the top-right corner, the
-value along the diagonal, and room reserved when asked. -/
+/-- A cancel mark laid out as cancel.sty v2.2 sets it: each stroke at its quantised slope centred
+on the struck box, a `\cancelto` vector's box centred there too, its value a text-style
+superscript on that box past the tip. -/
 public def cancelGeom (mark : CancelMark) (room : Bool) (i : CancelIn) : CancelGeom :=
-  let b := i.box room
-  let shift := if room then i.gap else 0
-  let band (rising : Bool) := cancelBand rising b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
   match mark with
-  | .up => { shift, polys := #[band true], advance := if room then b.2.2.1 else i.w }
-  | .down => { shift, polys := #[band false], advance := if room then b.2.2.1 else i.w }
-  | .cross =>
-    { shift, polys := #[band true, band false], advance := if room then b.2.2.1 else i.w }
+  | .up | .down | .cross =>
+    let (_, _, len) := cancelSlash i.w (i.top - i.bot)
+    let shift := if room then max 0 ((len - i.w) / 2) else 0
+    let strokes := match mark with
+      | .up => #[cancelSlashStroke i shift true]
+      | .down => #[cancelSlashStroke i shift false]
+      | _ => #[cancelSlashStroke i shift true, cancelSlashStroke i shift false]
+    { shift, strokes, polys := strokes.map fun (p, q) => cancelBand p q i.rule
+      advance := if room then max len i.w else i.w }
   | .to =>
-    let head := cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
-    let shaft := cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
-    let o := i.valueOrigin room
-    { shift, polys := if shaft.isEmpty then #[head] else #[shaft, head]
-      valueX := o.1, valueY := o.2
-      advance := if room then max b.2.2.1 (o.1 + max i.vw i.vright) + max 0 i.space else i.w }
+    let v := cancelVector i.w (i.top - i.bot)
+    let (x0, shift, advance) := cancelToRow i v room
+    let h := (v.len + v.back) * v.rise / v.run
+    let yb := (i.top + i.bot - h) / 2
+    let start := (x0 + v.back, yb + v.back * v.rise / v.run)
+    let tip := (x0 + v.back + v.len, yb + h)
+    let drop := i.supDrop
+    let up := max (i.axis + h - h / 2 - drop) i.supUp
+    { shift, strokes := #[(start, tip)]
+      polys := if cancelHeadBack start tip == start then #[cancelHead start tip]
+        else #[cancelBand start (cancelHeadBack start tip) i.rule, cancelHead start tip]
+      valueX := tip.1 + v.kern
+      valueY := yb + h / 2 - i.axis + up + v.lift
+      advance }
 
-public theorem cancelto_value_between (room : Bool) (i : CancelIn) :
-    let b := i.box room
-    let dx := b.2.2.1 - b.1
-    let dy := b.2.2.2 - b.2.1
-    let g := cancelGeom .to room i
-  let error := dx * (2 * g.valueY + i.vtop + i.vbot - 2 * b.2.2.2) -
-      dy * (2 * g.valueX + i.vright + i.vleft - 2 * b.2.2.1);
-    -(max dx dy) ≤ error ∧ error ≤ max dx dy := by
+public theorem cancelGeom_slash_centre_between (mark : CancelMark) (room : Bool) (i : CancelIn)
+    (h : mark ≠ .to) :
+    let g := cancelGeom mark room i
+    ∀ s ∈ g.strokes,
+      (s.1.1 + s.2.1 - (2 * g.shift + i.w)).natAbs ≤ 1 ∧
+      (s.1.2 + s.2.2 - (i.top + i.bot)).natAbs ≤ 1 := by
   dsimp only
-  let b := i.box room
-  let o := inkRayOrigin (b.2.2.1 - b.1) (b.2.2.2 - b.2.1) i.gap
-    i.vleft i.vbot i.vright i.vtop
-  have hx := (i.box_bounds_contract room).1
-  have hy := (i.box_bounds_contract room).2
-  have ex : 2 * (cancelGeom .to room i).valueX + i.vright + i.vleft - 2 * b.2.2.1 =
-      2 * o.1 + i.vright + i.vleft := by
-    dsimp [cancelGeom, CancelIn.valueOrigin, o, b]; omega
-  have ey : 2 * (cancelGeom .to room i).valueY + i.vtop + i.vbot - 2 * b.2.2.2 =
-      2 * o.2 + i.vtop + i.vbot := by
-    dsimp [cancelGeom, CancelIn.valueOrigin, o, b]; omega
-  rw [ex, ey]
-  exact inkRayOrigin_between _ _ _ _ _ _ _ (by omega) (by omega)
+  intro s hs
+  have key : ∀ rising, let t := cancelSlashStroke i (cancelGeom mark room i).shift rising
+      (t.1.1 + t.2.1 - (2 * (cancelGeom mark room i).shift + i.w)).natAbs ≤ 1 ∧
+      (t.1.2 + t.2.2 - (i.top + i.bot)).natAbs ≤ 1 := by
+    intro rising
+    simp only [cancelSlashStroke]
+    split <;> dsimp only <;> omega
+  cases mark <;> simp only [cancelGeom, ne_eq, not_true_eq_false] at h hs ⊢
+  all_goals first
+    | (simp only [Array.mem_singleton] at hs; subst hs; exact key _)
+    | (simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hs
+       rcases hs with rfl | rfl <;> exact key _)
 
-public theorem cancelto_value_clears_between (room : Bool) (i : CancelIn) :
-    let b := i.box room
+/-- The value stands a fixed kern past the tip and the vector's box is centred on the struck
+box. -/
+public theorem cancelto_anchor_exact (room : Bool) (i : CancelIn) :
+    let v := cancelVector i.w (i.top - i.bot)
     let g := cancelGeom .to room i
-    g.valueX + i.vleft = b.2.2.1 + max 0 i.gap ∨
-    g.valueY + i.vbot = b.2.2.2 + max 0 i.gap := by
-  have key := inkRayOrigin_axis_exact
-    ((i.box room).2.2.1 - (i.box room).1) ((i.box room).2.2.2 - (i.box room).2.1)
-    i.gap i.vleft i.vbot i.vright i.vtop
-  dsimp only [cancelGeom, CancelIn.valueOrigin] at *
+    let h := (v.len + v.back) * v.rise / v.run
+    (∀ s ∈ g.strokes, g.valueX = s.2.1 + v.kern ∧
+      (2 * (s.2.2 - h) + h - (i.top + i.bot)).natAbs ≤ 1) := by
+  dsimp only
+  intro s hs
+  simp only [cancelGeom, Array.mem_singleton] at hs ⊢
+  subst hs
+  dsimp only
   omega
 
+/-- With room made, the value's advance ends inside the mark's and the vector starts at or after
+its origin. -/
 public theorem cancelto_room_covers (i : CancelIn) :
-    (i.box true).2.2.1 ≤ (cancelGeom .to true i).advance ∧
-    (cancelGeom .to true i).valueX + i.vright ≤ (cancelGeom .to true i).advance ∧
-    (cancelGeom .to true i).valueX + i.vw ≤ (cancelGeom .to true i).advance := by
-  dsimp [cancelGeom]; omega
-
-public theorem cancelGeom_to_polys_exact (room : Bool) (i : CancelIn) :
-    let b := i.box room
-    (cancelGeom .to room i).polys =
-      (if (cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule).isEmpty then
-          #[cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]
-        else
-          #[cancelShaft b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule,
-            cancelHead b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule]) := (rfl)
-
-public theorem cancelGeom_polys_between (mark : CancelMark) (room : Bool) (i : CancelIn)
-    (hr : 0 ≤ i.rule) :
-    let b := i.box room
-    let e := cancelEnvelope b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
-    ∀ poly ∈ (cancelGeom mark room i).polys, ∀ p ∈ poly,
-      e.1 ≤ p.1 ∧ p.1 ≤ e.2.2.1 ∧ e.2.1 ≤ p.2 ∧ p.2 ≤ e.2.2.2 := by
+    let g := cancelGeom .to true i
+    g.valueX + i.vw ≤ g.advance ∧ ∀ s ∈ g.strokes, 0 ≤ s.1.1 := by
   dsimp only
-  have hw := (i.box_bounds_contract room).1
-  have hh := (i.box_bounds_contract room).2
-  have band (rising : Bool) :=
-    cancelBand_between rising (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
-      (i.box room).2.2.2 i.rule hr hw hh
-  have head :=
-    cancelHead_between (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
-      (i.box room).2.2.2 i.rule hw hh
-  have shaft :=
-    cancelShaft_between (i.box room).1 (i.box room).2.1 (i.box room).2.2.1
-      (i.box room).2.2.2 i.rule hr hw hh
-  intro poly hpoly p hp
-  cases mark
-  case up =>
-    simp only [cancelGeom, Array.mem_singleton] at hpoly
-    subst hpoly
-    have := band true p hp
-    dsimp [cancelEnvelope]
-    omega
-  case down =>
-    simp only [cancelGeom, Array.mem_singleton] at hpoly
-    subst hpoly
-    have := band false p hp
-    dsimp [cancelEnvelope]
-    omega
-  case cross =>
-    simp only [cancelGeom, List.mem_toArray, List.mem_cons, List.not_mem_nil,
-      or_false] at hpoly
-    rcases hpoly with rfl | rfl
-    · have := band true p hp; dsimp [cancelEnvelope]; omega
-    · have := band false p hp; dsimp [cancelEnvelope]; omega
-  case to =>
-    simp only [cancelGeom] at hpoly
-    split at hpoly
-    · simp only [Array.mem_singleton] at hpoly
-      subst hpoly; exact head p hp
-    · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hpoly
-      rcases hpoly with rfl | rfl
-      · exact shaft p hp
-      · exact head p hp
-
-public theorem cancelGeom_envelope_between (mark : CancelMark) (room : Bool) (i : CancelIn)
-    (hr : 0 ≤ i.rule) :
-    let b := i.box room
-    let e := cancelEnvelope b.1 b.2.1 b.2.2.1 b.2.2.2 i.rule
-    let g := cancelGeom mark room i
-    let r := inkRoom e.1 e.2.2.1 g.advance
-    0 ≤ r.1 + g.advance ∧ r.1 + g.advance ≤ r.2 ∧
-    ∀ poly ∈ g.polys, ∀ p ∈ poly, 0 ≤ r.1 + p.1 ∧ r.1 + p.1 ≤ r.2 := by
-  have bounds := cancelGeom_polys_between mark room i hr
-  have reserved := inkRoom_covers
-    (cancelEnvelope (i.box room).1 (i.box room).2.1
-      (i.box room).2.2.1 (i.box room).2.2.2 i.rule).1
-    (cancelEnvelope (i.box room).1 (i.box room).2.1
-      (i.box room).2.2.1 (i.box room).2.2.2 i.rule).2.2.1
-    (cancelGeom mark room i).advance
-  dsimp only at bounds reserved ⊢
-  refine ⟨reserved.2.2.2.1, reserved.2.2.2.2.1, ?_⟩
-  intro poly hpoly p hp
-  have := bounds poly hpoly p hp
+  simp only [cancelGeom, cancelToRow, ite_true, Array.mem_singleton, forall_eq]
   omega
 
 mutual

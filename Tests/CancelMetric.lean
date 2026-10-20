@@ -40,8 +40,7 @@ def agrees (fonts : Font.FontSet) (out : Layout.Out) (em : Int)
       ink.bottom == dy + u (geom.valueY + input.vbot) &&
       ink.top == dy + u (geom.valueY + input.vtop) : Except String Bool).toOption.getD false
 
-/-- Source neighbours witness the reserved interval: operand ink stays in the measured envelope and
-clear of the following source glyph. -/
+/-- The operand's ink stands where the shared geometry shifts its measured box. -/
 def bodyRoomAgrees (fonts : Font.FontSet) (out : Layout.Out)
     (metric : Math.CancelMetric) (spec : Math.CancelSpec) : Bool :=
   (do
@@ -53,10 +52,9 @@ def bodyRoomAgrees (fonts : Font.FontSet) (out : Layout.Out)
     let dx := actual.1 - Dim.Length.ofUnits expected.1
     let all := shippedBodyGlyphs out
     let body ← ShippedInk.targetInk fonts (all.filter (·.scalar == '𝑥'))
-    let (left, right) ← CancelAlignment.constructEndpoints out
     return body.left == dx + Dim.Length.ofUnits (geom.shift + metric.bodyLeft) &&
-      body.right == dx + Dim.Length.ofUnits (geom.shift + metric.bodyRight) &&
-      (!spec.room || body.inRoom left right) : Except String Bool).toOption.getD false
+      body.right == dx + Dim.Length.ofUnits (geom.shift + metric.bodyRight) :
+      Except String Bool).toOption.getD false
 
 /-- Ambient declarations reach the native resolver, and a stale callback is rejected when the active
 size changes. -/
@@ -96,8 +94,8 @@ def contextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
           check ref s!"cancel metric context: {name}/{operand} rejects a stale default size"
             (!(stale.any fun m => agrees fonts out m.em m.input spec "0𝑔"))
 
-/-- Negative spacing separates an operand's logical advance from its ink, and native reservation
-contains that ink. -/
+/-- Negative spacing separates an operand's logical advance from its ink, and the shared geometry
+places that ink. -/
 def signedRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for operand in ["\\!x", "x\\!\\!\\!\\!", "\\!\\!x\\!\\!\\!\\!"] do
     for room in [false, true] do
@@ -113,7 +111,7 @@ def signedRoomChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
         Layout.cancelMetric geom fonts #[] (.text false) spec body value
       check ref s!"cancel metric signed source: {operand}/{opts} preserves target and marks"
         (measured.any fun m => agrees fonts out m.em m.input spec "0𝑔")
-      check ref s!"cancel metric signed room: {operand}/{opts} carries operand ink beyond advance"
+      check ref s!"cancel metric signed room: {operand}/{opts} places operand ink beyond its advance"
         (measured.any fun m => bodyRoomAgrees fonts out m spec)
 
 end CancelMetric

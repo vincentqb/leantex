@@ -3843,25 +3843,25 @@ private def accentAssemble (e : MathEnv) (size raise : Length) (mark : Char)
     return (items, missing0)
 
 /-- The one measured input to cancellation geometry in both backends. -/
-private def cancelInput (e : MathEnv) (st : Math.MathStyle)
+private def cancelInput (e : MathEnv)
     (spec : Math.CancelSpec) (body value : Array Item) : Math.CancelIn :=
-  let size := e.sizeAt st
+  let text := e.sizeAt (.text false)
   let (top, bot) := mathItemsExtent e.fs body
   let ink := (mathItemsInk e.fs value).getD {}
-  let rule := e.constAt size e.consts.overbarRuleThickness
-  { rule := (if spec.thick then 2 * rule else rule).units
-    gap := (e.constAt size e.consts.overbarVerticalGap).units
+  { rule := Math.cancelRule spec.thick
     w := (mathItemsWidth body).units, top := top.units, bot := bot.units
     vw := (mathItemsWidth value).units
     vtop := ink.top, vbot := ink.bottom, vleft := ink.left, vright := ink.right
-    space := (e.constAt size e.consts.spaceAfterScript).units }
+    axis := (e.constAt text e.consts.axisHeight).units
+    supDrop := (e.constAt text e.consts.superscriptBaselineDropMax).units
+    supUp := (e.constAt text e.consts.superscriptShiftUp).units }
 
 /-- Assemble a laid cancel mark, cancel.sty's four commands, by `Math.cancelGeom`. -/
 private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     (mark : Math.CancelMark) (spec : Math.CancelSpec) (ink : Ir.Color)
     (bItems vItems : Array Item) : Array Item :=
   let size := e.sizeAt st
-  let input := cancelInput e st spec bItems vItems
+  let input := cancelInput e spec bItems vItems
   let w := mathLen input.w
   let vw := mathLen input.vw
   let g := Math.cancelGeom mark spec.room input
@@ -3873,7 +3873,7 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Length)
   let (mTop, mBot) := mathItemsExtent e.fs marks
   let raised := raiseItems raise bItems
   let body := #[mathKern e size shift] ++ raised
-  -- Only measured target ink follows the arrow's ray; a glyphless kern is not raised.
+  -- Only measured target ink is raised; a glyphless kern stays on the baseline.
   let vRaise := raise + if input.hasValueInk then mathLen g.valueY else 0
   let value := if vItems.isEmpty then #[] else
     let placed := raiseItems vRaise vItems
@@ -3884,19 +3884,7 @@ private def cancelAssemble (e : MathEnv) (st : Math.MathStyle) (raise : Length)
   let bot := min mBot (min (raise + mathLen input.bot)
     (if input.hasValueInk then vRaise + mathLen input.vbot else raise))
   let reach := struts e top bot
-  let assembled := ((marks ++ body ++ value).push (mathKern e size (advance - reached))) ++ reach
-  if !spec.room then assembled else
-  -- Reserve both sides by translating the whole assembly, never its target alone.
-  let bounds := (mathItemsInk e.fs assembled).getD {}
-  let left := min bounds.left (min g.shift (g.shift + input.w))
-  let right := max bounds.right (max g.shift (g.shift + input.w))
-  let target := input.hasValueInk || vw != 0
-  let left := if target then min left (min g.valueX (g.valueX + input.vw)) else left
-  let right := if target then max right (max g.valueX (g.valueX + input.vw)) else right
-  let (pad, width) := Math.inkRoom left right g.advance
-  if pad == 0 && width == g.advance then assembled else
-    #[mathKern e size (mathLen pad)] ++ assembled ++
-      #[mathKern e size (mathLen width - mathLen pad - advance)]
+  ((marks ++ body ++ value).push (mathKern e size (advance - reached))) ++ reach
 
 /-- A colour switch inside hidden content keeps the hidden paint. -/
 private def keepHidden (cur c : Ir.Color) : Ir.Color :=
@@ -4360,7 +4348,7 @@ public def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     let (vs, _) := layMathTail e (spec.size.style st) 0
       (Math.degrade value.classes) none (#[], missing) value
     let bounds := (mathItemsInk fs bs).getD {}
-    some { em := (e.sizeAt st).units, input := cancelInput e st spec bs vs
+    some { em := (e.sizeAt st).units, input := cancelInput e spec bs vs
            bodyLeft := bounds.left, bodyRight := bounds.right }
 
 public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)

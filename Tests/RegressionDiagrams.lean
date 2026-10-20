@@ -148,9 +148,10 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
     | .error e => t ("cancellation is measurable: " ++ e) false
     | .ok w =>
       let polys := ShippedInk.polygonsAt line
-      t "cancel target ink follows the forward diagonal" w.alongRay
-      t "cancel target clears the tip by the math font gap" w.clearsTip
-      t "cancel target clears the full shaft and head wings" (w.clearsMarks polys)
+      t "cancel target stands cancel.sty's kern past the tip" w.kernedFromTip
+      -- The descender may dip to the head's hull as cancel.sty's superscript lets it.
+      t "cancel target's digit clears the full shaft and head wings"
+        ((CancelAlignment.measure a.fonts one "0").toOption.any (·.clearsMarks polys))
       let glyphs := shippedBodyGlyphs one
       t "cancellation reserves room between its unchanged neighbors"
         (match ShippedInk.targetInk a.fonts (glyphs.filter (·.scalar == '𝑢')),
@@ -171,12 +172,19 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
           let first ← w.glyphs[0]?
           let em := anchor.size.units
           let css := fun n key => cssProperty (nodeAttr "style" n) key
-          let .elem _ _ #[_, value, overlay] := cancel | none
-          let vx ← readOffset em value
+          let .elem _ _ #[text, body, value] := cancel | none
+          let bodyAdvance ← (do
+            let left ← match css body "margin-left" with
+              | some l => readEm em l
+              | none => some 0
+            let w ← readEm em (nodeAttr "width" body)
+            let right ← readEm em (← css body "margin-right")
+            return left + max 0 w + right)
+          let vx ← (· + bodyAdvance) <$> readEm em (← css value "margin-left")
           let vy ← readEm em (nodeAttr "voffset" value)
-          let ox ← readOffset em overlay
-          let oy ← readEm em (nodeAttr "voffset" overlay)
-          let #[svg] := elemNodesOne (· == "svg") #[] overlay | none
+          let #[svg] := elemNodesOne (· == "svg") #[] text | none
+          let ox ← readEm em (← css svg "margin-left")
+          let oy ← readEm em (← css svg "margin-bottom")
           let [x0, y0, width, height] ←
             ((nodeAttr "viewBox" svg).splitOn " ").mapM String.toInt? | none
           let sw ← readEm em (← css svg "width")
@@ -194,8 +202,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
             let k : Int := (em + 1999999) / 2000000 + 1
             let eps := 6 * k * Dim.Length.quantum
             return chars value == "0𝑔" &&
-              ["width", "height", "depth"].all (fun k => nodeAttr k value == "0") &&
-              nodeAttr "preserveAspectRatio" svg == "none" &&
+              (nodeAttr "preserveAspectRatio" svg).isEmpty &&
               css svg "vertical-align" == some "baseline" &&
               (tip.1 - Dim.Length.ofUnits vx - (w.tip.1 - first.x)).abs ≤ eps &&
               (tip.2 - Dim.Length.ofUnits vy - (w.tip.2 + first.y)).abs ≤ eps

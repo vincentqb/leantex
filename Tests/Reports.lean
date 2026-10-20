@@ -477,10 +477,8 @@ def reports : List Report := [
     what := "a cancellation's target disappeared and coloured cancellation inside an aligned formula fell back to source text"
     pins := [check% cancelReportChecks, check% cancelGeometryChecks,
       check% cancelBoxChecks, check% cancelHtmlChecks,
-      thm% Math.cancelBand_between, thm% Math.cancelHead_between,
-      thm% Math.cancelShaft_between, thm% Math.cancelGeom_polys_between,
-      thm% Math.cancelGeom_to_polys_exact,
-      thm% Math.cancelto_value_clears_between]
+      thm% Math.cancelSlash_slope_mem, thm% Math.cancelVector_slope_mem,
+      thm% Math.cancelGeom_slash_centre_between]
     accept := ["the private presentation's cancellation formulas in both artifacts",
       "the invented cancellation page in the browser and its printed output"]
     state := .guarded "671e3fa6" .before .author },
@@ -594,12 +592,7 @@ def reports : List Report := [
   { id := "R65", date := "2026-10-01"
     what := "a native PDF cancellation target followed a superscript baseline instead of the arrow's direction and left no measured clearance from its tip"
     pins := [check% CancelAlignment.checks,
-      thm% Math.inkRayOrigin_between,
-      thm% Math.inkRayOrigin_forward_between,
-      thm% Math.inkRayOrigin_translation_exact,
-      thm% Math.inkRayOrigin_clears_between,
-      thm% Math.inkRoom_covers,
-      thm% Math.cancelto_value_between,
+      thm% Math.cancelto_anchor_exact,
       thm% Math.cancelto_room_covers]
     accept := ["native PDF renders of narrow, wide and tall arrows with ordinary and raised targets"]
     state := .guarded "41c36677" .before .reviewer },
@@ -745,10 +738,9 @@ def reports : List Report := [
     what := "cancellation arrows lost their visible heads and their targets sat below the forward ray instead of beyond the tip with measured clearance"
     pins := [check% CancelAlignment.checks, check% CancelMetric.checks,
       check% CancelContext.checks, check% CancelReview.checks,
-      check% cancelHtmlChecks, thm% Math.cancelHead_shape_exact,
+      check% cancelHtmlChecks,
       thm% Math.CancelIn.hasValueInk_contract, thm% MathMl.widthParts_contract,
-      thm% Math.inkRayOrigin_between, thm% Math.inkRayOrigin_clears_between,
-      thm% Math.cancelGeom_envelope_between, thm% Layout.cancelMetric_em_agree]
+      thm% Math.cancelto_anchor_exact, thm% Layout.cancelMetric_em_agree]
     accept := ["native guards failed before arrowheads retained their full triangle and the measured target ink was centered on the forward ray",
       "seventy-two shared-provider assertions failed before both artifacts used the native style and font measurements",
       "typed HTML guards failed 320 fraction-style assertions and 352 script-scale assertions before current-style projection removed browser-dependent implicit scaling",
@@ -2461,6 +2453,16 @@ def reports : List Report := [
       check% Tests.LeanStatements.leanStatementChecks, thm% LeanProse.parse_render_exact]
     accept := ["main's binary at 1e648c76 on an invented file of three clauses, the second of two: every element, is at most, both … and both, f(…) and Prod.fst(…), the guards failing there; this tree sets typed groups (for all bs : List Barge and cap : ℕ), symbols (b.draft ≤ b.draft + cap), the clauses as a numbered list and the second's as (a) and (b) a level in, each wrapped line under its item's text, variables as italic words and constants upright in the body's face, f x y, field notation and ×, an equivalence a quantifier opens as the following are equivalent: and its two sides, no item opening on a block, in the PDF and on the web page at a wide and a narrow measure",
       "the corpus built by main's binary at 351dd670 and by this tree's: every PDF byte-identical but the Lean prose fixture's; every web page's stylesheet gains one rule and every web page is visually the same but that fixture's and the box fixture's, whose lowered url tilde, a formula of one operator, now sets with no space either side, as its PDF does"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R284", date := "2026-10-20"
+    what := "a cancellation arrow ran along its operand's whole ink box from below a display limit to past the top corner, steeper than the cancel package's and starting left of the operand, in both artifacts; the web page drew it as a stretched picture beside the browser's own layout of the operand, a large operator's leading space pushing the operand off it"
+    pins := [check% cancelBoxChecks, check% CancelAlignment.checks, check% cancelHtmlChecks,
+      thm% Math.cancelSlash_slope_mem, thm% Math.cancelVector_slope_mem,
+      thm% Math.cancelGeom_slash_centre_between, thm% Math.cancelto_anchor_exact]
+    accept := ["the cancel tier, its oracle measuring leantex's PDF and its page in Chromium against lualatex 1.24 on an invented probe of every slope class",
+      "main's binary at 1e648c76 on the cancel probe: 4 of 20 cases within a tenth of an em of lualatex in the PDF and 4 in Chromium; this tree's: 18 and 16, the integral with both limits apart in each (its scripts stand closer in leantex's layout and lower in the browser's)",
+      "a private deck's two cancellation frames re-rendered: the arrow at the cancel package's quarter slope from under the limit to past the closing parenthesis, as lualatex sets it, in the PDF and the web page",
+      "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact byte-identical but the cancellation fixture, whose strokes and arrows now stand at the cancel package's slopes"]
     state := .guarded "1e648c76" .before .author }
 ]
 

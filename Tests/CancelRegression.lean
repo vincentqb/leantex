@@ -164,9 +164,8 @@ def cancelGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "cancel geometry: polygon bounds enter the shipped line's vertical extent"
     (box.above == q 900 && box.below == q 300 && box.inkAbove == q 900 && box.inkBelow == q 300)
 
-/-- Strikes stay inside the control band's corner-to-corner box and arrows inside
-`Math.cancelEnvelope`, over zero-area operands, all four math sizes, both room modes and both rule
-weights. -/
+/-- Strikes and arrows ship at cancel.sty's slopes, over zero-area operands, all four math sizes,
+both room modes and both rule weights. -/
 def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace
@@ -177,12 +176,6 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let glyphsAt (l : Layout.LineOut) :=
     shippedBodyGlyphs { pages := #[{ lines := #[l] }], diags := #[] }
   let targetGlyphs (l : Layout.LineOut) := (glyphsAt l).filter (·.scalar == '7')
-  let inside (bounds : ShippedInk.InkBounds)
-      (polys : Array (Array (Dim.Length × Dim.Length))) : Bool :=
-    !polys.isEmpty && polys.all fun pts =>
-      (ShippedInk.polygonHull pts).any fun mark =>
-        bounds.left ≤ mark.left && mark.right ≤ bounds.right &&
-          bounds.bottom ≤ mark.bottom && mark.top ≤ bounds.top
   -- Outline hulls enclose ink conservatively, so clearance needs a positive gap.
   let clearsInk (ink : ShippedInk.InkBounds)
       (placed : Array (Array (Dim.Length × Dim.Length))) : Bool :=
@@ -217,32 +210,6 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
             s!"{before}\\{cmd}\{{struck}}y{after}")
           (bodyLines (layoutOf fonts doc), ds)
         let label := s!"{shape}/{size}/{opts}"
-        let (control, _) := build "cancel"
-        let some controlLine := control[0]? |
-          t s!"cancel box: {label} ships the control line" false
-          continue
-        let some band := (polygons controlLine)[0]? |
-          t s!"cancel box: {label} ships the control band" false
-          continue
-        let #[style] := (glyphsAt controlLine).filter (·.scalar == '𝑦') |
-          t s!"cancel box: {label} ships one style witness" false
-          continue
-        let some font := fonts.fonts[style.face]? |
-          t s!"cancel box: {label} resolves the style face" false
-          continue
-        let some math := font.math |
-          t s!"cancel box: {label} has the font's MATH constants" false
-          continue
-        let rule := math.overbarRuleThickness * style.size / (font.unitsPerEm : Int) *
-          (if hasStr opts "thicklines" then 2 else 1)
-        t s!"cancel box: {label} has a positive font rule"
-          (font.unitsPerEm > 0 && rule > 0)
-        let some first := band[0]? |
-          t s!"cancel box: {label} control band has vertices" false
-          continue
-        let (x0, y0, x1, y1) := band.foldl
-          (fun (x0, y0, x1, y1) (x, y) => (min x0 x, min y0 y, max x1 x, max y1 y))
-          (first.1, first.2, first.1, first.2)
         for cmd in ["cancel", "bcancel", "xcancel", "cancelto{7}"] do
           let (lines, ds) := build cmd
           t s!"cancel box: {label}/{cmd} sets one line without recovery"
@@ -250,42 +217,37 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
           let some line := lines[0]? | continue
           let placed := polygonsAt line
           let polys := placed.map (·.2)
-          let points := polys.flatten
-          let (left, bottom, right, top) := if cmd == "cancelto{7}" then
-              let (l, b, r, t) := Math.cancelEnvelope x0.units y0.units x1.units y1.units rule.units
-              (Dim.Length.ofUnits l, Dim.Length.ofUnits b, Dim.Length.ofUnits r, Dim.Length.ofUnits t)
-            else (x0, y0, x1, y1)
-          let bounds : ShippedInk.InkBounds := { left, bottom, right, top }
-          t s!"cancel box: {label}/{cmd} ships every mark inside both axes"
-            (inside bounds polys)
-          -- One sp is the coordinate grid, not a perceptual tolerance.
-          for (edge, escaped) in [("left", (left - Dim.Length.quantum, bottom)),
-              ("right", (right + Dim.Length.quantum, bottom)), ("bottom", (left, bottom - Dim.Length.quantum)),
-              ("top", (left, top + Dim.Length.quantum))] do
-            let mutant := polys.mapIdx fun n pts =>
-              if n == 0 then pts.mapIdx (fun i p => if i == 0 then escaped else p)
-              else pts
-            t s!"cancel box: {label}/{cmd} rejects escape through {edge}"
-              (!inside bounds mutant)
-          t s!"cancel box: {label}/{cmd} rejects missing marks"
-            (!inside bounds #[] && !inside bounds (polys.push #[]))
-          t s!"cancel box: {label}/{cmd} keeps its marks and diagonal corners"
+          let slopes := if cmd == "cancelto{7}" then Math.cancelVectorSlopes
+            else Math.cancelSlashSlopes
+          -- A band's first edge runs along its centre line; the head's first vertex is the tip.
+          let strokes := polys.filter (·.size == 4)
+          t s!"cancel box: {label}/{cmd} ships cancel.sty's marks"
             (if cmd == "cancelto{7}" then
-              (polys.size == 1 || polys.size == 2) && points.contains (x1, y1)
-            else if cmd == "xcancel" then
-              polys.size == 2 && points.contains (x0, y0) && points.contains (x1, y1) &&
-                points.contains (x0, y1) && points.contains (x1, y0)
-            else
-              polys.size == 1 && points.contains (x0, if cmd == "cancel" then y0 else y1) &&
-                points.contains (x1, if cmd == "cancel" then y1 else y0))
+              (polys.size == 1 || polys.size == 2) && (polys.filter (·.size == 3)).size == 1
+            else polys.size == (if cmd == "xcancel" then 2 else 1) && strokes.size == polys.size)
+          t s!"cancel box: {label}/{cmd} strokes stand at cancel.sty's slopes"
+            (strokes.all fun pts =>
+              let dx := (pts[1]!.1 - pts[0]!.1).units
+              let dy := (pts[1]!.2 - pts[0]!.2).units
+              dx > 0 && dy != 0 && (cmd == "xcancel" || (cmd == "bcancel") == (dy < 0)) &&
+                slopes.any fun (run, rise) =>
+                  (dx * (rise : Int) - dy.natAbs * (run : Int)).natAbs ≤ 64)
+          if cmd == "xcancel" then
+            t s!"cancel box: {label} crosses a rising and a falling stroke"
+              (strokes.any (fun pts => pts[1]!.2 > pts[0]!.2) &&
+                strokes.any (fun pts => pts[1]!.2 < pts[0]!.2))
           if cmd == "cancelto{7}" then
             t s!"cancel box: {label} arrow clears its target"
               (arrowClearsTarget line)
           if hasStr opts "makeroom" then
+            -- A band's corner stands half its width off the centre line.
+            let slack := Math.cancelRule true
             t s!"cancel box: {label}/{cmd} holds every mark before the next atom"
               (match glyphX line "𝑦" with
                 | some yx => placed.all fun (pen, pts) =>
-                    pts.all fun (x, _) => line.x ≤ pen + x && pen + x ≤ yx
+                    pts.all fun (x, _) =>
+                      line.x ≤ pen + x + Dim.Length.ofUnits slack &&
+                        pen + x ≤ yx + Dim.Length.ofUnits slack
                 | none => false)
 
   -- Nonempty vertices alone do not witness the filled arrowhead's ink.
