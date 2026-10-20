@@ -9671,7 +9671,7 @@ private inductive Op where
   | pageOpening (opening : Ir.PageOpening)
   /-- Column markers: `colOpen` saves the vertical position, `colNext`
   rewinds to it, `colClose` resumes below the tallest column. -/
-  | colOpen (pos : Array Ir.BoxPos)
+  | colOpen (pos : Array Ir.BoxPos) (tex : Bool)
   | colNext
   | colClose
   /-- Style for the page being opened: a background fill and
@@ -9816,6 +9816,8 @@ public structure Spacing.Context where
   /-- The list being collected opens an item, in its label, where LaTeX's `\@noparlist` sets no
   skip above or below it. -/
   private inLabel : Bool := false
+  /-- A row of boxes set here is a paragraph's line of its own, not one an item's label row holds. -/
+  private texRows : Bool := true
   /-- The labels of the item whose block this walk opens on, outermost first, each with its item's
   indent, until that block's first paragraph line takes them (`\@donoparitem`). -/
   private labels : Array Spacing.Mark := #[]
@@ -11249,7 +11251,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       prev := 0
       let row := rows[i]
       -- Every cell stands on the row's baseline by its first line, as an `\halign` entry does.
-      a := { a with ops := a.ops.push (.colOpen (Array.replicate row.size .first)) }
+      a := { a with ops := a.ops.push (.colOpen (Array.replicate row.size .first) false) }
       for j in [0:row.size] do
         let sp := Ir.cellSpan? spans i j
         let spec := Ir.cellSpec cols spans i j
@@ -11477,19 +11479,28 @@ public theorem vphantom_absorbed (fs : FontSet) (size : Length) (segs : Array Se
   unfold labelVExtent
   rw [Array.foldl_push, labelVStep_glyph_id, Array.foldl_push, labelVStep_idem]
 
+/-- The math axis's height above the baseline of text at `size`, the math face's; zero without one. -/
+public def textAxis (fs : FontSet) (size : Length) : Length :=
+  match fs.mathFont? with
+  | some (_, f, c) =>
+    let base : Length := mathLen (Math.mathSize size.units.toNat fs.body.xHeightOptical
+      fs.body.unitsPerEm f.xHeightOptical f.unitsPerEm : Nat)
+    c.axisHeight * base / (f.unitsPerEm : Int)
+  | none => 0
+
 /-- Resolve a set label line once: the font band places its
 baseline and the measured glyph extent reserves its ink. -/
 public def measureLabelLine (fs : FontSet) (size width ex : Length) (segs : Array Seg) :
     Ir.Pic.LabelInk :=
   let band := labelVExtent fs size segs
   let ink := labelGlyphExtent fs size segs
-  let (axis, rule, script) : Length × Length × Nat := match fs.mathFont? with
+  let axis := textAxis fs size
+  let (rule, script) : Length × Nat := match fs.mathFont? with
     | some (_, f, c) =>
       let base : Length := mathLen (Math.mathSize size.units.toNat fs.body.xHeightOptical
         fs.body.unitsPerEm f.xHeightOptical f.unitsPerEm : Nat)
-      (c.axisHeight * base / (f.unitsPerEm : Int),
-       c.fractionRuleThickness * base / (f.unitsPerEm : Int), c.scales.script * 10)
-    | none => (0, 0, 0)
+      (c.fractionRuleThickness * base / (f.unitsPerEm : Int), c.scales.script * 10)
+    | none => (0, 0)
   { w := width, height := band.1, depth := band.2
     boxHeight := ink.1, boxDepth := ink.2, ex := ex, axis, rule, script }
 
@@ -13887,9 +13898,10 @@ private def collectItem (r : Rd) (a : Acc)
           -- The label line stands by its baseline, the box by the point its position names, the two
           -- one unbreakable box, as the label's line is in TeX.
           let a := (((a.flushGap r).pushOp .floatOpen).pushOp
-            (.colOpen #[if pos == .center then .last else pos, pos])).markLine r mark indent outer
+            (.colOpen #[if pos == .center then .last else pos, pos] false)).markLine r mark indent outer
           let shift := outer.foldl (· + ·.shift) mark.shift
-          ((collectBlock r (a.pushOp .colNext) b (indent + shift)).pushOp .colClose).pushOp .floatClose
+          ((collectBlock { r with texRows := false } (a.pushOp .colNext) b (indent + shift)).pushOp
+            .colClose).pushOp .floatClose
         -- Any other block follows the line the label sets on its own, as `\@item`'s paragraph.
         else collectBlock r (a.markLine r mark indent outer).wantGap b indent
       | b, false => collectBlock r a b indent
@@ -13992,6 +14004,11 @@ private def collectCentered (r : Rd) (a : Acc)
       (r.floatTail && rest.any Ir.Block.captionMark && rest.all Ir.Block.captionTailish)
     collectCentered (if statefulBlock blk || waits then r else { r with labels := #[] })
       (if ends || statefulBlock blk then a else a.wantGap) rest indent (ruleBlock blk)
+
+/-- Whether a row holds a picture, whose own baseline the row's TeX box does not model, so the row
+stands as the flow places it. -/
+private def holdsPicture (cols : Array (BoxWidth × Array Block)) : Bool :=
+  cols.any fun c => Ir.foldBlocks (fun acc b => acc || b matches .picture ..) (fun acc _ => acc) false c.2
 
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
@@ -14345,11 +14362,12 @@ private def collectBlock (r : Rd) (a : Acc)
       | some k => { (a.pushOp .floatOpen).pushOp (.regionOpen (.box k)) with
           ground := k.ground.or a.ground }
       | none => a
-    let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
+    let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos)) (r.texRows && !holdsPicture cols)) }
     -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage, and the page's own
     -- `\parskip` stands there over a list's `\parsep`.
     let inner := { (r.within blk) with
-      centreBoxes := false, geom := { r.geom with flushRight := false, texParskip := r.pageParskip } }
+      centreBoxes := false, texRows := true
+      geom := { r.geom with flushRight := false, texParskip := r.pageParskip } }
     let a := collectColumns inner a cols.toList (indent + off + inset)
       (natural.getD (shareW - 2 * inset)) gutter total
     let a := { a with ops := a.ops.push .colClose }
@@ -16759,7 +16777,7 @@ private def stagedLabelRequests (ops : Array Op) : Array LabelAudit.Request :=
       | .pageStyle _ _ | .pageGround _ | .titleBar _ _ _ | .frameOpen _ _ _
       | .frameClose | .boxAnchor _ _ _ | .hrule _ _ | .tableRule _ _ _ _
       | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .regionOpen _
-      | .regionClose | .colOpen _ | .colNext | .colClose | .setLogo _
+      | .regionClose | .colOpen _ _ | .colNext | .colClose | .setLogo _
       | .floatOpen | .floatClose | .anchor _ | .slotOpen | .slotClose _
       | .anchorRule _ | .noInterline | .texInterline | .clearDepth | .displayOpen _ _ _ => #[]
 
@@ -16817,6 +16835,12 @@ private structure ColSave where
   bottom : Option ColEnd := none
   source : Option Span := none
   pos : Array Ir.BoxPos := #[]
+  /-- The row is a paragraph's line of boxes, set by TeX's interline rule, owing `inset` above;
+  `interline` where a line above on its page spaces it, not a page top, an anchor or
+  `\nointerlineskip`. -/
+  tex : Bool := false
+  interline : Bool := false
+  inset : Length := 0
   page : Nat := 0
   marks : Array ColMark := #[]
   /-- Whether each region open at the row had set a line, which each column starts from. -/
@@ -16998,6 +17022,43 @@ private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat ×
 private def Spacing.Page.colMark (b : B) : ColMark :=
   { lines := b.cur.lines.size, fills := b.cur.fills.size, inks := b.cur.inks.size }
 
+/-- Whether a row of boxes opening here takes TeX's interline glue from the line above: a line on
+its page, not an anchor, `\nointerlineskip`, a frame's opening box or a painted surface's top
+standing between them. -/
+private def Spacing.Page.rowInterline (b : B) (fresh : Bool) : Bool :=
+  !fresh && !b.ignoreDepth && b.colAnchor.isNone && !b.opening &&
+    b.openRegions.all fun s => s.begun || !(s.kind matches .surface .. | .edge ..)
+
+/-- The highest point a column reaches between two marks: each line's box above its baseline, each
+fill's top and each picture's. -/
+private def rowBoxTop (cur : PageOut) (m : ColMark) (next : Option ColMark) : Option Length :=
+  let up (t : Option Length) (y : Length) : Option Length := some ((t.map (min · y)).getD y)
+  let t := (cur.lines.extract m.lines ((next.map (·.lines)).getD cur.lines.size)).foldl
+    (fun t (l : LineOut) => up t (l.y - ((l.regionExtent.map (·.1)).getD 0))) none
+  let t := (cur.fills.extract m.fills ((next.map (·.fills)).getD cur.fills.size)).foldl
+    (fun t (f : Fill) => up t f.y) t
+  (cur.inks.extract m.inks ((next.map (·.inks)).getD cur.inks.size)).foldl
+    (fun t (k : InkOut) => up t k.topLeft.2) t
+
+/-- A row of boxes' height above `target` and depth below it once each box stands on it, where
+every box that set something set a line. -/
+private def texRowExtent (save : ColSave) (tops : Array (Option Length)) (refs : Array Length)
+    (target : Length) : Option (Length × Length) := Id.run do
+  let mut top : Option Length := none
+  let mut bottom : Option Length := none
+  for ((m, r), t) in (save.marks.zip refs).zip tops do
+    if m.contributes then
+      let shift := target - r
+      match t with
+      | some t =>
+        top := some ((top.map (min · (t + shift))).getD (t + shift))
+        bottom := some ((bottom.map (max · (m.y + m.boxDepth + shift))).getD
+          (m.y + m.boxDepth + shift))
+      | none => return none
+  return match top, bottom with
+    | some t, some d => some (target - t, d - target)
+    | _, _ => none
+
 /-- A column ends where the builder stands; a zero-width strut still owns its height. -/
 private def ColMark.finish (m : ColMark) (save : ColSave) (b : B) : ColMark :=
   { m with y := b.y, depth := b.prevDepth, below := b.prevBelow, band := b.prevBand
@@ -17015,13 +17076,15 @@ private def ColSave.finish (save : ColSave) (b : B) : ColSave :=
               bottom := ColEnd.remember save.bottom b.colEnd
                 (marks.back?.any (·.contributes)) }
 
-/-- A row stands its boxes on one baseline, each by the
-reference point its `[pos]` names (latex.ltx `\@iiiparbox`). -/
-private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
+/-- A row stands its boxes on one baseline by their `[pos]` (latex.ltx `\@iiiparbox`); a TeX row
+centres a box on the math axis and is spaced as one line by TeX's interline rule. -/
+private def Spacing.Page.alignRow (b : B) (fs : FontSet) (save : ColSave) : B :=
+  let axis := if save.tex then some (textAxis fs b.geom.fontSize) else none
+  let lineEnd (k : Nat) : Nat := (save.marks[k + 1]?.map (·.lines)).getD b.cur.lines.size
+  let tops := save.marks.mapIdx fun k m => rowBoxTop b.cur m save.marks[k + 1]?
   let refOf (k : Nat) (m : ColMark) : Length :=
     if !m.contributes then save.y else
-    let lineEnd := (save.marks[k + 1]?.map (·.lines)).getD b.cur.lines.size
-    let firstLine := if m.lines < lineEnd then (b.cur.lines[m.lines]?.map (·.y)).getD m.y
+    let firstLine := if m.lines < lineEnd k then (b.cur.lines[m.lines]?.map (·.y)).getD m.y
       else m.y
     match save.pos[k]?.getD .top with
     | .top => save.y
@@ -17032,14 +17095,27 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
     | .center =>
       if save.pos.contains .last && m.lines < lineEnd then
         (firstLine + m.y) / 2 - Ir.leadingFor b.geom.fontSize b.geom.leading / 5 + b.geom.fontSize / 4
-      else (save.y + m.y + m.depth) / 2
+      else match axis, tops[k]?.join with
+        | some ax, some t => (t + m.y + m.boxDepth) / 2 + ax
+        | _, _ => (save.y + m.y + m.depth) / 2
   let refs := save.marks.mapIdx refOf
-  let target := refs.foldl max save.y
+  -- A line of boxes stands on its boxes' points alone, wherever the flow stood before it.
+  let placed := (save.marks.zip refs).filterMap fun (m, r) => if m.contributes then some r else none
+  let target := match axis, placed[0]? with
+    | some _, some r0 => placed.foldl max r0
+    | _, _ => refs.foldl max save.y
+  let row := axis.bind fun _ => texRowExtent save tops refs target
+  let bs := Ir.leadingFor b.geom.fontSize b.geom.leading
+  let base := match row with
+    | some (h, _) =>
+      if save.interline then save.y + save.skip.width + texBaselineGap bs save.boxDepth (h + save.inset)
+      else target
+    | none => target
   let dyAt (start : ColMark → Nat) (i : Nat) : Length := Id.run do
     let mut d : Length := 0
     for k in [0:save.marks.size] do
       if let some m := save.marks[k]? then
-        if m.contributes && start m ≤ i then d := target - refs[k]!
+        if m.contributes && start m ≤ i then d := target - refs[k]! + (base - target)
     return d
   let lines := b.cur.lines.mapIdx fun i l => { l with y := l.y + dyAt (·.lines) i }
   let fills := b.cur.fills.mapIdx fun i f => { f with y := f.y + dyAt (·.fills) i }
@@ -17053,19 +17129,25 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
       ColEnd.remember acc last m.contributes) none
   let contributed := ending.isSome
   let ending := ending.getD save.opening
-  let tail := ending.tail
+  let tail : Spacing.Tail := match row with
+    | some (_, d) =>
+      -- The leaded reach below stays where the joined columns' ends put it.
+      { y := base, depth := d, boxDepth := d, band := ending.tail.band
+        below := max d (ending.tail.y + ending.tail.below - target) }
+    | none => ending.tail
   { b with cur := { b.cur with lines := lines, fills := fills, inks := inks }
            y := tail.y, prevDepth := tail.depth, prevBelow := tail.below, prevBand := tail.band
            lastSource := ending.source, lastInk := some (tail.y, tail.depth, tail.boxDepth)
+           texAfter := b.texAfter || row.isSome
            skip := if contributed then {} else save.skip
            freshStart := if contributed then false else save.fresh
            needed := max b.needed (tail.y + tail.depth - b.geom.bodyBottom)
            neededSource := if b.needed < tail.y + tail.depth - b.geom.bodyBottom then ending.source
              else b.neededSource }
 
-private theorem alignRow_shipped_id (b : B) (save : ColSave) :
-    (b.alignRow save).pages = b.pages ∧ (b.alignRow save).geom = b.geom ∧
-    (b.alignRow save).docBg = b.docBg ∧ (b.alignRow save).noBreak = b.noBreak := by
+private theorem alignRow_shipped_id (b : B) (fs : FontSet) (save : ColSave) :
+    (b.alignRow fs save).pages = b.pages ∧ (b.alignRow fs save).geom = b.geom ∧
+    (b.alignRow fs save).docBg = b.docBg ∧ (b.alignRow fs save).noBreak = b.noBreak := by
   simp [Spacing.Page.alignRow]
 
 /-- Place `Op.boxAnchor` where its rule puts it below the band above, then the shift. -/
@@ -17242,7 +17324,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         below := below
         band := .rule
         header := b.curBand } }
-  | .colOpen pos =>
+  | .colOpen pos tex =>
     -- On a fresh page the columns' bottom starts at the body top, not the last page's line.
     let fresh := b.fresh
     -- Below an anchor the row is TeX's first box (`Spacing.Page.colAnchor`).
@@ -17254,7 +17336,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       prevBand := b.prevBand, skip := b.skip
       fresh := fresh
       source := b.lastSource
-      pos := pos, page := b.pages.size, marks := #[b.colMark]
+      pos := pos, tex := tex, interline := b.rowInterline fresh
+      inset := b.surfaceTop, page := b.pages.size, marks := #[b.colMark]
       begun := b.openRegions.map (·.begun) }
   | .colNext =>
     if let some save := colSaves.back? then
@@ -17276,7 +17359,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       let save := save.finish b
       if save.pos.any (· != .top) && save.marks.size == save.pos.size &&
           b.pages.size == save.page then
-        b := b.alignRow save
+        b := b.alignRow fs save
       else
         let ending := save.bottom.getD save.opening
         b := { b with y := ending.tail.y, prevDepth := ending.tail.depth
@@ -17825,9 +17908,10 @@ private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Length)
    placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors
       paintPadding step rs strut h⟩
 
-private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
-    (b.alignRow save).pages = b.pages ∧ (b.alignRow save).noBreak = true :=
-  let p := alignRow_shipped_id b save
+private theorem alignRow_pages_noBreak (b : B) (fs : FontSet) (save : ColSave)
+    (h : b.noBreak = true) :
+    (b.alignRow fs save).pages = b.pages ∧ (b.alignRow fs save).noBreak = true :=
+  let p := alignRow_shipped_id b fs save
   ⟨p.1, p.2.2.2.trans h⟩
 
 private theorem placeSlot_noBreak (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
@@ -18415,8 +18499,8 @@ driver, `stepStaged` placing a single cursor. -/
 private def stepFlow (fs : FontSet) (imgs : Image.Store) (st : FlowSt)
     (op : Op) : FlowSt :=
   match op, st.columns with
-  | .colOpen pos, _ =>
-    let placed := stepStaged fs imgs st.placed (.colOpen pos)
+  | .colOpen pos tex, _ =>
+    let placed := stepStaged fs imgs st.placed (.colOpen pos tex)
     { placed := placed, columns := { start := placed.b } :: st.columns }
   | .colNext, save :: rest =>
     let placed := stepStaged fs imgs st.placed .colNext
@@ -18513,8 +18597,8 @@ private theorem stepFlow_ground (fs : FontSet) (imgs : Image.Store)
     (h : FlowGround g d st) (hg : op.preservesGround = true) :
     FlowGround g d (stepFlow fs imgs st op) := by
   cases op with
-  | colOpen pos =>
-    have hp := h.1.step (bgStep_stepStaged fs imgs st.placed (.colOpen pos) hg)
+  | colOpen pos tex =>
+    have hp := h.1.step (bgStep_stepStaged fs imgs st.placed (.colOpen pos tex) hg)
     refine ⟨hp, ?_⟩
     simp only [stepFlow, List.forall_mem_cons]
     exact ⟨⟨hp, by simp⟩, h.2⟩
@@ -18840,8 +18924,8 @@ private theorem frameStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Na
   simp only [Spacing.Page.placeSlot]
   split <;> exact FrameStep.of_eq rfl rfl
 
-private theorem frameStep_alignRow (b : B) (save : ColSave) :
-    FrameStep b (b.alignRow save) := by
+private theorem frameStep_alignRow (b : B) (fs : FontSet) (save : ColSave) :
+    FrameStep b (b.alignRow fs save) := by
   refine FrameStep.of_eq ?_ ?_ <;> simp [Spacing.Page.alignRow, Spacing.Page.frameStamp]
 
 private def Op.frameOpening? : Op → Option FrameOpening
@@ -19020,8 +19104,8 @@ private theorem stepFlow_frames (fs : FontSet) (imgs : Image.Store)
     (h : FlowFooted openings st) (ho : ∀ f ∈ op.frameOpening?, f ∈ openings) :
     FlowFooted openings (stepFlow fs imgs st op) := by
   cases op with
-  | colOpen pos =>
-    have hp := stepStaged_frames fs imgs st.placed (.colOpen pos) openings h.1 ho
+  | colOpen pos tex =>
+    have hp := stepStaged_frames fs imgs st.placed (.colOpen pos tex) openings h.1 ho
     refine ⟨hp, ?_⟩
     simp only [stepFlow, List.forall_mem_cons]
     exact ⟨⟨hp, by simp⟩, h.2⟩
@@ -19337,8 +19421,8 @@ private theorem reflowStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × N
   simp only [Spacing.Page.placeSlot]
   split <;> exact ReflowStep.of_eq rfl rfl
 
-private theorem reflowStep_alignRow (b : B) (save : ColSave) :
-    ReflowStep b (b.alignRow save) := by
+private theorem reflowStep_alignRow (b : B) (fs : FontSet) (save : ColSave) :
+    ReflowStep b (b.alignRow fs save) := by
   refine ReflowStep.of_eq ?_ ?_ <;> simp [Spacing.Page.alignRow]
 
 private theorem stepStaged_reflows (fs : FontSet) (imgs : Image.Store)

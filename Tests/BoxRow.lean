@@ -24,7 +24,8 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let row := linesOf (doc "\\hfill\n")
   match lineWith row "Left", lineWith row "Right" with
   | some l, some r =>
-    t "two boxes with a fill between stand on one line" (l.y == r.y)
+    -- Undeclared boxes stand centred, so lines whose glyphs reach apart stand a hair apart.
+    t "two boxes with a fill between stand on one line" ((l.y - r.y).abs ≤ (Dim.pt 1 / 2).abs)
     t "the first box stands at the margin" (l.x == geom.hmargin)
     t "the second box starts where its declared width ends the measure"
       (decide (r.x ≥ geom.hmargin + geom.textWidth - geom.textWidth * 45 / 100 - Dim.Length.quantum))
@@ -92,11 +93,18 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      | [s], [b] => s == b
      | _, _ => false)
   let cRow := two "[c]" "Short." tall
+  -- A box's middle: halfway from its first line's top to its last line's bottom.
+  let middle (ls : List Layout.LineOut) : Option Dim.Length := do
+    let first ← ls.head?
+    let last ← ls.getLast?
+    let (above, _) := first.regionExtent.getD (0, 0)
+    let (_, below) := last.regionExtent.getD (0, 0)
+    pure ((first.y - above + last.y + below) / 2)
+  let cLines := linesOf cRow
   t "a [c] row stands each box on its middle"
-    (match ys cRow "Short", tallYs cRow with
-     | [s], y1 :: rest@(_ :: _) =>
-       let yn := rest.getLast?.getD y1
-       decide (s - (y1 + yn) / 2 ≤ Dim.Length.quantum ∧ (y1 + yn) / 2 - s ≤ Dim.Length.quantum)
+    (match middle (cLines.filter fun l => hasStr (lineText l) "Short").toList,
+        middle (cLines.filter fun l => !hasStr (lineText l) "Short").toList with
+     | some s, some m => decide (s - m ≤ Dim.Length.quantum ∧ m - s ≤ Dim.Length.quantum)
      | _, _ => false)
   t "an honoured box position names nothing"
     (!((elabStr bRow).2.any (·.code == "N0102")) && !((elabStr tRow).2.any (·.code == "N0102")))

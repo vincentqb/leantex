@@ -32,7 +32,7 @@ para
       text "probe"
   text " keeps its tilde low."
 columns
-  column 120pt in raise 0 frame ink pad 3pt rule 0.4pt
+  column 120pt [c] in raise 0 frame ink pad 3pt rule 0.4pt
     para
       text "An invented framed block of words."
 columns

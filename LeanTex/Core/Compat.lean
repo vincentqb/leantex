@@ -12702,11 +12702,11 @@ private def boxAt (rs : Array Raw) (i : Nat) :
   | some (.env "minipage" b p) =>
     (boxParts b).map fun (w, c, pos, o) => (w, c, pos, o, p, i + 1)
   | some (.ctrl wrapper wp) =>
-    if let some n := frameArgs? wrapper then
-      let (_, j0) := takeOpts rs (i + 1) 1
-      let (args, j) := takeGroups rs j0 n
+    let lead? : Option Nat := (frameArgs? wrapper).bind fun n =>
+      let (args, j) := takeGroups rs (takeOpts rs (i + 1) 1).2 n
+      if args.size == n then some j else none
+    if let some j := lead? then
       let k := skipSpaces rs j
-      if args.size != n then none else
       match rs[k]? with
       | some (.group g gp) =>
         (soleMinipage g).bind fun mb => (boxParts mb).map fun (w, c, pos, o) =>
@@ -12730,9 +12730,39 @@ private def boxAt (rs : Array Raw) (i : Nat) :
 elaboration resolves the link names. -/
 public def linkedBoxRowMark : String := " linked box row"
 
-/-- Each run of minipages at one level separated by glue
-holding a fill, as one `{columns}` row. -/
-private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) := Id.run do
+/-- A box's width as a share of the text width, in thousandths, where it is written as one. -/
+private def widthShare? (w : Raw) : Option Nat :=
+  match w with
+  | .group g _ =>
+    let src := (rawSrc g).trimAscii.toString
+    ["\\textwidth", "\\linewidth", "\\columnwidth"].findSome? fun unit =>
+      if src.endsWith unit then
+        let factor := (src.dropEnd unit.length).toString.trimAscii.toString
+        if factor.isEmpty then some 1000 else
+        (Decl.parseDecimal factor).map fun (m, sc) => (m * 1000 / ((max 1 sc : Nat) : Int)).toNat
+      else none
+  | _ => none
+
+/-- Whether boxes spaces part fit the line beside one another, as TeX sets them only where they
+do: each a share of the text width, together under a whole less about a space's hundredth for
+each space; a box of another width breaks the line. -/
+private def rowFits (widths : Array Raw) (spaces : Nat) : Bool :=
+  match widths.mapM widthShare? with
+  | some shares => shares.foldl (· + ·) 0 + 11 * spaces ≤ 1000
+  | none => false
+
+/-- The interword space between two boxes a space parts, cmr10's `\fontdimen2`: a third of the
+class size. -/
+private def rowSpace (classPt : Option Nat) (p : Pos) : Raw :=
+  let pt := classPt.getD 10
+  let milli := pt * 1000 / 3
+  .group #[.word s!"{milli / 1000}.{toString (1000 + milli % 1000) |>.drop 1}pt" p] p
+
+/-- Each run of minipages at one level separated by glue, as one `{columns}` row: a fill between
+them spends the row's slack there, else they stand side by side, a space apart where one parts
+them, the slack after the last; a box declaring no `[pos]` stands centred, as LaTeX's does. -/
+private def boxRows (rs : Array Raw) (classPt : Option Nat := none) :
+    Array Raw × Array (Pos × Bool × Bool) := Id.run do
   let mut out : Array Raw := #[]
   let mut rows : Array (Pos × Bool × Bool) := #[]
   let mut i := 0
@@ -12763,30 +12793,45 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
         i := pk + 1
       else
         let mut cols : Array (Raw × Array Raw × Array Raw × Pos) := #[(w0, c0, pos0, cp0)]
+        -- Each gap's glue: none, a space or a fill.
+        let mut gaps : Array Nat := #[]
         let mut opts := o0
         let mut j := next0
         for _ in [next0:rs.size + 1] do
           let mut k := j
           let mut fill := false
+          let mut space := false
           for _ in [j:rs.size + 1] do
             match rs[k]? with
             | some r =>
               if rowGlue r then
-                if !(r matches .space) then fill := true
+                if r matches .space then space := true else fill := true
                 k := k + 1
               else break
             | none => break
           match boxAt rs k with
           | some (w, c, ps, o, cp, nextk) =>
-            if fill then
+            if fill || !space ||
+                rowFits ((cols.map (·.1)).push w) ((gaps.filter (· == 1)).size + 1) then
               cols := cols.push (w, c, ps, cp)
+              gaps := gaps.push (if fill then 2 else if space then 1 else 0)
               opts := opts || o
               j := nextk
             else break
           | none => break
         if cols.size ≥ 2 then
-          let row := Raw.env "columns"
-            (cols.map fun (w, c, ps, cp) => Raw.env "column" (ps ++ #[w] ++ c) cp) cp0
+          -- Fills alone spend the slack between every two boxes; else each gap stands as written.
+          let fills := gaps.all (· == 2)
+          let column (k : Nat) (col : Raw × Array Raw × Array Raw × Pos) : Array Raw :=
+            let (w, c, ps, cp) := col
+            let ps := if ps.isEmpty then #[.sym '[' cp, .word "c" cp, .sym ']' cp] else ps
+            let gap := if fills || k == 0 then #[] else match gaps[k - 1]? with
+              | some 1 => #[Raw.env "column" #[rowSpace classPt cp] cp]
+              | some 2 => #[Raw.env "column" #[] cp]
+              | _ => #[]
+            gap.push (Raw.env "column" (ps ++ #[w] ++ c) cp)
+          let row := Raw.env "columns" ((cols.mapIdx column).flatten ++
+            if gaps.contains 2 then #[] else #[Raw.env "column" #[] cp0]) cp0
           let source := rs.extract i j
           if source.any (fun r => r matches .ctrl "href" _ | .ctrl "hyperlink" _) then
             out := out.push (.env linkedBoxRowMark
@@ -12806,21 +12851,25 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
 
 /-- One level of rows, formed and noted as translations onto
 the columns model. -/
-private def boxRowEmit (rs : Array Raw) : M (Array Raw) := do
-  let (out, rows) := boxRows rs
+private def boxRowEmitAt (classPt : Option Nat) (rs : Array Raw) : M (Array Raw) := do
+  let (out, rows) := boxRows rs classPt
   for (p, opts, withPic) in rows do
     if withPic then
       became "\\parbox[pos]{w}{…} \\begin{tikzpicture}…"
         "one row: the box, then the picture where it ends, each on the baseline by its own point"
         p (subject := some "env:box-picture-row")
     else
-      became "\\begin{minipage}…\\end{minipage}\\hfill\\begin{minipage}…"
-        "one row of boxes, the fill between them" p (subject := some "env:minipage-row")
+      became "\\begin{minipage}…\\end{minipage}…\\begin{minipage}…"
+        "one row of boxes, the glue between them as written" p (subject := some "env:minipage-row")
     if opts then
       sayOnce "env:minipage-row-options" .N0102
         "'minipage' [height] and [inner-pos] options are ignored in a row of boxes: each \
 box is as tall as its content" p
   return out
+
+/-- One level of rows at the class size in force. -/
+private def boxRowEmit (rs : Array Raw) : M (Array Raw) := do
+  boxRowEmitAt (← get).classPt rs
 
 /-- beamer's `\begin{columns}[t]` alignment carried onto
 every column that declares none. -/
@@ -12941,10 +12990,10 @@ private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
     | exact hs
     | intro _ s' hs'; exact say_tailDiag d _ _ _ _ _ _ _ _ _ _ hs'
 
-private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
-    (h : TailDiag d st) : TailDiag d (boxRowEmit rs st).2 := by
-  unfold boxRowEmit
-  generalize boxRows rs = result
+private theorem boxRowEmitAt_tailDiag (classPt : Option Nat) (rs : Array Raw) (d : Diag) (st : St)
+    (h : TailDiag d st) : TailDiag d (boxRowEmitAt classPt rs st).2 := by
+  unfold boxRowEmitAt
+  generalize boxRows rs classPt = result
   rcases result with ⟨out, rows⟩
   apply state_bind_inv (TailDiag d)
   · apply state_array_forIn_inv (TailDiag d) _ rows () st h
@@ -12960,6 +13009,10 @@ private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
         · exact state_bind_inv (TailDiag d) _ _ s'
             (sayOnce_minipage_tailDiag d _ _ _ _ _ _ hs') (fun _ _ hp => hp)
   · intro _ s hs; exact hs
+
+private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
+    (h : TailDiag d st) : TailDiag d (boxRowEmit rs st).2 :=
+  boxRowEmitAt_tailDiag st.classPt rs d st h
 
 mutual
 

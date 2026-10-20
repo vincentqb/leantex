@@ -53,7 +53,7 @@ frame
         text "marked words"
     text " close the line."
   columns
-    column 113.811pt
+    column 113.811pt [c]
       para
         decoration highlight alertmark #FACC15
           color alert #1C1917

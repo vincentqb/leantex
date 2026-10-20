@@ -469,8 +469,56 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let (_, _, html, _) := sourceArtifacts fonts
     (doc "" "\\noindent\\fcolorbox{red}{yellow}{\\begin{minipage}{100pt}Alpha\\end{minipage}}")
   t "box blocks: the web page's box paints its ground, frame and padding round the minipage"
-    (hasStr html "class=\"column\" style=\"container-type: inline-size; box-sizing: border-box; background-color:" &&
+    (hasStr html "class=\"column\" style=\"container-type: inline-size; align-self: center; box-sizing: border-box; background-color:" &&
       hasStr html s!"border: {(Dim.pt 2 / 5).toBpString}pt solid" &&
       hasStr html s!"padding: {(Dim.pt 3).toBpString}pt\">")
+  -- a row of boxes is one TeX line: its baseline and the next line's by TeX's interline rule
+  let ink (out : Layout.Out) (w : String) : Dim.Length × Dim.Length :=
+    ((lineOf out w).bind (·.regionExtent)).getD (0, 0)
+  let yOf (out : Layout.Out) (w : String) : Dim.Length := ((lineOf out w).map (·.y)).getD 0
+  let lone (pos : String) := layout (doc "\\setlength{\\parskip}{0pt}\n"
+    ("Alpha gypsy line.\n\n\\noindent\\begin{minipage}" ++ pos ++ "{100pt}Bravo\\\\ Charlie\\\\ " ++
+      "Delta\\end{minipage}\n\nEcho line."))
+  let tall := lone "[t]"
+  let low := lone "[b]"
+  let mid := lone ""
+  let tallAfter := yOf tall "Echo" - yOf tall "Delta"
+  t s!"box blocks: below a tall box the next line stands a lineskip clear of its depth ({tallAfter.toBpString})"
+    (tallAfter == (ink tall "Delta").2 + pt 1 + (ink tall "Echo").1)
+  let lowBefore := yOf low "Bravo" - yOf low "Alpha"
+  t s!"box blocks: above a box standing on its last line the box stands a lineskip below the line above ({lowBefore.toBpString})"
+    (lowBefore == (ink low "Alpha").2 + pt 1 + (ink low "Bravo").1)
+  t "box blocks: an undeclared minipage stands centred, a lineskip from the lines either side"
+    (yOf mid "Bravo" - yOf mid "Alpha" == (ink mid "Alpha").2 + pt 1 + (ink mid "Bravo").1 &&
+      yOf mid "Echo" - yOf mid "Delta" == (ink mid "Delta").2 + pt 1 + (ink mid "Echo").1)
+  let centred := layout (doc ""
+    ("\\noindent\\begin{minipage}{100pt}Bravo\\\\ Charlie\\\\ Delta\\end{minipage}\\hfill" ++
+      "\\begin{minipage}{100pt}Golf\\end{minipage}"))
+  let midOf (top bottom : String) := (yOf centred top - (ink centred top).1 + yOf centred bottom +
+    (ink centred bottom).2) / 2
+  let offset := midOf "Bravo" "Delta" - midOf "Golf" "Golf"
+  t s!"box blocks: two undeclared minipages stand centred on one another ({offset.toBpString})"
+    (-(pt 1 / 2) ≤ offset && offset ≤ pt 1 / 2)
+  let xOf (out : Layout.Out) (w : String) : Option Dim.Length := runX out w
+  let joined := layout (doc ""
+    ("\\noindent\\begin{minipage}[t]{100pt}Bravo\\end{minipage}%\n" ++
+      "\\begin{minipage}[t]{100pt}Golf\\end{minipage}"))
+  let gap := ((xOf joined "Golf").getD 0) - ((xOf joined "Bravo").getD 0) - pt 100
+  t s!"box blocks: minipages a comment joins stand side by side, touching ({gap.toBpString})"
+    (yOf joined "Bravo" == yOf joined "Golf" && gap == 0)
+  let spaced := layout (doc ""
+    ("\\noindent\\begin{minipage}[t]{0.3\\textwidth}Bravo\\end{minipage}\n" ++
+      "\\begin{minipage}[t]{0.3\\textwidth}Golf\\end{minipage}"))
+  let narrow := layout (doc ""
+    ("\\noindent\\begin{minipage}[t]{0.3\\textwidth}Bravo\\end{minipage}%\n" ++
+      "\\begin{minipage}[t]{0.3\\textwidth}Golf\\end{minipage}"))
+  let apart := ((xOf spaced "Golf").getD 0) - ((xOf narrow "Golf").getD 0)
+  t s!"box blocks: minipages a space parts stand side by side a space apart ({apart.toBpString})"
+    (yOf spaced "Bravo" == yOf spaced "Golf" && pt 3 < apart && apart < pt 4)
+  let wide := layout (doc ""
+    ("\\noindent\\begin{minipage}[t]{0.6\\textwidth}Bravo\\end{minipage}\n" ++
+      "\\begin{minipage}[t]{0.6\\textwidth}Golf\\end{minipage}"))
+  t "box blocks: minipages a space apart that the line cannot hold stand on lines of their own"
+    (yOf wide "Bravo" < yOf wide "Golf")
 
 end Tests.InlineBoxes

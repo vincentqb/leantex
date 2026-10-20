@@ -24,13 +24,13 @@ role trivlist-env
 role trivlist-env
   center
     columns
-      column 500/1000
+      column 500/1000 [c]
         para
           text "An invented lone minipage, narrower than the measure it stands in."
 role trivlist-env
   center
     columns
-      column 400/1000
+      column 400/1000 [c]
         para
           text "An invented parbox, set as one box."
 role trivlist-env

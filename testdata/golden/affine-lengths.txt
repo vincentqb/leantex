@@ -23,7 +23,7 @@ para
 para
   text "Minipage measure probe."
 columns
-  column 240pt
+  column 240pt [c]
     para
       role affinemini
         styled fontsize

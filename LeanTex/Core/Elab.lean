@@ -13474,12 +13474,12 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
     return { o with valign := .center }
   return o
 
-/-- A box's `[pos][height][inner-pos]` arguments: its position and the index
-past them, the last two named and ignored. -/
-private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String) :
-    EM (Ir.BoxPos × Nat) := do
+/-- A box's `[pos][height][inner-pos]` arguments: its position, `undeclared` where it names none,
+and the index past them, the last two named and ignored. -/
+private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String)
+    (undeclared : Ir.BoxPos := .top) : EM (Ir.BoxPos × Nat) := do
   let mut k := 0
-  let mut boxPos : Ir.BoxPos := .top
+  let mut boxPos : Ir.BoxPos := undeclared
   for arg in [0:3] do
     match (if arg == 0 then scanOpeningArg body pos fun _ => true
       else scanBracketArg body k pos) with
@@ -13831,7 +13831,8 @@ decreasing_by raws_dec
 them. -/
 private def minipageWidthArm (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Ir.BoxWidth × Nat) := do
-  let (boxPos, k) ← boxOptsArm ctx body pos "minipage"
+  -- latex.ltx's minipage stands centred where it declares no position.
+  let (boxPos, k) ← boxOptsArm ctx body pos "minipage" (undeclared := .center)
   let m := skipSpaces body k
   let mut width : Ir.BoxWidth := .share
   let mut m2 := m
