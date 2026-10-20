@@ -4,10 +4,12 @@ public import LeanTex.Core.CompatContract
 public import LeanTex.Core.Elab
 public import LeanTex.Core.Surface
 public import LeanTex.Core.MdDesugarContract
+public import LeanTex.Core.BibElab
 
 import all LeanTex.Core.Elab
 import all LeanTex.Core.Compat
 import all LeanTex.Core.Parse
+import all LeanTex.Core.BibElab
 import Std.Data.String.ToNat
 
 namespace LeanTex.Core.Parse
@@ -725,5 +727,28 @@ public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (cites : Boo
         (Md.readIncluded f t cites).1).run st).1 := by
   rw [markdownInput_blocks_exact ctx f t cites pre post pos st hm hp hne hpre hpost]
   exact Ir.markDisplay_text false _ false 0 _
+
+end LeanTex.Core.Elab
+
+namespace LeanTex.Core.Elab
+
+/-- Every lexer and parser diagnostic of a TeX source reaches the elaborated document's
+diagnostics. -/
+public theorem run_reports_contract (file input : String) (d : Diag)
+    (h : d ∈ (Surface.read .tex file input).2) :
+    Reported (run file input).2
+      ((prepare file (Surface.read .tex file input).1).sourceTriggers.attribute d) :=
+  runPreparedFinal_reports_contract file _ _ (fun _ _ => {}) d (Array.mem_append.mpr (Or.inl h))
+
+/-- Every diagnostic the reading and compatibility passes raised reaches the front end's
+diagnostics as the driver accounts them. -/
+public theorem accountFront_reports_contract (file : String) (p : Prepared)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
+    (bib notes refs : Array Diag) (d : Diag) (h : d ∈ earlier ++ p.compatDiags) :
+    Reported (Bib.accountFront (runPrepared file p earlier metric withdrawn).2.1 bib notes refs)
+      (p.sourceTriggers.attribute d) := by
+  unfold Bib.accountFront
+  exact reported_tally _ _ (reported_append _ _ _ (reported_append _ _ _ (reported_append _ _ _
+    (runPrepared_reports_contract file p earlier metric withdrawn d h))))
 
 end LeanTex.Core.Elab

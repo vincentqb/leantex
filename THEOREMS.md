@@ -5,6 +5,99 @@ by unfolding holds by unfolding the definition it names, a check on that one def
 written owed (Uxx) is a guarantee that unit delivers; `scripts/cites.lean` holds every name here to
 one declaration and fails an owed name once it resolves.
 
+## Headline: nothing is lost silently
+
+For every document and font environment leantex produces a result; the text of each artifact (the
+PDF's text layer, the HTML page's text, the markdown twin) is the source's text less exactly the
+pieces its diagnostics name, each named once; every artifact is well formed; and the result depends
+only on the document, the fonts and the output name. Resemblance to lualatex is not part of it: the
+tiers measure that. In Lean terms, over the stages `Cli.Driver.build` runs:
+
+```lean
+-- One run of file f with bytes b, font environment E and configuration cfg; the driver answers
+-- each host question the pure stages ask.
+ft                  := (Encoding.readDocument f b).1
+(raws, dRead)       := Surface.read (Ir.Surface.ofPath f) f ft.text
+ex                  ← Compat.executeInputs host f raws
+(doc, dElab, spans) := Elab.runPrepared f (Elab.prepareExecuted f ex) (ft.diags ++ dRead) metric wd
+dFront              := Bib.accountFront dElab dBib notes refs
+fitted              := Layout.runFitted geom fs pats doc imgs
+pdf                 := Pdf.writeChecked geom fs fitted.out.pages doc.info imgs …
+(html, dHtml)       := HtmlDoc.emit cfg doc
+md                  := MarkdownDoc.emit doc bibName
+D                   := Diag.foldRepeats (dFront ++ fitted.out.diags ++ dHtml ++ …)
+
+-- A text is its characters, each with its origin: a byte of a source file, or generated.
+inductive Origin | source (file : String) (offset : Nat) | generated
+srcText ex : List (Char × Origin) := Parse.rawText ex.raws         -- the executed text slots
+irText doc : List (Char × Origin) := Ir.foldDoc located [] doc      -- Ir.plainText's characters,
+  -- each under its innermost .located span; erased, Ir.blocksText doc.body, then each
+  -- Ir.furnitureInlines region's Ir.plainText
+text A     : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks
+named D A  : Set Origin := ⋃ {(Diag.piece d).offsets | d ∈ Diag.forOutputs #[A] D,
+                                                        d.kind.floor ≠ .content}
+keep P t   : String := String.mk ((t.filter fun (_, o) => o ∉ P ∧ o ≠ .generated).map (·.1))
+
+theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) :
+    let r := compile cfg src E      -- the stages above; src is f and every file the run reads
+    (r.D.all (!·.kind.stopsWriter) → r.shipped = r.emitted) ∧
+    (∀ A ∈ r.shipped,
+      Text.norm (keep (named r.D A) (text A)) = Text.norm (keep (named r.D A) (srcText r.ex))) ∧
+    ((r.D.filter (·.kind.floor ≠ .content)).map (·.piece)).Pairwise Disjoint ∧
+    (PdfCensus.census r.pdf).isOk ∧ HtmlDoc.scripts r.html ⊆ {deckScript, cfg.mathBoundary} ∧
+    ∀ cfg', cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
+      (compile cfg' src E).artifacts = r.artifacts
+-- A result exists because every stage is total and terminates.
+-- Text.norm: NFC, a white-space run as one space, TeX's ligature and quote spellings as the
+-- characters they set, a line-end hyphen joined.
+-- Composition: surface ∘ elaboration gives keep (named dFront) (irText doc) = keep (named dFront)
+-- (srcText ex); each backend gives keep (named D A) (text A) = keep (named D A) (irText doc); the
+-- accounting gives dRead ⊆ dFront ⊆ D (Reported), so named dFront ⊆ named D A.
+```
+
+| Stage | Proved | Owed |
+|---|---|---|
+| A result | No declaration is partial or unsafe (`bannedWord`), and both knots recurse on measures the kernel checks. | owed (U72): `partialReachChecks`; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between` |
+| Ships unless stopped | Only the causes `DiagCode.stopsWriter` lists stop the writer; tested: `machineLossChecks`. | owed (U37): `DiagCode.error_iff_fatal` |
+| Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `read_tex_exact`, `Code.segmentsOf_source_exact`, `Md.desugar_vocabulary_mem`, `elabBlocks_input_exact`, `markdownInput_blocks_text`, `rewriteCtrl_accounts` | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts` |
+| Elaboration: raws to IR text | `Ir.mapInlines_text`, `Ir.mapBlocks_text`, `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` | owed (U111): `Parse.rawText`, `Diag.piece`, `Elab.runPrepared_text_accounts` |
+| Accounting: every loss reaches D once | `Elab.run_reports_contract`, `Elab.accountFront_reports_contract`, `Elab.runExecuted_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `pending_named`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | |
+| PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
+| HTML page text | `escapeText_spec`, `mathml_glyphs_agree` | owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts` |
+| Markdown twin | `rowLine_cells_exact` | owed (U49): `MarkdownDoc.escape_read_id`; owed (U110): `MarkdownDoc.emit_text_accounts` |
+| Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `hidden_script_gated`, `math_boundary_contract` | owed (U113): `HtmlDoc.emit_scripts_mem` |
+| Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free` | |
+| The headline | the rows above, composed | owed (U112): `compile_text_accounts` |
+
+Three gaps keep the composition open:
+
+- Termination: every function a run calls returns. The kernel checks each declaration's measure,
+  but do-notation repeat and while loops compile to a partial combinator, and use-time macro lookup
+  (X4) must expand the definition visible where a macro is used while expansion stays within a
+  depth the document bounds, deeper recursion stopping as a named loss as TeX's own limit does.
+  owed (U72): `partialReachChecks`, no partial constant reachable from the binary's entry, read off
+  the compiled closure; owed (U77): `lookupUser_latest_exact`, `Elab.expandUser_depth_between`.
+  Modules: `scripts/ProofAudit.lean`, `LeanTex/Core/Elab.lean` and the loops' own, most in
+  `LeanTex/Core/Layout.lean`.
+- Elaboration conservation: through both of Elab's knots, keep (named dFront) (irText doc) = keep
+  (named dFront) (srcText ex), the pieces of distinct diagnostics disjoint. srcText reads the
+  executed surface's text slots, each argument a control's registry signature types as text, with
+  its offsets; a diagnostic's piece is the source range its loss covers, where a span holds only its
+  start today. owed (U111): `Parse.rawText`, `Diag.piece`, `Elab.runPrepared_text_accounts`.
+  Modules: `LeanTex/Core/Parse.lean`, `LeanTex/Core/Compat.lean`, `LeanTex/Core/Elab.lean`,
+  `LeanTex/Core/Diag.lean`, `LeanTex/Core/InputContract.lean`.
+- Artifact text: a model of what a viewer extracts, against which each backend's census is proved.
+  For the PDF, PDF 2.0's text extraction: content-stream strings through each font's ToUnicode map
+  in marked-content order, Artifact content generated, origins from the structure tree's marked
+  content, and set lines carrying the IR text; owed (U21): `PdfContent.extract_text`; owed (U110):
+  `Layout.runFitted_text_accounts`. For HTML, a model of the WHATWG parse over the emitted subset
+  that reads the rendered bytes back as their tree, its text the text nodes in tree order outside
+  style and script; owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts`. For the
+  twin, the markdown reader's text of the emitted file; owed (U110):
+  `MarkdownDoc.emit_text_accounts`.
+  Modules: `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Layout.lean`, `LeanTex/Core/Html.lean`,
+  `LeanTex/Core/HtmlDoc.lean`, `LeanTex/Core/MarkdownDoc.lean`, `LeanTex/Core/MdParse.lean`.
+
 ## Surfaces
 
 | Area | Guarantee | Proofs |
