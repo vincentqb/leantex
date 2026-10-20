@@ -13615,6 +13615,9 @@ private def Spacing.Context.loneLabel (r : Rd) (a : Acc) (blk : Block) (rest : L
         let (w, a) := a.naturalWidth r r.geom.fontSize (label.popWhile (· matches .text _))
           r.geom.textWidth
         let sep := labelSep r.geom
+        -- A listing outside any trivlist starts its first line at the item's indent, the label there
+        -- (listings' lines take no `\itemindent`).
+        let hang := if next matches .verbatim _ _ { frame := .none, .. } then 0 else hang
         -- Its ink ends in that gap, so it ends a gap further on than the label does.
         some (⟨ink, indent - hang + w + sep + sep, leaf, w + sep - hang⟩, more, a)
       else none
@@ -13859,9 +13862,12 @@ private def collectItem (r : Rd) (a : Acc)
           collectBlock { r with inLabel := true, labels := outer.push mark } a b indent
         -- A box stands on the label's line, the two aligned as the box's position says.
         else if let some pos := boxItemPos? b then
-          let a := ((a.flushGap r).pushOp (.colOpen #[pos, pos])).markLine r mark indent outer
+          -- The label line stands by its baseline, the box by the point its position names, the two
+          -- one unbreakable box, as the label's line is in TeX.
+          let a := (((a.flushGap r).pushOp .floatOpen).pushOp
+            (.colOpen #[if pos == .center then .last else pos, pos])).markLine r mark indent outer
           let shift := outer.foldl (· + ·.shift) mark.shift
-          (collectBlock r (a.pushOp .colNext) b (indent + shift)).pushOp .colClose
+          ((collectBlock r (a.pushOp .colNext) b (indent + shift)).pushOp .colClose).pushOp .floatClose
         -- Any other block follows the line the label sets on its own, as `\@item`'s paragraph.
         else collectBlock r (a.markLine r mark indent outer).wantGap b indent
       | b, false => collectBlock r a b indent
@@ -16990,7 +16996,12 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
     | .top => save.y
     | .first => m.first.getD firstLine
     | .last => m.y
-    | .center => (save.y + m.y + m.depth) / 2
+    -- Beside a line standing by its baseline, a centred box's middle stands on the math axis, its
+    -- rows' struts 0.7 and 0.3 of the leading (latex.ltx `\@arstrut`), cmsy10's axis a quarter em.
+    | .center =>
+      if save.pos.contains .last && m.lines < lineEnd then
+        (firstLine + m.y) / 2 - Ir.leadingFor b.geom.fontSize b.geom.leading / 5 + b.geom.fontSize / 4
+      else (save.y + m.y + m.depth) / 2
   let refs := save.marks.mapIdx refOf
   let target := refs.foldl max save.y
   let dyAt (start : ColMark → Nat) (i : Nat) : Length := Id.run do

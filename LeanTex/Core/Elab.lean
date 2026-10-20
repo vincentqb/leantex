@@ -11502,9 +11502,16 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         "'tabular*' total width is ignored: columns take their \
   declared widths" pos
       k := skipSpaces body (k + 1)
+  -- In a list a top or bottom tabular is a box its item's label stands beside by its first or
+  -- last row; elsewhere nothing shares its line.
+  let mut valign : Option Ir.BoxPos := none
   if let .took k' := scanBracketArg body k pos then
-    warnOnce ctx "tabular:valign" .N0102
-      "'tabular' [t]/[b] alignment is ignored: the table stands \
+    let v := (bracketSrc body k k').trimAscii.toString
+    if ctx.listNest.depth > 0 && v == "t" then valign := some .first
+    else if ctx.listNest.depth > 0 && v == "b" then valign := some .last
+    else
+      warnOnce ctx "tabular:valign" .N0102
+        "'tabular' [t]/[b] alignment is ignored: the table stands \
   where written" pos
     k := skipSpaces body k'
   let mut cols : Array Ir.ColSpec := #[]
@@ -11661,7 +11668,10 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
       "a row carries fewer cells than the column spec; it is \
   padded with empty cells" pos
   rows := Ir.padTableRows rows cols.size
-  blocks := blocks.push (.table cols padL padR rows rules spans)
+  let table := Block.table cols padL padR rows rules spans
+  blocks := blocks.push (match valign with
+    | some p => .columns #[(⟨.share, p, none, false⟩, #[table])]
+    | none => table)
   return blocks
 
 /-- Drops the frame sources recorded from the earliest completed role that

@@ -7,6 +7,7 @@ import Tests.ItemLabels
 import Tests.LabelLines
 import Tests.ListGaps
 import Tests.ListLabels
+import Tests.ItemBoxes
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2397,6 +2398,12 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented articles: an item in bold text starts the next item with the text after it bold; a section in a footnote sets in the note; a verbatim in an mbox is refused in LR mode; an environment over verbatim's halves with the verbatim package sets its body verbatim, without the package or with the environment spelled stops the run; this tree sets the items byte-identically to the same items written apart, the footnote's heading as a bold line of the note (W0371, unnumbered, where LaTeX numbers it), names the boxed listing once (W0411), sets both verbatim definitions' bodies verbatim and names the spelled one (W0411)",
       "main's binary at 1e648c76 on the same probes: E0312 for the item and the footnote heading, nothing for the boxed listing, the verbatim body read as TeX with W0301 or E0303 and W0302; the checks fail there",
       "the corpus and three private documents (two decks and a long markdown report) built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical, and every diagnostic the same"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R269", date := "2026-10-20"
+    what := "a top or bottom tabular opening a list item stood centred on its label, a centred one stood its label 1.2pt low of the math axis, a tabular opening an item split across pages, and a description's label before a listing stood at the outer margin"
+    pins := [check% Tests.ItemBoxes.checks]
+    accept := ["lualatex 1.24 on invented probes: the bullet on a top tabular's first row, on a bottom one's last, 0.1pt below a centred one's middle row, the tabular and its bullet moved whole to the next page, and a description's label before a listing 25pt in, at the listing's own indent; this tree sets each the same, the code after the label 1.4pt nearer it",
+      "main's binary at 1e648c76 on the same probes: the bullet on the middle row of each, 1.2pt below a centred one's, the rows split over two pages, and the label at the outer margin; the guards fail there"]
     state := .guarded "1e648c76" .before .author }
 ]
 

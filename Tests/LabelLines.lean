@@ -81,7 +81,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     (match bullets.toList, lineWith boxed "Foxtrot", lineWith boxed "Golf", lineWith boxed "Hotel",
         lineWith boxed "Kilo" with
       | [b1, b2, b3], some f, some g, some h, some k =>
-        (b1.y - (f.y + g.y) / 2).abs ≤ Dim.pt 3 / 2 && b2.y == h.y && b3.y == k.y
+        (b1.y - (f.y + g.y) / 2).abs ≤ Dim.pt 3 / 2 && b2.y == h.y && (b3.y - k.y).abs ≤ Dim.pt 3 / 2
       | _, _, _, _, _ => false)
   -- A declared label is the item's text, so its ink is its own leaf's wherever its line stands.
   let lone := linesOf oneFace (article "" ("\\begin{enumerate}\n\\item[y)] \\begin{enumerate}\n" ++
