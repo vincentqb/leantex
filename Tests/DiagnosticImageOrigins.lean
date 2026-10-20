@@ -29,7 +29,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     ds.size == 1 && ds.all (·.triggerText == some trigger)
   let hasHeader (ds : Array Diag) (location trigger : String) :=
     hasTrigger ds trigger && ds.all fun d =>
-      (Render.human false d).startsWith s!"ℹ [N0376] - {location} - {trigger}\n"
+      (Render.human false d).startsWith s!"{location}: info: "
   let noTrigger (ds : Array Diag) :=
     ds.size == 1 && ds.all (·.trigger.isNone)
   let commandEvidence (tokens : Array Lex.Token) := tokens.filterMap fun tok =>
@@ -204,7 +204,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((missing boundaryDs).isEmpty && noTrigger shipped &&
       shipped.all fun d =>
         d.span == some ⟨"boundary.tex", { line := 1, col := 1 }⟩ &&
-        (Render.human false d).startsWith "ℹ [N0376] - boundary.tex:1:1\n")
+        (Render.human false d).startsWith "boundary.tex:1:1: info: ")
   let boundaryPrepared := Elab.prepare "boundary.tex"
     (imageOriginParse "boundary.tex" boundarySource)
   let attributed := shipped.map boundaryPrepared.sourceTriggers.attribute
@@ -243,9 +243,10 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         (Lean.Json.obj (after.erase "trigger") == Lean.Json.obj before &&
           ((Lean.Json.obj after).getObjValAs? String "trigger").toOption == d.triggerText)
     | _, _ => t "image origin: porcelain remains valid JSON" false
-  t "image origin: human animation header quotes the authored animategraphics token"
+  t "image origin: human animation line leads with the authored animategraphics location"
     (ads.any fun d =>
-      (Render.human false d).startsWith "ℹ [N0376] - animation.tex:3:1 - \\animategraphics\n")
+      d.triggerText == some "\\animategraphics" &&
+        (Render.human false d).startsWith "animation.tex:3:1: info: ")
   let rawImages := Ir.altDiags animated (Elab.ReqSpans.spanOf spans.images)
   t "image origin: existing request span API remains sufficient"
     (rawImages.map (·.span) == ads.map (·.span))

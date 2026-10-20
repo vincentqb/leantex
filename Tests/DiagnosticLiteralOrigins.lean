@@ -99,7 +99,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
         d.trigger.isNone)
   t "literal origins: human and JSON compression records stand at the text and quote none of it"
     (notes.any fun d =>
-      hasStr (Render.human false d) "literal-origins.tex:8:1\n" &&
+      hasStr (Render.human false d) "literal-origins.tex:8:1: " &&
       !hasStr (Render.porcelainDiag d) "\"trigger\":")
   let bare := Ir.eraseLocations doc
   let bareOut := Layout.run geom fs none bare

@@ -944,7 +944,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       some "Two Invented Words")
   t "compat hyperref's link-only package options do nothing visible"
     ((elabStr (pre "\\usepackage[hidelinks]{hyperref}")).2.any fun d =>
-      d.code == "N0100" && hasStr d.message "the engine does this itself")
+      d.code == "N0100" && hasStr (saidText d) "the engine does this itself")
   let algorithmic (open_ step close_ : String) : Array Diag :=
     (elabStr (dvDoc "\\usepackage{algpseudocode}\n"
       s!"{open_}\\begin\{algorithmic} {step}\n\\State first\n\\end\{algorithmic}{close_}")).2
@@ -1745,7 +1745,7 @@ def hookSeamChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\documentclass{" ++ cls ++ "}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++
       "\\section{Zz}\nAlpha.\n\\end{document}\n"
   let hookNote (d : Diag) : Bool :=
-    d.kind == .N0100 && d.message.startsWith "'\\AtBeginDocument"
+    d.kind == .N0100 && d.message.startsWith (Diag.translated "\\AtBeginDocument")
   -- Spaces stand where the hook's opening does, so a diagnostic sits where the hook's would.
   let pad := String.ofList (List.replicate "\\AtBeginDocument{".length ' ')
   let decls := Elab.declCtrl ++ Elab.runningCtrl
@@ -4721,7 +4721,7 @@ def translationOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
           let ds := (elabStr (deck169 src "x")).2
           t s!"'\\{construct}' translates to a declaration its help names"
             (ds.any fun d => d.code == "N0100" &&
-              decls.any fun nd => (d.message.splitOn ("\\" ++ nd)).length > 1)
+              decls.any fun nd => ((saidText d).splitOn ("\\" ++ nd)).length > 1)
   for (construct, _) in Compat.translationRefused do
     t s!"the refusal row for '\\{construct}' is a live row"
       ((Compat.beamerNative.lookup construct).any fun help => !(named help).isEmpty)
@@ -5426,8 +5426,7 @@ def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dsM ← run "m"
   t "E0502 renders the including file and line, never its directory"
     (dsM.any fun d => d.code == "E0502" &&
-      ((Render.human false d).splitOn
-        " - testdata/corpus/input-missing/m.tex:4:1\n").length == 2)
+      (Render.human false d).startsWith "testdata/corpus/input-missing/m.tex:4:1: error: ")
   let dsN ← run "outer"
   t "a nested input's E0502 names the input file it sits in"
     (dsN.any fun d => d.code == "E0502" &&

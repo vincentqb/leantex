@@ -34,4 +34,4 @@ float figure 2
 para
   text "A closing paragraph after both figures."
 -- diagnostics
-note[N0100] 7:1 '\usepackage{subcaption}' → nothing: the engine does this itself
+info[N0100] 7:1 translated command \usepackage{subcaption} | detail: nothing: the engine does this itself

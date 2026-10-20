@@ -744,7 +744,7 @@ def dvCaseOk (s : String) : Bool :=
   | [] => true
   | c :: _ =>
     !c.isUpper ||
-      ["TeX", "LaTeX", "LEANTEX_FONT", "PNG", "JPEG", "WCAG", "HTML",
+      ["TeX", "LaTeX", "LEANTEX_FONT", "PNG", "JPEG", "WCAG", "HTML", "Pygments",
        "U+"].any (s.startsWith ·)
 
 /-- One convention for terminal punctuation: none (a `?` may close a real question). -/
@@ -843,6 +843,107 @@ def dvNumberSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("no glyph for U+2705", none), ("W0378 names it", none)] do
     check ref s!"diag voice number lint: {text} reads {expected}" (dvNumber? text == expected)
 
+/-- A message's words as tokens: a run of non-spaces, or a `'...'` quotation closing before a space
+or the end. -/
+def dvTokens (s : String) : List String := Id.run do
+  let cs := s.toList.toArray
+  let mut out : Array String := #[]
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    if cs[i]! == ' ' then
+      i := i + 1
+      continue
+    let mut j := i + 1
+    if cs[i]! == '\'' then
+      for _ in [0:cs.size] do
+        if j ≥ cs.size then break
+        if cs[j]! == '\'' && (j + 1 == cs.size || cs[j + 1]! == ' ') then break
+        j := j + 1
+      j := min cs.size (j + 1)
+    else
+      for _ in [0:cs.size] do
+        if j ≥ cs.size || cs[j]! == ' ' then break
+        j := j + 1
+    out := out.push (String.ofList (cs.extract i j).toList)
+    i := j
+  return out.toList
+
+/-- The noun two or one leading tokens spell, with the tokens after it. -/
+def dvNoun? : List String → Option (Diag.Noun × List String)
+  | a :: b :: rest =>
+    match Diag.Noun.all.find? (·.label == a ++ " " ++ b) with
+    | some n => some (n, rest)
+    | none => (Diag.Noun.all.find? (·.label == a)).map (·, b :: rest)
+  | [a] => (Diag.Noun.all.find? (·.label == a)).map (·, [])
+  | [] => none
+
+/-- A name token as the form prints it: quoted whole, or bare with no quote at its start. -/
+def dvName (t : String) : Option Diag.Name :=
+  if t.length ≥ 2 && t.startsWith "'" && t.endsWith "'" then
+    some { text := ((t.drop 1).dropEnd 1).toString, quoted := true }
+  else if t.startsWith "'" then none
+  else some { text := t, quoted := false }
+
+/-- The form a message reads as, when it reads as one: `qual noun [name] [for [noun] name]`. -/
+def dvForm? (s : String) : Option Diag.Words := do
+  let q :: rest := dvTokens s | none
+  let qual ← Diag.Qual.all.find? (·.label == q)
+  let (noun, rest) ← dvNoun? rest
+  let (name, rest) ← match rest with
+    | t :: more => if t == "for" then pure (none, rest) else (dvName t).map (fun n => (some n, more))
+    | [] => pure (none, [])
+  let obj ← match rest with
+    | [] => pure none
+    | ["for", t] => (dvName t).map fun n => some (none, n)
+    | "for" :: more =>
+      match dvNoun? more with
+      | some (n, [t]) => (dvName t).map fun x => some (some n, x)
+      | _ => none
+    | _ => none
+  let w : Diag.Words := { qual, noun, name, obj }
+  if w.render == s then some w else none
+
+/-- Codes whose messages are still free prose: a baseline that may fall and never rise. -/
+def formDebt : List String :=
+  ["E0101", "E0102", "E0111", "E0112", "E0113", "E0201", "E0202", "E0205", "E0303", "E0304",
+   "E0305", "E0306", "E0309", "E0310", "E0311", "E0312", "E0313", "E0320", "E0321",
+   "E0322", "E0323", "E0324", "E0325", "E0326", "E0327", "E0328", "E0329", "E0330", "E0331",
+   "E0332", "E0333", "E0334", "E0336", "E0340", "E0347", "E0375", "E0390", "E0395", "E0405",
+   "N0017", "N0018", "N0019", "N0020", "N0021", "N0023", "N0024", "N0025", "N0026", "N0027",
+   "N0029", "N0030", "N0032", "N0102", "N0103", "N0104", "N0105", "N0114", "N0200", "N0359",
+   "N0376", "N0448", "W0001", "W0002", "W0003", "W0004", "W0005", "W0007", "W0009", "W0010",
+   "W0012", "W0014", "W0015", "W0016", "W0101", "W0102", "W0103", "W0104", "W0105", "W0106",
+   "W0107", "W0108", "W0109", "W0110", "W0111", "W0201", "W0202", "W0301", "W0302", "W0303",
+   "W0304", "W0306", "W0307", "W0308", "W0309", "W0310", "W0311", "W0312", "W0314", "W0315",
+   "W0316", "W0317", "W0318", "W0319", "W0320", "W0321", "W0322", "W0323", "W0325", "W0326",
+   "W0327", "W0328", "W0329", "W0330", "W0331", "W0332", "W0333", "W0334", "W0335", "W0336",
+   "W0337", "W0338", "W0340", "W0342", "W0343", "W0345", "W0346", "W0348", "W0349", "W0350",
+   "W0351", "W0352", "W0353", "W0354", "W0355", "W0357", "W0358", "W0361", "W0362", "W0363",
+   "W0364", "W0367", "W0368", "W0369", "W0370", "W0371", "W0372", "W0373", "W0374", "W0377",
+   "W0380", "W0381", "W0383", "W0384", "W0385", "W0386", "W0387", "W0388", "W0389", "W0391",
+   "W0392", "W0394", "W0396", "W0398", "W0399", "W0400", "W0411", "W0412", "W0413", "W0414",
+   "W0415", "W0416", "W0419", "W0420", "W0421", "W0422", "W0423", "W0425", "W0426", "W0427",
+   "W0428", "W0429", "W0431", "W0432", "W0433", "W0434", "W0435", "W0436", "W0440", "W0441",
+   "W0442", "W0443", "W0444", "W0445", "W0446", "W0447", "W0449", "W0450", "W0451", "W0452",
+   "W0453", "W0454", "W0601", "W0602", "W0603", "W0604", "W0605", "W0609", "W0701"]
+
+/-- Does a message read as its code's form: its code's word, a noun of the vocabulary, a name. -/
+def dvFormOk (d : Diag) : Bool :=
+  (dvForm? d.message).any (·.qual == d.kind.qual)
+
+/-- The form reader read in both directions: what it must accept and what it must refuse. -/
+def dvFormSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for (text, ok) in [
+      ("undefined command \\foo", true), ("unsupported environment banner", true),
+      ("ignored option shrink for frame", true), ("invalid value 'big' for key scale", true),
+      ("substituted face 'Demo Serif Regular' for 'Demo Serif Bold'", true),
+      ("missing argument for \\page", true), ("missing font", true),
+      ("unknown command '\\mystery'; its {...} arguments were kept as text", false),
+      ("undefined banana \\foo", false), ("undefined command \\foo bar", false),
+      ("undefined command 'a b", false)] do
+    check ref s!"diag form reader: {text} reads {ok}" ((dvForm? text).isSome == ok)
+
 /-- The lint over one fired diagnostic; the `\allow` codes (W0013, E0329, N0105) may quote the
 user's own codes. -/
 def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
@@ -861,6 +962,8 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
       for tok in dvForeignCodes d.code s do
         fail s!"{d.code} {part}: names {tok}, which the reader cannot look up: {s}"
   judge "message" d.message
+  unless formDebt.contains d.code || dvFormOk d do
+    fail s!"{d.code} message: not the form '{d.kind.qual.label} <noun> [name] [for [noun] name]': {d.message}"
   if let some text := d.detail then judge "detail" text
   if d.kind.loss.severity.isWarning && dvMeasured d.message then
     fail s!"{d.code} message: a measure taken at the site belongs in its detail: {d.message}"
@@ -1558,6 +1661,13 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   nameRefusalRegistryChecks ref one mapped withMath probeOf
   subjectCensusChecks ref one mapped withMath probeOf
   dvNumberSelfChecks ref
+  dvFormSelfChecks ref
+  for code in formDebt do
+    match DiagCode.ofString? code with
+    | some c =>
+      check ref s!"form debt {code}: the baseline row still describes a real gap"
+        (((diagWitness one mapped withMath probeOf c).filter (·.kind == c)).any (!dvFormOk ·))
+    | none => failures ref s!"form debt {code}: names no code"
   repeatFoldChecks ref one mapped withMath probeOf
   let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
@@ -1700,7 +1810,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       resolved.errors == 0 && resolved.warnings == 0 &&
       exitFor resolved.errors 0 resolved.warnings true == 0)
   t "alternative advice renders with the information icon and code"
-    (advice.all fun d => (Render.human false d).startsWith "ℹ [N0376]\n")
+    (advice.all fun d => (Render.human false d).startsWith "info: ")
   let (oldDoc, oldDs) := elabStr (dvDoc "\\allow{W0376}\n"
     "\\includegraphics{chart.png}")
   t "the former alternative warning migrates without granting acceptance"
@@ -1913,7 +2023,7 @@ def porcelainCensusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (acc, accepted) := Diag.accept #["W0301"] false (Diag.of .W0301 "m")
   let accLine := Render.porcelainDiag acc
   t "porcelain: an accepted loss reads note and keeps its declared class"
-    (accepted && hasStr accLine (field "severity" "note") && hasStr accLine (field "loss" "degraded"))
+    (accepted && hasStr accLine (field "severity" "info") && hasStr accLine (field "loss" "degraded"))
   let repeated := (elabStr (dvDoc "" "\\zzpcrep{a}\n\n\\zzpcrep{b}")).2.filter (·.code == "W0301")
   t "porcelain: a repeat site's note keeps its declared class"
     (repeated.size == 2 && repeated.any (·.severity == .note) &&

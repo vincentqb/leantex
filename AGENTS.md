@@ -83,8 +83,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 - A PDF text-positioning emission: placed by the viewer's arithmetic (`artGlyphPlacementOffences`).
 - A typographic attachment: its anchors, direction and bounds named, its displacement derived from
   them and the resolved font (`CancelAlignment.checks`).
-- A diagnostic code: one constructor with its loss, a firing witness, a voice-clean message and an
-  audit row (`DiagCode.all_complete`, `diagWitness`, `DiagAudit.registry`).
+- A diagnostic code: one constructor with its loss and word, a firing witness, a `Diag.say` message,
+  an audit row (`DiagCode.qual`, `diagWitness`, `dvFormOk`, `DiagAudit.registry`).
 - A diagnostic at a site another code names: one accounting, or a siteAccounting row naming the file
   owing the merge (`siteAccountingChecks`); a censused code: a subject at every emission and door,
   or a subjectDebt row only falling (`subjectCensusChecks`, `subjectDoorChecks`).

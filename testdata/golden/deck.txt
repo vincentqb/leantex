@@ -87,13 +87,13 @@ frame standout
   para
     text "Questions?"
 -- diagnostics
-note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
-note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
-note[N0100] 9:1 '\usetheme' → \theme{example}
-note[N0100] 10:1 '\setbeamercovered' → \palette{ covered = 15\% }
-note[N0100] 11:1 '\newcommand{\dim}' → \define \dim(a1: content) {...}
-note[N0100] 12:1 '\newenvironment{banner}' → \defineenv{banner}(a1: content) {begin} {end}
-note[N0100] 35:19 '\alert' → {\bfseries ...}
+info[N0100] 7:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 7:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
+info[N0100] 7:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
+info[N0100] 9:1 translated command \usetheme | detail: \theme{example}
+info[N0100] 10:1 translated command \setbeamercovered | detail: \palette{ covered = 15\% }
+info[N0100] 11:1 translated command \newcommand{\dim} | detail: \define \dim(a1: content) {...}
+info[N0100] 12:1 translated command \newenvironment{banner} | detail: \defineenv{banner}(a1: content) {begin} {end}
+info[N0100] 35:19 translated command \alert | detail: {\bfseries ...}
 warning[W0319] 9:1 unknown theme 'example'; the document is unthemed | help: themes: moloch, plain, daylight, gemini
 warning[W0304] 47:21 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }

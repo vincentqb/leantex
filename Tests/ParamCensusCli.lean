@@ -25,6 +25,7 @@ structure Said where
   code : String
   subject : Option String
   message : String
+  detail : String
   deriving BEq
 
 /-- The diagnostics of a porcelain run, as the census reads them. -/
@@ -35,7 +36,8 @@ def saidOf (stdout : String) : Array Said :=
       else some { severity := (j.getObjValAs? String "severity").toOption.getD ""
                   code := (j.getObjValAs? String "code").toOption.getD ""
                   subject := (j.getObjValAs? String "subject").toOption
-                  message := (j.getObjValAs? String "message").toOption.getD "" }).toArray
+                  message := (j.getObjValAs? String "message").toOption.getD ""
+                  detail := (j.getObjValAs? String "detail").toOption.getD "" }).toArray
 
 /-- What a build writes: each file under its output directory with its bytes, its exit status and
 its diagnostics. -/
@@ -88,7 +90,8 @@ def builtJudge (base trial : Built) (key : String) (inert : Bool) : Bool × Bool
   let warned := fresh.filter fun d =>
     (d.severity == "warning" || d.severity == "error") && d.subject.any (keyedOrIs key)
   let noted := if inert then fresh.filter fun d =>
-      d.code == "N0100" && hasStr d.message "→ nothing:" && d.subject.any (keyedOrIs key)
+      d.code == "N0100" && (d.detail.startsWith "nothing:" || hasStr d.message "→ nothing:") &&
+        d.subject.any (keyedOrIs key)
     else #[]
   let unread := warned.any (fun d => unreadCodes.contains d.code &&
       !d.subject.any (·.startsWith "partial:")) || (warned.isEmpty && !noted.isEmpty)

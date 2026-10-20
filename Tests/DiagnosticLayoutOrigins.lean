@@ -67,7 +67,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
         d.trigger.isNone))
   t "layout origins: overflow CLI human and JSON stand at the line and quote no token"
     (overfull.any fun d =>
-      (Render.human false d).startsWith "⚠ [W0005] - line-origin.tex:2:1\n" &&
+      (Render.human false d).startsWith "line-origin.tex:2:1: warning: " &&
       !hasStr (Render.porcelainDiag d) "\"trigger\":")
   let bare := Ir.eraseLocations doc
   let bareOut := Layout.run geom fs none bare
@@ -179,7 +179,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
       hasStr (Render.porcelainDiag d) "\"file\":\"shrink-origin.tex\"" &&
       hasStr (Render.porcelainDiag d) "\"line\":8" &&
       !hasStr (Render.porcelainDiag d) "\"trigger\":" &&
-      hasStr (Render.human false d) "shrink-origin.tex:8:1\n")
+      (Render.human false d).startsWith "shrink-origin.tex:8:1: ")
   let unlocatedShrink := Ir.eraseLocations shrinkDoc
   let unlocatedOut := Layout.run shrinkGeom fs none unlocatedShrink
   t "layout origins: shrink metadata preserves shipped paint and PDF bytes"

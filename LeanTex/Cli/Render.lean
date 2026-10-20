@@ -42,47 +42,35 @@ private def humanText (newline : String) (s : String) : String :=
       else if bidiControl c then pushEscape acc c
       else acc.push c
 
-/-- One diagnostic as human-readable lines, with no final newline; output labels appear
-only when the run writes several outputs. -/
+/-- The one note a diagnostic shows: its detail, else its help, else what replaced the construct. -/
+public def note? (d : Diag) : Option String :=
+  let nonEmpty (s : Option String) : Option String := s.filter (!·.isEmpty)
+  match nonEmpty d.detail, nonEmpty d.help, d.recovery with
+  | some text, _, _ => some text
+  | none, some text, _ => some text
+  | none, none, some (.replacedBy text) => nonEmpty (some text)
+  | none, none, _ => none
+
+/-- One diagnostic as `file:line:col: severity: message [code]`, then at most one note line, with
+no final newline; output labels appear only when the run writes several outputs. -/
 public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String :=
-  let icon := match d.severity with
-    | .error => "✖"
-    | .warning => "⚠"
-    | .note => "ℹ"
-  let head := sgr color (severityColor d.severity) s!"{icon} [{d.code}]"
+  let location := match d.span with
+    | some sp => sgr color "1" s!"{humanText "\\n" sp.file}:{sp.pos.line}:{sp.pos.col}:" ++ " "
+    | none => ""
+  let severity := sgr color (severityColor d.severity) (d.severity.label ++ ":")
   let scope := if showOutput then
       match d.output with
       | some output => s!" ({output.label.toUpper})"
       | none => ""
     else ""
-  let location := match d.span with
-    | some sp => " - " ++ sgr color "1;34"
-        s!"{humanText "\\n" sp.file}:{sp.pos.line}:{sp.pos.col}"
+  let count := if d.sites ≤ 1 then "" else s!" ({d.sites} sites)"
+  let message := humanText "\n  " (d.message.replace "\r\n" "\n")
+  let note := match note? d with
+    | some text => "\n  " ++ sgr color "1" "note:" ++ " " ++
+        humanText "\n    " (text.replace "\r\n" "\n")
     | none => ""
-  let trigger := match d.trigger with
-    | some t => " - " ++ humanText "\\n" t.text
-    | none => ""
-  let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
-  let reason := if d.message.isEmpty then "" else
-    "\n  " ++ humanText "\n  " (d.message.replace "\r\n" "\n")
-  let detail := match d.detail with
-    | some text => if text.isEmpty then "" else
-        "\n  " ++ humanText "\n  " (text.replace "\r\n" "\n")
-    | none => ""
-  let recovery := match d.recovery with
-    | none => ""
-    | some .ignored => "\n  ignored"
-    | some .skipped => "\n  skipped"
-    | some (.replacedBy text) =>
-        if text.isEmpty then "\n  replaced" else
-          "\n  " ++ sgr color "1" "replaced by:" ++ " " ++
-            humanText "\n    " (text.replace "\r\n" "\n")
-  let suggestion := match d.help with
-    | some text => if text.isEmpty then "" else
-        "\n  " ++ sgr color "1" "suggestion:" ++ " " ++
-          humanText "\n    " (text.replace "\r\n" "\n")
-    | none => ""
-  head ++ scope ++ location ++ trigger ++ count ++ reason ++ detail ++ recovery ++ suggestion
+  let message := if message.isEmpty then "" else " " ++ message
+  location ++ severity ++ message ++ " [" ++ d.code ++ "]" ++ scope ++ count ++ note
 
 /-- A run's verdict line; `written` names the artifacts a failed run still wrote, and `pages`
 their page count. -/
@@ -109,7 +97,7 @@ public def humanDone (color : Bool) (file output : String) (pages : Option Nat) 
     | none => ""
   -- Notes print only under -v; the summary counts them.
   let hint := if notes == 0 then "" else
-    sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
+    sgr color "2" s!" · {notes} info (-v)"
   s!"{sgr color "1;32" "✔"} {file} → {output}{set} ({ms} ms){hint}"
 
 public def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=

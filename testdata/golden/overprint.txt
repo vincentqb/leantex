@@ -89,9 +89,9 @@ frame
   para
     text "A reading kept as written."
 -- diagnostics
-note[N0100] 12:1 '\begin{overprint}' → \alt alternation, one item per overlay
-note[N0100] 28:1 '\begin{overprint}' → \alt alternation, one item per overlay
-note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
-note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
+info[N0100] 12:1 translated environment overprint | detail: \alt alternation, one item per overlay
+info[N0100] 28:1 translated environment overprint | detail: \alt alternation, one item per overlay
+info[N0100] 7:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 7:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
+info[N0100] 7:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
 warning[W0302] 35:1 unknown environment '{overprint}'; its body is kept | help: \defineenv{name}(...) {begin} {end} declares one

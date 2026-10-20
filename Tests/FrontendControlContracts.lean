@@ -45,7 +45,8 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}alpha " ++ (if deferred then "" else call) ++
       " omega\\end{document}"
   let reported (row : Compat.CtrlRow) (ds : Array Diag) : Bool :=
-    let noted := ds.any fun d => d.kind == .N0100 && d.message.startsWith s!"'\\{row.name}' →"
+    let noted := ds.any fun d => d.kind == .N0100 &&
+      d.message.startsWith (Diag.translated s!"\\{row.name}")
     match row.action with
     | .tokens _ none => true
     | .tokens _ (some _) | .native .. | .skip _ => noted
@@ -79,7 +80,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hooked.any (·.kind == .W0340) && !settled hooked)
   let later := listed "" "\\newpage" "\\gdef\\newpage{\\setlength{\\itemsep}{9pt}}"
   t "dispatch order: a use before a later definition keeps the row's meaning"
-    (later.any (fun d => d.kind == .N0100 && d.message.startsWith "'\\newpage' →") &&
+    (later.any (fun d => d.kind == .N0100 && d.message == Diag.translated "\\newpage") &&
       !settled later)
   let lowered := listed "" "\\pagestyle{zzstyle}" "\\gdef\\pagestyle{\\setlength{\\itemsep}{9pt}}"
   t "dispatch order: a lowered control used before a later definition keeps its meaning"
@@ -265,8 +266,8 @@ def ctrlGateChecks (ref : IO.Ref (List String)) : IO Unit := do
       let groups := row.sig.filter fun k => k != .opt && k != .star
       let params := String.join (groups.map fun _ => "{#1}")
       let waits (ds : Array Diag) : Bool := ds.any fun d => d.kind == .N0100 &&
-        d.message ==
-          s!"'\\{row.name}' → a rewrite at each use, where its parameters hold their values"
+        d.message == Diag.translated s!"\\{row.name}" &&
+          d.detail == some "a rewrite at each use, where its parameters hold their values"
       let (_, ds) := Elab.run file ("\\documentclass{article}\\newcommand{\\zzwrap}[1]{\\" ++
         row.name ++ params ++ "}\\begin{document}omega\\end{document}")
       t s!"control gate: \\{row.name} holding a parameter waits for its uses"
@@ -302,7 +303,7 @@ def ctrlLeaveChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Elab.run "leaves.tex" ("\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++
       "\\end{document}")).2
   let noted (ds : Array Diag) (s : String) : Bool :=
-    ds.any fun d => d.kind == .N0100 && (d.message.splitOn s).length > 1
+    ds.any fun d => d.kind == .N0100 && ((d.message ++ "\n" ++ (d.detail.getD "")).splitOn s).length > 1
   let unknown (ds : Array Diag) (n : String) : Bool :=
     ds.any fun d => d.kind == .W0301 && (d.message.splitOn s!"'\\{n}'").length > 1
   let defined := "\\newcommand{\\zzmac}{\\usepackage{xcolor}}"

@@ -159,7 +159,7 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
           && (diags.filter (·.kind == .N0031)).size == 1 && !diags.any (·.kind == .W0006))
       let note := diags.find? (·.kind == .N0031)
       t s!"the shipped monospace's note names the document's font directory ({note.map (·.message)}, {note.bind (·.help)})"
-        (note.any fun d => hasStr d.message "the document's font directory" &&
+        (note.any fun d => hasStr (saidText d) "the document's font directory" &&
           hasStr (d.help.getD "") "put the family's italic faces in the document's font directory" &&
           !hasStr (d.help.getD "") "install")
     | .error d => t s!"the shipped upright assembly succeeds ({d.message})" false

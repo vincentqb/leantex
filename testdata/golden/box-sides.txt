@@ -44,4 +44,4 @@ role trivlist-env
 para
   text "Body text after the boxes, long enough to show where the measure stands on the page and to wrap across a second line of it."
 -- diagnostics
-note[N0100] 28:1 '\parbox' → \begin{minipage}{<width>}...\end{minipage}
+info[N0100] 28:1 translated command \parbox | detail: \begin{minipage}{<width>}...\end{minipage}

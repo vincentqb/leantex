@@ -78,4 +78,4 @@ frame
       para
         text "Third third, level with both."
 -- diagnostics
-note[N0102] 32:1 'columns' option 'onlytextwidth' is not modelled; ignored
+info[N0102] 32:1 'columns' option 'onlytextwidth' is not modelled; ignored

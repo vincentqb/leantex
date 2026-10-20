@@ -59,9 +59,9 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         let col := line.toList.takeWhile (· != '∀') |>.length |>.succ
         t s!"listing origins {label}: tab and Unicode count authored scalars"
           (losses.all fun d => d.span.any fun span => span.pos.line == 4 && span.pos.col == col)
-      t s!"listing origins {label}: rendered record ends its header at its location"
+      t s!"listing origins {label}: rendered record leads with its location"
         (losses.all fun d => d.span.any fun span =>
-          hasStr (Render.human false d) s!"{file}:{span.pos.line}:{span.pos.col}\n" &&
+          (Render.human false d).startsWith s!"{file}:{span.pos.line}:{span.pos.col}: " &&
           !hasStr (Render.porcelainDiag d) "\"trigger\":")
       let bare := Ir.eraseLocations doc
       let bareOut := Layout.run geom fs none bare

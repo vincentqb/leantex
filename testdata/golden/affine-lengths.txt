@@ -76,13 +76,13 @@ table @{}l:220pt@{}
           text "B"
         rule calc(25% - 1.993pt) × calc(2% + 0.996pt) raise calc(1% + 0.996pt)
 -- diagnostics
-note[N0100] 24:13 '\fontsize' → an affine font size and baseline skip
-note[N0100] 24:65 '\selectfont' → nothing: font declarations apply where they stand
-note[N0100] 29:14 '\fontsize' → an affine font size and baseline skip
-note[N0100] 29:66 '\selectfont' → nothing: font declarations apply where they stand
-note[N0100] 36:16 '\fontsize' → an affine font size and baseline skip
-note[N0100] 36:68 '\selectfont' → nothing: font declarations apply where they stand
-note[N0100] 45:15 '\fontsize' → an affine font size and baseline skip
-note[N0100] 45:67 '\selectfont' → nothing: font declarations apply where they stand
-note[N0100] 51:15 '\fontsize' → an affine font size and baseline skip
-note[N0100] 51:67 '\selectfont' → nothing: font declarations apply where they stand
+info[N0100] 24:13 translated command \fontsize | detail: an affine font size and baseline skip
+info[N0100] 24:65 translated command \selectfont | detail: nothing: font declarations apply where they stand
+info[N0100] 29:14 translated command \fontsize | detail: an affine font size and baseline skip
+info[N0100] 29:66 translated command \selectfont | detail: nothing: font declarations apply where they stand
+info[N0100] 36:16 translated command \fontsize | detail: an affine font size and baseline skip
+info[N0100] 36:68 translated command \selectfont | detail: nothing: font declarations apply where they stand
+info[N0100] 45:15 translated command \fontsize | detail: an affine font size and baseline skip
+info[N0100] 45:67 translated command \selectfont | detail: nothing: font declarations apply where they stand
+info[N0100] 51:15 translated command \fontsize | detail: an affine font size and baseline skip
+info[N0100] 51:67 translated command \selectfont | detail: nothing: font declarations apply where they stand

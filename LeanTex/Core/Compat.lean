@@ -1443,7 +1443,7 @@ public def multicolumnMisplacedHelp : String :=
 /-- The translation note, one shape for every translation. -/
 private def became (what native : String) (pos : Pos)
     (subject : Option String := none) : M Unit :=
-  say .N0100 s!"'{what}' → {native}" pos (subject := subject)
+  say .N0100 (Diag.translated what) pos (subject := subject) (detail := some native)
 
 /-- A construct that reads to nothing: the translation note keyed
 `ctrl:nothing:<key>`, naming the reason. -/

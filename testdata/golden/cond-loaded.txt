@@ -9,12 +9,12 @@ para
 para
   text "Unloaded branch ships."
 -- diagnostics
-note[N0114] 9:27 '\@ifpackageloaded': 'graphicx' is loaded here, so the first branch is kept
-note[N0114] 10:29 '\@ifpackageloaded': no package 'tabularx' is loaded here, so only the second branch is kept
-note[N0114] 14:1 '\@ifpackageloaded': 'graphicx' is loaded here, so the first branch is kept
-note[N0114] 16:1 '\@ifpackageloaded': no package 'tabularx' is loaded here, so only the second branch is kept
-note[N0100] 7:1 '\usepackage{graphicx}' → nothing: the engine does this itself
-note[N0100] 8:1 '\makeatletter' → nothing: @-names are always readable here
-note[N0100] 9:1 '\newcommand{\probeloaded}' → \define \probeloaded() {...}
-note[N0100] 10:1 '\newcommand{\probeunloaded}' → \define \probeunloaded() {...}
-note[N0100] 11:1 '\makeatother' → nothing: @-names are always readable here
+info[N0114] 9:27 '\@ifpackageloaded': 'graphicx' is loaded here, so the first branch is kept
+info[N0114] 10:29 '\@ifpackageloaded': no package 'tabularx' is loaded here, so only the second branch is kept
+info[N0114] 14:1 '\@ifpackageloaded': 'graphicx' is loaded here, so the first branch is kept
+info[N0114] 16:1 '\@ifpackageloaded': no package 'tabularx' is loaded here, so only the second branch is kept
+info[N0100] 7:1 translated command \usepackage{graphicx} | detail: nothing: the engine does this itself
+info[N0100] 8:1 translated command \makeatletter | detail: nothing: @-names are always readable here
+info[N0100] 9:1 translated command \newcommand{\probeloaded} | detail: \define \probeloaded() {...}
+info[N0100] 10:1 translated command \newcommand{\probeunloaded} | detail: \define \probeunloaded() {...}
+info[N0100] 11:1 translated command \makeatother | detail: nothing: @-names are always readable here

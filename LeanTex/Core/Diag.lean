@@ -1,6 +1,7 @@
 module
 
 import Std.Data.HashMap
+public import LeanTex.Core.DiagWords
 
 namespace LeanTex.Core
 
@@ -61,7 +62,7 @@ public inductive Severity where
 public def Severity.label : Severity → String
   | .error => "error"
   | .warning => "warning"
-  | .note => "note"
+  | .note => "info"
 
 /-- The class letter a severity puts on its codes: `error` codes are `E…`,
 `warning` codes `W…`, `note` codes `N…`. -/
@@ -521,6 +522,71 @@ public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 public def DiagCode.loss (c : DiagCode) : Loss := c.spec.2.1
 
 public def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
+
+/-- The word each code's messages open with, fixed per code. -/
+public def DiagCode.qual : DiagCode → Diag.Qual
+  | .E0306 | .E0322 | .E0324 | .E0326 | .E0327 | .E0328 | .E0329 | .W0111 | .W0301 | .W0304 |
+    .E0340 | .W0316 | .W0319 | .W0323 | .W0349 | .W0351 | .W0353 | .W0364 | .W0381 | .W0426 |
+    .W0412 | .W0454 =>
+    .undefined
+  | .E0006 | .E0111 | .E0112 | .E0113 | .E0309 | .W0010 | .W0011 | .W0012 | .W0015 | .W0102 |
+    .W0103 | .W0106 | .W0109 | .W0302 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
+    .W0363 | .E0375 | .W0370 | .W0371 | .W0373 | .W0374 | .W0380 | .W0383 | .W0701 | .W0605 |
+    .W0609 | .W0385 | .W0389 | .E0390 | .W0419 | .W0435 | .E0607 | .W0422 | .W0423 | .W0427 |
+    .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 =>
+    .unsupported
+  | .W0101 | .N0102 | .N0104 | .W0001 | .W0007 | .W0104 | .W0108 | .W0110 | .W0303 | .E0336 |
+    .W0317 | .W0318 | .E0334 | .W0329 | .W0340 | .W0346 | .E0347 | .W0348 | .W0354 | .W0355 |
+    .N0359 | .W0361 | .W0367 | .W0369 | .W0387 | .W0603 | .W0604 | .N0027 | .W0391 | .W0392 |
+    .W0399 | .W0445 | .W0444 =>
+    .ignored
+  | .N0103 | .N0105 | .W0013 | .N0029 | .W0416 | .W0449 =>
+    .unused
+  | .W0002 | .E0004 | .E0005 | .E0205 | .E0303 | .E0305 | .E0320 | .E0321 | .E0323 | .E0325 |
+    .E0331 | .E0332 | .E0501 | .W0014 | .W0105 | .W0107 | .W0202 | .E0333 | .W0314 | .W0332 |
+    .W0337 | .W0352 | .W0420 | .W0425 | .W0429 | .W0306 | .W0431 | .W0442 | .W0433 =>
+    .invalid
+  | .E0001 | .E0402 | .E0404 | .W0601 | .W0446 =>
+    .unreadable
+  | .E0304 | .E0401 | .W0003 | .E0405 | .W0008 | .N0018 | .W0309 | .W0312 | .W0320 | .W0326 |
+    .E0502 | .E0365 | .N0376 | .W0377 | .W0378 | .W0379 | .W0382 | .W0390 | .W0393 | .W0394 |
+    .E0395 | .E0606 | .W0424 | .N0031 | .W0414 | .W0432 | .N0032 | .W0503 =>
+    .missing
+  | .E0003 | .W0311 | .W0322 | .W0325 | .W0327 | .W0342 | .W0343 | .W0350 | .W0441 | .W0450 =>
+    .duplicate
+  | .E0102 | .E0201 | .E0316 | .W0310 =>
+    .unclosed
+  | .E0101 | .E0202 | .E0310 | .E0311 | .E0312 | .E0313 | .W0321 | .W0398 | .W0411 | .W0413 |
+    .W0451 | .W0452 =>
+    .unexpected
+  | .W0004 | .W0403 | .W0006 | .W0009 | .W0016 | .W0366 | .W0368 | .N0026 | .W0421 | .W0447 =>
+    .substituted
+  | .W0005 | .W0328 | .W0333 | .W0335 | .W0336 | .W0338 | .W0358 | .W0372 | .W0384 | .W0400 |
+    .W0386 | .W0388 | .W0396 =>
+    .overfull
+  | .W0201 | .W0315 | .W0330 | .W0345 | .W0308 =>
+    .illegible
+  | .E0330 =>
+    .failed
+  | .N0200 =>
+    .tight
+  | .N0100 | .N0020 | .N0023 | .N0024 | .N0030 =>
+    .translated
+  | .N0114 | .N0019 | .N0025 | .N0448 =>
+    .resolved
+  | .N0016 | .N0017 | .N0021 =>
+    .default
+
+/-- A message in the one form, opening with its code's word. -/
+public def Diag.say (c : DiagCode) (noun : Diag.Noun) (name : Option Diag.Name := none)
+    (obj : Option (Option Diag.Noun × Diag.Name) := none) : String :=
+  { qual := c.qual, noun, name, obj : Diag.Words }.render
+
+/-- N0100's words for a written construct: an environment by its name, anything else as written. -/
+public def Diag.translated (what : String) : String :=
+  match (what.dropPrefix? "\\begin{").bind (·.toString.dropSuffix? "}") with
+  | some env => Diag.say .N0100 .environment (Diag.Name.of env.toString)
+  | none => Diag.say .N0100 .command (Diag.Name.of what)
 
 public def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
 

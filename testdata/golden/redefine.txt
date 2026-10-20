@@ -15,6 +15,6 @@ para
     text "The runnable body wins."
   italicCorr maybe
 -- diagnostics
-note[N0100] 8:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
-note[N0100] 9:1 '\renewcommand{\titlepage}' → \define \titlepage() {...}
+info[N0100] 8:1 translated command \renewcommand{\maketitle} | detail: \define \maketitle() {...}
+info[N0100] 9:1 translated command \renewcommand{\titlepage} | detail: \define \titlepage() {...}
 warning[W0361] 8:1 the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands | detail: '\venuetitlebox' at redefine.tex:8

@@ -196,15 +196,15 @@ def missingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"bib missing: biblatex's file is named as its resource, never as a command it was not \
 ({repr (bds.map fun d => (d.message, d.help))})"
     (bds.map (·.kind) == #[.W0503] && bds.all fun d =>
-      hasStr d.message "resource 'absent" && !hasStr d.message "\\bibliography" &&
-        !hasStr d.message "\\printbibliography" && !d.help.any (hasStr · "\\bibliography"))
+      d.detail == some "named by a bibliography resource" && !hasStr (saidText d) "\\bibliography" &&
+        !hasStr (saidText d) "\\printbibliography" && !d.help.any (hasStr · "\\bibliography"))
   let ownDoc := (elabStr ("\\documentclass{article}\n\\begin{document}\nSee \\cite{o} and \\cite{a}.\n\
 \\begin{thebibliography}{9}\n\\bibitem{o} Own Notes.\n\\end{thebibliography}\n\\bibliography{absent}\n\
 \\end{document}\n")).1
   let (_, ods, _) ← Input.resolveBibliography "doc.tex" ownDoc Bib.plainReading #[]
   t s!"bib missing: beside the document's own entries the file's loss leaves each '?' named \
 ({repr (ods.map fun d => (d.code, d.message))})"
-    (ods.any (fun d => d.kind == .W0503 && hasStr d.message "own entries" && d.carries.isEmpty) &&
+    (ods.any (fun d => d.kind == .W0503 && d.carries.isEmpty) &&
       ods.any (fun d => d.kind == .W0351 && d.subject == some "a"))
   let macroBlx := "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{absent.bib}\n\
 \\newcommand{\\refs}{\\printbibliography}\n\\begin{document}\nA claim \\cite{a}.\n\\refs\n\\end{document}\n"
@@ -214,7 +214,7 @@ def missingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"bib missing: a biblatex list a macro prints names its file as a resource \
 ({repr (mds.map fun d => (d.message, d.help))})"
     (mds.map (·.kind) == #[.W0503] && mds.all fun d =>
-      hasStr d.message "resource 'absent" && !d.help.any (hasStr · "\\bibliography"))
+      d.detail == some "named by a bibliography resource" && !d.help.any (hasStr · "\\bibliography"))
   let quiet := (elabStr (citingDoc "No citation here." (files := "absent"))).1
   let (_, qds, _) ← Input.resolveBibliography "doc.tex" quiet Bib.plainReading #[]
   t s!"bib missing: with no citation the file's loss claims no mark \

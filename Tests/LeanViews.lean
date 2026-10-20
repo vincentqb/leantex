@@ -526,7 +526,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, goneDs, _) ← Input.expandInputs "testdata/compat-index/probe.md" goneRaws
   t "views: a division whose file is not there names the division, not the command it lowers onto"
     (goneDs.any fun d => d.kind == .E0502 &&
-      (d.message.splitOn "the Lean division's file 'fixtures/gone.lean' is not there").length == 2)
+      d.message == "missing file fixtures/gone.lean" && d.detail == some "named by the Lean division")
   -- A division's attributes reach the inclusion as written, through no text a reader lexes again.
   IO.FS.withTempDir fun tmp => do
     IO.FS.writeFile (tmp / "ex.lean") "theorem probe_true : True := trivial\n"

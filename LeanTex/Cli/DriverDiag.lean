@@ -25,53 +25,58 @@ public theorem atImageRequest_located_exact (imageSpans : Array (String × Span)
 
 /-- E0001: the input file itself could not be read. -/
 public def unreadableInput (file err : String) : Diag :=
-  Diag.of .E0001 s!"cannot read '{file}': {err}"
+  Diag.of .E0001 (Diag.say .E0001 .file file) (detail := some err)
 
 /-- E0004: an artifact could not be written where asked; `err` is the system's reason, and
 the other artifacts are written. -/
 public def outputUnwritable (path err : String) : Diag :=
-  Diag.of .E0004 s!"cannot write '{path}': {err}"
+  Diag.of .E0004 (Diag.say .E0004 .output path) (detail := some err)
     (help := "choose a destination this user can write with -o, or the markdown twin's with \\output{ md = ... }")
     (subject := some path)
 
 /-- E0006: `-o` names an extension no format writes, so nothing is built. -/
 public def outputFormatUnknown (name : String) : Diag :=
-  Diag.of .E0006 s!"cannot tell the output format of '{name}'"
+  Diag.of .E0006 (Diag.say .E0006 .output name)
     (help := s!"name an output file ending in {Emit.extensions} with -o, or a directory ending in '/'")
     (subject := some name)
 
 /-- E0003: distinct artifacts would overwrite the same file. -/
 public def outputPathsConflict (detail : String) : Diag :=
-  Diag.of .E0003 s!"cannot publish output: {detail}"
+  Diag.of .E0003 (Diag.say .E0003 .output) (detail := some detail)
     (help := "choose separate files with -o and \\output{ md = ... }; use destinations without hard links")
 
 /-- E0005: an artifact would be written over one of the build's inputs, so nothing is
 written; the subject is the destination. -/
 public def outputOverwritesInput : PublicationPaths.Overwrite → Diag
   | .same format dest input => overwrite dest
-    s!"the {format} destination '{dest}' is '{input}', one of the build's inputs"
+    s!"the {format} output is the input '{input}'"
   | .linked format dest input => overwrite dest
-    s!"the {format} destination '{dest}' may be a hard link to '{input}', one of the build's inputs"
+    s!"the {format} output may be a hard link to the input '{input}'"
 where
   overwrite (dest detail : String) : Diag :=
-    Diag.of .E0005 s!"cannot publish output: {detail}"
+    Diag.of .E0005 (Diag.say .E0005 .output dest) (detail := some detail)
       (help := "name another destination with -o, or the markdown twin with \\output{ md = ... }")
       (subject := some dest)
 
 /-- A whole-artifact PDF representation refusal, with no span, since no source command is
 identified. -/
 public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
-  let message := match error with
+  let (message, detail) := match error with
     | .byteOffset bytes =>
-      s!"the PDF body needs {bytes} bytes; offsets must be below {2 ^ 64}"
+      (Diag.say .E0607 .output,
+        s!"the PDF body needs {bytes} bytes; offsets stay below {2 ^ 64}")
     | .objectStreamSize bytes =>
-      s!"the largest PDF object stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
+      (Diag.say .E0607 .output,
+        s!"the largest object stream needs {bytes} decoded bytes; the limit is {PdfRead.maxDecoded}")
     | .xrefStreamSize bytes =>
-      s!"the PDF cross-reference stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
+      (Diag.say .E0607 .output,
+        s!"the cross-reference stream needs {bytes} decoded bytes; the limit is {PdfRead.maxDecoded}")
     | .objectSpelling id =>
-      s!"the PDF object {id} contains a spelling the writer cannot represent"
+      (Diag.say .E0607 .object (Diag.Name.of (toString id)),
+        "a spelling the writer cannot represent")
     | .inkRaster page =>
-      s!"a picture on page {page + 1} paints a raster image the PDF writer cannot place"
+      (Diag.say .E0607 .image,
+        s!"a picture on page {page + 1} paints a raster image")
   let split := "split the document into smaller files and compile each with `leantex <file>.tex`"
   let help := match error with
     | .objectSpelling _ =>
@@ -80,24 +85,24 @@ public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
     | .byteOffset _ | .xrefStreamSize _ => split
     | .inkRaster _ => "draw the picture without an embedded raster, or include the image with \\includegraphics"
   Diag.of .E0607 message
-    (help := help)
+    (help := help) (detail := some detail)
 
 /-- E0402: `LEANTEX_FONT` names a file that does not parse as a font. -/
 public def envFontUnusable (path err : String) : Diag :=
-  Diag.of .E0402 s!"cannot use LEANTEX_FONT '{path}': {err}"
+  Diag.of .E0402 (Diag.say .E0402 .font path) (detail := some s!"LEANTEX_FONT: {err}")
 
 /-- E0402: `LEANTEX_FONT` names a file that is not there. -/
 public def envFontMissing (path : String) : Diag :=
-  Diag.of .E0402 s!"LEANTEX_FONT '{path}' does not exist"
+  Diag.of .E0402 (Diag.say .E0402 .font path) (detail := some "LEANTEX_FONT names no file")
 
 /-- E0401: the scan produced nothing usable at all. -/
 public def noFont : Diag :=
-  Diag.of .E0401 "no usable font found"
+  Diag.of .E0401 (Diag.say .E0401 .font)
     (help := "install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT")
 
 /-- W0008: the document's `\fonts{ dir = ... }` is not a directory. -/
 public def fontsDirMissing (decl resolved : String) : Diag :=
-  Diag.of .W0008 s!"'\\fonts' dir '{decl}' is not a directory ({resolved}); looking elsewhere"
+  Diag.of .W0008 (Diag.say .W0008 .directory decl) (detail := some resolved)
     (subject := some "param:\\fonts:dir")
 
 /-- W0403: a named family is not installed, at the declaration naming it; `near` are the closest
@@ -106,20 +111,19 @@ public def familyMissing (family : String) (near : List String) (installed : Nat
     (span : Option Span := none) : Diag :=
   let hint := if near.isEmpty then s!"{installed} families are installed"
     else s!"did you mean: {String.intercalate ", " near}?"
-  Diag.of .W0403 s!"no installed font family named '{family}'; the default family stands in" span
+  Diag.of .W0403 (Diag.say .W0403 .family (obj := some (none, family))) span
     (subject := some ("family:" ++ family))
     (help := s!"{hint} — `leantex fonts` lists every family")
 
 /-- E0404: a font file that exists but does not parse. -/
 public def fontFileUnusable (path err : String) : Diag :=
-  Diag.of .E0404 s!"cannot use '{path}': {err}"
+  Diag.of .E0404 (Diag.say .E0404 .font path) (detail := some err)
 
 /-- W0366: a name asked for a weight the family does not ship; the nearest
 installed weight substitutes, both weights named. -/
 public def weightSubstituted (asked : String) (requested : Nat) (face : FontDb.Face) : Diag :=
   Diag.of .W0366
-    (s!"'{asked}' asks for a weight that is not installed; " ++
-      s!"'{face.family} {face.subfamily}' is the nearest")
+    (Diag.say .W0366 .face s!"{face.family} {face.subfamily}" (some (none, asked)))
     (detail := some s!"weight {requested} asked, weight {face.weight} the nearest")
     (help := "install the named weight, or name the face to use \
 (\\fonts{ sans.upright = \"...\" } and siblings)")
@@ -147,8 +151,8 @@ font directory{declared}"
       else s!"install one of {listed}, its bold and both or no italics{declared}; `leantex fonts` \
 lists the installed families"
     else s!"{declare} gives the slot its own face; `leantex fonts` lists the installed families"
-  Diag.of .W0390
-    s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"
+  Diag.of .W0390 (Diag.say .W0390 .family key)
+    (detail := some s!"{whereLost}{runs} set in {served}, {note}")
     (subject := some s!"slot:{key}") (help := help)
 
 /-- N0031: the engine's typewriter default has no italic face, so its italic corners set
@@ -159,10 +163,8 @@ public def monoUpright (family : String) (declarable : Bool := true) (own : Bool
   let remedy := if own then "put the family's italic faces in the document's font directory"
     else "install the family's italic faces"
   let shipsNone := FontDb.monoUprightOnly.contains family
-  Diag.of .N0031
-    (if own then s!"'{family}' in the document's font directory has no italic face; italic code \
-sets upright in it"
-      else s!"'{family}' has no italic face; italic code sets upright in it")
+  Diag.of .N0031 (Diag.say .N0031 .face "italic" (some (some .family, family)))
+    (detail := if own then some "in the document's font directory" else none)
     (subject := some "slot:mono:italic")
     (help := if shipsNone then (if declarable then some declare else none)
       else if declarable then some s!"{remedy}, or {declare}" else some remedy)
@@ -170,30 +172,31 @@ sets upright in it"
 /-- The two substitution codes of one resolution result: a missing variant is W0006, a
 missing weight W0366. -/
 public def substituted : FontDb.Substituted → Diag
-  | .variant msg => Diag.of .W0006 msg
+  | .variant asked declared face =>
+    Diag.of .W0006 (Diag.say .W0006 .face s!"{face.family} {face.subfamily}" (some (none, asked)))
+      (detail := declared.map (s!"'{·}' is not installed"))
   | .weight asked requested face => weightSubstituted asked requested face
 
 /-- W0011: the declared math face has no OpenType MATH table. -/
 public def mathFaceNoTable (family path : String) : Diag :=
-  Diag.of .W0011
-    s!"'{family}' ({path}) has no OpenType MATH table; math is set as plain text"
+  Diag.of .W0011 (Diag.say .W0011 .mathFont family)
+    (detail := some s!"{path} has no OpenType MATH table")
     (help := "\\fonts{ math = \"STIX Two Math\" } names a math face; \
 `leantex fonts` lists the installed families")
 
 /-- N0016: no math face was declared and the body family's designed
 companion is installed, so the engine set math in it. -/
 public def mathFaceCompanion (mathFamily bodyFamily : String) : Diag :=
-  Diag.of .N0016
-    s!"math is set in '{mathFamily}', the designed companion of '{bodyFamily}'"
+  Diag.of .N0016 (Diag.say .N0016 .mathFont mathFamily)
+    (detail := some s!"the designed companion of '{bodyFamily}'")
     (help := "\\fonts{ math = \"...\" } chooses a face yourself; \
 `leantex fonts` lists the installed families")
 
 /-- N0016: no math face was declared and no companion is installed, so the
 engine set math in the first installed face with an OpenType MATH table. -/
 public def mathFaceFirst (mathFamily : String) : Diag :=
-  Diag.of .N0016
-    s!"math is set in '{mathFamily}', the first installed face with an \
-OpenType MATH table"
+  Diag.of .N0016 (Diag.say .N0016 .mathFont mathFamily)
+    (detail := some "the first installed face with an OpenType MATH table")
     (help := "\\fonts{ math = \"...\" } chooses a face yourself; \
 `leantex fonts` lists the installed families")
 
@@ -202,11 +205,8 @@ holds no earlier render, so its placeholder ships; `why` is how the version ques
 ended. -/
 public def boundaryToolUnavailable (tool : String) (span : Option Span := none)
     (why : String := "") : Diag :=
-  Diag.of .W0379
-    (if why.isEmpty then "no boundary tool is available for this picture outside the rendered subset"
-      else s!"no boundary tool is available for this picture: {tool}'s version was not read")
-    span
-    (detail := if why.isEmpty then none else some why)
+  Diag.of .W0379 (Diag.say .W0379 .tool tool) span
+    (detail := if why.isEmpty then none else some s!"its version was not read: {why}")
     (help := s!"install {tool} if it is missing, or \\pictures\{ tool = none } accepts the \
 placeholder; a warm cache needs no tool")
     (recovery := some (.replacedBy "a placeholder box"))
@@ -214,8 +214,7 @@ placeholder; a warm cache needs no tool")
 /-- W0382: a boundary render that failed ships its placeholder, named once under the
 picture's source with the tool's last words. -/
 public def boundaryFailed (tool logTail src : String) (span : Option Span := none) : Diag :=
-  Diag.of .W0382
-    s!"'{tool}' drew nothing for this picture; a placeholder box marks its place"
+  Diag.of .W0382 (Diag.say .W0382 .drawing (obj := some (some .tool, tool)))
     span
     (help := if logTail.isEmpty then
         s!"{tool}'s log says nothing usable; \\allow\{W0382} accepts the placeholder"
@@ -226,9 +225,8 @@ public def boundaryFailed (tool logTail src : String) (span : Option Span := non
 /-- W0382 for an attempt that never finished: nothing is remembered or withdrawn, the
 placeholder ships, and `why` is how the attempt ended. -/
 public def boundaryUnfinished (tool why src : String) (span : Option Span := none) : Diag :=
-  Diag.of .W0382
-    s!"'{tool}' did not finish this picture; a placeholder box marks its place"
-    span
+  Diag.of .W0382 (Diag.say .W0382 .drawing (obj := some (some .tool, tool)))
+    span (detail := some why)
     (help := s!"{why}; nothing is remembered, so a rebuild asks {tool} again; \
 \\allow\{W0382} accepts the placeholder")
     (subject := some src)
@@ -275,23 +273,21 @@ public inductive SvgFaceLoss where
 rendered subset's drawing or a labelled placeholder; one per picture, under its image
 source. -/
 public def boundarySvgMissing (src : String) (loss : SvgFaceLoss) : Diag :=
-  let (message, detail, help) : String × Option String × String := match loss with
+  let (detail, help) : String × String := match loss with
     | .textless =>
-      ("this boundary picture has no browser face: its text is in a font the engine does not \
-draw, and no converter drew it", none,
+      ("its text is in a font the engine does not draw, and no converter drew it",
         "install poppler's pdftocairo, which draws the picture whole, rebuild if a conversion \
 was interrupted, or \\allow{W0378} accepts the loss")
     | .textlessDeclined =>
-      ("this boundary picture has no browser face: its text is in a font the engine does not \
-draw, and the converter is declined", none,
+      ("its text is in a font the engine does not draw, and the converter is declined",
         "\\figures{ convert = none } declines the converter; without it, pdftocairo draws the \
 picture whole, or \\allow{W0378} accepts the loss")
     | .unconverted why =>
-      ("this boundary picture has no browser face: its conversion to SVG failed or did not \
-finish", some why,
+      (s!"its conversion to SVG failed or did not finish: {why}",
         "install poppler's pdftocairo if the reason says it is missing, rebuild if it was \
 interrupted, or \\allow{W0378} accepts the loss")
-  Diag.of .W0378 message (subject := some src) (detail := detail) (help := help)
+  Diag.of .W0378 (Diag.say .W0378 .drawing (obj := some (none, "HTML"))) (subject := some src)
+    (detail := some detail) (help := help)
     (output := some .html)
 
 public theorem boundarySvgMissing_subject (src : String) (loss : SvgFaceLoss) :
@@ -302,42 +298,39 @@ public theorem boundarySvgMissing_subject (src : String) (loss : SvgFaceLoss) :
 /-- W0393: the external classifier supplied no usable answer; the listing ships as plain
 text, keyed by its language. -/
 public def listingHighlightUnavailable (language reason : String) : Diag :=
-  Diag.of .W0393
-    s!"cannot highlight '{language}'; the listing is set as plain text"
+  Diag.of .W0393 (Diag.say .W0393 .highlighter (obj := some (some .language, language)))
+    (detail := some reason)
     (subject := some ("listing-language:" ++ language))
     (help := s!"check `python3 -m pygments -L lexers`, or install Pygments for `python3` ({reason})")
 
 /-- E0606: the page failed the resource-closure check and is not published. -/
 public def htmlResourceUnavailable (detail : String) : Diag :=
-  Diag.of .E0606 s!"cannot publish self-contained HTML: {detail}"
+  Diag.of .E0606 (Diag.say .E0606 .resource) (detail := some detail)
     (help := "use readable local image, font, stylesheet and math renderer files; remove CSS `@import` and external `url(...)` dependencies")
     (output := some .html)
 
 /-- E0502: an included source file is not there; its content is absent. -/
 public def inputMissing (name : String) (span : Option Span) (command : String := "input")
     (spelled : Option String := none) : Diag :=
-  let what := spelled.getD s!"'\\{command}' file"
-  Diag.of .E0502 s!"{what} '{name}' is not there; its content is absent" span
+  Diag.of .E0502 (Diag.say .E0502 .file name) span
+    (detail := some s!"named by {spelled.getD s!"\\{command}"}")
     (help := "\\allow{E0502} accepts the loss")
 
 /-- What names a missing `.bib` file: the `\bibliography` command that requested it, else
 biblatex's resource. -/
-private def bibNamed (name : String) (command : Option String) : String × String :=
+private def bibNamed (command : Option String) : String × String :=
   match command with
-  | some c => (s!"'{c}' file '{name}'", s!"correct its name in {c}")
-  | none => (s!"the bibliography resource '{name}'", "correct the resource's name")
+  | some c => (s!"named by {c}", s!"correct its name in {c}")
+  | none => ("named by a bibliography resource", "correct the resource's name")
 
 /-- W0503: a `.bib` file the list's `command` names is not there; the reference list stays empty
 and, where `shows`, every citation shows `?`, unless the document lists entries of its own. -/
 public def bibMissing (name looked : String) (span : Option Span)
     (command : Option String := some "\\bibliography") (own : Bool := false)
     (shows : Bool := true) : Diag :=
-  let rest := if own then "the reference list holds only the document's own entries"
-    else if shows then "the reference list is empty and every citation shows '?'"
-    else "the reference list is empty"
-  let (what, fix) := bibNamed name command
-  Diag.of .W0503 s!"{what} is not there; {rest}"
-    span (help := s!"put the file at {looked}, or {fix}")
+  let (named, fix) := bibNamed command
+  Diag.of .W0503 (Diag.say .W0503 .file name)
+    span (help := s!"put the file at {looked}, or {fix}") (detail := some named)
     (subject := some ("bibfile:" ++ name)) (carries := if own || !shows then [] else [.W0351])
 
 /-- W0424: one `.bib` file of several a bibliography names is not there;
@@ -347,25 +340,21 @@ public def bibMissingAmong (name looked : String) (span : Option Span)
     (command : Option String := some "\\bibliography") : Diag :=
   let drop := if command.isSome then s!"drop '{name}' from the list of files"
     else "drop the resource"
-  Diag.of .W0424 s!"{(bibNamed name command).1} is not there; the reference list holds the \
-entries of the other files" span
-    (help := s!"put the file at {looked}, or {drop}")
+  Diag.of .W0424 (Diag.say .W0424 .file name) span
+    (help := s!"put the file at {looked}, or {drop}") (detail := some (bibNamed command).1)
     (subject := some ("bibfile:" ++ name))
 
 /-- W0503 as a code file's documentation names its bibliography, on its page or under the inclusion
 `entry` names: the file is not there, so its documentation's citations stay as written. -/
 public def bibMissingLean (name looked : String) (span : Span) (entry : Option String) : Diag :=
-  let loss := match entry with
-    | some _ => "the included documentation's citations stay as written"
-    | none => "the page's citations stay as written and its reference list is empty"
-  Diag.of .W0503 s!"the bibliography file '{name}' the documentation names is not there; {loss}"
-    (some span) (help := s!"put the file at {looked}") (subject := some ("bibfile:" ++ name))
+  Diag.of .W0503 (Diag.say .W0503 .file name) (some span)
+    (detail := some (if entry.isSome then "named by the included documentation"
+      else "named by the documentation")) (help := s!"put the file at {looked}") (subject := some ("bibfile:" ++ name))
 
 /-- W0503 as a code file's documentation cites entries of its project's bibliography, `name` from the
 file, and declares none in `home`, where the line `spelled` would. -/
 public def bibUndeclared (name home spelled : String) (keys : Array String) (span : Span) : Diag :=
-  Diag.of .W0503 s!"the documentation cites entries of '{name}', its project's bibliography, and \
-declares no bibliography; its citations stay as written" (some span)
+  Diag.of .W0503 (Diag.say .W0503 .declaration (obj := some (some .file, name))) (some span)
     (help := s!"declare it on a line of {home}: `{spelled}`")
     (subject := some ("bibfile:" ++ name)) (detail := some (", ".intercalate keys.toList))
 
@@ -373,30 +362,28 @@ declares no bibliography; its citations stay as written" (some span)
 public def bibMissingMarkdown (among : Bool) (name looked : String) (span : Option Span)
     (shows : Bool := true) : Diag :=
   if among then
-    Diag.of .W0424 s!"the bibliography file '{name}' is not there; the reference list holds the \
-entries of the other files" span
+    Diag.of .W0424 (Diag.say .W0424 .file name) span
       (help := s!"put the file at {looked}, or drop '{name}' from 'bibliography:'")
       (subject := some ("bibfile:" ++ name))
   else
-    let rest := if shows then "the reference list is empty and every citation shows '?'"
-      else "the reference list is empty"
-    Diag.of .W0503 s!"the bibliography file '{name}' is not there; {rest}"
+    Diag.of .W0503 (Diag.say .W0503 .file name) (detail := some "named by 'bibliography:'")
       span (help := s!"put the file at {looked}, or correct its name in 'bibliography:'")
       (subject := some ("bibfile:" ++ name)) (carries := if shows then [.W0351] else [])
 
 /-- E0365: a `.bib` file `\data` names is not there; its records are absent and every read
 of them stays unresolved. -/
 public def dataMissing (name looked : String) (span : Option Span) : Diag :=
-  Diag.of .E0365 s!"'\\data' file '{name}' is not there; its records are absent"
+  Diag.of .E0365 (Diag.say .E0365 .file name)
     span (help := s!"looked at: {looked}; \\allow\{E0365} accepts the loss")
 
 /-- E0501: the `\input` stack never emptied. -/
 public def inputTooDeep : Diag :=
-  Diag.of .E0501 "'\\input' nesting deeper than 8 files; is a file including itself?"
+  Diag.of .E0501 (Diag.say .E0501 .nesting (obj := some (none, "\\input")))
+    (detail := some "deeper than 8 files")
 
 /-- W0013: an `\allow` entry no diagnostic matched. -/
 public def allowUnfired (code : String) : Diag :=
-  Diag.of .W0013 s!"'\\allow' lists {code}, which never fired"
+  Diag.of .W0013 (Diag.say .W0013 .code code)
     (help := "the document no longer needs it; drop the entry from \\allow")
 
 end LeanTex.Cli.DriverDiag

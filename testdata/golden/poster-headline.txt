@@ -46,4 +46,4 @@ frame
         para
           text "Body text in the second column, likewise synthetic."
 -- diagnostics
-note[N0100] 12:1 '\footercontent' → \runningfoot{...}
+info[N0100] 12:1 translated command \footercontent | detail: \runningfoot{...}

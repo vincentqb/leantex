@@ -335,8 +335,8 @@ def selftest : IO UInt32 := tierSelftest "diagaudit" fun no => do
   let site (sev : String) (loss : String) (sites : String) : String :=
     s!"\{\"event\":\"diagnostic\",\"severity\":\"{sev}\",\"code\":\"W0104\",\"loss\":\"{loss}\",\
 \"message\":\"m\",\"file\":\"a.tex\",\"line\":1,\"col\":1,\"subject\":\"ctrl:x\"{sites}}\n"
-  let three := site "warning" "config" ",\"sites\":3" ++ site "note" "config" ",\"sites\":0" ++
-    site "note" "config" ",\"sites\":0"
+  let three := site "warning" "config" ",\"sites\":3" ++ site "info" "config" ",\"sites\":0" ++
+    site "info" "config" ",\"sites\":0"
   let c := census #[("a.pdf.porcelain", three)]
   no "a loss printed as a warning and two notes is one row in its declared band"
     (c.rows.size == 1 && (c.rows.map fun r => (r.code.code, r.lines, r.sites, r.groups, r.mixed))

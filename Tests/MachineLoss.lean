@@ -444,7 +444,7 @@ def machineLossChecks (ref : IO.Ref (List String))
     let slow ← build boundary hanging "hanging" (dir / "hanging-out" / "page.html")
     t s!"machine loss CLI killed version question: W0379 names how the question ended (exit {slow.exitCode})"
       (slow.exitCode == 0 && (recordsOf slow).any fun j => codeOf j == some "W0379" &&
-        ((j.getObjValAs? String "message").toOption.any (hasStr · "version was not read") &&
+        ((j.getObjValAs? String "detail").toOption.any (hasStr · "version was not read") &&
           (j.getObjValAs? String "detail").toOption.any (hasStr · "no version within")))
     let unloadable := dir / "unloadable"
     writeScript (unloadable / "lualatex") ("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'synthetic boundary renderer 1'; exit 0; fi\n" ++

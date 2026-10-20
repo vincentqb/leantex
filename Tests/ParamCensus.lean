@@ -169,7 +169,8 @@ def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
 
 /-- Whether a diagnostic is the note an inert row gives a setting, keyed by it. -/
 def notesInert (key : String) (d : Diag) : Bool :=
-  d.code == "N0100" && hasStr d.message "→ nothing:" && d.subject.any (keyedBy key)
+  d.code == "N0100" && (d.detail.any (·.startsWith "nothing:") || hasStr d.message "→ nothing:") &&
+    d.subject.any (keyedBy key)
 
 /-- One reader's vocabulary: each setting as the document writes it, the documents it is tried in
 (`none` without it), the name its diagnostics carry, and whether a setting is an inert row of the

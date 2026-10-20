@@ -98,45 +98,45 @@ para
     text "remarkably steadily"
   text " into a headwind."
 -- diagnostics
-note[N0100] 7:1 '\usepackage{xcolor}' → nothing: the engine does this itself
-note[N0100] 8:1 '\definecolor{deepwater}' → \palette{ deepwater = HTML(1F4E5F) }
-note[N0100] 9:1 '\definecolor{driftwood}' → \palette{ driftwood = rgb(0.47,0.41,0.33) }
-note[N0100] 10:1 '\definecolor{foam}' → \palette{ foam = HTML(B8D8CF) }
-note[N0100] 11:1 '\colorlet' → \palette{ oarblade = driftwood }
-note[N0100] 13:1 '\usepackage[english]{babel}' → \pdfmeta{ language = "en" }
-note[N0100] 14:1 '\babelfont' → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
-note[N0100] 15:1 '\babelfont' → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
-note[N0100] 16:1 '\usepackage{geometry}' → nothing: the paper is the one in force, as without the option
-note[N0100] 16:1 '\usepackage{geometry}' → \page{ headsep = 5mm, hmargin = 17mm, vmargin = 14mm }
-note[N0100] 17:1 '\usepackage{microtype}' → nothing: the engine does this itself
-note[N0100] 19:1 '\newlength{\beat}' → \tokens{ beat = 0pt }
-note[N0100] 20:1 '\setlength{\beat}' → \tokens{ beat = 2.2ex plus 0.6ex minus 0.3ex }
-note[N0100] 21:1 '\newlength{\stroke}' → \tokens{ stroke = 0pt }
-note[N0100] 22:1 '\setlength{\stroke}' → \tokens{ stroke = 0.75 * beat }
-note[N0100] 23:1 '\linespread' → \page{ leading = 1.12 }
-note[N0100] 25:1 '\usepackage{scrlayer-scrpage}' → nothing: the engine does this itself
-note[N0100] 26:1 '\clearpairofpagestyles' → no running fields; fields declared after apply
-note[N0100] 29:1 '\pagestyle{scrheadings}' → nothing: declared running fields apply by themselves
-note[N0100] 32:1 '\makeatletter' → nothing: @-names are always readable here
-note[N0100] 33:1 '\sectionlinesformat' → \style{section}{ rule = foam, rule-position = baseline, rule-thickness = 1.1pt }
-note[N0100] 34:1 '\makeatother' → nothing: @-names are always readable here
-note[N0100] 35:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 2 * stroke, after = 1 * stroke }
-note[N0100] 36:1 '\setkomafont{section}' → \style{section}{ font = {...} }
-note[N0100] 37:1 '\setlist[itemize]' → \style{itemize}{ marker = {\textcolor {oarblade}{\footnotesize \textbullet}}, indent = 1.6em, itemsep = stroke, topsep = stroke }
-note[N0100] 39:1 '\newcommand{\boat}' → \define \boat(a1: content, a2: content) {...}
-note[N0100] 40:1 '\NewDocumentCommand{\boatsep}' → \define \boatsep() {...}
-note[N0100] 41:1 '\NewDocumentCommand{\fixture}' → \define \fixture(a1: content, a2: content, a3: content, a4?: content) {...}
-note[N0100] 45:1 '\usepackage{hyperref}' → nothing: the engine does this itself
-note[N0100] 46:1 '\usepackage{soul}' → nothing: the engine does this itself
-note[N0100] 47:1 'pdfborder={0 0 0}' → nothing: links are written without a border
-note[N0100] 53:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
-note[N0100] 56:1 '\color{deepwater}' → \deepwater
-note[N0100] 60:5 '\vspace' → \block[before = 2 * stroke]{}
-note[N0100] 61:6 '\color{driftwood}' → \driftwood
-note[N0100] 72:1 '\vspace' → \block[before = 2 * stroke]{}
-note[N0100] 83:1 '\noindent' → nothing: no paragraph carries a first-line indent here
-note[N0100] 85:1 '\ul' → \underline
-note[N0100] 85:33 '\varul' → \underline
-note[N0100] 27:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\itshape Harbour Rowing Club \hfill  \hfill \thepage}
-note[N0100] 47:1 '\hypersetup' → \pdfmeta{ title = "Spring Bulletin", author = "Harbour Rowing Club" }
-note[N0100] 83:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force
+info[N0100] 7:1 translated command \usepackage{xcolor} | detail: nothing: the engine does this itself
+info[N0100] 8:1 translated command \definecolor{deepwater} | detail: \palette{ deepwater = HTML(1F4E5F) }
+info[N0100] 9:1 translated command \definecolor{driftwood} | detail: \palette{ driftwood = rgb(0.47,0.41,0.33) }
+info[N0100] 10:1 translated command \definecolor{foam} | detail: \palette{ foam = HTML(B8D8CF) }
+info[N0100] 11:1 translated command \colorlet | detail: \palette{ oarblade = driftwood }
+info[N0100] 13:1 translated command \usepackage[english]{babel} | detail: \pdfmeta{ language = "en" }
+info[N0100] 14:1 translated command \babelfont | detail: \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
+info[N0100] 15:1 translated command \babelfont | detail: \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
+info[N0100] 16:1 translated command \usepackage{geometry} | detail: nothing: the paper is the one in force, as without the option
+info[N0100] 16:1 translated command \usepackage{geometry} | detail: \page{ headsep = 5mm, hmargin = 17mm, vmargin = 14mm }
+info[N0100] 17:1 translated command \usepackage{microtype} | detail: nothing: the engine does this itself
+info[N0100] 19:1 translated command \newlength{\beat} | detail: \tokens{ beat = 0pt }
+info[N0100] 20:1 translated command \setlength{\beat} | detail: \tokens{ beat = 2.2ex plus 0.6ex minus 0.3ex }
+info[N0100] 21:1 translated command \newlength{\stroke} | detail: \tokens{ stroke = 0pt }
+info[N0100] 22:1 translated command \setlength{\stroke} | detail: \tokens{ stroke = 0.75 * beat }
+info[N0100] 23:1 translated command \linespread | detail: \page{ leading = 1.12 }
+info[N0100] 25:1 translated command \usepackage{scrlayer-scrpage} | detail: nothing: the engine does this itself
+info[N0100] 26:1 translated command \clearpairofpagestyles | detail: no running fields; fields declared after apply
+info[N0100] 29:1 translated command \pagestyle{scrheadings} | detail: nothing: declared running fields apply by themselves
+info[N0100] 32:1 translated command \makeatletter | detail: nothing: @-names are always readable here
+info[N0100] 33:1 translated command \sectionlinesformat | detail: \style{section}{ rule = foam, rule-position = baseline, rule-thickness = 1.1pt }
+info[N0100] 34:1 translated command \makeatother | detail: nothing: @-names are always readable here
+info[N0100] 35:1 translated command \RedeclareSectionCommand{section} | detail: \style{section}{ before = 2 * stroke, after = 1 * stroke }
+info[N0100] 36:1 translated command \setkomafont{section} | detail: \style{section}{ font = {...} }
+info[N0100] 37:1 translated command \setlist[itemize] | detail: \style{itemize}{ marker = {\textcolor {oarblade}{\footnotesize \textbullet}}, indent = 1.6em, itemsep = stroke, topsep = stroke }
+info[N0100] 39:1 translated command \newcommand{\boat} | detail: \define \boat(a1: content, a2: content) {...}
+info[N0100] 40:1 translated command \NewDocumentCommand{\boatsep} | detail: \define \boatsep() {...}
+info[N0100] 41:1 translated command \NewDocumentCommand{\fixture} | detail: \define \fixture(a1: content, a2: content, a3: content, a4?: content) {...}
+info[N0100] 45:1 translated command \usepackage{hyperref} | detail: nothing: the engine does this itself
+info[N0100] 46:1 translated command \usepackage{soul} | detail: nothing: the engine does this itself
+info[N0100] 47:1 translated command 'pdfborder={0 0 0}' | detail: nothing: links are written without a border
+info[N0100] 53:1 translated command \thispagestyle{empty} | detail: \runninghead[from = 2]{...}
+info[N0100] 56:1 translated command \color{deepwater} | detail: \deepwater
+info[N0100] 60:5 translated command \vspace | detail: \block[before = 2 * stroke]{}
+info[N0100] 61:6 translated command \color{driftwood} | detail: \driftwood
+info[N0100] 72:1 translated command \vspace | detail: \block[before = 2 * stroke]{}
+info[N0100] 83:1 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
+info[N0100] 85:1 translated command \ul | detail: \underline
+info[N0100] 85:33 translated command \varul | detail: \underline
+info[N0100] 27:1 translated command '\ihead / \chead / \ohead' | detail: \runninghead[from = 2]{\itshape Harbour Rowing Club \hfill  \hfill \thepage}
+info[N0100] 47:1 '\hypersetup' → \pdfmeta{ title = "Spring Bulletin", author = "Harbour Rowing Club" }
+info[N0100] 83:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force

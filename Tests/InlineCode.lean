@@ -572,6 +572,6 @@ def lstInlineChecks (ref : IO.Ref (List String)) : IO Unit := do
       Html.render (Html.elem "div" (HtmlDoc.emitTree {} inlined.1).2.1) 0)
   let missing ← elabInputSrc file (dvDoc "\\usepackage{listings}\n" "\\lstinputlisting{absent.py}")
   t "lstinputlisting: a missing file is named by its command"
-    (missing.2.any fun d => d.code == "E0502" && hasStr d.message "lstinputlisting")
+    (missing.2.any fun d => d.code == "E0502" && hasStr (saidText d) "lstinputlisting")
 
 end Tests

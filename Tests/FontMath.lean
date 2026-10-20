@@ -116,8 +116,8 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", none))
   t "a declared face the host lacks degrades and says so"
     (((FontDb.resolveWeight faces "Alpha Sans" (some "Nope Light") 300 false).map
-      (fun r => (subMsg r.2).getD "")).getD "" |>.startsWith
-      "'Alpha Sans' declares 'Nope Light' as its weight-300 face")
+      (fun r => (subMsg r.2).getD "")).getD "" ==
+      "substituted face 'Alpha Sans Light' for 'Alpha Sans weight 300'; 'Nope Light' is not installed")
   t "the 400 and 700 corners stay resolveVariant's"
     ((FontDb.resolveWeight faces "Alpha Sans" none 700 false).map
         (fun r => (r.1.subfamily, subMsg r.2)) ==
@@ -207,12 +207,11 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "declared face the host lacks degrades and says so"
     ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Nope Sans") { bold := true }).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", some
-        ("'Alpha Sans Light' declares 'Nope Sans' as its bold face, " ++
-         "which is not installed; 'Alpha Sans Light' substitutes")))
+        "substituted face 'Alpha Sans Light' for 'Alpha Sans Light bold'; 'Nope Sans' is not installed"))
   t "substitution names the face actually used"
     ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map
       (subMsg ·.2) ==
-      some (some "'Alpha Sans Light' has no bold face; 'Alpha Sans Light' substitutes"))
+      some (some "substituted face 'Alpha Sans Light' for 'Alpha Sans Light bold'"))
   t "a satisfied variant carries no message"
     ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (subMsg ·.2) == some none)
   t "a missing family is still the caller's W0403"
@@ -223,13 +222,13 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a missing weight resolves to the nearest installed weight"
     ((FontDb.resolveVariant betas "Beta Sans Light" none {}).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular",
-        some ("'Beta Sans Light' asks for a weight that is not installed; " ++
-          "'Beta Sans Regular' is the nearest; weight 300 asked, weight 400 the nearest")))
+        some ("substituted face 'Beta Sans Regular' for 'Beta Sans Light'; " ++
+          "weight 300 asked, weight 400 the nearest")))
   t "a declared weighted face the host lacks takes the nearest weight"
     ((FontDb.resolveVariant betas "Beta Sans" (some "Beta Sans Medium") {}).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular",
-        some ("'Beta Sans Medium' asks for a weight that is not installed; " ++
-          "'Beta Sans Regular' is the nearest; weight 500 asked, weight 400 the nearest")))
+        some ("substituted face 'Beta Sans Regular' for 'Beta Sans Medium'; " ++
+          "weight 500 asked, weight 400 the nearest")))
   let betaLight : FontDb.Face := { synthFace "Beta Sans" "/x/bs-l.otf" with
     subfamily := "Light", weight := 300 }
   t "an installed weight is served exactly and stays silent"
@@ -2488,9 +2487,9 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "slot loss: a deck's mono slot was served by the body family"
     (SlotLoss.served deck 2 == .bodyFamily)
   t "slot loss: the deck's report says the body family served the slot"
-    (((SlotLoss.diags deckSpec deck usesMono pdf).map (·.message)) ==
-      #["nothing declares a 'mono' family; typewriter runs set in the body family, \
-which is not fixed-pitch"])
+    (((SlotLoss.diags deckSpec deck usesMono pdf).map fun d => (d.message, d.detail)) ==
+      #[("missing family mono",
+        some "typewriter runs set in the body family, which is not fixed-pitch")])
   t "slot loss: an artifact carrying no face reports nothing"
     ((SlotLoss.diags {} collapsed usesMono bare).isEmpty)
   t "slot loss: a PDF carries a face whatever the font policy"
@@ -2508,9 +2507,9 @@ which is not fixed-pitch"])
     (Tests.SlotLossWording.carryOnly (SlotLoss.carries #[.pdf, .html, .md] .embedded) == none &&
       Tests.SlotLossWording.carryOnly pdf == none)
   t "slot loss: the mixed build's report says the PDF lost"
-    (((SlotLoss.diags {} collapsed usesMono mixed).map (·.message)) ==
-      #["nothing declares a 'mono' family; in the PDF, typewriter runs set in the body face, \
-which is not fixed-pitch"])
+    (((SlotLoss.diags {} collapsed usesMono mixed).map fun d => (d.message, d.detail)) ==
+      #[("missing family mono",
+        some "in the PDF, typewriter runs set in the body face, which is not fixed-pitch")])
   t "slot loss: the body slot is never reported"
     ((SlotLoss.losses {} collapsed #[0, 1, 2] pdf).all (·.slot != 0))
   let manyRuns := doc ("A \\texttt{one} run, a \\texttt{two} run, a \\texttt{three} run, " ++

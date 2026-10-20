@@ -718,7 +718,7 @@ def parseSample (log : String) : Except String Sample := do
     let j ← Lean.Json.parse line
     match ← j.getObjValAs? String "event" with
     | "diagnostic" =>
-      unless (← j.getObjValAs? String "severity") == "note" do
+      unless (← j.getObjValAs? String "severity") == "info" do
         throw s!"fixture has a rendering loss: {j.compress}"
       diagnostics := diagnostics.push j.compress
     | "phase" =>
@@ -966,8 +966,8 @@ def writeInputs (dir : System.FilePath) (frames : Nat) (image : Bool → ByteArr
 
 def selftest : IO Unit := do
   require (median #[9, 1, 5] == 5 && median #[8, 3, 5, 1, 7] == 5) "median"
-  let a := "{\"event\":\"diagnostic\",\"severity\":\"note\",\"message\":\"first\"}"
-  let b := "{\"event\":\"diagnostic\",\"severity\":\"note\",\"message\":\"second\"}"
+  let a := "{\"event\":\"diagnostic\",\"severity\":\"info\",\"message\":\"first\"}"
+  let b := "{\"event\":\"diagnostic\",\"severity\":\"info\",\"message\":\"second\"}"
   let ph := "{\"event\":\"phase\",\"name\":\"images\",\"detail\":\"2 files\",\"ms\":7}"
   let done := "{\"event\":\"summary\",\"ok\":true,\"errors\":0,\"output\":\"deck.pdf\",\"pages\":8,\"ms\":20}"
   let log := String.intercalate "\n" [a, b, ph, done]
@@ -986,7 +986,7 @@ def selftest : IO Unit := do
       ("summary errors", log.replace "\"errors\":0" "\"errors\":1"),
       ("empty pages", log.replace "\"pages\":8" "\"pages\":0"),
       ("negative timing", log.replace "\"ms\":7" "\"ms\":-1"),
-      ("loss diagnostic", log.replace "\"note\"" "\"warning\""),
+      ("loss diagnostic", log.replace "\"info\"" "\"warning\""),
       ("non-JSON", log ++ "\ncompiler crashed")] do
     require (!(parseSample bad).isOk) s!"parser accepted {name}"
   for detail in ["two files", "2 files, 3 cached", "2 files, 1 cached extra"] do

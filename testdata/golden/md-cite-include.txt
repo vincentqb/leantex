@@ -60,5 +60,5 @@ bibliography "md-cite" style "unsrtnat"
       text "An Uncited Handbook"
     text ". Example Press, 2016."
 -- diagnostics
-note[N0100] 7:1 '\usepackage[numbers]{natbib}' → natbib's citation punctuation, read at \begin{document}
-note[N0100] 8:1 '\usepackage{markdown}' → nothing: native Markdown fragments are read at each '\markdownInput' command
+info[N0100] 7:1 translated command \usepackage[numbers]{natbib} | detail: natbib's citation punctuation, read at \begin{document}
+info[N0100] 8:1 translated command \usepackage{markdown} | detail: nothing: native Markdown fragments are read at each '\markdownInput' command

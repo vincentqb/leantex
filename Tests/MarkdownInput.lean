@@ -78,7 +78,8 @@ def quotedInputFilenameChecks (ref : IO.Ref (List String)) : IO Unit := do
         let preferred := if command == "input" then "absent name.md.tex" else "absent name.md"
         t s!"quoted input {command}/{nested}: missing file names normalized path and caller"
           (missing.size == 1 && missing.any fun d =>
-            hasStr d.message s!"'\\{command}' file '{preferred}'" &&
+            d.message == Diag.say .E0502 .file preferred &&
+              d.detail == some s!"named by \\{command}" &&
               d.span.any fun sp =>
                 sp.file == (if nested then nestedFile else file) &&
                 sp.pos == { line := if nested then 3 else 4, col := 1 })
@@ -215,7 +216,7 @@ def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       (dvDoc pre "\\markdownInput{absent.md}")
     t "markdown input: missing file names the command and including file"
       (missingDs.any fun d => d.kind == .E0502 &&
-        hasStr d.message "\\markdownInput" &&
+        hasStr (saidText d) "\\markdownInput" &&
         d.span.any fun sp => sp.file == file && sp.pos == { line := 4, col := 1 })
     IO.FS.writeFile (dir / "strict.md") "paragraph\n\n<div>unsupported</div>\n"
     let (_, strictDs) ← elabInputSrc file (dvDoc pre "\\markdownInput{strict.md}")

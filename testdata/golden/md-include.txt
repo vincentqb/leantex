@@ -35,4 +35,4 @@ verbatim language python
 para
   text "Placeholder prose standing after it."
 -- diagnostics
-note[N0100] 10:1 '\usepackage{markdown}' → nothing: native Markdown fragments are read at each '\markdownInput' command
+info[N0100] 10:1 translated command \usepackage{markdown} | detail: nothing: native Markdown fragments are read at each '\markdownInput' command

@@ -225,7 +225,7 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
   let path := dir / ask.name
   unless ← path.pathExists do
     return (#[], #[DriverDiag.inputMissing ask.name (some ask.site) "inputlean"
-      (if ask.division then some "the Lean division's file" else none)])
+      (if ask.division then some "the Lean division" else none)])
   match ← readSource path.toString with
   | .error d => return (#[], #[{ d with span := some ask.site }])
   | .ok bytes =>

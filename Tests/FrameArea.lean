@@ -512,7 +512,7 @@ def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "float level: a declared topsep reaches the deck as the stage's share and is noted as the top level's"
     ((roots.any fun d => cssStageLength d "--topsep" (Dim.pt 20) ddoc.page.height) &&
      !(roots.any fun d => (cssProperty d "--topsep").any (·.endsWith "pt")) &&
-     dds.any fun d => hasStr d.message "which a trivlist outside a list reads")
+     dds.any fun d => hasStr (saidText d) "which a trivlist outside a list reads")
 
 /-- A Light family's set: the shipped Fira Sans's outlines as a 300 in the
 regular slot and as a 400 in the bold one, the shape of a deck that sets a

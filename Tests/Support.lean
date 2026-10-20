@@ -22,6 +22,9 @@ instance [BEq ε] [BEq α] : BEq (Except ε α) where
     | .error a, .error b => a == b
     | _, _ => false
 
+/-- A diagnostic's words and its detail, read as one text where a test asks what it says. -/
+def saidText (d : Diag) : String := d.message ++ "\n" ++ (d.detail.getD "")
+
 /-- The one paint every glyph of a run shares, where they share one. -/
 def onePaint {α : Type} [BEq α] (paint : Option (Array α)) : Option α :=
   paint.bind fun p => p[0]?.bind fun first => if p.all (· == first) then some first else none

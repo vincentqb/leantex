@@ -206,7 +206,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
           if asked then
             diags := diags.push (DriverDiag.monoUpright family tex (own := monoOwn))
         if let some s := sub then
-          unless upright && s matches .variant _ do
+          unless upright && s matches .variant .. do
             let d := DriverDiag.substituted s
             -- Slots share families: a substitution is recorded once per message and detail.
             unless diags.any (fun e => e.message == d.message && e.detail == d.detail) do

@@ -56,4 +56,4 @@ section* 1
 para
   text "A saucer holds the cup."
 -- diagnostics
-note[N0100] 27:1 '\newpage' → \pagebreak
+info[N0100] 27:1 translated command \newpage | detail: \pagebreak

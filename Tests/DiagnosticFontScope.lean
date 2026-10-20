@@ -80,7 +80,7 @@ def diagnosticFontScopeChecks (ref : IO.Ref (List String))
             (reports.all fun d => fontScopeString d "output" == "pdf" &&
               fontScopeString d "file" == source.toString && fontScopeCount d "line" == 6 &&
               fontScopeCount d "col" == 8 && (d.getObjVal? "trigger").toOption.isNone &&
-              fontScopeString d "severity" == (if allow then "note"
+              fontScopeString d "severity" == (if allow then "info"
                 else if fallback then "warning" else "error"))
           let accepted := records.filter (fontScopeString · "event" == "accepted")
           t "acceptance counts only a requested PDF loss"

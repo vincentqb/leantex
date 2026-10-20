@@ -296,7 +296,7 @@ def readReport (stdout : String) : Except String Build := do
           faces := some (paths, scanned)
       phases := phases.push p
     | "diagnostic" =>
-      if jsonStr j "severity" != "note" then losses := losses.push (jsonStr j "code")
+      if jsonStr j "severity" != "info" then losses := losses.push (jsonStr j "code")
     | "summary" =>
       if summary.isSome then throw "more than one summary"
       unless (j.getObjValAs? Bool "ok").toOption == some true do throw "the run wrote no artifact"

@@ -139,10 +139,10 @@ frame standout
   para
     text "One language, two backends."
 -- diagnostics
-note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 8:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
-note[N0100] 8:1 '\usepackage{amsthm}' → \theoremstyle{plain}
-note[N0100] 10:1 '\usetheme' → \theme{moloch}
-note[N0100] 35:11 '\alert' → the alert colour
-note[N0100] 42:6 '\alert' → the alert colour
+info[N0100] 8:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 8:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
+info[N0100] 8:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
+info[N0100] 10:1 translated command \usetheme | detail: \theme{moloch}
+info[N0100] 35:11 translated command \alert | detail: the alert colour
+info[N0100] 42:6 translated command \alert | detail: the alert colour
 warning[W0315] 35:44 text coloured 'fg!50!bg' reads on the page below the contrast WCAG 2.2 asks of large-scale text (SC 1.4.3) | detail: #8F999B on #FAFAFA: 2.79:1, below 3.00:1

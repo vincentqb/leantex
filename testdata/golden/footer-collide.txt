@@ -42,7 +42,7 @@ frame
   para
     text "The overlong note reaches the number, which yields in place."
 -- diagnostics
-note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 8:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
-note[N0100] 8:1 '\usepackage{amsthm}' → \theoremstyle{plain}
-note[N0100] 10:1 '\usetheme' → \theme{moloch}
+info[N0100] 8:1 translated command \documentclass{beamer} | detail: \documentclass[aspectratio=169]{slides}
+info[N0100] 8:1 translated command \RequirePackage{amsmath} | detail: nothing: the engine does this itself
+info[N0100] 8:1 translated command \usepackage{amsthm} | detail: \theoremstyle{plain}
+info[N0100] 10:1 translated command \usetheme | detail: \theme{moloch}

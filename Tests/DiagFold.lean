@@ -26,14 +26,17 @@ def sink (cfg : Config) (allowed : Array String) (ds : Array Diag)
   let text (b : IO.FS.Stream.Buffer) := String.fromUTF8? b.data |>.getD ""
   return (text (← err.get), text (← out.get), r)
 
-/-- The record lines a human log holds for a code, each opening with the severity icon and the
-bracketed code. -/
+/-- Does a human line carry this severity: after its location, or opening the line. -/
+def severityAt (l sev : String) : Bool :=
+  l.startsWith (sev ++ ": ") || hasStr l s!": {sev}: "
+
+/-- The record lines a human log holds for a code, each with a severity and the bracketed code. -/
 def headLines (log code : String) : List String :=
   (log.splitOn "\n").filter fun l =>
-    (l.startsWith "⚠ " || l.startsWith "✖ " || l.startsWith "ℹ ") && hasStr l s!"[{code}]"
+    ["error", "warning", "info"].any (severityAt l ·) && hasStr l s!"[{code}]"
 
 def warningLines (log code : String) : List String :=
-  (headLines log code).filter (·.startsWith "⚠ ")
+  (headLines log code).filter (severityAt · "warning")
 
 /-- The porcelain records for a code: each line's `sites` (absent is 1) and severity. -/
 def porcelainRows (log code : String) : List (Nat × String) :=
@@ -115,7 +118,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((porcelainRows porcelain "W0110").map (·.1) == [4, 0, 0, 0, 1])
   t "porcelain: the later sites read note, the first warning"
     ((porcelainRows porcelain "W0110").map (·.2) ==
-      ["warning", "note", "note", "note", "warning"])
+      ["warning", "info", "info", "info", "warning"])
   let advised := #[Diag.of .W0110 "zzsame words" (span 1) (help := some "zzone"),
     Diag.of .W0110 "zzsame words" (span 2) (help := some "zztwo")]
   let (err, _, _) ← sink plain #[] advised
@@ -170,7 +173,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] quiet
   t "a loss that opens on a note still shows its warning, the loss's sites all counted"
     ((warningLines err "W0110").length == 1 && (warningLines err "W0110").all (hasStr · "deck.tex:2:1") &&
-      (porcelainRows porcelain "W0110") == [(1, "note"), (1, "warning")])
+      (porcelainRows porcelain "W0110") == [(1, "info"), (1, "warning")])
   -- The line is the wording, never the census key, and a wording prints once.
   let keyed := (List.range 5).toArray.map fun k =>
     Diag.of .W0005 "overfull line; no feasible break" (span (k + 2))

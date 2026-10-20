@@ -1851,6 +1851,7 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     -- Diagnostic icons lead into a code bracket; plain ✔/✖ run summaries stay legal.
     if writer && (
         ["warning", "error", "note", "info"].any (fun word => headerAfter word [":", "[", "- "]) ||
+        [": warning:", ": error:", ": info:"].any (containsSub headline ·) ||
         ["⚠", "✖", "ℹ"].any (fun icon => headerAfter icon ["["])) then
       out := out.push (row + 1, "hand-written diagnostic headline")
   return out
@@ -2936,6 +2937,8 @@ def selftest : IO UInt32 := do
       ["def Ui.phase := IO.eprintln \"ℹ [N0100] translated text\""], true),
     ("icon headline interpolation", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := IO.eprintln s!\"⚠ [{code}] lost text\""], true),
+    ("located headline", "LeanTex/Cli/Driver.lean",
+      ["def Ui.phase := IO.eprintln s!\"{file}:1:1: warning: lost text [W0301]\""], true),
     ("multiline icon headline", "LeanTex/Cli/Driver.lean",
       ["def Ui.phase := do", "  IO.eprintln", "    \"⚠[W0301] lost text\""], true),
     ("typed sink", "LeanTex/Cli/Driver.lean",

@@ -184,7 +184,8 @@ public def resolveWeightName (faces : Array Face) (name : String) (v : Variant) 
 
 /-- What a resolution substituted, when it did. -/
 public inductive Substituted where
-  | variant (msg : String)
+  /-- `asked` names the family and variant asked for, `declared` the file or face named for it. -/
+  | variant (asked : String) (declared : Option String) (face : Face)
   | weight (asked : String) (requested : Nat) (face : Face)
 
 /-- The face for one slot variant and what substituted; a declared face wins, and `none` only
@@ -207,14 +208,12 @@ public def resolveVariant (faces : Array Face) (family : String) (declared : Opt
           else some (.weight name req face))
       | none =>
         (resolve faces family v).map fun (face, _) =>
-          (face, some (.variant s!"'{family}' declares '{name}' as its {want} face, \
-            which is not installed; '{face.family} {face.subfamily}' substitutes"))
+          (face, some (.variant s!"{family} {want}" (some name) face))
   | none =>
     match resolve faces family v with
     | some (face, satisfied) =>
       if satisfied then some (face, none)
-      else some (face, some (.variant s!"'{family}' has no {want} face; \
-        '{face.family} {face.subfamily}' substitutes"))
+      else some (face, some (.variant s!"{family} {want}" none face))
     | none =>
       -- A family name carrying a weight word answers at the base family's nearest weight.
       (resolveWeightName faces family v).map fun (face, req) =>
@@ -242,9 +241,7 @@ public def resolveWeight (faces : Array Face) (family : String)
       match resolveNamed faces name with
       | some face => some (face, none)
       | none => pick.map fun (face, _) =>
-          (face, some (.variant s!"'{family}' declares '{name}' as its \
-weight-{weight} face, which is not installed; \
-'{face.family} {face.subfamily}' substitutes"))
+          (face, some (.variant s!"{family} weight {weight}" (some name) face))
     | none => pick
 
 /-- The candidate order every scan-derived pick shares: family, upright first, weight nearest

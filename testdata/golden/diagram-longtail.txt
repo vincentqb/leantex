@@ -49,4 +49,4 @@ picture 12 shapes
   group
     draw path (-28.346,34.016)~(-23.365,36.506)--(37.538,36.506)~(42.52,38.997)~(47.501,36.506)--(108.405,36.506)~(113.386,34.016) stroke #000000 0.399
 -- diagnostics
-note[N0376] 24:1 this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
+info[N0376] 24:1 this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
