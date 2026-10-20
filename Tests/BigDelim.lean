@@ -28,8 +28,8 @@ def faceGlyphInk (fs : Font.FontSet) (face : Nat) (out : Layout.Out) :
               let (lo, hi) := (f.yExtent g).getD (0, 0)
               let upem : Int := f.unitsPerEm
               acc := acc.push (c, g, size, raise + hi * size / upem, raise + lo * size / upem)
-      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _
-      | .rule _ _ _ _ | .image _ _ _ _ _ | .poly _ _ => pure ()
+      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _ _
+      | .rule _ _ _ _ _ | .image _ _ _ _ _ _ | .poly _ _ => pure ()
   return acc
 
 /-- A shipped line's reach above and below its baseline: every run's ink and each glyph-free
@@ -50,8 +50,8 @@ def lineReach (fs : Font.FontSet) (l : Layout.LineOut) : Dim.Length × Dim.Lengt
           let upem : Int := f.unitsPerEm
           (max top (raise + hi * size / upem), min bot (raise + lo * size / upem))
         | none => (top, bot)
-    | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _
-    | .rule _ _ _ _ | .image _ _ _ _ _ | .poly _ _ => (top, bot)
+    | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _ _
+    | .rule _ _ _ _ _ | .image _ _ _ _ _ _ | .poly _ _ => (top, bot)
 
 /-- amsmath's sized delimiters, `\big` through `\Bigg` in their four classes, as `\bBigg@` grows
 them around a `\vcenter`. -/

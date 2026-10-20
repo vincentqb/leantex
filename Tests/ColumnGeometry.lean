@@ -17,7 +17,7 @@ private def columnGeomInk (out : Layout.Out) : Array ColumnGeomInk :=
   out.pages.zipIdx.flatMap fun (page, i) => page.lines.filterMap fun line =>
     if line.furniture then none else
     match line.segs with
-    | #[.rule w _ _ _] => some ⟨i, line.x, line.y, w⟩
+    | #[.rule w _ _ _ _] => some ⟨i, line.x, line.y, w⟩
     | _ => none
 
 private def columnGeomAtom (s : String) (measure : Length) : Option Length := do

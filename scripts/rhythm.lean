@@ -253,9 +253,9 @@ def ofOut (out : Layout.Out) : Array MPage :=
             if w > 0 then text := text.push ' '
           else for (_, c, _) in glyphs do text := text.push c
         | .gap _ _ | .decoratedGap _ _ _ => text := text.push ' '
-        | .rule _ th raise _ | .decoration _ _ th raise _ =>
+        | .rule _ th raise _ _ | .decoration _ _ th raise _ _ =>
           marks := marks.push (l.y - raise - th, l.y - raise)
-        | .image _ _ h _ raise => marks := marks.push (l.y - raise - h, l.y - raise)
+        | .image _ _ h _ raise _ => marks := marks.push (l.y - raise - h, l.y - raise)
         | .poly pts _ =>
           if let some (_, y) := pts[0]? then
             let bounds := pts.foldl (fun (t, b) (_, y) =>

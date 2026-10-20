@@ -311,7 +311,7 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     "\\title{Synthetic Deck}\\setbeamercolor{title separator}{fg=ProbeOther}" "\\maketitle"
   t "beamer colors: title separator color paints the existing title rule"
     ((allLines separator).any fun l => l.segs.any fun s => match s with
-      | .rule _ _ _ c => c == other
+      | .rule _ _ _ c _ => c == other
       | _ => false)
   t "beamer colors: title separator has the matching HTML color and no loss"
     ((treeCssOne "" separatorHtml).contains "--ltx-separator: #582347" &&

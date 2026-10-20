@@ -451,15 +451,15 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Length) (st : TextSt) (
 
 private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Length)
     (og : Origin) (st : TextSt) : Seg → TextSt
-  | .rule w thickness raise color =>
+  | .rule w thickness raise color _ =>
     { st with rules := st.rules.push (color, st.x, ypdf + raise, w, thickness), x := st.x + w }
-  | .decoration kind w thickness raise color =>
+  | .decoration kind w thickness raise color _ =>
     let r := (color, st.x, ypdf + raise, w, thickness)
     { st with rules := if kind.isMark then st.rules else st.rules.push r
               marks := if kind.isMark then st.marks.push r else st.marks, x := st.x + w }
   | .poly pts color =>
     { st with polys := st.polys.push (color, pts.map fun (px, py) => (st.x + px, ypdf + py)) }
-  | .image idx w h _ raise =>
+  | .image idx w h _ raise _ =>
     { st with images := st.images.push { x := st.x, y := ypdf + raise, w, h,
                                          res := idx.bind fun k => imgMap[k]?.getD none,
                                          origin := og, store := idx },
@@ -539,9 +539,9 @@ public def _root_.LeanTex.Core.Layout.Seg.withoutGlyphs : Seg → Seg
     .run idx color link w #[] size m decs raise ground attr
   | .gap w word => .gap w word
   | .decoratedGap w word decs => .decoratedGap w word decs
-  | .decoration kind w t raise color => .decoration kind w t raise color
-  | .rule w t raise color => .rule w t raise color
-  | .image store w h i r => .image store w h i r
+  | .decoration kind w t raise color fl => .decoration kind w t raise color fl
+  | .rule w t raise color fl => .rule w t raise color fl
+  | .image store w h i r fl => .image store w h i r fl
   | .poly pts color => .poly pts color
 
 /-- A line with its glyphs taken out, its rules, images and polygons kept. -/
@@ -1009,8 +1009,8 @@ public def ContentOp.decoration : ContentOp → Bool
 public def segRuns : Seg → List (Array Nat)
   | .run _ _ _ _ glyphs _ _ _ _ _ _ => if glyphs.isEmpty then [] else [glyphs.map (·.1)]
   | .gap _ _ | .decoratedGap _ _ _ => []
-  | .rule _ _ _ _ | .decoration _ _ _ _ _ => []
-  | .image _ _ _ _ _ => []
+  | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _ => []
+  | .image _ _ _ _ _ _ => []
   | .poly _ _ => []
 
 /-- The shipped glyph census of a page: every run's glyphs, line by line in segment order. -/
@@ -1495,7 +1495,7 @@ private theorem foldl_lines_items (geom : Geom) (remap : Array Nat) (imgMap : Ar
 
 /-- The store index an image segment places, as a one-entry list. -/
 public def segStores : Seg → List (Option Nat)
-  | .image idx _ _ _ _ => [idx]
+  | .image idx _ _ _ _ _ => [idx]
   | .run .. | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .poly .. => []
 
 /-- Every image a page's lines place, by store index, in order. -/

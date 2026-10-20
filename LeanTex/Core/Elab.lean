@@ -4514,21 +4514,21 @@ private def hboxContent (xs : Array Inline) : Array Inline :=
     | .pageNumber | .pageCount | .strut _ | .italicCorr _ | .onSteps .. | .altSteps ..
     | .image .. | .icon .. | .cite .. | .cited .. | .footnote .. => out.push y) #[])
 
-/-- Names a declared box extent its content's image, rule, frame or ground still claims beside it:
-the line measures those by their own height and depth. -/
+/-- Names a declared box extent its content's image, rule, frame or ground still claims beside it on
+the web page, whose line measures those by their own height and depth. -/
 private def boxExtentNote (ctx : Ctx) (b : Ir.InlineBox) (content : Array Inline) (pos : Pos) :
     EM Unit := do
   let paints := Ir.foldInlines (fun found x => found || match x with
     | .image .. | .rule .. => true
     | .boxed inner _ => inner.ground.isSome || inner.frame.isSome
     | _ => false) false content
-  -- premise: boxScopeChecks — a declared extent holds for a box's text alone
+  -- premise: boxScopeChecks — the page holds a declared extent for all a box holds, the web page for its text
   if (b.height.isSome || b.depth.isSome) && paints then
     warnOnce ctx "raisebox:extent" .W0110
-      "a raised box's declared height and depth hold for its text; an image, rule, frame or ground \
-inside it still claims its own height and depth on the line" pos
+      "on a web page a raised box's declared height and depth hold for its text; an image, rule, \
+frame or ground inside it still claims its own height and depth on the line" pos
       (help := "an image's height option sets the height it takes on the line")
-      (trigger := "\\raisebox") (recovery := some .ignored)
+      (trigger := "\\raisebox") (recovery := some .ignored) (output := some .html)
 
 /-- A box parameter's assignment in running text (`\setlength{\fboxsep}{1pt}`), holding to the end
 of its group; a value the length reader cannot read leaves the parameter as it was, named. -/

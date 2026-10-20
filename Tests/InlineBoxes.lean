@@ -29,16 +29,16 @@ private def runX (out : Layout.Out) (word : String) : Option Dim.Length :=
       | .run _ _ _ w glyphs .. =>
         if String.ofList (glyphs.toList.map (·.2.1)) == word then return some x
         x := x + w
-      | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ | .rule w _ _ _
-      | .image _ w _ _ _ => x := x + w
+      | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ _ | .rule w _ _ _ _
+      | .image _ w _ _ _ _ => x := x + w
       | .poly _ _ => pure ()
     return none
 
 /-- Every rule and mark a source's lines paint: its kind, width, thickness, raise and colour. -/
 private def paintsOf (out : Layout.Out) : Array (String × Dim.Length × Dim.Length × Dim.Length × String) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
-    | .rule w t r c => if w != 0 && t != 0 then some ("rule", w, t, r, c.hex) else none
-    | .decoration (.highlight _ _) w t r c => some ("mark", w, t, r, c.hex)
+    | .rule w t r c _ => if w != 0 && t != 0 then some ("rule", w, t, r, c.hex) else none
+    | .decoration (.highlight _ _) w t r c _ => some ("mark", w, t, r, c.hex)
     | _ => none
 
 /-- The pt as sp, for a length an expectation states. -/
@@ -279,12 +279,16 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     | _ => acc) #[] (elabStr envNotes).1.body
   t s!"box scope: an environment's begin code runs before its content ({notes})"
     (notes == #[(some 1, "begin note"), (some 2, "inner note"), (some 3, "after note")])
-  let smashed := doc "" "Alpha\\\\\n\\raisebox{0pt}[0pt][0pt]{\\fbox{\\Huge Bravo}}Charlie\\\\\nDelta"
   let plainLines := doc "" "Alpha\\\\\nCharlie\\\\\nDelta"
   let baseline (src w : String) := ((runsOf (layoutOf fonts (elabStr src).1) w)[0]?).map (·.2)
-  t "box scope: a frame inside a declared extent still claims its own height on the line, named"
-    (baseline smashed "Delta" != baseline plainLines "Delta" &&
-      (elabStr smashed).2.any (·.subject == some "raisebox:extent"))
+  for (what, inner) in [("a frame", "\\fbox{\\Huge Bravo}"), ("a rule", "\\rule{1cm}{2cm}"),
+      ("a ground", "\\colorbox{yellow}{\\Huge Bravo}"), ("a lowered frame", "\\raisebox{-1cm}{\\fbox{Bravo}}")] do
+    let smashed := doc "" s!"Alpha\\\\\n\\raisebox\{0pt}[0pt][0pt]\{{inner}}Charlie\\\\\nDelta"
+    let named := (elabStr smashed).2.filter (·.subject == some "raisebox:extent")
+    t s!"box scope: {what} inside a declared extent claims nothing on the page's line, named for the web page"
+      (baseline smashed "Charlie" == baseline plainLines "Charlie" &&
+        baseline smashed "Delta" == baseline plainLines "Delta" &&
+        named.size == 1 && named.all (·.output == some .html))
   let words := String.intercalate " " ((List.range 40).map fun k =>
     if k % 5 == 4 then "\\fcolorbox{red}{yellow}{three framed words}" else s!"word{k}")
   let expanded := layoutOf fonts (elabStr (doc "" words)).1
@@ -293,9 +297,9 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     let mut sides : Array (Dim.Length × Dim.Length × Dim.Length) := #[]
     for seg in l.segs do
       match seg with
-      | .rule w t _ c => if c.hex == "#FF0000" then sides := sides.push (x, w, t)
-                         x := x + w
-      | .run _ _ _ w .. | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ | .image _ w _ _ _ =>
+      | .rule w t _ c _ => if c.hex == "#FF0000" then sides := sides.push (x, w, t)
+                           x := x + w
+      | .run _ _ _ w .. | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ _ | .image _ w _ _ _ _ =>
         x := x + w
       | .poly _ _ => pure ()
     -- Each frame paints its left and right sides, then its top and bottom.

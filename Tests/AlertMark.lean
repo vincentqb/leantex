@@ -84,8 +84,8 @@ private def marksBefore (lines : Array Layout.LineOut) (i : Nat) :
     let mut x := l.x
     for seg in l.segs do
       match seg with
-      | .decoration (.highlight _ _) w _ _ c => out := out.push (c, x, w); x := x + w
-      | .decoration _ w _ _ _ | .gap w _ | .decoratedGap w _ _ | .rule w _ _ _ | .image _ w _ _ _ =>
+      | .decoration (.highlight _ _) w _ _ c _ => out := out.push (c, x, w); x := x + w
+      | .decoration _ w _ _ _ _ | .gap w _ | .decoratedGap w _ _ | .rule w _ _ _ _ | .image _ w _ _ _ _ =>
         x := x + w
       | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
       | .poly _ _ => pure ()
@@ -99,7 +99,7 @@ private def marksUnder (lines : Array Layout.LineOut) (word : String) :
 /-- Every highlight seg a laid-out document ships. -/
 private def highlightSegs (out : Layout.Out) : Array Ir.Color :=
   (allLines out).flatMap fun l => l.segs.filterMap fun s => match s with
-    | .decoration (.highlight _ _) _ _ _ c => some c
+    | .decoration (.highlight _ _) _ _ _ c _ => some c
     | _ => none
 
 def seedsLine : String := "\\palette[seeds]{ ink = #000000, paper = #FFFFFF, accent = #FACC15 }\n"
@@ -127,7 +127,7 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
       for seg in lines[i]!.segs do
         match seg with
         | .run _ _ _ w _ _ _ _ _ ground _ => out := out.push (x, w, ground == some yellow); x := x + w
-        | .gap w _ | .decoratedGap w _ _ | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ _ =>
+        | .gap w _ | .decoratedGap w _ _ | .rule w _ _ _ _ | .decoration _ w _ _ _ _ | .image _ w _ _ _ _ =>
           x := x + w
         | .poly _ _ => pure ()
       return out

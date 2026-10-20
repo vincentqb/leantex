@@ -1296,17 +1296,17 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
           px := px + w
           chars := chars.push ' '
           covered := covered.push ' '
-        | .rule w th _ _ =>
+        | .rule w th _ _ _ =>
           px := px + w
           rules := rules + 1
           ruleSegs := ruleSegs.push (l.y, th)
-        | .decoration kind w th raise color =>
+        | .decoration kind w th raise color _ =>
           px := px + w
           rules := rules + 1
           ruleSegs := ruleSegs.push (l.y, th)
           decorations := decorations.push (kind, l.y, w, th, raise, color)
         -- an image is decorative ink to the text census, like a rule
-        | .image k w _ _ _ =>
+        | .image k w _ _ _ _ =>
           px := px + w
           images := images + 1
           if let some fig := k.bind fun i => (imgs.shaped[i]?).join then
@@ -1617,8 +1617,8 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Length := Id.run do
         if c == wanted then return some pen
         pen := pen + advance
       x := x + w
-    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
-    | .rule w _ _ _ | .image _ w _ _ _ => x := x + w
+    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ _
+    | .rule w _ _ _ _ | .image _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
   return none
 
@@ -1632,9 +1632,9 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Length × Dim.Le
       out := out.push (idx, String.ofList (gs.map (·.2.1)).toList, x, w)
       x := x + w
     | .gap w _ | .decoratedGap w _ _ => x := x + w
-    | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
-    | .image _ w _ _ _ => x := x + w
+    | .image _ w _ _ _ _ => x := x + w
   return out
 
 /-- Material 3's disliked region as the box `scripts/dislike-oracle.lean` holds it in, stated here so
@@ -2205,9 +2205,9 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Length) := Id.run d
         out := out.push (String.ofList (glyphs.toList.map (·.2.1)), x)
       x := x + w
     | .gap w _ | .decoratedGap w _ _ => x := x + w
-    | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
-    | .image _ w _ _ _ => x := x + w
+    | .image _ w _ _ _ _ => x := x + w
   return out
 
 /-- A body glyph's shipped position and paint, independent of run segmentation and leaf
@@ -2248,8 +2248,8 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
               color, link, leading := metrics.leading, decorations, ground }
             dx := dx + advance
           x := x + width
-        | .gap width _ | .decoratedGap width _ _ | .rule width _ _ _
-          | .decoration _ width _ _ _ | .image _ width _ _ _ => x := x + width
+        | .gap width _ | .decoratedGap width _ _ | .rule width _ _ _ _
+          | .decoration _ width _ _ _ _ | .image _ width _ _ _ _ => x := x + width
         | .poly _ _ => pure ()
   return acc
 
@@ -2329,7 +2329,7 @@ def polygonPens (line : Layout.LineOut) : Array (Dim.Length × Array (Dim.Length
   for seg in line.segs do
     match seg with
     | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
-    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ _ =>
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ | .image _ w _ _ _ _ =>
       pen := pen + w
     | .poly points _ => polys := polys.push (pen, points)
   return polys
@@ -2352,19 +2352,19 @@ def metricInnerGaps (l : Layout.LineOut) : Array Dim.Length := Id.run do
       unless glyphs.isEmpty do
         out := out ++ pending
         pending := #[]
-    | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ | .image _ _ _ _ _ => pure ()
+    | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _ | .poly _ _ | .image _ _ _ _ _ _ => pure ()
   return out
 
 /-- Painted inline rules on shipped body pages. -/
 def metricRuleSegs (out : Layout.Out) : Array (Dim.Length × Dim.Length × Dim.Length × Ir.Color) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
-    | .rule w h raise color => some (w, h, raise, color)
+    | .rule w h raise color _ => some (w, h, raise, color)
     | _ => none
 
 def metricDecorationSegs (out : Layout.Out) :
     Array (Ir.Decoration × Dim.Length × Dim.Length × Dim.Length × Ir.Color) :=
   (bodyLines out).flatMap fun l => l.segs.filterMap fun s => match s with
-    | .decoration kind w h raise color => some (kind, w, h, raise, color)
+    | .decoration kind w h raise color _ => some (kind, w, h, raise, color)
     | _ => none
 
 /-- Sizes of glyph runs on shipped body pages. -/

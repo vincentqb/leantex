@@ -22,8 +22,8 @@ def firstGlyphX (l : Layout.LineOut) : Option Dim.Length := Id.run do
         if c != '\u00a0' && c != ' ' then return some pen
         pen := pen + advance
       x := x + w
-    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
-    | .rule w _ _ _ | .image _ w _ _ _ => x := x + w
+    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ _
+    | .rule w _ _ _ _ | .image _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
   return none
 

@@ -257,8 +257,8 @@ def rulesAt (line : Layout.LineOut) : Array InkBounds := Id.run do
   for seg in line.segs do
     match seg with
     | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
-    | .image _ w _ _ _ => pen := pen + w
-    | .rule w t raise _ | .decoration _ w t raise _ =>
+    | .image _ w _ _ _ _ => pen := pen + w
+    | .rule w t raise _ _ | .decoration _ w t raise _ _ =>
       if w != 0 && t != 0 then
         result := result.push ⟨min pen (pen + w), min raise (raise + t) - line.y,
           max pen (pen + w), max raise (raise + t) - line.y⟩
@@ -546,8 +546,8 @@ private def shiftTarget (out : Layout.Out) (target : String) (dx dy : Dim.Length
                     .run face color link width glyphs size leading decorations (raise + dy) ground attr,
                     .gap (-dx) false]
                 else #[seg]
-              | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _
-                | .decoration _ _ _ _ _ | .image _ _ _ _ _ | .poly _ _ => #[seg] } } }
+              | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _ _
+                | .decoration _ _ _ _ _ _ | .image _ _ _ _ _ _ | .poly _ _ => #[seg] } } }
 
 /-- Outline translations and small integral witnesses test the judges' bounds, rounding, direction
 and clearance. -/

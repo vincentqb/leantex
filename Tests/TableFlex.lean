@@ -9,7 +9,7 @@ open LeanTex.Core LeanTex.Core.Dim
 private def flexRuleWidths (out : Layout.Out) : Array Length :=
   out.pages.flatMap fun p => p.lines.flatMap fun l =>
     if l.furniture then #[] else l.segs.filterMap fun s => match s with
-      | .rule w _ _ _ => some w
+      | .rule w _ _ _ _ => some w
       | _ => none
 
 private structure FlexCase where
@@ -67,7 +67,7 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       ((censusText census |>.splitOn "Spanmark").length == 2 &&
         (censusText census |>.splitOn "Tail").length == 2)
     let lines := (allLines out).filter (!·.furniture)
-    let rule := lines.find? fun l => l.segs.any fun s => s matches .rule _ _ _ _
+    let rule := lines.find? fun l => l.segs.any fun s => s matches .rule _ _ _ _ _
     let runs := lines.flatMap lineRuns
     let right := runs.foldl (fun x r => max x (r.2.2.1 + r.2.2.2)) 0
     let trailing := if c.padR then Ir.tabColSep.sp else 0

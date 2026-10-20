@@ -152,7 +152,7 @@ private def strike (ref : IO.Ref (List String)) (a : Artifact) (page : Nat)
   let rules := ((linesAt a page).filter (fun l =>
     bases.any (fun b => l.x == b.x && l.y == b.y))).flatMap fun l =>
     l.segs.filterMap fun s => match s with
-      | .decoration .lineThrough w h raise color => some (w, h, raise, color)
+      | .decoration .lineThrough w h raise color _ => some (w, h, raise, color)
       | _ => none
   check ref s!"decks/overlays: page {page + 1} strike on {text}"
     (!gs.isEmpty && gs.all (fun g => g.decorations.lineThrough.isSome == on) &&

@@ -55,8 +55,8 @@ def pageSettings (out : Layout.Out) :=
     (l.x, l.y, metricRunsAt l, l.segs.filterMap fun s => match s with
       | .run f _ _ w glyphs size _ _ _ _ _ =>
         if glyphs.isEmpty then none else some (f, w, size)
-      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _
-      | .rule _ _ _ _ | .poly _ _ | .image _ _ _ _ _ => none)
+      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _ _
+      | .rule _ _ _ _ _ | .poly _ _ | .image _ _ _ _ _ _ => none)
 
 end MintedSettings
 

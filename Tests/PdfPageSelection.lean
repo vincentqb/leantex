@@ -103,7 +103,7 @@ private def selectedWrapper (font : Font) (f : { f : PdfRead.Form // f.wf }) :
   let imgs : Image.Store := { entries := #[{ src := "poster.pdf", info := some plan }] }
   let line : Layout.LineOut :=
     { x := Dim.bp 10, y := Dim.bp 100, size := Dim.bp 12, setWidth := f.val.w,
-      segs := #[.image (some 0) f.val.w f.val.h true 0] }
+      segs := #[.image (some 0) f.val.w f.val.h true 0 false] }
   Pdf.write {} { fonts := #[font] } #[{ lines := #[line] }] (imgs := imgs)
 
 /-- The emitted form's resource references, its transitive self-referencing resource form

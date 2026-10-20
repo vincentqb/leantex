@@ -537,17 +537,18 @@ public inductive Item where
   | pen (w : Length) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Length))
   /-- An unbreakable image box `w` wide standing `h` above the baseline plus `raise`; `store` indexes
-  the `Image.Store`, `none` places a placeholder, and `ink` false ships nothing in its box. -/
-  | img (store : Option Nat) (w : Length) (h : Length) (ink : Bool) (raise : Length)
+  the `Image.Store`, `none` places a placeholder, and `ink` false ships nothing in its box; a `flat`
+  item claims no height or depth on its line, a box's declared extent standing for it. -/
+  | img (store : Option Nat) (w : Length) (h : Length) (ink : Bool) (raise : Length) (flat : Bool)
   /-- A horizontal rule `w` wide and `thickness` tall, its
   bottom at the baseline plus `raise`; never a breakpoint. -/
-  | rule (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color)
+  | rule (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color) (flat : Bool)
   /-- A filled polygon taking no width, its points from where
   it stands and the baseline, y up; never a breakpoint. -/
   | poly (pts : Array (Length × Length)) (color : Ir.Color)
   /-- A band `w` wide and `thickness` tall painted under the line's text, its bottom at the
   baseline plus `raise`: a box's ground; never a breakpoint. -/
-  | mark (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color)
+  | mark (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color) (flat : Bool)
   deriving Repr, Inhabited
 
 private def Item.boxChars : Item → List Char
@@ -593,14 +594,15 @@ public inductive Seg where
   | gap (w : Length) (word : Bool)
   /-- A set interword or authored gap retaining both decoration bands. -/
   | decoratedGap (w : Length) (word : Bool) (decorations : Decorations (Option DecorationRule))
-  /-- A text-decoration rule, painted as a generic rule and kept apart by its kind. -/
+  /-- A text-decoration rule, painted as a generic rule and kept apart by its kind; a `flat` one, as
+  a flat rule or image, claims no height or depth on its line (`Item.img`). -/
   | decoration (kind : Ir.Decoration) (w : Length) (thickness : Length) (raise : Length)
-      (color : Ir.Color)
+      (color : Ir.Color) (flat : Bool)
   /-- A horizontal rule `w` wide and `thickness` thick, on the baseline plus `raise`. -/
-  | rule (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color)
+  | rule (w : Length) (thickness : Length) (raise : Length) (color : Ir.Color) (flat : Bool)
   /-- An image box standing `h` up from the baseline plus `raise`; `store` indexes the backends'
   `Image.Store`, an entry that did not load renders as a placeholder, and `ink` false ships nothing. -/
-  | image (store : Option Nat) (w : Length) (h : Length) (ink : Bool) (raise : Length)
+  | image (store : Option Nat) (w : Length) (h : Length) (ink : Bool) (raise : Length) (flat : Bool)
   /-- A filled polygon with no width, its points from the pen position and the baseline, y up. -/
   | poly (pts : Array (Length × Length)) (color : Ir.Color)
   deriving Repr, Inhabited
@@ -1281,24 +1283,24 @@ public structure Out where
 
 /-- Does a segment carry ink that ships nothing? -/
 @[expose] public def Seg.hides : Seg → Bool
-  | .run _ c .. | .decoration _ _ _ _ c | .rule _ _ _ c | .poly _ c => c == hiddenPaint
+  | .run _ c .. | .decoration _ _ _ _ c _ | .rule _ _ _ c _ | .poly _ c => c == hiddenPaint
   | .decoratedGap _ _ d =>
     hiddenRule d.underline || hiddenRule d.lineThrough || hiddenRule d.highlight
   | .gap .. => false
-  | .image _ _ _ ink _ => !ink
+  | .image _ _ _ ink _ _ => !ink
 
 /-- A segment repainted to ship nothing, its kind and box kept. -/
 @[expose] public def Seg.hide : Seg → Seg
   | .run f _ l w gs sz m d r g a => .run f hiddenPaint l w gs sz m d r g a
-  | .decoration k w t r _ => .decoration k w t r hiddenPaint
-  | .rule w t r _ => .rule w t r hiddenPaint
+  | .decoration k w t r _ fl => .decoration k w t r hiddenPaint fl
+  | .rule w t r _ fl => .rule w t r hiddenPaint fl
   | .poly pts _ => .poly pts hiddenPaint
   | .decoratedGap w word d =>
     .decoratedGap w word { underline := d.underline.map ({ · with color := hiddenPaint })
                            lineThrough := d.lineThrough.map ({ · with color := hiddenPaint })
                            highlight := d.highlight.map ({ · with color := hiddenPaint }) }
   | .gap w word => .gap w word
-  | .image s w h _ r => .image s w h false r
+  | .image s w h _ r fl => .image s w h false r fl
 
 /-- A segment as it ships: hidden ink a gap as wide, a hidden polygon nothing. -/
 @[expose] public def Seg.shipped (s : Seg) : Option Seg :=
@@ -1326,9 +1328,9 @@ public structure Out where
   | .gap w word => .gap w (word && between)
   | .decoratedGap w word d => .decoratedGap w (word && between) d
   | .run f c l w gs sz m d r g a => .run f c l w gs sz m d r g a
-  | .decoration k w t r c => .decoration k w t r c
-  | .rule w t r c => .rule w t r c
-  | .image st w h ink r => .image st w h ink r
+  | .decoration k w t r c fl => .decoration k w t r c fl
+  | .rule w t r c fl => .rule w t r c fl
+  | .image st w h ink r fl => .image st w h ink r fl
   | .poly pts c => .poly pts c
 
 @[expose] public def Seg.isWordGap : Seg → Bool
@@ -3464,7 +3466,7 @@ rule before its rewind kern as line placement does. -/
 public def mathItemsWidth (items : Array Item) : Length :=
   items.foldl (fun w it => match it with
     | .box bw _ _ _ _ _ _ _ _ _ _ => w + bw
-    | .rule bw _ _ _ => w + bw
+    | .rule bw _ _ _ _ => w + bw
     | _ => w) 0
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
@@ -3501,7 +3503,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
           bounds := add bounds (inkBounds gx raise (gx + adv) (raise + font.capHeight * size / upem))
         gx := gx + adv
       pen := pen + w
-    | .rule w t r _ | .mark w t r _ =>
+    | .rule w t r _ _ | .mark w t r _ _ =>
       if !paintOnly || (w != 0 && t != 0) then
         bounds := add bounds (inkBounds (min pen (pen + w)) r (max pen (pen + w)) (r + t))
       pen := pen + w
@@ -3514,7 +3516,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
       if !paintOnly || paints then
         for (x, y) in pts do
           bounds := add bounds (inkBounds (pen + x) y (pen + x) y)
-    | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ _ _ => pure ()
+    | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ _ _ _ => pure ()
   return bounds
 
 /-- Measured attachment ink, without the baseline or nonpainting spacing items. -/
@@ -3532,17 +3534,17 @@ private def raiseItems (delta : Length) (items : Array Item) : Array Item :=
   if delta == 0 then items else
   items.map fun it => match it with
     | .box w i c l g s ld u r gr a => .box w i c l g s ld u (r + delta) gr a
-    | .rule w t r c => .rule w t (r + delta) c
-    | .mark w t r c => .mark w t (r + delta) c
+    | .rule w t r c fl => .rule w t (r + delta) c fl
+    | .mark w t r c fl => .mark w t (r + delta) c fl
     | .poly pts c => .poly (pts.map fun (x, y) => (x, y + delta)) c
     | .glue g => .glue g
     | .decoratedGlue g r => .decoratedGlue g r
     | .pen w c f i col g => .pen w c f i col g
-    | .img s w h i r => .img s w h i r
+    | .img s w h i r fl => .img s w h i r fl
 
 /-- The zero-size rule a display alignment leaves at its
 last row's baseline, which `LineOut.lastBase` reads. -/
-private def alignRowMark (raise : Length) (color : Ir.Color) : Item := .rule 0 0 raise color
+private def alignRowMark (raise : Length) (color : Ir.Color) : Item := .rule 0 0 raise color false
 
 /-- An invisible box reserving the declared reach exactly. -/
 private def struts (e : MathEnv) (top bot : Length) : Array Item :=
@@ -3720,7 +3722,7 @@ private def fracAssemble (e : MathEnv) (size : Length) (display : Bool) (raise :
   let numPad := mathLen (Math.ColAlign.pad .center ruleW.units numW.units)
   let denPad := mathLen (Math.ColAlign.pad .center ruleW.units denW.units)
   let bar : Array Item :=
-    if θ == 0 then #[] else #[Item.rule ruleW θ (raise + axis - θ / 2) e.color, mathKern e size (-ruleW)]
+    if θ == 0 then #[] else #[Item.rule ruleW θ (raise + axis - θ / 2) e.color false, mathKern e size (-ruleW)]
   (#[mathKern e size (if ndLeft then nd else 0), mathKern e size numPad]
       ++ raiseItems (raise + u) numItems)
     ++ (#[mathKern e size (ruleW - numPad - numW), mathKern e size (-ruleW)] ++ bar ++
@@ -3746,7 +3748,7 @@ private def radAssemble (e : MathEnv) (size : Length) (display : Bool) (raise : 
     let missing := if missing0.contains (e.idx, '\u221A') then missing0
       else missing0.push (e.idx, '\u221A')
     let raisedBody := raiseItems raise bItems
-    let items := (#[(Item.rule bodyW θ (raise + ruleBot) e.color),
+    let items := (#[(Item.rule bodyW θ (raise + ruleBot) e.color false),
         mathKern e size (-bodyW)]
       ++ raisedBody)
       ++ struts e (raise + ruleTop + extraAsc) (raise + bBot)
@@ -3771,7 +3773,7 @@ private def radAssemble (e : MathEnv) (size : Length) (display : Bool) (raise : 
           (mathKern e size kernA)
     let items := (degPrefix.push
         (mathBox e e.idx surdW #[(gv, '\u221A', surdW)] size surdRaise)
-      |>.push (Item.rule bodyW θ (raise + ruleBot) e.color)
+      |>.push (Item.rule bodyW θ (raise + ruleBot) e.color false)
       |>.push (mathKern e size (-bodyW)))
       ++ raisedBody
       ++ struts e (raise + ruleTop + extraAsc) (min (raise + bBot) (surdRaise + vBot))
@@ -3791,7 +3793,7 @@ private def accentAssemble (e : MathEnv) (size raise : Length) (mark : Char)
     let extraAsc := e.constAt size e.consts.overbarExtraAscender
     let ruleBot := bTop + ψ
     let items := (raisedBody.push (mathKern e size (-baseW))).push
-        (Item.rule baseW θ (raise + ruleBot) e.color)
+        (Item.rule baseW θ (raise + ruleBot) e.color false)
       ++ struts e (raise + ruleBot + θ + extraAsc) (raise + bBot)
     return (items, missing0)
   match glyphOf size e.font mark with
@@ -4484,15 +4486,15 @@ private def kernItem (fs : FontSet) (sty : TextStyle) (size xHeight textW textH 
   .box w (fs.lookup sty.slot sty.weight.css sty.italic) sty.paint sty.link #[] sz {}
     (sty.resolvedDecorations size xHeight textW textH fs) 0 sty.ground .unattributed
 
-/-- An item raised by `r`; with `flat` a run claims no extent, the box's declared one standing for
+/-- An item raised by `r`; with `flat` it claims no extent, the box's declared one standing for
 it. -/
 private def raiseItem (r : Length) (flat : Bool) : Item → Item
   | .box w idx color link glyphs size metrics decorations raise ground attr =>
     .box w idx color link glyphs size (if flat then { metrics with extent := some (0, 0) } else metrics)
       decorations (raise + r) ground attr
-  | .rule w t raise color => .rule w t (raise + r) color
-  | .mark w t raise color => .mark w t (raise + r) color
-  | .img s w h ink raise => .img s w h ink (raise + r)
+  | .rule w t raise color fl => .rule w t (raise + r) color (fl || flat)
+  | .mark w t raise color fl => .mark w t (raise + r) color (fl || flat)
+  | .img s w h ink raise fl => .img s w h ink (raise + r) (fl || flat)
   | .poly pts color => .poly (pts.map fun (x, y) => (x, y + r)) color
   | .glue g => .glue g
   | .decoratedGlue g d => .decoratedGlue g d
@@ -4505,13 +4507,13 @@ private def fixRun : Item → Item
   | .glue g => .glue g
   | .decoratedGlue g d => .decoratedGlue g d
   | .pen w c f i k gs => .pen w c f i k gs
-  | .img s w h ink r => .img s w h ink r
-  | .rule w t r c => .rule w t r c
+  | .img s w h ink r fl => .img s w h ink r fl
+  | .rule w t r c fl => .rule w t r c fl
   | .poly pts c => .poly pts c
-  | .mark w t r c => .mark w t r c
+  | .mark w t r c fl => .mark w t r c fl
 
 /-- The natural width, height and depth TeX's `\hbox` gives a run of items, its glyphs measured by
-their outlines and a run whose box declares its extent by that extent. -/
+their outlines, a run whose box declares its extent by that extent, and flat ink by none. -/
 private def itemsBox (fs : FontSet) (items : Array Item) : Length × Length × Length :=
   items.foldl (fun (w, h, d) it => match it with
     | .box bw idx _ _ glyphs sz metrics _ raise _ _ =>
@@ -4526,8 +4528,10 @@ private def itemsBox (fs : FontSet) (items : Array Item) : Length × Length × L
         (w + bw, h, d)
     | .glue g | .decoratedGlue g _ => (w + g.width, h, d)
     | .pen .. => (w, h, d)
-    | .img _ iw ih _ raise => (w + iw, max h (ih + raise), max d (-raise))
-    | .rule rw t raise _ | .mark rw t raise _ => (w + rw, max h (raise + t), max d (-raise))
+    | .img _ iw ih _ raise flat =>
+      if flat then (w + iw, h, d) else (w + iw, max h (ih + raise), max d (-raise))
+    | .rule rw t raise _ flat | .mark rw t raise _ flat =>
+      if flat then (w + rw, h, d) else (w + rw, max h (raise + t), max d (-raise))
     | .poly pts _ =>
       (w, pts.foldl (fun m (_, y) => max m y) h, pts.foldl (fun m (_, y) => max m (-y)) d))
     (0, 0, 0)
@@ -4567,10 +4571,10 @@ private def closeBox (fs : FontSet) (size xHeight textW textH : Length) (acc : I
     items := items.modify i (raiseItem r declared)
   let reserved : Array Item := #[
     (match frame with
-     | some c => .rule t full base c
+     | some c => .rule t full base c false
      | none => kern 0),
     (match b.ground with
-     | some (c, _) => .mark win (h0 + d0 + 2 * p) (r - d0 - p) (paint c)
+     | some (c, _) => .mark win (h0 + d0 + 2 * p) (r - d0 - p) (paint c) false
      | none => kern 0),
     kern (if b.ground.isSome then -win else 0),
     kern p]
@@ -4578,12 +4582,12 @@ private def closeBox (fs : FontSet) (size xHeight textW textH : Length) (acc : I
     items := items.modify (ob.start + k) fun it => reserved[k]?.getD it
   items := items.push (kern p)
   if let some c := frame then
-    items := items ++ #[.rule t full base c, kern (-(win + t)), .rule win t (r + h0 + p) c,
-      kern (-win), .rule win t base c, kern t]
+    items := items ++ #[.rule t full base c false, kern (-(win + t)), .rule win t (r + h0 + p) c false,
+      kern (-win), .rule win t base c false, kern t]
   if declared then
     let ht := (b.height.map len).getD (max 0 (h0 + r))
     let dp := (b.depth.map len).getD (max 0 (d0 - r))
-    items := items.push (.rule 0 (ht + dp) (-dp) Ir.Color.black)
+    items := items.push (.rule 0 (ht + dp) (-dp) Ir.Color.black false)
   for k in [ob.start:items.size] do
     items := items.modify k fixRun
   return { acc with items := items }
@@ -4727,7 +4731,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
     let xh := xHeight.mulDiv sz (max size Length.quantum)
     let glue := g.resolve sz xh
     let items := if keep then
-        (acc.items.push (.rule 0 0 0 Ir.Color.black)).push unbreakable
+        (acc.items.push (.rule 0 0 0 Ir.Color.black false)).push unbreakable
       else if sty.boxed then acc.items.push unbreakable
       else acc.items
     let glue := if sty.boxed then rigidGlue glue else glue
@@ -4749,7 +4753,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
     let w := width.resolveWidth values fs xh
     let h := height.resolveWidth values fs xh
     let r := raise.resolveWidth values fs xh
-    let item : Item := .rule (max 0 w) (max 0 h) r sty.paint
+    let item : Item := .rule (max 0 w) (max 0 h) r sty.paint false
     { acc with items := acc.items.push item }
   | .corr maybe sty => correctItalic fs maybe sty acc
   | .boxOpen b sty =>
@@ -4762,7 +4766,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
     | none => acc
   | .strut g =>
     let strut : Item := .rule 0 (max 0 (g.width.resolve size xHeight)) 0
-      Ir.Color.black
+      Ir.Color.black false
     { acc with items := acc.items.push strut }
   | .img src spec ink =>
     -- An entry that failed to load keeps the requested size around a default square.
@@ -4777,7 +4781,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
           spec.height.isNone && w > textW && w > 0 then
         (textW, textW.mulDiv h w)
       else (w, h)
-    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h) ink 0) }
+    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h) ink 0 false) }
   | .brk extra =>
     let items := acc.items.push (.glue { fil := true, parfill := true })
     let extras :=
@@ -5558,8 +5562,8 @@ public def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   | some (.glue _) | some (.decoratedGlue _ _) =>
     match items[j-1]? with
     | some (.box _ _ _ _ _ _ _ _ _ _ _) => j > 0
-    | some (.img _ _ _ _ _) => j > 0
-    | some (.rule _ _ _ _) => j > 0
+    | some (.img _ _ _ _ _ _) => j > 0
+    | some (.rule _ _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
   | _ => false
@@ -5696,8 +5700,8 @@ public def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
     match items[k]! with
     | .box w _ _ _ _ _ metrics _ _ _ _ =>
       m := { m with natural := m.natural + w, boxW := if metrics.fixed then m.boxW else m.boxW + w }
-    | .img _ w _ _ _ => m := { m with natural := m.natural + w }
-    | .rule w _ _ _ | .mark w _ _ _ => m := { m with natural := m.natural + w }
+    | .img _ w _ _ _ _ => m := { m with natural := m.natural + w }
+    | .rule w _ _ _ _ | .mark w _ _ _ _ => m := { m with natural := m.natural + w }
     | .poly _ _ => pure ()
     | .glue g | .decoratedGlue g _ => m := { m with
         natural := m.natural + g.width
@@ -5806,8 +5810,8 @@ public def kpSums (items : Array Item) : KpSums := Id.run do
   for k in [0:n] do
     let (dw, dst, dsh, dfil, db) : Length × Length × Length × Nat × Length := match items[k]! with
       | .box w _ _ _ _ _ metrics _ _ _ _ => (w, 0, 0, 0, if metrics.fixed then 0 else w)
-      | .img _ w _ _ _ => (w, 0, 0, 0, 0)
-      | .rule w _ _ _ | .mark w _ _ _ => (w, 0, 0, 0, 0)
+      | .img _ w _ _ _ _ => (w, 0, 0, 0, 0)
+      | .rule w _ _ _ _ | .mark w _ _ _ _ => (w, 0, 0, 0, 0)
       | .poly _ _ => (0, 0, 0, 0, 0)
       | .glue g | .decoratedGlue g _ =>
         (g.width, g.stretch, g.shrink, if g.fil then 1 else 0, 0)
@@ -6929,14 +6933,14 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
       segs := setWordBox segs f offset w fontIdx color link glyphs size leading
         decorations raise ground attr
       width := width + expandSpan f offset w
-    | .img idx w h ink raise =>
-      segs := segs.push (.image idx w h ink raise)
+    | .img idx w h ink raise flat =>
+      segs := segs.push (.image idx w h ink raise flat)
       width := width + w
-    | .rule w thickness raise color =>
-      segs := segs.push (.rule w thickness raise color)
+    | .rule w thickness raise color flat =>
+      segs := segs.push (.rule w thickness raise color flat)
       width := width + w
-    | .mark w thickness raise color =>
-      segs := segs.push (.decoration (.highlight color none) w thickness raise color)
+    | .mark w thickness raise color flat =>
+      segs := segs.push (.decoration (.highlight color none) w thickness raise color flat)
       width := width + w
     | .poly pts color =>
       segs := segs.push (.poly (pts.map fun (x, y) => (x + x * f / 1000, y)) color)
@@ -7278,11 +7282,11 @@ private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option Region
         out := addRegionBox out x (l.y - raise - size * 4 / 5) (x + w) (l.y - raise + size / 4)
       x := x + w
     | .gap w _ | .decoratedGap w _ _ => x := x + w
-    | .rule w thickness raise _ | .decoration _ w thickness raise _ =>
-      out := addRegionBox out x (l.y - raise - thickness) (x + w) (l.y - raise)
+    | .rule w thickness raise _ flat | .decoration _ w thickness raise _ flat =>
+      unless flat do out := addRegionBox out x (l.y - raise - thickness) (x + w) (l.y - raise)
       x := x + w
-    | .image _ w h _ raise =>
-      out := addRegionBox out x (l.y - raise - h) (x + w) (l.y - raise)
+    | .image _ w h _ raise flat =>
+      unless flat do out := addRegionBox out x (l.y - raise - h) (x + w) (l.y - raise)
       x := x + w
     | .poly pts _ =>
       -- A polygon advances no pen; its vertices stand at the pen x, `py` up from the baseline.
@@ -7892,7 +7896,7 @@ private def Spacing.Page.noteLines (b : B) : Array LineOut :=
     let rule : LineOut := { x := b.geom.hmargin
                             y := top - b.geom.fontSize * 26 / 100
                             size := 0
-                            segs := #[.rule ruleW thick 0 b.noteInk]
+                            segs := #[.rule ruleW thick 0 b.noteInk false]
                             setWidth := ruleW
                             note := true }
     #[rule] ++ b.pendingNotes.map (fun l => { l with y := top + l.y, note := true })
@@ -8572,9 +8576,9 @@ public def Seg.advance : Seg → Length
   | .run _ _ _ w .. => w
   | .gap w _ => w
   | .decoratedGap w _ _ => w
-  | .decoration _ w _ _ _ => w
+  | .decoration _ w _ _ _ _ => w
   | .rule w .. => w
-  | .image _ w _ _ _ => w
+  | .image _ w _ _ _ _ => w
   | .poly _ _ => 0
 
 /-- Shipping keeps a segment's advance: hidden ink a gap as wide, a hidden polygon none. -/
@@ -8697,9 +8701,9 @@ public def Seg.stripGlyphs : Seg → Seg
     .run idx color link w #[] size leading decorations raise ground attr
   | .gap w word => .gap w word
   | .decoratedGap w word paint => .decoratedGap w word paint
-  | .decoration kind w t r c => .decoration kind w t r c
-  | .rule w t r c => .rule w t r c
-  | .image s w h i r => .image s w h i r
+  | .decoration kind w t r c fl => .decoration kind w t r c fl
+  | .rule w t r c fl => .rule w t r c fl
+  | .image s w h i r fl => .image s w h i r fl
   | .poly pts c => .poly pts c
 
 /-- Whether a segment contributes a text strut. -/
@@ -8784,9 +8788,10 @@ private def lineBoxStep (fs : FontSet) (nominal : Length) (leadFactor : Nat) (le
       mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
         scaledAt sz font font.inkAscent.toNat + max 0 raise,
         scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
-  | .image _ _ h _ r => mergeLineBox acc ⟨max 0 (h + r), max 0 (-r), max 0 (h + r), max 0 (-r)⟩
-  | .rule _ t r _ | .decoration _ _ t r _ =>
-    mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
+  | .image _ _ h _ r flat =>
+    if flat then acc else mergeLineBox acc ⟨max 0 (h + r), max 0 (-r), max 0 (h + r), max 0 (-r)⟩
+  | .rule _ t r _ flat | .decoration _ _ t r _ flat =>
+    if flat then acc else mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
   | .poly pts _ =>
     let (above, below) := pts.foldl
       (fun (a, b) (_, y) => (max a y, max b (-y))) (0, 0)
@@ -8856,9 +8861,9 @@ public def segsInk (fs : FontSet) (segs : Array Seg) : Length × Length :=
         glyphs.foldl (fun (acc : Length × Length) (g, _) =>
           let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
           (max acc.1 (sc hi + raise), max acc.2 (-(sc lo) - raise))) acc
-    | .image _ _ h _ r => (max acc.1 (h + r), max acc.2 (-r))
-    | .rule _ t r _ | .decoration _ _ t r _ =>
-      (max acc.1 (r + t), max acc.2 (-r))
+    | .image _ _ h _ r flat => if flat then acc else (max acc.1 (h + r), max acc.2 (-r))
+    | .rule _ t r _ flat | .decoration _ _ t r _ flat =>
+      if flat then acc else (max acc.1 (r + t), max acc.2 (-r))
     | .poly pts _ =>
       pts.foldl (fun (above, below) (_, y) =>
         (max above y, max below (-y))) acc
@@ -9129,12 +9134,12 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Length) (size : L
     | some dj =>
       if !dj.ctx.align then 0 else
       segs.foldl (fun m s => match s with
-        | .rule 0 0 raise _ => max m (-raise)
+        | .rule 0 0 raise _ _ => max m (-raise)
         | _ => m) 0
     | none => 0
   -- A zero-width rule is dropped: some viewers rasterize a degenerate rectangle as a hairline.
   let segs := segs.filter fun s => match s with
-    | .rule w _ _ _ => w != 0
+    | .rule w _ _ _ _ => w != 0
     | _ => true
   -- The fit test reserves this line's notes too, so a line that does not fit spills with its notes.
   let need := if notes.isEmpty then 0
@@ -10650,7 +10655,7 @@ private def itemsNaturalWidth (items : Array Item) : Length :=
     | .box bw .. => w + bw
     | .glue g | .decoratedGlue g _ => w + g.width
     | .pen .. => w
-    | .img _ bw _ _ _ => w + bw
+    | .img _ bw _ _ _ _ => w + bw
     | .rule bw .. | .mark bw .. => w + bw
     | .poly .. => w) 0
 
@@ -10677,7 +10682,7 @@ private def itemsLinesWidth (items : Array Item) : Length := Id.run do
   let mut run : Length := 0
   for it in items do
     match it with
-    | .box bw .. | .img _ bw _ _ _ | .rule bw .. | .mark bw .. => run := run + bw
+    | .box bw .. | .img _ bw _ _ _ _ | .rule bw .. | .mark bw .. => run := run + bw
     | .glue g | .decoratedGlue g _ => run := run + g.width
     | .pen _ cost .. =>
       if cost ≤ forcedCost then
@@ -10926,7 +10931,7 @@ private def itemsMinWidth (items : Array Item) : Length := Id.run do
   for it in items do
     match it with
     | .box w .. => run := run + w
-    | .img _ w _ _ _ => run := run + w
+    | .img _ w _ _ _ _ => run := run + w
     | .rule w .. | .mark w .. => run := run + w
     | .glue _ | .decoratedGlue _ _ =>
       widest := max widest run
@@ -11195,7 +11200,7 @@ private def collectTable (r : Rd) (a0 : Acc)
                   x := l'
                   first := false
                 if l' > x then segs := segs.push (.gap (l' - x) false)
-                segs := segs.push (.rule w cmidW 0 fg)
+                segs := segs.push (.rule w cmidW 0 fg false)
                 x := max x (l' + w)
                 hi := hi + 1
               | _ => break
@@ -11218,7 +11223,7 @@ private def collectTable (r : Rd) (a0 : Acc)
             | 2 => 0
             | _ => ab
           let ops := (a.ops.push (.skip { width := sep })).push
-            (.tableRule th (r.geom.hmargin + x0) tableW #[.rule tableW th 0 fg])
+            (.tableRule th (r.geom.hmargin + x0) tableW #[.rule tableW th 0 fg false])
           a := { a with ops := ops }
           pendBelow := some be
           prev := 1
@@ -11383,9 +11388,9 @@ public def labelGlyphStep (fs : FontSet) (size : Length) (acc : Length × Length
       let font := fs.get idx
       let sz := if sz == 0 then size else sz
       glyphs.foldl (fun acc (g, _) => growExtent acc (glyphVExtent font sz raise g)) acc
-    | .image _ _ h _ r => (max acc.1 (h + r), max acc.2 (-r))
-    | .rule _ t raise _ | .decoration _ _ t raise _ =>
-      growExtent acc (raise + t, -raise)
+    | .image _ _ h _ r flat => if flat then acc else (max acc.1 (h + r), max acc.2 (-r))
+    | .rule _ t raise _ flat | .decoration _ _ t raise _ flat =>
+      if flat then acc else growExtent acc (raise + t, -raise)
     | .poly pts _ => pts.foldl (fun acc (_, y) => growExtent acc (y, -y)) acc
     | .gap _ _ | .decoratedGap _ _ _ => acc
 
@@ -11399,8 +11404,14 @@ private theorem labelGlyphStep_grows (fs : FontSet) (size : Length)
   cases seg with
   | run =>
     exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
-  | image => exact ⟨Int.le_max_left _ _, Int.le_max_left _ _⟩
-  | rule | decoration => exact growExtent_left _ _
+  | image _ _ _ _ _ flat =>
+    cases flat
+    · exact ⟨Int.le_max_left _ _, Int.le_max_left _ _⟩
+    · exact ⟨Int.le_refl _, Int.le_refl _⟩
+  | rule _ _ _ _ flat | decoration _ _ _ _ _ flat =>
+    cases flat
+    · exact growExtent_left _ _
+    · exact ⟨Int.le_refl _, Int.le_refl _⟩
   | poly => exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
   | gap | decoratedGap => exact ⟨Int.le_refl _, Int.le_refl _⟩
 
@@ -11595,7 +11606,7 @@ public def labelGlyphUnknown (fs : FontSet) (size : Length) (segs : Array Seg) :
   | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
     glyphs.any fun g =>
       (GlyphBounds.glyph (fs.get idx) (if sz == 0 then size else sz) raise g.1).unresolved
-  | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+  | .image _ _ _ _ _ _ | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _
     | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false
 
 /-- Read each painted run in its own face, size and raise against the producer's reserve. -/
@@ -11612,7 +11623,7 @@ public def observeLabel (fs : FontSet) (line : LineOut) (stamp : LabelAudit.Stam
           | some (lo, hi) =>
             decide (hi * size / (font.unitsPerEm : Int) + raise ≤ stamp.above ∧
               (-lo) * size / (font.unitsPerEm : Int) - raise ≤ stamp.below)
-      | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+      | .image _ _ _ _ _ _ | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _
         | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => true }
 
 /-- The label census over the final page lines, after placement and furniture. -/
@@ -14682,7 +14693,7 @@ public theorem mergeIntervals_chained (obs : Array (Length × Length))
 decoration segments, the pen advancing by the set widths. -/
 public def decorationSpans (x : Length) : List Seg → List (Length × Length × Ir.Decoration × DecorationRule)
   | [] => []
-  | .decoration k w t r c :: rest =>
+  | .decoration k w t r c _ :: rest =>
     (x, x + w, k, { color := c, thickness := t, raise := r }) :: decorationSpans (x + w) rest
   | s :: rest => decorationSpans (x + s.advance) rest
 
@@ -14705,7 +14716,7 @@ private def underlinePieces (paint : DecorationRule) (hi : Length) :
   | (lo, stop) :: rest, cur, out =>
     underlinePieces paint hi rest stop
       ((out.push (.gap (lo - cur) false)).push
-        (.decoration .underline (stop - lo) paint.thickness paint.raise paint.color))
+        (.decoration .underline (stop - lo) paint.thickness paint.raise paint.color false))
 
 private theorem underlinePieces_placement (paint : DecorationRule) (hi x cur : Length)
     (spans : List (Length × Length)) (out : Array Seg)
@@ -14719,7 +14730,7 @@ private theorem underlinePieces_placement (paint : DecorationRule) (hi x cur : L
     length_omega
   | cons span rest ih =>
     let next := (out.push (.gap (span.1 - cur) false)).push
-      (.decoration .underline (span.2 - span.1) paint.thickness paint.raise paint.color)
+      (.decoration .underline (span.2 - span.1) paint.thickness paint.raise paint.color false)
     have hn : x + (next.toList.map Seg.advance).sum = span.2 := by
       simp [next, Seg.advance, lsum_append]
       length_omega
@@ -14736,7 +14747,7 @@ public def Seg.underlineRule (fs : FontSet) (lineSize : Length) : Seg → Option
   | .run fontIdx color _ _ _ size _ decorations _ _ _ =>
     (decorations.resolve (fs.get fontIdx) (if size == 0 then lineSize else size) color).underline
   | .decoratedGap _ _ decorations => decorations.underline
-  | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ _ _ | .poly _ _ => none
+  | .gap _ _ | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _ | .image _ _ _ _ _ _ | .poly _ _ => none
 
 /-- Append a segment's skip-ink paint, its full advance kept as gaps between the surviving spans. -/
 public def appendUnderline (fs : FontSet) (size : Length) (obs : List (Length × Length))
@@ -14797,8 +14808,8 @@ private def underlineSegs (fs : FontSet) (lineSize : Length) (segs : Array Seg) 
   for seg in segs do
     match seg with
     | .gap w _ | .decoratedGap w _ _ => x := x + w
-    | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-    | .image _ w _ _ _ => x := x + w
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w
+    | .image _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
     | .run fontIdx _ _ w glyphs size _ _ _ _ _ =>
       let font := fs.get fontIdx
@@ -14833,16 +14844,16 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
     | .run _ _ _ w _ _ _ decorations _ _ _ =>
       match decorations.lineThrough with
       | some paint =>
-        out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color)
+        out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color false)
       | none => out := out.push (Seg.gap w false)
     | .decoratedGap w _ decorations =>
       match decorations.lineThrough with
       | some paint =>
-        out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color)
+        out := out.push (Seg.decoration .lineThrough w paint.thickness paint.raise paint.color false)
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
-    | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
-    | .image _ w _ _ _ => out := out.push (.gap w false)
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => out := out.push (.gap w false)
+    | .image _ w _ _ _ _ => out := out.push (.gap w false)
     | .poly _ _ => pure ()
   return out
 
@@ -14850,11 +14861,11 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
 stretch of a mark is one rectangle and no seam shows between its runs. -/
 private def pushMark (out : Array Seg) (c : Color) (w t r : Length) : Array Seg :=
   match out.back? with
-  | some (.decoration (.highlight c' none) w' t' r' p') =>
+  | some (.decoration (.highlight c' none) w' t' r' p' _) =>
     if c' == c && t' == t && r' == r && p' == c then
-      out.pop.push (.decoration (.highlight c none) (w' + w) t r c)
-    else out.push (.decoration (.highlight c none) w t r c)
-  | _ => out.push (.decoration (.highlight c none) w t r c)
+      out.pop.push (.decoration (.highlight c none) (w' + w) t r c false)
+    else out.push (.decoration (.highlight c none) w t r c false)
+  | _ => out.push (.decoration (.highlight c none) w t r c false)
 
 /-- A placed line's marks: a `.decoration` seg under each marked stretch, a gap elsewhere. -/
 private def markSegs (segs : Array Seg) : Array Seg := Id.run do
@@ -14875,8 +14886,8 @@ private def markSegs (segs : Array Seg) : Array Seg := Id.run do
       | some paint => out := pushMark out paint.color w paint.thickness paint.raise
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
-    | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
-    | .image _ w _ _ _ => out := out.push (.gap w false)
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => out := out.push (.gap w false)
+    | .image _ w _ _ _ _ => out := out.push (.gap w false)
     | .poly _ _ => pure ()
   return out
 
@@ -15417,7 +15428,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
               scaledAt sz font font.xHeightOptical
             | _ => b.xHeight
           let raise := rule.position.raise xHeight
-          (segs1 ++ #[Seg.gap gap false, Seg.rule ruleW rule.thickness raise rule.color], width)
+          (segs1 ++ #[Seg.gap gap false, Seg.rule ruleW rule.thickness raise rule.color false], width)
         else (segs1, w1)
       | none => (segs1, w1)
     else (segs1, w1)
@@ -16456,7 +16467,7 @@ private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
             census_spillPage pick b _ hb]
 
 private theorem filter_zeroRule_chars (segs : Array Seg) :
-    (segs.filter fun s => match s with | .rule w _ _ _ => w != 0 | _ => true).toList.flatMap
+    (segs.filter fun s => match s with | .rule w _ _ _ _ => w != 0 | _ => true).toList.flatMap
       Seg.glyphChars = segs.toList.flatMap Seg.glyphChars := by
   rw [Array.toList_filter]
   induction segs.toList with
@@ -17253,7 +17264,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .boxAnchor rule shift paints => b := b.placeAnchor fs rule shift paints
   | .hrule color th =>
     -- A rule line takes the full line machinery, so it spaces, breaks and distributes as text does.
-    b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color]
+    b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color false]
       b.geom.textWidth
   | .tableRule th x w segs =>
     -- Exactly the pending sep below the previous ink, with zero depth, as after TeX's `\hrule`.
@@ -17310,7 +17321,7 @@ private theorem stepStaged_hrule_b (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (color : Ir.Color) (th : Length) :
     (stepStaged fs imgs st (.hrule color th)).b =
       st.b.placeLine fs st.b.geom.hmargin 0
-        #[.rule st.b.geom.textWidth th 0 color] st.b.geom.textWidth := rfl
+        #[.rule st.b.geom.textWidth th 0 color false] st.b.geom.textWidth := rfl
 
 private theorem stepStaged_regionClose_b (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
     (stepStaged fs imgs st .regionClose).b = st.b.closeRegion fs := rfl
@@ -20129,7 +20140,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
             let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
             -- A glyph run's size stands in for its ascent, the band centring's only estimate.
             let inkH := segs.foldl (init := (0 : Length)) fun m sg => match sg with
-              | .image _ _ h _ r => max m (h + r)
+              | .image _ _ h _ r flat => if flat then m else max m (h + r)
               | .run _ _ _ _ _ size _ _ raise _ _ => max m (size + raise)
               | _ => m
             let x := if left then geom.hmargin else geom.pageW - geom.hmargin - w
@@ -22917,7 +22928,7 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Length)
       ((b.commit
         { x, y := nextBaseline fs b size segs first step, size
           segs := segs.filter fun s => match s with
-            | .rule width _ _ _ => width != 0
+            | .rule width _ _ _ _ => width != 0
             | _ => true
           setWidth := w, hang, expand, counted, leaf, anchors
           regionExtent := some (lineStrutInk strut (segsInk fs segs)) }
@@ -23231,8 +23242,8 @@ public def textInk : Seg → List Char
   | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
     (String.ofList (glyphs.toList.map (·.2.1))).toList.filter fun c =>
       !(c.isWhitespace || c == ' ' || c == '\u00a0' || c == '\u00ad')
-  | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
-    | .image _ _ _ _ _ | .poly _ _ => []
+  | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _
+    | .image _ _ _ _ _ _ | .poly _ _ => []
 
 public def inkLine (l : LineOut) : Bool :=
   !l.furniture && !l.note && l.segs.toList.flatMap textInk != []

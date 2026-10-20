@@ -284,7 +284,7 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
     let ys := [lineOf "Kilo", lineOf "Lima"].filterMap (·.map (·.y))
     let red := Ir.Color.ofHtml 0xFF 0x00 0x00
     t s!"hidden item, {label}: the step showing it inks its lines, its marker, image and link"
-      (ys.length == 2 && (lineOf "Kilo").any (fun l => l.segs.any (· matches .image _ _ _ true _) &&
+      (ys.length == 2 && (lineOf "Kilo").any (fun l => l.segs.any (· matches .image _ _ _ true _ _) &&
         l.segs.any fun sg => match sg with
           | .run _ _ link .. => link == some "https://example.org"
           | _ => false) &&

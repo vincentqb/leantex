@@ -602,7 +602,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   let throughOf (ls : Array Layout.LineOut) :
       Array (Dim.Length × Dim.Length × Dim.Length × Ir.Color) :=
     ls.flatMap fun l => l.segs.filterMap fun s => match s with
-      | .decoration .lineThrough w thickness raise color => some (w, thickness, raise, color)
+      | .decoration .lineThrough w thickness raise color _ => some (w, thickness, raise, color)
       | _ => none
   let paintedInPdf (doc2 : Ir.Doc) (o : Layout.Out) : Bool :=
     let tree := Struct.ofDoc (Layout.pdfView doc2)

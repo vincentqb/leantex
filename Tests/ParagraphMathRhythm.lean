@@ -33,14 +33,14 @@ def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Length ×
         let some (lo, hi) := f.yExtent g | throw "probe glyph has no outline"
         above := max above (raise + hi * size / f.unitsPerEm)
         below := max below (-raise - lo * size / f.unitsPerEm)
-    | .rule _ t r _ | .decoration _ _ t r _ =>
+    | .rule _ t r _ _ | .decoration _ _ t r _ _ =>
       above := max above (r + t)
       below := max below (-r)
     | .poly points _ =>
       for (_, y) in points do
         above := max above y
         below := max below (-y)
-    | .image _ _ h _ _ => above := max above h
+    | .image _ _ h _ _ _ => above := max above h
     | .gap .. | .decoratedGap .. => pure ()
   return (above, below)
 

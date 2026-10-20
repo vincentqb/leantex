@@ -4047,8 +4047,8 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Length × Layout.Seg) := Id.run 
     x := x + match s with
       | .run _ _ _ w _ _ _ _ _ _ _ => w
       | .gap w _ | .decoratedGap w _ _ => w
-      | .rule w _ _ _ | .decoration _ w _ _ _ => w
-      | .image _ w _ _ _ => w
+      | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => w
+      | .image _ w _ _ _ _ => w
       | .poly _ _ => 0
   return out
 
@@ -4781,7 +4781,7 @@ def titleTemplateTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     "\\title{Probe Title}\\author{R. Placeholder}") "\\titlepage"
   t "title template before the document's own separator: the declared separator draws"
     ((page ruled).lines.any fun l => l.segs.any fun s => match s with
-      | .rule _ _ _ c => c == ruleInk
+      | .rule _ _ _ c _ => c == ruleInk
       | _ => false)
   let bodySrc := deck169 (colors ++ "\\title{Probe Title}") (ground node ++ "\\titlepage")
   let (_, bds) := elabStr bodySrc
@@ -5843,7 +5843,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let out := layoutOf oneFace fitDoc (imgs := store)
   let geom := Layout.Geom.ofPage fitDoc.page
   let widths := (allLines out).flatMap (·.segs.filterMap fun s => match s with
-    | .image _ w _ _ _ => some w
+    | .image _ w _ _ _ _ => some w
     | _ => none)
   t "an unsized boundary picture wider than the measure fits it exactly"
     (widths == #[geom.textWidth])
@@ -5856,7 +5856,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let imgOut := layoutOf oneFace imgDoc (imgs := imgStore)
   t "an ordinary wide image keeps its natural size and the overfull is named"
     (((allLines imgOut).flatMap (·.segs.filterMap fun s => match s with
-        | .image _ w _ _ _ => some w
+        | .image _ w _ _ _ _ => some w
         | _ => none)) == #[Dim.bp 2000] &&
      imgOut.diags.any (·.code == "W0005"))
 

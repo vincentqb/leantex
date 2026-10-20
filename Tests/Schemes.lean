@@ -212,7 +212,7 @@ def shippedColors (out : Layout.Out) : Array Ir.Color × Array Ir.Color :=
     | .run _ c _ _ glyphs .. => if glyphs.isEmpty then acc else add acc c
     | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => acc) #[]
   let marks := segs.foldl (fun acc s => match s with
-    | .decoration _ _ _ _ c | .rule _ _ _ c | .poly _ c => add acc c
+    | .decoration _ _ _ _ c _ | .rule _ _ _ c _ | .poly _ c => add acc c
     | .run .. | .gap .. | .decoratedGap .. | .image .. => acc) #[]
   (inks, out.pages.foldl (fun acc p => p.fills.foldl (fun acc f => add acc f.color) acc) marks)
 

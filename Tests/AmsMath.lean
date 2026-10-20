@@ -404,7 +404,7 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       sizeOf "\\[ x\\tfrac{a}{b} \\]" a != sizeOf "\\[ x\\tfrac{a}{b} \\]" x)
   let rules (src : String) : List Dim.Length :=
     (laid src).toList.flatMap fun l => l.segs.toList.filterMap fun s => match s with
-      | .rule _ th _ _ => some th
+      | .rule _ th _ _ _ => some th
       | _ => none
   let mathGlyphs (src : String) : List (Nat × Char) :=
     (laid src).toList.flatMap fun l => l.segs.toList.flatMap fun s => match s with

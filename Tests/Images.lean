@@ -304,7 +304,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     for p in out.pages do
       for l in p.lines do
         for s in l.segs do
-          if let .image idx w h _ _ := s then acc := acc.push (idx, w, h)
+          if let .image idx w h _ _ _ := s then acc := acc.push (idx, w, h)
     return acc
   let layoutSrc (src : String) : Layout.Out :=
     let (doc, _) := Elab.run "t" src
@@ -385,7 +385,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       p.lines.any fun l =>
         l.x + l.setWidth == logoGeom.pageW - logoGeom.hmargin &&
         l.segs.any fun s => match s with
-          | .image _ w h _ _ => w == logoW && h == Dim.pt 8
+          | .image _ w h _ _ _ => w == logoW && h == Dim.pt 8
           | _ => false)
 
   let (pdfDoc, _) := Elab.run "t"
@@ -957,12 +957,12 @@ def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         let mut x := l.x
         for s in l.segs do
           match s with
-          | .image _ w hh _ _ =>
+          | .image _ w hh _ _ _ =>
             acc := acc.push (i, x, l.y, w, hh)
             x := x + w
           | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
           | .gap w _ | .decoratedGap w _ _ => x := x + w
-          | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
+          | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w
           | .poly _ _ => pure ()
     return acc
   let img := "\\includegraphics[keepaspectratio,totalheight=.28\\textheight,\

@@ -23,7 +23,7 @@ private def spacingGaps (line : Layout.LineOut) : Array (Dim.Length × Dim.Lengt
         | _ => false
       if seen && later && 0 < w then gaps := gaps.push (x, w)
       x := x + w
-    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ _ => x := x + w
+    | .rule w _ _ _ _ | .decoration _ w _ _ _ _ | .image _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
   return gaps
 
@@ -33,12 +33,12 @@ private def spacingPaint (line : Layout.LineOut) : Array (Ir.Decoration × Layou
   let mut paint := #[]
   for seg in line.segs do
     match seg with
-    | .decoration kind w thickness raise color =>
+    | .decoration kind w thickness raise color _ =>
       paint := paint.push (kind,
         { x := x, y := line.y - raise - thickness, w := w, h := thickness, color := color })
       x := x + w
     | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
-      | .rule w _ _ _ | .image _ w _ _ _ => x := x + w
+      | .rule w _ _ _ _ | .image _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
   return paint
 

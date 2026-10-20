@@ -1337,7 +1337,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Length × Dim.Length) :=
     ((outOf fs src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
       match s with
-      | .decoration .underline w th _ _ => some (w, th)
+      | .decoration .underline w th _ _ _ => some (w, th)
       | _ => none)
   let widthOf (fs : Font.FontSet) (src : String) : Dim.Length :=
     (((outOf fs src).pages.flatMap (·.lines))[0]?.map (·.setWidth)).getD 0
@@ -1406,7 +1406,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
               | _ => none
             let ruleW := ((lines[1]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
-              | .decoration .underline w _ _ _ => some w
+              | .decoration .underline w _ _ _ _ => some w
               | _ => none
             return (runW[0]?.getD 0, ruleW[0]?.getD 0)
           let (aW, aRule) := firstRunAndRule "\\underline{a\\textit{g}}"
@@ -1502,7 +1502,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       let badRules := ((outOf badSet "\\underline{ab}").pages.flatMap
         (·.lines)).flatMap (·.segs.filterMap fun s =>
           match s with
-          | .decoration .underline w th raise _ => some (w, th, raise)
+          | .decoration .underline w th raise _ _ => some (w, th, raise)
           | _ => none)
       t "band: absurd post metrics still rule below the baseline"
         (badRules.size ≥ 1 && badRules.all fun (w, th, raise) =>
@@ -1694,7 +1694,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let ruleRaises := ((layoutOf oneFace rdoc geom).pages.flatMap (·.lines)).filterMap
     fun l => if l.furniture then none else
       l.segs.findSome? fun s => match s with
-        | .rule _ _ raise _ => if raise > 0 then some raise else none
+        | .rule _ _ raise _ _ => if raise > 0 then some raise else none
         | _ => none
   t "the heading rule sits at half the heading's own x-height"
     (ruleRaises ==
@@ -1703,7 +1703,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((layoutOf oneFace d geom).pages.flatMap (·.lines)).filterMap
       fun l => if l.furniture then none else
         l.segs.findSome? fun s => match s with
-          | .rule _ th raise _ => some (th, raise)
+          | .rule _ th raise _ _ => some (th, raise)
           | _ => none
   let komaRule := (Elab.run "t" ("\\documentclass{scrartcl}\\definecolor{ink}{HTML}{112233}" ++
     "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule height 2pt\\hfill}}\\makeatother" ++
@@ -1725,7 +1725,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     | .rule .. => true | _ => false
   t "the synthetic hero page draws its section rule on the section baseline"
     ((ruledLine.bind fun l => l.segs.findSome? fun s => match s with
-        | .rule _ th raise _ => some (th, raise)
+        | .rule _ th raise _ _ => some (th, raise)
         | _ => none) == some (Dim.pt 1, 0))
   t "the synthetic hero page sets title, two contact lines, section, entry"
     (heroLines.size == 5 && (heroLines.zip (heroLines.extract 1 heroLines.size)).all
@@ -1828,7 +1828,7 @@ def titleBarChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     let firstT ← titles[0]?
     let lastT ← titles.back?
     let th2 ← bar2.segs.findSome? fun s => match s with
-      | .rule _ th _ _ => some th | _ => none
+      | .rule _ th _ _ _ => some th | _ => none
     return ((firstT.y - cap) - bar1.y, (bar2.y - th2) - lastT.y, titles.size)
   match probe "Even", probe "Gyp" with
   | some (above, below, n), some (_, below', n') =>
@@ -2120,7 +2120,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "the separator sets as a full-measure rule"
     ((linesOf styledSrc).any fun l => l.segs.any fun sg =>
       match sg with
-      | .rule w _ _ _ => w == geom.textWidth
+      | .rule w _ _ _ _ => w == geom.textWidth
       | _ => false)
   let deckTitleSrc := "\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
     "\\begin{document}\n\\title{Alpha Beta}\\author{Pat Placeholder}\n" ++
@@ -2959,13 +2959,13 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
         let mut x := l.x
         for s in l.segs do
           match s with
-          | .rule w _ _ _ =>
+          | .rule w _ _ _ _ =>
             acc := acc.push (x, w)
             x := x + w
           | .gap g _ | .decoratedGap g _ _ => x := x + g
-          | .decoration _ w _ _ _ => x := x + w
+          | .decoration _ w _ _ _ _ => x := x + w
           | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
-          | .image _ w _ _ _ => x := x + w
+          | .image _ w _ _ _ _ => x := x + w
           | .poly _ _ => pure ()
     return acc
   t "the three rules ship" (ruleSegs.size == 3)
@@ -2988,7 +2988,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
       for l in p.lines do
         if l.size == 0 then
           for sg in l.segs do
-            if let .rule w _ _ _ := sg then
+            if let .rule w _ _ _ _ := sg then
               return w
     return 0
   -- (measure edge, right ink edge) of page 0's first line holding `needle`.
@@ -3002,7 +3002,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
             | .decoratedGap w _ _ => a + w
             | .decoration _ w .. => a + w
             | .rule w .. => a + w
-            | .image _ w _ _ _ => a + w
+            | .image _ w _ _ _ _ => a + w
             | .poly .. => a) (0 : Dim.Length)
           return some (l.x + l.hang, l.x + w)
     return none
@@ -3332,9 +3332,9 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (["left", "right", "top", "bottom"].zip es).all fun (e, s) =>
       (s.splitOn s!"{e} margin").length == 2
   t "the area judge holds a rule to all four edges"
-    (namesEveryEdge (areaEdges fun w h => .rule w h 0 Ir.Color.black))
+    (namesEveryEdge (areaEdges fun w h => .rule w h 0 Ir.Color.black false))
   t "the area judge holds an image box to all four edges"
-    (namesEveryEdge (areaEdges fun w h => .image none w h true 0))
+    (namesEveryEdge (areaEdges fun w h => .image none w h true 0 false))
   t "a running head does not fail text.in_area"
     ((judge ("\\runninghead{Pat Placeholder \\hfill \\pagenumber}\n" ++
       "\\assert{ text.in_area }\n" ++
@@ -5138,7 +5138,7 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
     ((notesOf out).all fun n => n.y ≤ geom.bodyBottom &&
       (flowOf out).all fun b => b.y < n.y)
   t "footnote: the rule ships with the notes"
-    ((notesOf out).any fun l => l.segs.any fun s => s matches .rule _ _ _ _)
+    ((notesOf out).any fun l => l.segs.any fun s => s matches .rule _ _ _ _ _)
   t "footnote: notes are body ink, never furniture"
     ((notesOf out).all fun l => !l.furniture)
   let filler := String.intercalate " " (List.replicate 40 "wandering syllables")
@@ -5398,7 +5398,7 @@ def isGlyphRun : Layout.Seg → Bool
 
 def isInkSeg : Layout.Seg → Bool
   | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-  | .image _ _ _ _ _ => true
+  | .image _ _ _ _ _ _ => true
   | _ => false
 
 def isWordGap : Layout.Seg → Bool

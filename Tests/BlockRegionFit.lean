@@ -138,7 +138,7 @@ public def emptyColumnSource (pos : String) (contents : Array String) : String :
 private def followingRules (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines) |>.filter fun line =>
     !line.furniture && line.segs.size == 1 && line.segs.all fun
-      | .rule w thickness raise _ =>
+      | .rule w thickness raise _ _ =>
         w == Dim.pt 200 && thickness == Dim.pt 1 && raise == 0
       | _ => false
 
@@ -236,14 +236,14 @@ public def closedRuleChecks (ref : IO.Ref (List String))
     check ref (label ++ ": following rule survives once with its declared dimensions")
       (rules.size == 1 && rules.all fun line =>
         line.segs.size == 1 && line.segs.all fun
-          | .rule w thickness raise _ =>
+          | .rule w thickness raise _ _ =>
             w == Dim.pt 20 && thickness == Dim.pt 1 && raise == 0
           | _ => false)
     check ref (label ++ ": following rule starts below every closed surface")
       (out.pages.all fun page => page.lines.all fun line =>
         if !line.furniture && Layout.ruleOnly line.segs then
           line.segs.all fun
-            | .rule _ thickness raise _ =>
+            | .rule _ thickness raise _ _ =>
               (page.fills.filter isSurface).all fun fill =>
                 fill.y + fill.h ≤ line.y - raise - thickness
             | _ => false
@@ -292,7 +292,7 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
         check ref (label ++ ": following rule spans every surface once at its declared size")
           (rules.size == 1 && rules.all fun line =>
             line.segs.size == 1 && line.segs.all fun
-              | .rule w thickness raise _ =>
+              | .rule w thickness raise _ _ =>
                 w == Dim.pt 200 && thickness == Dim.pt 1 && raise == 0 &&
                   (fills.filter isSurface).all fun fill =>
                     line.x - pad ≤ fill.x && fill.x + fill.w ≤ line.x + w + pad
@@ -301,7 +301,7 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
           (out.pages.all fun page => page.lines.all fun line =>
             if !line.furniture && Layout.ruleOnly line.segs then
               line.segs.all fun
-                | .rule _ thickness raise _ =>
+                | .rule _ thickness raise _ _ =>
                   (page.fills.filter isSurface).all fun fill =>
                     fill.y + fill.h ≤ line.y - raise - thickness
                 | _ => false

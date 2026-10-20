@@ -1787,8 +1787,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         if pick glyphs then return some x
         x := x + w
       | .gap w _ | .decoratedGap w _ _ => x := x + w
-      | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-      | .image _ w _ _ _ => x := x + w
+      | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w
+      | .image _ w _ _ _ _ => x := x + w
       | .poly _ _ => pure ()
     return none
   let hatG := (fira.gid '\u0302').getD 0
@@ -1807,7 +1807,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "overline draws its rule and no glyph mark"
     (warnCodes "$\\overline{x+y}$" == [] &&
       ((lineOf "$\\overline{x+y}$").segs.filter fun s => match s with
-        | .rule _ _ _ _ => true
+        | .rule _ _ _ _ _ => true
         | _ => false).size == 1)
   t "an accented atom still takes its script"
     (warnCodes "$\\hat{x}^2$" == [] && warnCodes "$e^{\\hat{H}}$" == [])
@@ -1951,8 +1951,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         for s in l.segs do
           match s with
           | .gap w _ | .decoratedGap w _ _ => x := x + w
-          | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-          | .image _ w _ _ _ => x := x + w
+          | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w
+          | .image _ w _ _ _ _ => x := x + w
           | .poly _ _ => pure ()
           | .run _ _ _ w glyphs sz _ _ raise _ _ =>
             let mut gx := x
@@ -1968,7 +1968,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     for page in (layoutOf mfs d geom).pages do
       for l in page.lines.filter (!·.furniture) do
         for s in l.segs do
-          if let .rule w thickness raise _ := s then
+          if let .rule w thickness raise _ _ := s then
             out := out.push (w, thickness, raise)
     return out
   t "frac advance is the wider part plus null delimiters"

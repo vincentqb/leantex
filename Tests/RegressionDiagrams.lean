@@ -276,7 +276,7 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
     let mut x := l.x
     let mut result := #[]
     for s in l.segs do
-      if let .decoration .underline w h raise _ := s then
+      if let .decoration .underline w h raise _ _ := s then
         result := result.push (x, l.y - raise - h, w, h)
       x := x + s.advance
     return result

@@ -28,7 +28,7 @@ private def placement (out : Layout.Out) :=
     (line.x, line.y, line.size, line.setWidth,
       line.segs.filterMap fun seg => match seg with
       | .run idx _ _ w glyphs size _ _ raise _ _ => some (idx, w, glyphs, size, raise)
-      | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+      | .image _ _ _ _ _ _ | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _
         | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => none)
 
 /-- The production boundary from a real producer result, its integrity guards tested by deleting
@@ -119,7 +119,7 @@ def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font) :
       (bodyLines mixedOut).any fun line =>
         line.segs.any fun seg => match seg with
         | .run idx _ _ _ _ size _ _ _ _ _ => idx == 1 && size > geom.fontSize
-        | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+        | .image _ _ _ _ _ _ | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _
           | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false)
   record "known mixed-face and mixed-size glyphs need no unresolved warning"
     (labelPaintedText (run fs mixed) == "Éx" && !(named (run fs mixed) .W0394 mixed))

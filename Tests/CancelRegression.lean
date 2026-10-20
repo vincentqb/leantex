@@ -90,8 +90,8 @@ def cancelReportChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       | .run _ c _ _ glyphs _ _ _ _ _ _ =>
         if glyphs.any (fun (_, ch, _) => !ch.isWhitespace) then some c else none
       | .poly pts c => if pts.isEmpty then none else some c
-      | .rule w h _ c => if w > 0 && h > 0 then some c else none
-      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ _ _ => none
+      | .rule w h _ c _ => if w > 0 && h > 0 then some c else none
+      | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _ _ | .image _ _ _ _ _ _ => none
     t s!"cancel contrast: {label} witnesses the colours actually shipped"
       (red.isSome && blue.isSome && inks.any (fun c => some c == blue) &&
         (inks.any (fun c => some c == red)) == redInk &&

@@ -2369,6 +2369,13 @@ def reports : List Report := [
     pins := [check% footnoteBackendChecks]
     accept := ["main's binary at 1e648c76 on an invented book with two chapters of notes, one note's words repeated in the second chapter, and a note numbered 7: ids fn1, fn2, fn1, fn7 and endnotes numbered 1 to 4; the guard fails there; this tree names each mark and note by its place, fn1 to fn4, each back link reaching its own mark, and numbers the endnotes 1, 2, 1, 7 as the marks and the PDF show them; a speaker note's mark links nowhere",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF byte-identical; the footnotes fixture's web page numbers its endnote for the mark showing 12 as 12, where main's showed 3 (visualdiff: visible on the third screen, the intended change); one more page differs invisibly; every diagnostic the same"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R999", date := "2026-10-20"
+    what := "an image, a rule, a frame or a ground inside a raised box declaring its height and depth, zero for both, still claimed its own height and depth on its line, pushing the lines around it apart where LaTeX keeps their pitch"
+    pins := [check% Tests.InlineBoxes.boxScopeChecks]
+    accept := ["lualatex 1.24 on invented probes: a 2cm rule, a 2cm image lowered by half its height and a frame lowered 1cm, each in a box declaring no height or depth, leave every line 11.96pt below the one before; this tree sets the same pitch, the ink overlapping the lines around it as lualatex's does",
+      "main's binary at 1e648c76 on the same probes: the lines 58.57pt, 30.22pt and 38.42pt, and 41.92pt apart; the guard fails there",
+      "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical"]
     state := .guarded "1e648c76" .before .author }
 ]
 

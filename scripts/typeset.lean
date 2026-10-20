@@ -285,9 +285,9 @@ def segText : Layout.Seg → String
     s!"run(face {idx}, {w.toBpString} pt, {gs.size} glyphs{if m.math.isSome then ", math" else ""}, {kind})"
   | .gap w word => s!"gap({w.toBpString}{if word then ", word" else ""})"
   | .decoratedGap w word _ => s!"gap({w.toBpString}{if word then ", word" else ""}, decorated)"
-  | .decoration _ w _ _ _ => s!"decoration({w.toBpString})"
-  | .rule w t _ _ => s!"rule({w.toBpString} × {t.toBpString})"
-  | .image _ w h _ _ => s!"image({w.toBpString} × {h.toBpString})"
+  | .decoration _ w _ _ _ _ => s!"decoration({w.toBpString})"
+  | .rule w t _ _ _ => s!"rule({w.toBpString} × {t.toBpString})"
+  | .image _ w h _ _ _ => s!"image({w.toBpString} × {h.toBpString})"
   | .poly pts _ => s!"poly({pts.size} points)"
 
 /-- Build one fixture by its item name. -/
@@ -438,7 +438,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     (overflow geom { stLine 20 790 #[stRun 30 "foot"] with furniture := true } == 0)
   no "overfull: a decoration's rider past the edge stands with its line"
     (overflow geom (stLine 100 100 #[.decoration .underline (Dim.pt 410) Dim.Length.quantum 0
-      Ir.Color.black]) == 0)
+      Ir.Color.black false]) == 0)
   no "overfull: a fill after the text is not ink"
     (overflow geom (stLine 100 100 #[stRun 300 "text", .gap (Dim.pt 150) false]) == 0)
   -- overflow-pt: the largest overflow, rounded up to a whole point.
@@ -447,7 +447,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     (maxOverflowPt geom #[stPage #[overBy 5, overBy 12, overBy 7]] == 12)
   no "overflow-pt: a hair past the edge is a whole point"
     (maxOverflowPt geom #[stPage #[stLine 100 100 #[.gap (Dim.pt 400) false,
-      .rule (Dim.pt 1 / 10) Dim.Length.quantum 0 Ir.Color.black]]] == 1)
+      .rule (Dim.pt 1 / 10) Dim.Length.quantum 0 Ir.Color.black false]]] == 1)
   no "overflow-pt: no overfull line is zero" (maxOverflowPt geom #[stPage #[inside]] == 0)
   -- off-medium: the page and its bleed hold the ink.
   let fs : Font.FontSet ← do

@@ -160,8 +160,8 @@ private def runsAt (l : Layout.LineOut) : Array (String × Dim.Length × Nat) :=
     | .run idx _ _ w glyphs .. =>
       out := out.push (String.ofList (glyphs.toList.map (·.2.1)), x, idx)
       x := x + w
-    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ | .rule w _ _ _
-    | .image _ w _ _ _ => x := x + w
+    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ _ | .rule w _ _ _ _
+    | .image _ w _ _ _ _ => x := x + w
     | .poly _ _ => pure ()
   return out
 

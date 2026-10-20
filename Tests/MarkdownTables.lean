@@ -79,7 +79,7 @@ its label, then counts them"
     (!lines.isEmpty && (lines.flatMap lineRuns).all fun (_, _, x, w) =>
       left - Dim.pt 1 ≤ x && x + w ≤ left + measure + Dim.pt 1)
   let ruleWidths := lines.flatMap fun l => l.segs.filterMap fun s => match s with
-    | .rule w _ _ _ => some w
+    | .rule w _ _ _ _ => some w
     | _ => none
   t s!"and its rules span the measure, the columns filling it ({ruleWidths})"
     (ruleWidths.size == 3 && ruleWidths.all fun w => measure - 8 * Dim.Length.quantum ≤ w && w ≤ measure)
