@@ -137,7 +137,7 @@ private def wrapperMatches (font : Font) (f : { f : PdfRead.Form // f.wf })
       entry.decoded.toOption == some (some (selectedInk n))
     forms.size == 1 && forms.all (fun entry =>
       (match entry.val.get? "BBox" with
-      | some (.arr coords) => coords.map (·.sp?) == (selectedBox cropped n).map some
+      | some (.arr coords) => coords.map (·.len?) == (selectedBox cropped n).map some
       | _ => false) && (wrapperResources entries.val entry.val n).getD false) &&
       (PdfRead.readForm bytes).isOk
 

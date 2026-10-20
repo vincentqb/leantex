@@ -271,7 +271,11 @@ public def shifted (x : Length) : Rat := x.toRat + 65536
     ("BaseNamedEq", "public def eq_sneaky : Length := Length.ofUnits 65536"),
     ("BaseScaledCount", "public def inPoints (x : Length) : Int := x.units / (2 * 32768)"),
     ("BaseFactor", "public def points (n : Int) : Length := Length.ofUnits (n * 65536)"),
-    ("BaseDefault", "public structure Box where\n  w : Length := Length.ofUnits 65536")]
+    ("BaseDefault", "public structure Box where\n  w : Length := Length.ofUnits 65536"),
+    ("BaseNamedCount", "def perPoint : Int := 65536\npublic def inPoints (x : Length) : Int := x.units / perPoint"),
+    ("BaseNamedRead", "def bpCount : Nat := (bp 1).units.toNat\npublic def twice : Nat := 2 * bpCount"),
+    ("BaseProof", "public theorem perInch : (inch 1).units = (inch 1).units := by\n  have : unitsPerInch = unitsPerInch := rfl\n  rfl"),
+    ("BaseUnary", "public def walk (x : Length) (n : Nat) : Length :=\n  if h : n = 0 then x else walk (x + Length.ofUnits 65536) (n - 1)\ntermination_by n\ndecreasing_by omega")]
   for (name, body) in shapes do
     let out ← probe name s!"module\npublic import LeanTex.Core.Dim\nopen LeanTex.Core.Dim\n{body}\n"
     (_, failures) ← (expect s!"{name} fixture did not compile" (out.exitCode == 0)).run failures
@@ -285,7 +289,7 @@ public def perPoint : Int := unitsPerInch / 72
     "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Hoisted", "Structured", "Threaded",
     "Threading", "Unimported", "BaseNamed", "BaseBuilt", "BaseCounted", "BaseShifted", "BaseRead", "BaseProduct", "BaseAbove",
     "BaseFloor", "BaseQuanta", "BaseScaled", "BaseNatural", "BaseNamedEq", "BaseScaledCount",
-    "BaseFactor", "BaseDefault"]
+    "BaseFactor", "BaseDefault", "BaseNamedCount", "BaseNamedRead", "BaseProof", "BaseUnary"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
       ("hyphenated compiled module", #["Valid", "Hyphenated-Module"],
@@ -313,6 +317,10 @@ public def perPoint : Int := unitsPerInch / 72
       ("a base-unit count against a closed count", #["BaseScaledCount"], #["BaseScaledCount"], false),
       ("a length built with a base-sized factor", #["BaseFactor"], #["BaseFactor"], false),
       ("a field default built from a count", #["BaseDefault"], #["BaseDefault"], false),
+      ("a count behind a named numeric definition", #["BaseNamedCount"], #["BaseNamedCount"], false),
+      ("a base-unit count behind a name against a numeral", #["BaseNamedRead"], #["BaseNamedRead"], false),
+      ("the base unit read in a proof", #["BaseProof"], #["BaseProof"], false),
+      ("a length built from a count in a recursion's body", #["BaseUnary"], #["BaseUnary"], false),
       ("empty manifest", #["Valid"], #[], false),
       ("duplicate manifest", #["Valid"], #["Valid", "Valid"], false),
       ("missing module", #["Valid"], #["Unimported"], false)] do

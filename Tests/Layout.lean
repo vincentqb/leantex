@@ -5013,7 +5013,7 @@ def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (d, _) := elabStr ("\\documentclass{scrartcl}\n\\begin{document}\n" ++
     "Opening line.\n\n\\section*{Alpha}\n\nClosing line.\n\\end{document}")
   t "premise: the class declared a zero parskip"
-    ((d.page.parskip.map (·.width.sp)) == some 0)
+    ((d.page.parskip.map (·.width.fixed)) == some 0)
   let out := layoutOf oneFace d
   let c := censusOf #[] out
   let yOf (s : String) : Option Dim.Length := lineYOf c 0 s
@@ -5022,8 +5022,8 @@ def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     let leading := Ir.leadingFor (Layout.Geom.ofPage d.page).fontSize
     t "the heading's own rhythm stands: a full unit above plus a half below"
       (yc - yo ≥ 2 * leading
-        + (Ir.headingBeforeDefault (Layout.Geom.ofPage d.page).fontSize).width.sp
-        + (Ir.headingAfterDefault (Layout.Geom.ofPage d.page).fontSize).width.sp
+        + (Ir.headingBeforeDefault (Layout.Geom.ofPage d.page).fontSize).width.fixed
+        + (Ir.headingAfterDefault (Layout.Geom.ofPage d.page).fontSize).width.fixed
         - Dim.pt 1)
     t "more space above the heading than below it"
       (yh - yo > yc - yh)

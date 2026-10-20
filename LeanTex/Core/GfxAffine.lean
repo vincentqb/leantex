@@ -303,8 +303,8 @@ public theorem Figure.bodies_useFree_covers {L : Type} (fig : Figure L) :
 
 
 
-public theorem qSp_fixed_point (x : Length) : qSp (qSp x) = qSp x := by
-  simp only [qSp, Length.toBpMilli_ofBpMilli]
+public theorem qLen_fixed_point (x : Length) : qLen (qLen x) = qLen x := by
+  simp only [qLen, Length.toBpMilli_ofBpMilli]
 
 private theorem round_mul (v d : Int) (hd : 0 < d) :
     (if v * d < 0 then -((-(v * d) + d / 2) / d) else (v * d + d / 2) / d) = v := by
@@ -330,7 +330,7 @@ private theorem qRat_mkRat (v : Int) : qRat (mkRat v 1000000000) = mkRat v 10000
 public theorem qRat_fixed_point (r : Rat) : qRat (qRat r) = qRat r := qRat_mkRat _
 
 public theorem qPt_fixed_point (p : Pt) : qPt (qPt p) = qPt p := by
-  simp [qPt, qSp_fixed_point]
+  simp [qPt, qLen_fixed_point]
 
 private theorem Seg.map_qPt (s : Seg) : (s.map qPt).map qPt = s.map qPt := by
   cases s <;> simp [Seg.map, qPt_fixed_point]
@@ -347,8 +347,8 @@ private theorem Affine.quantize_fixed_point (m : Affine) : m.quantize.quantize =
 
 private theorem Geom.quantize_fixed_point (g : Geom) : g.quantize.quantize = g.quantize := by
   cases g with
-  | rect => simp [Geom.quantize, qSp_fixed_point]
-  | ellipse => simp [Geom.quantize, qSp_fixed_point]
+  | rect => simp [Geom.quantize, qLen_fixed_point]
+  | ellipse => simp [Geom.quantize, qLen_fixed_point]
   | path subs =>
     simp only [Geom.quantize, Array.map_map, Geom.path.injEq]
     apply Array.map_congr_left
@@ -359,19 +359,19 @@ private theorem Paint.quantize_fixed_point (p : Paint) : p.quantize.quantize = p
   cases p with
   | solid => rfl
   | gradient g =>
-    cases g <;> simp [Paint.quantize, Gradient.quantize, qPt_fixed_point, qSp_fixed_point,
+    cases g <;> simp [Paint.quantize, Gradient.quantize, qPt_fixed_point, qLen_fixed_point,
       Affine.quantize_fixed_point]
 
 private theorem Fill.quantize_fixed_point (f : Fill) : f.quantize.quantize = f.quantize := by
   simp [Fill.quantize, Paint.quantize_fixed_point]
 
 private theorem Stroke.quantize_fixed_point (st : Stroke) : st.quantize.quantize = st.quantize := by
-  simp only [Stroke.quantize, Paint.quantize_fixed_point, qSp_fixed_point, qRat_fixed_point,
+  simp only [Stroke.quantize, Paint.quantize_fixed_point, qLen_fixed_point, qRat_fixed_point,
     Array.map_map]
   congr 1
   apply Array.map_congr_left
   intro a _
-  exact qSp_fixed_point a
+  exact qLen_fixed_point a
 
 private theorem Clip.quantize_fixed_point (c : Clip) : c.quantize.quantize = c.quantize := by
   simp [Clip.quantize, Geom.quantize_fixed_point]

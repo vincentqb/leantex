@@ -109,8 +109,8 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   t "diagram display: after a long line the long skips, after a short one the short pair"
     (match around long, around short with
      | some l, some sh =>
-       l - sh == (skips.above.width.sp - skips.aboveShort.width.sp) +
-         (skips.below.width.sp - skips.belowShort.width.sp)
+       l - sh == (skips.above.width.fixed - skips.aboveShort.width.fixed) +
+         (skips.below.width.fixed - skips.belowShort.width.fixed)
      | _, _ => false)
   let (desc, _) := firstPass (dvDoc ("\\palette{ bg = #202020, fg = #F0F0F0 }\n" ++ pre)
     "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"f\" description] & \\mathrm{Beta} \\end{tikzcd}\\]")

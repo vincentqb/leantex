@@ -53,12 +53,12 @@ as TeX's `\parskip` does. -/
 
 public theorem rhythmQuantum_pos (size : Length) (h : Dim.pt 1 ≤ size) :
     0 < rhythmQuantum size := by
-  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, unitsPerInch] at h ⊢
+  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt_eq] at h ⊢
   length_omega
 
 public theorem rhythmQuantum_lt_double (size : Length) (h : Dim.pt 1 ≤ size) :
     rhythmQuantum size < 2 * rhythmQuantum size := by
-  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt, unitsPerInch] at h ⊢
+  simp only [rhythmQuantum, leadingFor, leadingMilli, Dim.pt_eq] at h ⊢
   length_omega
 
 /-- The default gap between a cut mark's inner end and the trim, wider than
@@ -776,11 +776,11 @@ public def cmidRuleKern : Dim.SymLength := { em := 500 }
 /-- `\addlinespace` default: booktabs `\defaultaddspace` (.5em). -/
 public def defaultAddSpace : Dim.SymLength := { em := 500 }
 /-- Half the gap between two table columns: LaTeX's `\tabcolsep`, 6pt. -/
-public def tabColSep : Dim.SymLength := { sp := Dim.pt 6 }
+public def tabColSep : Dim.SymLength := { fixed := Dim.pt 6 }
 /-- The gap between text columns: LaTeX's `\columnsep`, 10pt. -/
-public def columnSep : Dim.SymLength := { sp := Dim.pt 10 }
+public def columnSep : Dim.SymLength := { fixed := Dim.pt 10 }
 /-- The gap between two stacked full rules: LaTeX's `\doublerulesep`, 2pt. -/
-public def doubleRuleSep : Dim.SymLength := { sp := Dim.pt 2 }
+public def doubleRuleSep : Dim.SymLength := { fixed := Dim.pt 2 }
 
 /-- The lengths a formal table reads, under their LaTeX names, each with its undeclared default. -/
 public def tableLengths : List (String × Dim.SymLength) :=
@@ -820,28 +820,28 @@ public theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < bel
 /-- Gap between a float's object and its caption, on the object side only: one
 rhythm quantum of the governing size. -/
 @[expose] public def captionSepDefault (size : Length) : SymGlue :=
-  { width := { sp := rhythmQuantum size } }
+  { width := { fixed := rhythmQuantum size } }
 /-- Gap between a float and the text around it: one full rhythm unit of the governing size. -/
 @[expose] public def floatSepDefault (size : Length) : SymGlue :=
-  { width := { sp := 2 * rhythmQuantum size } }
+  { width := { fixed := 2 * rhythmQuantum size } }
 
 /-- Gap between the last body line and the footnote region: `\skip\footins`,
 quantized to one leading. -/
 public def footinsDefault (size : Length) : SymGlue :=
-  { width := { sp := 2 * rhythmQuantum size } }
+  { width := { fixed := 2 * rhythmQuantum size } }
 
 public theorem footins_within_glue :
-    (footinsDefault baseFontSize).width.sp = 2 * rhythmQuantum baseFontSize ∧
-    Dim.pt 7 ≤ (footinsDefault baseFontSize).width.sp ∧
-    (footinsDefault baseFontSize).width.sp ≤ Dim.pt 13 := by
+    (footinsDefault baseFontSize).width.fixed = 2 * rhythmQuantum baseFontSize ∧
+    Dim.pt 7 ≤ (footinsDefault baseFontSize).width.fixed ∧
+    (footinsDefault baseFontSize).width.fixed ≤ Dim.pt 13 := by
   refine ⟨rfl, ?_, ?_⟩ <;> decide
 
 /-- The space a trivlist environment opens above and below: LaTeX's top-level
 `\topsep`, quantized to one rhythm quantum. -/
 @[expose] public def trivlistSkipDefault (size : Length) : SymGlue :=
-  { width := { sp := rhythmQuantum size }
-    stretch := { sp := size / 5 }
-    shrink := { sp := size * 2 / 5 } }
+  { width := { fixed := rhythmQuantum size }
+    stretch := { fixed := size / 5 }
+    shrink := { fixed := size * 2 / 5 } }
 
 public def trivlistSkipName : String := "topsep"
 
@@ -861,7 +861,7 @@ public def bibSepName : String := "bibsep"
 
 public def bibSepDefault (size : Length) : SymGlue :=
   let g (w s h : Length) : SymGlue :=
-    { width := { sp := w }, stretch := { sp := s }, shrink := { sp := h } }
+    { width := { fixed := w }, stretch := { fixed := s }, shrink := { fixed := h } }
   if size == Dim.pt 10 then g (Dim.pt 8) (Dim.pt 4) (Dim.pt 2)
   else if size == Dim.pt 11 then g (Dim.pt 9) (Dim.pt 4) (Dim.pt 2)
   else if size == Dim.pt 12 then g (Dim.pt 10) (Dim.pt 5) (Dim.pt 2)
@@ -1067,12 +1067,12 @@ public def runInHeadRole : String := "run-in-head"
 public def titleTextRole : String := "nameref-text"
 
 public theorem trivlist_between :
-    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 10)).width.sp ∧
-      (trivlistSkipDefault (Dim.pt 10)).width.sp ≤ Dim.pt 10 ∧
-    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 1095 / 100)).width.sp ∧
-      (trivlistSkipDefault (Dim.pt 1095 / 100)).width.sp ≤ Dim.pt 12 ∧
-    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 12)).width.sp ∧
-      (trivlistSkipDefault (Dim.pt 12)).width.sp ≤ Dim.pt 14 := by
+    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 10)).width.fixed ∧
+      (trivlistSkipDefault (Dim.pt 10)).width.fixed ≤ Dim.pt 10 ∧
+    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 1095 / 100)).width.fixed ∧
+      (trivlistSkipDefault (Dim.pt 1095 / 100)).width.fixed ≤ Dim.pt 12 ∧
+    Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 12)).width.fixed ∧
+      (trivlistSkipDefault (Dim.pt 12)).width.fixed ≤ Dim.pt 14 := by
   decide
 
 /-- Where a class's list spacing comes from: the standard classes' size file,
@@ -1094,8 +1094,8 @@ public structure ListSkips where
 
 /-- Glue spelled in hundredths of a point: natural, stretch, shrink. -/
 private def ptsGlue (w st sh : Int) : SymGlue :=
-  { width := { sp := Dim.pt w / 100 }, stretch := { sp := Dim.pt st / 100 },
-    shrink := { sp := Dim.pt sh / 100 } }
+  { width := { fixed := Dim.pt w / 100 }, stretch := { fixed := Dim.pt st / 100 },
+    shrink := { fixed := Dim.pt sh / 100 } }
 
 /-- The sourced list levels per lineage, size file and level one to three; a
 deeper level keeps the third's values. -/
@@ -1436,11 +1436,11 @@ public theorem TrivIn.within_koma_exact (l : ListLineage) (size : Length) (level
   simp [TrivIn.within, hl, hd, hz, ListExtra.over, hlv, hp]
 
 public theorem trivIn_exact :
-    ((TrivIn.top .sizeFile {} (Dim.pt 10)).add true).width.sp = Dim.pt 10 ∧
-    ((TrivIn.top .sizeFile {} (Dim.pt 10)).add false).width.sp = Dim.pt 8 ∧
-    ((TrivIn.top .sizeFile {} (Dim.pt 11)).add true).width.sp = Dim.pt 12 ∧
-    ((TrivIn.top .sizeFile {} (Dim.pt 12)).add true).width.sp = Dim.pt 13 ∧
-    ((TrivIn.top .beamer {} (Dim.pt 11)).add true).width.sp = Dim.pt 9 := by
+    ((TrivIn.top .sizeFile {} (Dim.pt 10)).add true).width.fixed = Dim.pt 10 ∧
+    ((TrivIn.top .sizeFile {} (Dim.pt 10)).add false).width.fixed = Dim.pt 8 ∧
+    ((TrivIn.top .sizeFile {} (Dim.pt 11)).add true).width.fixed = Dim.pt 12 ∧
+    ((TrivIn.top .sizeFile {} (Dim.pt 12)).add true).width.fixed = Dim.pt 13 ∧
+    ((TrivIn.top .beamer {} (Dim.pt 11)).add true).width.fixed = Dim.pt 9 := by
   decide
 
 /-- The four glues a size file's `\normalsize` sets around display math. -/
@@ -1489,7 +1489,7 @@ public def displaySkipsAt (size : Length) : DisplaySkips :=
 public def displaySkipDefault (size : Length) : SymGlue := (displaySkipsAt size).above
 
 public theorem displaySkipDefault_base_exact :
-    (displaySkipDefault baseFontSize).width.sp = Dim.pt 10 := by
+    (displaySkipDefault baseFontSize).width.fixed = Dim.pt 10 := by
   decide
 
 public def displaySkipAbove : String := "abovedisplayskip"
@@ -1543,22 +1543,22 @@ public theorem DisplayCtx.ofRole?_role_exact (c : DisplayCtx) : DisplayCtx.ofRol
   | mk p e a v b => cases p <;> cases e <;> cases a <;> cases v <;> cases b <;> decide
 
 public theorem partopsep_exact :
-    (partopsepFor .sizeFile (Dim.pt 10) 1 {}).width.sp = Dim.pt 2 ∧
-    (partopsepFor .sizeFile (Dim.pt 11) 1 {}).width.sp = Dim.pt 3 ∧
-    (partopsepFor .sizeFile (Dim.pt 12) 1 {}).width.sp = Dim.pt 3 ∧
-    (partopsepFor .sizeFile (Dim.pt 10) 3 {}).width.sp = Dim.pt 1 ∧
-    (partopsepFor .beamer (Dim.pt 11) 1 {}).width.sp = 0 := by
+    (partopsepFor .sizeFile (Dim.pt 10) 1 {}).width.fixed = Dim.pt 2 ∧
+    (partopsepFor .sizeFile (Dim.pt 11) 1 {}).width.fixed = Dim.pt 3 ∧
+    (partopsepFor .sizeFile (Dim.pt 12) 1 {}).width.fixed = Dim.pt 3 ∧
+    (partopsepFor .sizeFile (Dim.pt 10) 3 {}).width.fixed = Dim.pt 1 ∧
+    (partopsepFor .beamer (Dim.pt 11) 1 {}).width.fixed = 0 := by
   decide
 
 public theorem listSkips_exact :
     ((listSkips .sizeFile (Dim.pt 10) 1).map fun s =>
-      (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 8, Dim.pt 8) ∧
+      (s.topsep.width.fixed, s.itemsep.width.fixed + s.parsep.width.fixed)) = some (Dim.pt 8, Dim.pt 8) ∧
     ((listSkips .sizeFile (Dim.pt 11) 1).map fun s =>
-      (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 9, Dim.pt 9) ∧
+      (s.topsep.width.fixed, s.itemsep.width.fixed + s.parsep.width.fixed)) = some (Dim.pt 9, Dim.pt 9) ∧
     ((listSkips .sizeFile (Dim.pt 12) 1).map fun s =>
-      (s.topsep.width.sp, s.itemsep.width.sp + s.parsep.width.sp)) = some (Dim.pt 10, Dim.pt 10) ∧
+      (s.topsep.width.fixed, s.itemsep.width.fixed + s.parsep.width.fixed)) = some (Dim.pt 10, Dim.pt 10) ∧
     ((listSkips .beamer (Dim.pt 11) 1).map fun s =>
-      (s.topsep.width.sp, s.itemsep.width.sp, s.parsep.width.sp)) = some (Dim.pt 3, Dim.pt 3, 0) := by
+      (s.topsep.width.fixed, s.itemsep.width.fixed, s.parsep.width.fixed)) = some (Dim.pt 3, Dim.pt 3, 0) := by
   decide
 
 /-- How a theorem-like block spends its space: the trivlist its spelling opens
@@ -1597,7 +1597,7 @@ public structure ThmSkips where
   deriving Repr, BEq
 
 /-- amsthm's proof `\topsep` (amsthm.sty:433), whatever the body size. -/
-public def proofTopsep : SymGlue := { width := { sp := Dim.pt 6 }, stretch := { sp := Dim.pt 6 } }
+public def proofTopsep : SymGlue := { width := { fixed := Dim.pt 6 }, stretch := { fixed := Dim.pt 6 } }
 
 /-- A theorem-like block's space: the `\topsep` in force where it stands,
 spent as its spelling spends it. -/
@@ -1618,19 +1618,19 @@ public def thmSkips (l : ListLineage) (size : Length) (level : Nat) (tokens : To
       ⟨g, g, true⟩
 
 public theorem thmSkips_exact :
-    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 10) ∧
-    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 12) ∧
-    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .kernel true).map (·.above.width.sp)) = some (Dim.pt 13) ∧
-    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel false).map (·.below.width.sp)) = some (Dim.pt 8) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel true).map (·.above.width.fixed)) = some (Dim.pt 10) ∧
+    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .kernel true).map (·.above.width.fixed)) = some (Dim.pt 12) ∧
+    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .kernel true).map (·.above.width.fixed)) = some (Dim.pt 13) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .kernel false).map (·.below.width.fixed)) = some (Dim.pt 8) ∧
     ((thmSkips .sizeFile (Dim.pt 10) 1 {} .ams true).map fun s =>
-      (s.above.width.sp, s.below.width.sp, s.parskipAbove)) = some (Dim.pt 8, Dim.pt 8, false) ∧
-    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .ams true).map (·.above.width.sp)) = some (Dim.pt 10) ∧
-    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .amsHalf true).map (·.above.width.sp)) = some (Dim.pt 4) ∧
-    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .amsHalf true).map (·.above.width.sp)) =
+      (s.above.width.fixed, s.below.width.fixed, s.parskipAbove)) = some (Dim.pt 8, Dim.pt 8, false) ∧
+    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .ams true).map (·.above.width.fixed)) = some (Dim.pt 10) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .amsHalf true).map (·.above.width.fixed)) = some (Dim.pt 4) ∧
+    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .amsHalf true).map (·.above.width.fixed)) =
       some (Dim.pt 9 / 2) ∧
-    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .proof false).map (·.above.width.sp)) = some (Dim.pt 8) ∧
-    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .proof false).map (·.below.width.sp)) = some (Dim.pt 9) ∧
-    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .proof false).map (·.above.width.sp)) = some (Dim.pt 9) ∧
+    ((thmSkips .sizeFile (Dim.pt 10) 1 {} .proof false).map (·.above.width.fixed)) = some (Dim.pt 8) ∧
+    ((thmSkips .sizeFile (Dim.pt 11) 1 {} .proof false).map (·.below.width.fixed)) = some (Dim.pt 9) ∧
+    ((thmSkips .sizeFile (Dim.pt 12) 1 {} .proof false).map (·.above.width.fixed)) = some (Dim.pt 9) ∧
     thmSkips .web (Dim.pt 10) 1 {} .ams true = none := by
   decide
 
@@ -1663,33 +1663,33 @@ public def leftMarginFor (l : ListLineage) (tokens : Tokens) (level : Nat) : Sym
 /-- The heading's default space above: one full rhythm unit, a token of its
 own rather than a multiple of the parskip. -/
 public def headingBeforeDefault (size : Length) : SymGlue :=
-  { width := { sp := 2 * rhythmQuantum size } }
+  { width := { fixed := 2 * rhythmQuantum size } }
 /-- The heading's default space below: the half-unit. -/
 public def headingAfterDefault (size : Length) : SymGlue :=
-  { width := { sp := rhythmQuantum size } }
+  { width := { fixed := rhythmQuantum size } }
 
 public theorem heading_space_above_ge_below (size : Length) (h : Dim.pt 1 ≤ size) :
-    (headingAfterDefault size).width.sp ≤ (headingBeforeDefault size).width.sp ∧
-    (headingAfterDefault size).width.sp = rhythmQuantum size ∧
-    0 < (headingAfterDefault size).width.sp :=
+    (headingAfterDefault size).width.fixed ≤ (headingBeforeDefault size).width.fixed ∧
+    (headingAfterDefault size).width.fixed = rhythmQuantum size ∧
+    0 < (headingAfterDefault size).width.fixed :=
   ⟨Length.le_of_lt (rhythmQuantum_lt_double size h), rfl, rhythmQuantum_pos size h⟩
 
 public theorem default_rhythm_multiples (size : Length) (h : Dim.pt 1 ≤ size) :
-    (parskipDefault size).width.sp = rhythmQuantum size ∧
-    0 < (parskipDefault size).width.sp :=
+    (parskipDefault size).width.fixed = rhythmQuantum size ∧
+    0 < (parskipDefault size).width.fixed :=
   ⟨rfl, rhythmQuantum_pos size h⟩
 
 public theorem parskip_is_quantum (size : Length) :
-    (parskipDefault size).width.sp = rhythmQuantum size := by rfl
+    (parskipDefault size).width.fixed = rhythmQuantum size := by rfl
 
 public theorem parskip_halves_leading_at_bases :
-    2 * (parskipDefault baseFontSize).width.sp = leadingFor baseFontSize := by
+    2 * (parskipDefault baseFontSize).width.fixed = leadingFor baseFontSize := by
   decide
 
 public theorem caption_gaps_rhythm (size : Length) (h : Dim.pt 1 ≤ size) :
-    (captionSepDefault size).width.sp = rhythmQuantum size ∧
-    (floatSepDefault size).width.sp = 2 * rhythmQuantum size ∧
-    (captionSepDefault size).width.sp < (floatSepDefault size).width.sp :=
+    (captionSepDefault size).width.fixed = rhythmQuantum size ∧
+    (floatSepDefault size).width.fixed = 2 * rhythmQuantum size ∧
+    (captionSepDefault size).width.fixed < (floatSepDefault size).width.fixed :=
   ⟨rfl, rfl, rhythmQuantum_lt_double size h⟩
 
 /-- The title block's author strut: two rhythm units of line box for the author's name. -/
@@ -1742,15 +1742,15 @@ both backends realize. -/
 
 public theorem rhythm_table_exact (size : Length) :
     ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum size
-      = (parskipDefault size).width.sp ∧
+      = (parskipDefault size).width.fixed ∧
     ((rhythmGapQuanta.lookup "caption").getD 0 : Int) * rhythmQuantum size
-      = (captionSepDefault size).width.sp ∧
+      = (captionSepDefault size).width.fixed ∧
     ((rhythmGapQuanta.lookup "float").getD 0 : Int) * rhythmQuantum size
-      = (floatSepDefault size).width.sp ∧
+      = (floatSepDefault size).width.fixed ∧
     ((rhythmGapQuanta.lookup "heading").getD 0 : Int) * rhythmQuantum size
-      = (headingBeforeDefault size).width.sp ∧
+      = (headingBeforeDefault size).width.fixed ∧
     ((rhythmGapQuanta.lookup "trivlist").getD 0 : Int) * rhythmQuantum size
-      = (parskipDefault size).width.sp + (trivlistSkipDefault size).width.sp ∧
+      = (parskipDefault size).width.fixed + (trivlistSkipDefault size).width.fixed ∧
     (rhythmGapQuanta.lookup "heading").getD 0
       = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by
   refine ⟨?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
@@ -3607,7 +3607,7 @@ public inductive VAlign where
 
 /-- The fixed opening skip before a frame's body, separate from its distributable space. -/
 public def frameBodySkip (hasTitle : Bool) (valign : VAlign) : SymLength :=
-  { sp := if valign matches .top then Dim.mm 2 else 0
+  { fixed := if valign matches .top then Dim.mm 2 else 0
     em := if hasTitle then 250 else 0 }
 
 public theorem frameBodySkip_exact (hasTitle : Bool) (valign : VAlign)
@@ -4497,11 +4497,11 @@ flush left, one centred, both flush right. -/
 
 /-- A box's offset inside the measure it stands in: its side's share of the
 slack the box leaves. -/
-public def HAlign.boxOffset (h : HAlign) (slack : Int) : Int := slack * h.slackHalves / 2
+public def HAlign.boxOffset (h : HAlign) (slack : Length) : Length := slack * h.slackHalves / 2
 
-public theorem HAlign.boxOffset_between (h : HAlign) (s : Int) (hs : 0 ≤ s) :
+public theorem HAlign.boxOffset_between (h : HAlign) (s : Length) (hs : 0 ≤ s) :
     0 ≤ h.boxOffset s ∧ h.boxOffset s ≤ s := by
-  cases h <;> simp only [boxOffset, slackHalves] <;> omega
+  cases h <;> simp only [boxOffset, slackHalves] <;> length_omega
 
 /-- Which edge of the measure a ragged scope's lines hang from: `\raggedright`
 is flush left, `\raggedleft` flush right. -/
@@ -4661,7 +4661,7 @@ private def milliDecimal (n : Int) : String :=
 
 private def TrackTerm.css (horizontalUnit : String) : TrackTerm → Array String
   | .length l =>
-    (if l.sp == 0 then #[] else #[l.sp.toBpString ++ "pt"]) ++
+    (if l.fixed == 0 then #[] else #[l.fixed.toBpString ++ "pt"]) ++
     (if l.em == 0 then #[] else #[milliDecimal l.em ++ "em"]) ++
     (if l.ex == 0 then #[] else #[milliDecimal l.ex ++ "ex"])
   | .measure m num den =>
@@ -6864,7 +6864,7 @@ public def CaptionSkip.default (s : CaptionSkip) (size : Length) : SymGlue :=
 beamer sets both to 7 pt. -/
 public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Length) : SymGlue :=
   match l with
-  | .beamer => { width := { sp := Dim.pt 7 } }
+  | .beamer => { width := { fixed := Dim.pt 7 } }
   | .sizeFile | .web => s.default size
 
 /-- Every token name an engine site reads, the names a document's length reaches the engine by. -/
@@ -7050,6 +7050,10 @@ public def BoxPoint.vshares : BoxPoint → Nat × Nat
 public def shareOf (s : Nat × Nat) (e : Int) : Int :=
   if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
 
+/-- A length's share `s.1 / (s.1 + s.2)`, rounded down. -/
+public def shareLen (s : Nat × Nat) (e : Length) : Length :=
+  if s.1 + s.2 = 0 then 0 else e * s.1 / (s.1 + s.2)
+
 public theorem pagePoint_agree (p : BoxPoint) (e : Int) :
     shareOf p.hshares e = shareOf p.hshares 100000 * e / 100000 ∧
     shareOf p.vshares e = shareOf p.vshares 100000 * e / 100000 := by
@@ -7156,24 +7160,24 @@ public inductive BlockSpan where
 public structure BlockMetric where
   lead : Int := 0
   cap : Int := 0
-  sp : Int := 0
+  fixed : Length := 0
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- A metric at the title's `\baselineskip` and cap height. -/
-public def BlockMetric.resolve (m : BlockMetric) (lead cap : Int) : Int :=
-  m.lead * lead / 1000 + m.cap * cap / 1000 + m.sp
+public def BlockMetric.resolve (m : BlockMetric) (lead cap : Length) : Length :=
+  m.lead * lead / (1000 : Int) + m.cap * cap / (1000 : Int) + m.fixed
 
 public def BlockMetric.neg (m : BlockMetric) : BlockMetric :=
-  { lead := -m.lead, cap := -m.cap, sp := -m.sp }
+  { lead := -m.lead, cap := -m.cap, fixed := -m.fixed }
 
 /-- Half the leading the capitals leave, `(\baselineskip-\fontcharht\font`H)/2`. -/
 public def BlockMetric.halfLeading : BlockMetric := { lead := 500, cap := -500 }
 
-public theorem BlockMetric.halfLeading_centred_exact (lead cap : Int) :
+public theorem BlockMetric.halfLeading_centred_exact (lead cap : Length) :
     BlockMetric.halfLeading.resolve lead cap - BlockMetric.halfLeading.neg.resolve lead cap =
       lead - cap := by
   simp only [BlockMetric.resolve, BlockMetric.halfLeading, BlockMetric.neg]
-  omega
+  length_omega
 
 /-- How far a template's rule reaches beside its box: `box`, the box's own
 height and depth; `lines`, by the title's lines. -/
@@ -7185,13 +7189,13 @@ public inductive BlockReach where
 /-- Where a web page stands a rule reaching by a block title's lines beside
 the header that sets the title. -/
 public structure BlockTitlePlace where
-  top : Int
-  bottom : Int
-  rise : Int
-  riseMany : Int
-  room : Int
-  depth : Int
-  bodyBelow : Int
+  top : Length
+  bottom : Length
+  rise : Length
+  riseMany : Length
+  room : Length
+  depth : Length
+  bodyBelow : Length
   deriving Repr, BEq, Inhabited
 
 /-- A rule beside one of a block's boxes, as themes spell it: `width` wide,
@@ -7458,7 +7462,7 @@ public def blockShapeOf (styles : Styles) (kind : TitledKind) : Option BlockShap
   kind.styleElement.bind fun el => (styles.find? el).bind (·.shape)
 
 /-- The `\topsep` beamer's squeeze leaves in force (beamerbaseframesize.sty:22), rigid. -/
-public def squeezedTopsep : SymGlue := { width := { sp := Dim.pt 1 / 2 } }
+public def squeezedTopsep : SymGlue := { width := { fixed := Dim.pt 1 / 2 } }
 
 /-- Where a frame's squeezed list spacing comes from. -/
 public inductive FrameSqueeze where
@@ -8893,7 +8897,7 @@ public def Doc.lineModulo (doc : Doc) : Nat :=
 /-- A symbolic glue as it was declared, for goldens. -/
 public def dumpGlue (g : SymGlue) : String :=
   let part (l : SymLength) : String :=
-    let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
+    let bits := (if l.fixed != 0 then [s!"{l.fixed.toPtString}pt"] else []) ++
       (if l.em != 0 then [s!"{l.em}/1000em"] else []) ++
       (if l.ex != 0 then [s!"{l.ex}/1000ex"] else [])
     if bits.isEmpty then "0" else String.intercalate "+" bits
@@ -10959,7 +10963,7 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
       | none => "."
     let head := if spec == {} then "frac{" else
       s!"frac[{name spec.left}{name spec.right}" ++
-        (match spec.rule with | some t => s!" rule:{t}" | none => "") ++
+        (match spec.rule with | some t => s!" rule:{t.toPtString}pt" | none => "") ++
         (match spec.style with | some s => s!" style:{s.rank}" | none => "") ++ "]{"
     ((dumpMathList (acc ++ head) num ++ "}{" |> fun a =>
       dumpMathList a den)).push '}'
@@ -11118,7 +11122,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
   | .image src size alt =>
     let dim (label : String) (l : Image.Len) : String :=
       let v := match l.value with
-        | .lit g => g.width.sp.toPtString ++ "pt"
+        | .lit g => g.width.fixed.toPtString ++ "pt"
         | .scale n d (.ref .textHeight) => s!"{n * 1000 / d}/1000th"
         | .scale n d (.ref _) => s!"{n * 1000 / d}/1000tw"
         | .ref .textHeight => "1000/1000th"
@@ -11163,7 +11167,7 @@ private def dumpColSpec (c : ColSpec) : String :=
     let width := match e with
       | .scale n d (.ref _) => s!"{n * 1000 / d}/1000"
       | .ref _ => "1000/1000"
-      | .lit g => g.width.sp.toPtString ++ "pt"
+      | .lit g => g.width.fixed.toPtString ++ "pt"
       | other => Track.css (.affine other)
     s!"{al}:{width}"
   | .flex target => s!"{al}:flex:{target.css}"
@@ -11210,7 +11214,7 @@ private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) :
       | .sized (.scale n d (.ref _)) =>
         s!"{ind}column {n * 1000 / d}/1000{pos}\n"
       | .sized (.ref _) => s!"{ind}column 1000/1000{pos}\n"
-      | .sized (.lit g) => s!"{ind}column {g.width.sp.toPtString}pt{pos}\n"
+      | .sized (.lit g) => s!"{ind}column {g.width.fixed.toPtString}pt{pos}\n"
       | .sized e => s!"{ind}column {Track.css (.affine e)}{pos}\n"
       | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest

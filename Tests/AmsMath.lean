@@ -98,10 +98,10 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
   match (runsOf pairDoc).find? (·.1 == letter 'b'), (runsOf pairDoc).find? (·.1 == letter 'c') with
   | some (_, xb, wb), some (_, xc, _) =>
     t s!"amsmath aligned: its column pairs stand \\minalignsep apart, got {spMilli (xc - (xb + wb))}"
-      (xc - (xb + wb) == (Dim.Length.ofUnits Math.minAlignSep))
+      (xc - (xb + wb) == Math.minAlignSep)
   | _, _ => t "amsmath aligned: the two-pair probe ships its cells" false
   let pairHtml := (HtmlDoc.emit {} (elabStr pairDoc).1).1
-  let sep := HtmlDoc.classLengthCss (Dim.pt 10) (Dim.SymLength.ofLength (Dim.Length.ofUnits Math.minAlignSep))
+  let sep := HtmlDoc.classLengthCss (Dim.pt 10) (Dim.SymLength.ofLength Math.minAlignSep)
   t s!"amsmath aligned: the browser's pair boundary carries the separation, half a side, \
 as a print length ({sep})"
     (hasStr pairHtml s!"padding-left: 0; padding-right: calc({sep} / 2)" &&
@@ -127,7 +127,7 @@ as a print length ({sep})"
       | some g =>
         t s!"amsmath aligned: '{rows}' stands {if trails then "\\minalignsep" else "nothing"} \
 after its last pair, got {spMilli (g - base)}"
-          (g - base == if trails then (Dim.Length.ofUnits Math.minAlignSep) else 0)
+          (g - base == if trails then Math.minAlignSep else 0)
       | none => t s!"amsmath aligned: the '{rows}' probe ships its marks" false
     let trailHtml (rows : String) : String := (HtmlDoc.emit {} (elabStr (trailDoc rows)).1).1
     t "amsmath aligned: the browser stands a trailing pair's \\minalignsep after its last cells"

@@ -49,7 +49,7 @@ private def opensAt (fs : Font.FontSet) (geom : Layout.Geom) (ds : Array Obj)
     (line : Layout.LineOut) : Bool :=
   let tolerance := Length.ofBpMilli 1
   ds[1]? == some (.name "XYZ") && ds[4]? == some .null &&
-    (match ds[2]?.bind Obj.sp?, ds[3]?.bind Obj.sp? with
+    (match ds[2]?.bind Obj.len?, ds[3]?.bind Obj.len? with
      | some x, some y =>
        (x - (line.x + geom.bleed)).abs ≤ tolerance &&
          (y - (geom.pageH + geom.bleed - line.y +
@@ -226,7 +226,7 @@ def deckDestinationChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO 
   -- PDF coordinates round to a millipoint.
   let atTop (i : Nat) : Option (Nat × Array Obj) → Bool
     | some (j, ds) => j == i && ds[1]? == some (.name "XYZ") &&
-        (ds[3]?.bind Obj.sp?).any fun y =>
+        (ds[3]?.bind Obj.len?).any fun y =>
           (y - (egeom.pageH + 2 * egeom.bleed)).abs ≤ Length.ofBpMilli 1
     | none => false
   t s!"an empty frame ships a page of its own, its ink furniture alone ({eout.pages.size} pages)"
@@ -535,7 +535,7 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
       (match tdest with
        | .ok (some (0, ds)) =>
          ds[1]? == some (.name "XYZ") && ds[2]? == some (.int 0) &&
-           (ds[3]?.bind Obj.sp?).any fun y =>
+           (ds[3]?.bind Obj.len?).any fun y =>
              (y - (tgeom.pageH + 2 * tgeom.bleed)).abs ≤ Length.ofBpMilli 1
        | _ => false)
   let (adoc, _) := elabStr (dvDoc pre ("Words.\\newpage\\hypertarget{top}{TARGET words.}" ++
@@ -602,7 +602,7 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
      | .ok ds, some k =>
        let tolerance := Length.ofBpMilli 1
        ds[1]?.any fun (_, d) => d[1]? == some (.name "XYZ") &&
-         (match d[2]?.bind Obj.sp?, d[3]?.bind Obj.sp? with
+         (match d[2]?.bind Obj.len?, d[3]?.bind Obj.len? with
           | some x, some y =>
             (x - (k.topLeft.1 + fgeom.bleed)).abs ≤ tolerance &&
               (y - (fgeom.pageH + fgeom.bleed - k.topLeft.2)).abs ≤ tolerance

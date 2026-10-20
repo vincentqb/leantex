@@ -44,14 +44,14 @@ contents, a keyword as an operator-shaped token. -/
 private def ctOfObj (acc : Array CTok) : Obj → Array CTok
   | .null => acc.push (.op "null")
   | .bool b => acc.push (.op (if b then "true" else "false"))
-  | .int n => acc.push (.num ((Obj.int n).sp?.getD 0) (toString n))
-  | .real raw => acc.push (.num ((Obj.real raw).sp?.getD 0) raw)
+  | .int n => acc.push (.num ((Obj.int n).len?.getD 0) (toString n))
+  | .real raw => acc.push (.num ((Obj.real raw).len?.getD 0) raw)
   | .str raw => acc.push (ctStr raw)
   | .name n => acc.push (.name n)
   | .arr xs => (ctOfList (acc.push .arrOpen) xs.toList).push .arrClose
   | .dict es => (ctOfEntries (acc.push .dictOpen) es.toList).push .dictClose
   | .ref n g =>
-    acc.push (.num ((Obj.int n).sp?.getD 0) (toString n)) |>.push (.num ((Obj.int g).sp?.getD 0) (toString g))
+    acc.push (.num ((Obj.int n).len?.getD 0) (toString n)) |>.push (.num ((Obj.int g).len?.getD 0) (toString g))
       |>.push (.op "R")
 
 private def ctOfList (acc : Array CTok) : List Obj → Array CTok
@@ -143,7 +143,7 @@ def artToUniMap (toks : Array CTok) : Std.HashMap Nat String := Id.run do
 
 /-- A font-dictionary metric in thousandths of the em, read as that many points; a real number is
 not truncated. -/
-def artMille (o : Obj) : Option Dim.Length := o.sp?
+def artMille (o : Obj) : Option Dim.Length := o.len?
 
 /-- A `/W` array (§9.7.4.3) in both forms, the range form capped so a malformed pair cannot make the
 reading unbounded. -/
@@ -441,7 +441,7 @@ def ArtPage.mediaH (p : ArtPage) : Dim.Length := p.media.2.2.2 - p.media.2.1
 private def artRect (o : Obj) : Dim.Length × Dim.Length × Dim.Length × Dim.Length :=
   match o with
   | .arr xs =>
-    let v (k : Nat) : Dim.Length := ((xs[k]?).bind Obj.sp?).getD 0
+    let v (k : Nat) : Dim.Length := ((xs[k]?).bind Obj.len?).getD 0
     (v 0, v 1, v 2, v 3)
   | _ => (0, 0, 0, 0)
 
@@ -998,7 +998,7 @@ def formGlyphOffences (pdf : ByteArray) (fs : Font.FontSet)
   for e in esv do
     unless e.val.get? "Subtype" == some (.name "Form") do continue
     let bb : Array Rat := boxOf (match deref ((e.val.get? "BBox").getD .null) with
-      | .arr xs => xs.map fun o => pt ((PdfRead.Obj.sp? o).getD 0)
+      | .arr xs => xs.map fun o => pt ((PdfRead.Obj.len? o).getD 0)
       | _ => #[])
     let some bx0 := bb[0]? | throw "a form has no /BBox"
     let (by0, bx1, by1) := (bb[1]?.getD 0, bb[2]?.getD 0, bb[3]?.getD 0)

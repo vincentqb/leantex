@@ -730,7 +730,7 @@ private def readGenfracSpec (toks : Array MTok) (i : Nat) :
     | some "" => pure none
     | some s => match Decl.parseLength s with
       | some l =>
-        if l.em == 0 && l.ex == 0 then pure (some l.sp.units)
+        if l.em == 0 && l.ex == 0 then pure (some l.fixed)
         else throw s!"'\\genfrac' with the font-relative thickness '{s}'"
       | none => throw s!"'\\genfrac' with the thickness '{s}'"
     | none => throw "'\\genfrac' with a thickness it cannot read"

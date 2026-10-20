@@ -673,8 +673,8 @@ public def evalInt (look : String → Option Int) : LenExpr → (SymLength → I
     | _, .error m => .error m
 
 public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
-    (eval look e).map (fun g => g.width.sp.units)
-      = evalInt (fun n => (look n).map (fun g => g.width.sp.units)) e (fun l => l.sp.units) := by
+    (eval look e).map (fun g => g.width.fixed.units)
+      = evalInt (fun n => (look n).map (fun g => g.width.fixed.units)) e (fun l => l.fixed.units) := by
   induction e with
   | lit l => rfl
   | ref n => simp only [eval, evalInt]; cases look n <;> rfl

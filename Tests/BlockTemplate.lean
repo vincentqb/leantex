@@ -2177,9 +2177,9 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     match ruleOf page edgeColor 0, lineOf page "Body words here." with
     | some bar, some last =>
       let pdf := bar.y + bar.h - last.y
-      check ref s!"whole bar HTML: the section's rule ends the page's depth below the last baseline ({p.depth} against {pdf})"
-        ((Dim.Length.ofUnits p.depth - pdf).abs ≤ 2 * Dim.pt 1 / 1000)
-      let stage (v : Int) := HtmlDoc.blockShapeLength doc { width := .ofLength (.ofUnits v) }
+      check ref s!"whole bar HTML: the section's rule ends the page's depth below the last baseline ({p.depth.toPtString}pt against {pdf.toPtString}pt)"
+        ((p.depth - pdf).abs ≤ 2 * Dim.pt 1 / 1000)
+      let stage (v : Dim.Length) := HtmlDoc.blockShapeLength doc { width := .ofLength v }
       check ref s!"whole bar HTML: a paragraph's line box ends the rule by default ({rule})"
         (hasStr rule s!"var(--block-last-below, {stage p.bodyBelow}) - {stage p.depth})")
     | _, _ => check ref "whole bar HTML: the page's rule and its last line ship" false

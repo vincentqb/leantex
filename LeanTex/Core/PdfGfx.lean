@@ -26,25 +26,13 @@ open LeanTex.Core.PdfContentLex (Tok)
 /-- A number operand exactly. -/
 public def ratOf (o : Obj) : Option Rat := PdfContentLex.numRat? o
 
-/-- Base units in a big point, PDF's user unit. -/
-private def bpN : Nat := (bp 1).units.toNat
-
 /-- Base units in a big point, as a rational. -/
-public def bpU : Rat := (bpN : Rat)
+public def bpU : Rat := (bpUnits : Rat)
 
 /-- A rational in big points as a length, rounded half away from zero. -/
-public def spOfRat (r : Rat) : Length :=
+public def lenOfRat (r : Rat) : Length :=
   let v := r * bpU
   .ofUnits (if v < 0 then -((-v + (1 : Rat) / 2).floor) else (v + (1 : Rat) / 2).floor)
-
-/-- A number's parts in big points as a length, in integer arithmetic, rounded half away from zero. -/
-public def spOfParts (p : Bool × Nat × Nat) : Length :=
-  let (neg, n, scale) := p
-  let q : Int := ((2 * bpN * n + scale) / (2 * scale) : Nat)
-  .ofUnits (if neg then -q else q)
-
-/-- A length operand. -/
-public def spOf (o : Obj) : Option Length := (PdfContentLex.numParts? o).map spOfParts
 
 private theorem floor_natDiv (N D : Nat) (hD : 0 < D) :
     ((N : Rat) / (D : Rat)).floor = ((N / D : Nat) : Int) := by
@@ -67,18 +55,18 @@ private theorem floor_natDiv (N D : Nat) (hD : 0 < D) :
     push_cast at hle' ⊢
     exact hle'
 
-private theorem spOfParts_rat (neg : Bool) (n s : Nat) :
-    spOfParts (neg, n, s) = spOfRat (let v : Rat := mkRat n s; if neg then -v else v) := by
+private theorem ofBpParts_rat (neg : Bool) (n s : Nat) :
+    Length.ofBpParts (neg, n, s) = lenOfRat (let v : Rat := mkRat n s; if neg then -v else v) := by
   have h0 : ((1 : Rat) / 2).floor = 0 := by
     have := floor_natDiv 1 2 (by decide)
     simpa using this
   by_cases hs : s = 0
   · subst hs
-    cases neg <;> simp [spOfParts, spOfRat] <;> rw [Rat.zero_add, h0]
+    cases neg <;> simp [Length.ofBpParts, lenOfRat] <;> rw [Rat.zero_add, h0]
   · have hs' : 0 < s := Nat.pos_of_ne_zero hs
     have hsR : (s : Rat) ≠ 0 := by exact_mod_cast hs
     have key : (mkRat (n : Int) s) * bpU + 1 / 2 =
-        (((2 * bpN * n + s : Nat) : Rat) / ((2 * s : Nat) : Rat)) := by
+        (((2 * bpUnits * n + s : Nat) : Rat) / ((2 * s : Nat) : Rat)) := by
       rw [Rat.mkRat_eq_div, bpU]
       push_cast
       grind
@@ -92,22 +80,22 @@ private theorem spOfParts_rat (neg : Bool) (n s : Nat) :
       have hm := Rat.mul_nonneg this hK
       push_cast
       exact hm
-    have hq := floor_natDiv (2 * bpN * n + s) (2 * s) (by omega)
+    have hq := floor_natDiv (2 * bpUnits * n + s) (2 * s) (by omega)
     cases neg with
     | false =>
-      simp only [spOfParts, spOfRat, Bool.false_eq_true, ↓reduceIte, hnn]
+      simp only [Length.ofBpParts, lenOfRat, Bool.false_eq_true, ↓reduceIte, hnn]
       rw [key, hq]
     | true =>
       by_cases hn : n = 0
       · subst hn
         have hsd : s / (2 * s) = 0 := Nat.div_eq_of_lt (by omega)
-        simp [spOfParts, spOfRat, hsd]
+        simp [Length.ofBpParts, lenOfRat, hsd]
         rw [Rat.zero_add, h0]
       · have hpos : (0 : Rat) < (n : Rat) / (s : Rat) := by
           rw [Rat.lt_div_iff (by exact_mod_cast hs')]
           have : (0 : Rat) < (n : Rat) := by exact_mod_cast Nat.pos_of_ne_zero hn
           grind
-        have hKp : (0 : Rat) < bpU := by unfold bpU bpN; decide
+        have hKp : (0 : Rat) < bpU := by unfold bpU bpUnits; decide
         have hneg : -(mkRat (n : Int) s) * bpU < 0 := by
           have hm := Rat.mul_pos hpos hKp
           have e : mkRat (n : Int) s = (n : Rat) / (s : Rat) := by
@@ -118,18 +106,18 @@ private theorem spOfParts_rat (neg : Bool) (n s : Nat) :
           grind
         have hflip : -(-(mkRat (n : Int) s) * bpU) + 1 / 2 = (mkRat (n : Int) s) * bpU + 1 / 2 := by
           grind
-        simp only [spOfParts, spOfRat, ↓reduceIte, hneg]
+        simp only [Length.ofBpParts, lenOfRat, ↓reduceIte, hneg]
         rw [hflip, key, hq]
 
-public theorem spOf_exact (o : Obj) : spOf o = (ratOf o).map spOfRat := by
-  unfold spOf ratOf
+public theorem len?_exact (o : Obj) : Obj.len? o = (ratOf o).map lenOfRat := by
+  unfold Obj.len? ratOf
   rw [PdfContentLex.numRat?_parts]
   cases PdfContentLex.numParts? o with
   | none => rfl
   | some p =>
     obtain ⟨neg, n, s⟩ := p
     simp only [Option.map_some]
-    exact congrArg some (spOfParts_rat neg n s)
+    exact congrArg some (ofBpParts_rat neg n s)
 
 /-- Six numbers as a matrix (§8.3.4), the translation from points to sp. -/
 public def affineOf (xs : Array Rat) : Option Affine :=
@@ -760,10 +748,10 @@ private def gradientOf (cx : Ctx) (shObj : Obj) : Except Loss Shade := do
   let e0 := ext[0]?.getD false
   let e1 := ext[1]?.getD false
   let fnLoss : Option String := if exact then none else some "shading-function-approximated"
-  let c (i : Nat) : Length := spOfRat (coords[i]?.getD 0)
+  let c (i : Nat) : Length := lenOfRat (coords[i]?.getD 0)
   let bbox : Option Clip := match (sh.get? "BBox").bind fun x => (cx.doc.deref x).toOption with
     | some (.arr xs) =>
-      let v := xs.filterMap fun x => (cx.doc.deref x).toOption.bind spOf
+      let v := xs.filterMap fun x => (cx.doc.deref x).toOption.bind Obj.len?
       if h : v.size = 4 then
         let x0 := min v[0] v[2]
         let y0 := min v[1] v[3]
@@ -789,7 +777,7 @@ private def stripPath (p0 p1 : Pt) (area : Box) (e0 e1 : Bool) : Subpath :=
   let n := max 1 (dx.units.natAbs + dy.units.natAbs)
   let corners : List Pt := [area.1, (area.2.1, area.1.2), area.2, (area.1.1, area.2.2)]
   let far : Nat := corners.foldl (fun m q => max m ((q.1 - p0.1).units.natAbs + (q.2 - p0.2).units.natAbs)) 0
-  let k : Int := (2 * (far + bpN) / n : Nat) + 1
+  let k : Int := (2 * (far + bpUnits) / n : Nat) + 1
   let nx := -dy * k
   let ny := dx * k
   let ex := dx * k
@@ -1204,10 +1192,10 @@ private def maskConst (cx : Ctx) (sm : Obj) : Except Loss (Alpha × Clip) := do
   unless paints == 1 do throw soft
   let some l := lum | throw soft
   let a : Alpha := ⟨min 1000 ((l * 1000 + (1 : Rat) / 2).floor.toNat), by omega⟩
-  let x0 := spOfRat (min (bbox[0]?.getD 0) (bbox[2]?.getD 0))
-  let x1 := spOfRat (max (bbox[0]?.getD 0) (bbox[2]?.getD 0))
-  let y0 := spOfRat (min (bbox[1]?.getD 0) (bbox[3]?.getD 0))
-  let y1 := spOfRat (max (bbox[1]?.getD 0) (bbox[3]?.getD 0))
+  let x0 := lenOfRat (min (bbox[0]?.getD 0) (bbox[2]?.getD 0))
+  let x1 := lenOfRat (max (bbox[0]?.getD 0) (bbox[2]?.getD 0))
+  let y0 := lenOfRat (min (bbox[1]?.getD 0) (bbox[3]?.getD 0))
+  let y1 := lenOfRat (max (bbox[1]?.getD 0) (bbox[3]?.getD 0))
   return (a, { geom := .rect x0 y0 (x1 - x0) (y1 - y0), rule := .nonzero })
 
 private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
@@ -1221,7 +1209,7 @@ private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
   let val (k : String) : Option Obj := (g.get? k).bind fun x => (cx.doc.deref x).toOption
   if let some a := (val "ca").bind alphaOf then st := { st with gs := { st.gs with ca := a } }
   if let some a := (val "CA").bind alphaOf then st := { st with gs := { st.gs with cA := a } }
-  if let some w := (val "LW").bind spOf then st := { st with gs := { st.gs with width := w } }
+  if let some w := (val "LW").bind Obj.len? then st := { st with gs := { st.gs with width := w } }
   if let some c := (val "LC").bind Obj.int? then
     st := { st with gs := { st.gs with cap := if c == 1 then .round else if c == 2 then .square else .butt } }
   if let some j := (val "LJ").bind Obj.int? then
@@ -1229,7 +1217,7 @@ private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
   if let some m := (val "ML").bind ratOf then st := { st with gs := { st.gs with miter := m } }
   match val "D" with
   | some (.arr #[.arr ds, ph]) =>
-    st := { st with gs := { st.gs with dash := ds.filterMap spOf, phase := (spOf ph).getD 0 } }
+    st := { st with gs := { st.gs with dash := ds.filterMap Obj.len?, phase := (Obj.len? ph).getD 0 } }
   | _ => pure ()
   match val "Font" with
   | some (.arr #[f, sz]) =>
@@ -1373,11 +1361,11 @@ public def frameScale? (m : Affine) : Option Rat :=
 /-- A user-space length carried into a glyph frame, `none` unless the frame is an axis-aligned
 similarity (`frameScale?`). -/
 public def strokeIn (m : Affine) (w : Length) : Option Length :=
-  (frameScale? m).map fun s => spOfRat (w.toRat / bpU / s)
+  (frameScale? m).map fun s => lenOfRat (w.toRat / bpU / s)
 
-public theorem spOfRat_between (r : Rat) :
-    r * bpU - 1 / 2 ≤ (spOfRat r).toRat ∧ (spOfRat r).toRat ≤ r * bpU + 1 / 2 := by
-  unfold spOfRat Length.toRat
+public theorem lenOfRat_between (r : Rat) :
+    r * bpU - 1 / 2 ≤ (lenOfRat r).toRat ∧ (lenOfRat r).toRat ≤ r * bpU + 1 / 2 := by
+  unfold lenOfRat Length.toRat
   have floorLe (x : Rat) : ((x.floor : Int) : Rat) ≤ x := Rat.le_floor_iff.mp (Int.le_refl _)
   have ltFloor (x : Rat) : x < ((x.floor + 1 : Int) : Rat) := Rat.floor_lt_iff.mp (Int.lt_succ _)
   simp only
@@ -1408,8 +1396,8 @@ public theorem strokeIn_between (m : Affine) (w w' : Length) (h : strokeIn m w =
     · split <;> grind
     · have hs : (0 : Rat) < (if m.a < 0 then -m.a else m.a) := by split <;> grind
       generalize (if m.a < 0 then -m.a else m.a) = s at hs ⊢
-      have hr := spOfRat_between (w.toRat / bpU / s)
-      have hKp : (0 : Rat) < bpU := by unfold bpU bpN; decide
+      have hr := lenOfRat_between (w.toRat / bpU / s)
+      have hKp : (0 : Rat) < bpU := by unfold bpU bpUnits; decide
       have e : w.toRat / bpU / s * bpU = w.toRat / s := by grind
       rw [e] at hr
       obtain ⟨lo, hi⟩ := hr
@@ -1506,7 +1494,7 @@ private def nodesInk (nodes : Array (Node Run)) (outlines : Array (Array Subpath
 private def bboxClip (dict : Obj) (doc : Doc) (body : Array (Node Run)) (store : Store) : Array Clip :=
   match (dict.get? "BBox").bind fun x => (doc.deref x).toOption with
   | some (.arr xs) =>
-    let v := xs.filterMap fun x => (doc.deref x).toOption.bind spOf
+    let v := xs.filterMap fun x => (doc.deref x).toOption.bind Obj.len?
     if h : v.size = 4 then
       let x0 := min v[0] v[2]
       let x1 := max v[0] v[2]
@@ -1738,7 +1726,7 @@ termination_by (e.room, 2, 1)
 private def stepRest (cx : Ctx) (e : Entered) (name : String) (st : St) : St :=
   let n := st.nums
   let num (i : Nat) : Rat := n[i]?.getD 0
-  let sps := st.ops.filterMap spOf
+  let sps := st.ops.filterMap Obj.len?
   let sp (i : Nat) : Length := sps[i]?.getD 0
   let pt (i : Nat) : Pt := (sp i, sp (i + 1))
   match name with
@@ -1783,7 +1771,7 @@ private def stepRest (cx : Ctx) (e : Entered) (name : String) (st : St) : St :=
   | "d" =>
     match st.op 0 with
     | some (.arr ds) =>
-      { st with gs := { st.gs with dash := ds.filterMap spOf, phase := ((st.op 1).bind spOf).getD 0 } }
+      { st with gs := { st.gs with dash := ds.filterMap Obj.len?, phase := ((st.op 1).bind Obj.len?).getD 0 } }
     | _ => st
   | "gs" =>
     match st.op 0 with
@@ -1957,10 +1945,10 @@ private def tileNodes (cx : Ctx) (e : Entered) (st : St) (pat : Obj) (region : G
               let st := { st with store := Store.empty }
               let inner := runToks cx' (e.push pn h.2.2) (PdfContentLex.scan data) 0
                 (St.initial (GState.initial space) store)
-              let bx0 := spOfRat (min (bb[0]?.getD 0) (bb[2]?.getD 0))
-              let bx1 := spOfRat (max (bb[0]?.getD 0) (bb[2]?.getD 0))
-              let by0 := spOfRat (min (bb[1]?.getD 0) (bb[3]?.getD 0))
-              let by1 := spOfRat (max (bb[1]?.getD 0) (bb[3]?.getD 0))
+              let bx0 := lenOfRat (min (bb[0]?.getD 0) (bb[2]?.getD 0))
+              let bx1 := lenOfRat (max (bb[0]?.getD 0) (bb[2]?.getD 0))
+              let by0 := lenOfRat (min (bb[1]?.getD 0) (bb[3]?.getD 0))
+              let by1 := lenOfRat (max (bb[1]?.getD 0) (bb[3]?.getD 0))
               let body := #[Node.group Affine.unit #[{ geom := .rect bx0 by0 (bx1 - bx0) (by1 - by0), rule := .nonzero }]
                 Alpha.opaque inner.finish]
               let store := inner.store

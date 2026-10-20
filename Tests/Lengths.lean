@@ -21,8 +21,8 @@ def hspaceAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "hspace finite stretch and shrink use the same typed glue"
     (para "Alpha\\hspace{1em plus 2pt minus 1pt}Bravo" ==
       some #[.text "Alpha", .hspace (.lit {
-        width := { em := 1000 }, stretch := { sp := Dim.pt 2 },
-        shrink := { sp := Dim.pt 1 } }) false, .text "Bravo"])
+        width := { em := 1000 }, stretch := { fixed := Dim.pt 2 },
+        shrink := { fixed := Dim.pt 1 } }) false, .text "Bravo"])
   t "hspace fill spellings normalize to the existing fill node"
     (para "a\\hspace{\\fill}b" == some #[.text "a", .fill, .text "b"] &&
       para "a\\hspace{\\stretch{1}}b" == some #[.text "a", .fill, .text "b"] &&

@@ -102,9 +102,9 @@ def elementSpacingChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   out := out.push ("element ex lengths agree with their resolved absolute length",
     displacement ordinary (spacingPage fs (some relativeEx) none) (resolved.width - pt 6) &&
     displacement (spacingPage fs (some absolute) none) (spacingPage fs (some relativeEx) none) 0)
-  let signed : SymGlue := { width := { sp := pt 6, em := -1000 } }
+  let signed : SymGlue := { width := { fixed := pt 6, em := -1000 } }
   out := out.push ("a positive absolute component can resolve to negative space",
-    signed.width.sp > 0 && (signed.resolve geometry.fontSize xHeight).width < 0 &&
+    signed.width.fixed > 0 && (signed.resolve geometry.fontSize xHeight).width < 0 &&
     displacement ordinary (spacingPage fs (some signed) none) (pt (-10)))
   let short := { geometry with pageH := pt 80 }
   let before := spacingPage fs none none #[] short

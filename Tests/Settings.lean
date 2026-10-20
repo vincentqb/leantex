@@ -914,7 +914,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     if b matches .para _ then n + 1 else n) 0
   let spaces (src : String) : Array String := Ir.foldBlocks (fun acc _ => acc) (fun acc x =>
     match x with
-    | .hspace e _ => acc.push (toString (e.eval fun _ => {}).width.sp)
+    | .hspace e _ => acc.push (toString (e.eval fun _ => {}).width.fixed)
     | _ => acc) #[] (elabStr src).1.body
   let gap := "\\newlength\\gap\n"
   let mid := dvDoc gap "A \\setlength{\\gap}{5pt} b\\hspace{\\gap}c d.\n\nE\\hspace{\\gap}f."
@@ -930,14 +930,14 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
       spaces boxed == #[toString (Dim.pt 2)])
   let pads (src : String) : Array String := Ir.foldBlocks (fun acc _ => acc) (fun acc x =>
     match x with
-    | .boxed b _ => acc.push (toString b.pad.width.sp)
+    | .boxed b _ => acc.push (toString b.pad.width.fixed)
     | _ => acc) #[] (elabStr src).1.body
   let cells := dvDoc "" ("\\begin{tabular}{ll}\n\\setlength{\\fboxsep}{0pt}\\fbox{c} & \\fbox{d} \\\\\n" ++
     "\\fbox{e} & f\n\\end{tabular}")
   t s!"a table's cell is a group: what it sets ends at its '&' and its row's end ({pads cells})"
     (pads cells == #[toString 0, toString (Dim.pt 3), toString (Dim.pt 3)])
   let tok (src key : String) : Option Dim.Length :=
-    ((elabStr src).1.tokens.find? key).map (·.width.sp)
+    ((elabStr src).1.tokens.find? key).map (·.width.fixed)
   let skips := dvDoc "\\newlength\\la\\newlength\\lb\\setlength{\\la}{\\baselineskip}\n"
     "{\\small\\setlength{\\lb}{\\ht\\strutbox}Alpha\\hspace{\\lb}beta.}"
   t s!"the preamble's \\baselineskip is the class's: 12pt at 10pt ({tok skips "la"})"
@@ -955,14 +955,14 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
   t s!"a \\page block's em is its own font size's ({em.hmargin})" (em.hmargin == Dim.pt 48)
   let strut := dvDoc "" "Alpha\\strut{} words."
   let rules := Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
-    | .rule w h _ => acc.push ((w.eval fun _ => {}).width.sp, (h.eval fun _ => {}).width.sp)
+    | .rule w h _ => acc.push ((w.eval fun _ => {}).width.fixed, (h.eval fun _ => {}).width.fixed)
     | _ => acc) #[] (elabStr strut).1.body
   t s!"\\strut is a rule of no width the strut box tall ({rules})"
     (!(codes strut).contains "W0301" && rules == #[(0, Dim.pt 12)])
   -- The foot's skip as the page reads it: the declared key, else the engine length.
   let footOfDoc (src : String) : Option Dim.Length :=
     let d := (elabStr src).1
-    d.page.footskip <|> (d.tokens.find? "footskip").map (·.width.sp)
+    d.page.footskip <|> (d.tokens.find? "footskip").map (·.width.fixed)
   let footOf (o : String) : Option Dim.Length :=
     footOfDoc (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")
   -- lualatex: geometry's top=2cm, bottom=4cm sets the folio's baseline 30pt below the text.

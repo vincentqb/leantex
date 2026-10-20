@@ -73,6 +73,31 @@ meta def numericConstant (e : Expr) : Bool :=
        | .str _ s => s.startsWith "inst"
        | _ => false)
 
+/-- An expression with every project constant naming a closed count read as its value, so a count
+behind a name (`def bpN : Nat := (bp 1).units.toNat`) meets the audit as its spelling; the base
+itself stays named. -/
+meta def unfoldCounts (env : Environment) (e : Expr) : Expr := Id.run do
+  let project (c : Name) : Bool := match env.getModuleIdxFor? c with
+    | some i => !(env.header.moduleNames[i.toNat]?).any fun m => [`Init, `Std, `Lean].contains m.getRoot
+    | none => true
+  let named (c : Name) : Option Expr :=
+    if !project c || c == `LeanTex.Core.Dim.unitsPerInch then none else
+    match env.find? c with
+    | some (.defnInfo d) =>
+      if !(#[``Int, ``Nat, ``Rat].any d.type.isConstOf) || d.value.hasLooseBVars then none
+      else if numericConstant d.value || (d.value.find? (readsUnits true ·)).isSome ||
+          d.value.getUsedConstants.any project then some d.value
+      else none
+    | _ => none
+  let mut e := e
+  for _ in [0:4] do
+    let next := e.replace fun sub => match sub with
+      | .const c _ => named c
+      | _ => none
+    if next == e then break
+    e := next
+  return e
+
 /-- What a subterm spells of a count of the base unit, which Dim alone defines: the base itself, a
 length built from a closed count, a large multiple of the quantum, or a base-unit count or a large
 scale of its rational image against a numeral other than 0 and ±1. -/
@@ -389,13 +414,20 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
       let fieldDefault := match privateToUserName decl with
         | .str _ s => s == "_default"
         | _ => false
-      let generated := ((privateToUserName decl).isInternalDetail && !fieldDefault) || match decl with
+      let body := match privateToUserName decl with
+        | .str _ s => s == "_unary" || s == "_mutual"
+        | _ => false
+      let generated := ((privateToUserName decl).isInternalDetail && !fieldDefault && !body) || match decl with
         | .str _ s => numbered s "eq_" || s == "eq_def" || s == "splitter" || numbered s "match_"
         | _ => false
       if !baseUnitModules.contains name && !generated then
         if let some info := env.find? decl then
-          let spelled := (baseLiteral info.type).orElse fun _ => match info with
-            | .defnInfo d => baseLiteral d.value
+          let spelled := (baseLiteral (unfoldCounts env info.type)).orElse fun _ => match info with
+            | .defnInfo d => baseLiteral (unfoldCounts env d.value)
+            | .thmInfo t =>
+              if (t.value.find? (·.isConstOf `LeanTex.Core.Dim.unitsPerInch)).isSome then
+                some "the base unit itself, read in a proof"
+              else none
             | _ => none
           if let some what := spelled then
             logError m!"proof audit: {name}: {decl} spells a count of the base unit, {what}; \

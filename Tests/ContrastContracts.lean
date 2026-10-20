@@ -140,7 +140,7 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(pdfAssert pendingOut).isEmpty)
   let lowInk : Ir.Color := { r := 136, g := 136, b := 136 }
   let small : Ir.Doc := { body := #[.para #[.styled (.fontSize
-      (.lit { width := { sp := Dim.pt 12 } }) (.lit { width := { sp := Dim.pt 14 } }))
+      (.lit { width := { fixed := Dim.pt 12 } }) (.lit { width := { fixed := Dim.pt 14 } }))
       #[.colored lowInk none #[.text "Small"]]]] }
   t "a low-contrast shipped run cannot pass using absent diagnostic evidence"
     (!(pdfAssert (render small)).isEmpty)
@@ -157,8 +157,8 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let atSize := fun size (face : Font) =>
     Layout.run geom (oneFaceOf face) none
       { ordinary with body := #[.para #[.styled
-        (.fontSize (.lit { width := { sp := size } })
-          (.lit { width := { sp := size * 6 / 5 } }))
+        (.fontSize (.lit { width := { fixed := size } })
+          (.lit { width := { fixed := size * 6 / 5 } }))
         #[.colored lowInk none #[.text "Size"]]]] }
   for (name, size, face, expected) in #[
       ("regular below large", Dim.bp 17, font, false),

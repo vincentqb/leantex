@@ -170,7 +170,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame opening: a paragraph's first baseline stands one baselineskip below the opening, as lualatex's"
     ((first 0).any fun y => y == skip + lead && near y (Dim.Length.ofBpMilli 17620))
   let listOpen : Option Dim.Length := (Ir.listSkips doc.docClass.record.lists size 1).map fun sk =>
-    sk.topsep.width.sp + (Ir.partopsepFor doc.docClass.record.lists size 1 doc.tokens).width.sp
+    sk.topsep.width.fixed + (Ir.partopsepFor doc.docClass.record.lists size 1 doc.tokens).width.fixed
   t "frame opening: a list's first item stands its topsepadd lower, as lualatex's"
     (match first 1, first 2, listOpen with
      | some a, some b, some o => a == skip + o + lead && b == a && near a (Dim.Length.ofBpMilli 20610)
@@ -242,7 +242,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lists := doc.docClass.record.lists
   let lead := Ir.leadingFor size doc.page.leading
   let skip := (Ir.frameBodySkip false .top).resolve size 0
-  let topsep := (Ir.trivlistSkipFor lists doc.tokens size 0).width.sp
+  let topsep := (Ir.trivlistSkipFor lists doc.tokens size 0).width.fixed
   let lineY (page : Nat) (word : String) : Option Dim.Length :=
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) word).map (·.y)
@@ -250,7 +250,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
   t "trivlist opening: a frame's trivlist spends LaTeX's top-level topsep, size10's 8pt"
-    (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size 0).1.width.sp == topsep)
+    (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size 0).1.width.fixed == topsep)
   t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip below the opening, as lualatex's"
     ([0, 1, 2].all fun pg => (lineY pg "Kilo").any fun y =>
       y == skip + topsep + lead && near y (Dim.Length.ofBpMilli 25594))
@@ -264,7 +264,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
      (lineY 6 "Mike").any (near · (Dim.Length.ofBpMilli 57475)))
   -- Inside a list beamer's `\@listi` has set `\topsep` again, to 3 pt.
   t "trivlist opening: a center inside a list item spends its level's topsep, as lualatex's"
-    ((Ir.trivlistSkipFor lists doc.tokens size 1).width.sp == Dim.pt 3 &&
+    ((Ir.trivlistSkipFor lists doc.tokens size 1).width.fixed == Dim.pt 3 &&
      (lineY 7 "Lima").any (near · (Dim.Length.ofBpMilli 35557)) && (lineY 7 "Mike").any (near · (Dim.Length.ofBpMilli 50501)) &&
      (lineY 7 "November").any (near · (Dim.Length.ofBpMilli 65445)))
   -- A caption sets 7 pt below its line (`\belowcaptionskip`), then the figure's topsep.
@@ -275,12 +275,12 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _, _ => false))
   -- The top-level topsep is the size file's: extsizes' 6 pt under `9pt`, beamer's 11pt's 9 pt.
   t "trivlist opening: the top-level topsep is the class option's size file's"
-    ((Ir.trivlistSkipFor lists {} (Dim.pt 9) 0).width.sp == Dim.pt 6 &&
-     (Ir.trivlistSkipFor lists {} Ir.posterFontSize 0).width.sp == Dim.pt 9 &&
-     (Ir.trivlistSkipFor lists {} (Dim.pt 10) 2).width.sp == Dim.pt 2 &&
-     (Ir.trivlistSkipFor lists { entries := #[(Ir.trivlistSkipName, { width := { sp := Dim.pt 20 } })] } (Dim.pt 10) 1).width.sp
+    ((Ir.trivlistSkipFor lists {} (Dim.pt 9) 0).width.fixed == Dim.pt 6 &&
+     (Ir.trivlistSkipFor lists {} Ir.posterFontSize 0).width.fixed == Dim.pt 9 &&
+     (Ir.trivlistSkipFor lists {} (Dim.pt 10) 2).width.fixed == Dim.pt 2 &&
+     (Ir.trivlistSkipFor lists { entries := #[(Ir.trivlistSkipName, { width := { fixed := Dim.pt 20 } })] } (Dim.pt 10) 1).width.fixed
        == Dim.pt 3 &&
-     (Ir.floatSpaceFor lists doc.tokens size 1).1.width.sp == Dim.pt 3 &&
+     (Ir.floatSpaceFor lists doc.tokens size 1).1.width.fixed == Dim.pt 3 &&
      Ir.captionPosFor lists #[] .figure == .bottom)
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
@@ -302,10 +302,10 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
      cssProperty root "--floatsep" == some "calc(var(--topsep) + var(--parskip, 0rem))")
   t "trivlist opening html: each list level declares its own topsep, the stage's share"
     ((cssBlocksFor css "li, dd, blockquote").any (cssStageLength · "--topsep"
-        (Ir.trivlistSkipFor lists doc.tokens size 1).width.sp doc.page.height) &&
+        (Ir.trivlistSkipFor lists doc.tokens size 1).width.fixed doc.page.height) &&
      (cssBlocksFor css ("li li, li dd, li blockquote, dd li, dd dd, dd blockquote, " ++
         "blockquote li, blockquote dd, blockquote blockquote")).any
-       (cssStageLength · "--topsep" (Ir.trivlistSkipFor lists doc.tokens size 2).width.sp
+       (cssStageLength · "--topsep" (Ir.trivlistSkipFor lists doc.tokens size 2).width.fixed
          doc.page.height))
   -- The caption skips' undeclared value is the chain's innermost fallback.
   let innermost (v : String) : String :=
@@ -491,7 +491,7 @@ def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := elabStr trivDeck
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
-  let level := (Ir.trivlistSkipFor doc.docClass.record.lists doc.tokens doc.page.fontSize 1).width.sp
+  let level := (Ir.trivlistSkipFor doc.docClass.record.lists doc.tokens doc.page.fontSize 1).width.fixed
   let figs := (tagPathsList "figure" artBodyPath #[] body.toList).filter (·.any (·.1 == "li"))
   let owner (path : Array ArtElem) : Option (Array ArtElem) :=
     ((List.range path.size).reverse.map (fun k => path.extract 0 (k + 1))).find? fun pre =>

@@ -129,8 +129,9 @@ public structure Plan where
 
 public theorem width_at_default_dpi (px : Nat) :
     Plan.width { pxW := px, pxH := px } = Dim.bp px := by
-  simp only [Plan.width, inch, bp, Length.ext_iff', Length.units_divn, defaultDpi]
-  rfl
+  have h : max defaultDpi 1 = 72 := rfl
+  simp only [Plan.width, h]
+  exact inch_div_bp px
 
 private def u8? (b : ByteArray) (i : Nat) : Option Nat :=
   (b[i]?).map (·.toNat)

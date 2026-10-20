@@ -79,21 +79,16 @@ def bigMoSize (step : Nat) : String :=
   s!"{t / 1000}.{frac}em"
 
 /-- A fraction's declared rule as `mfrac`'s `linethickness`, in measured em when known. -/
-def ruleAttrs (rule : Option Int) (em : Option Int) : Array (String × String) :=
+def ruleAttrs (rule : Option Dim.Length) (em : Option Int) : Array (String × String) :=
   match rule with
   | none => #[]
   | some t =>
     let width := max t 0
+    let points := if width == 0 then "0" else s!"{width.toBpString}pt"
     let length := match em with
-      | some size => if 0 < size then measuredEm width size else points width
-      | none => points width
+      | some size => if 0 < size then measuredEm width.units size else points
+      | none => points
     #[("linethickness", length)]
-where
-  points (width : Int) : String :=
-    let m := width * 1000 / (Dim.bp 1).units
-    let fs := toString (m % 1000)
-    if m == 0 then "0"
-    else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt"
 
 /-- A style switch as MathML Core's `displaystyle` and absolute `scriptlevel` (§2.1.6). -/
 public def styleAttrs : Option MathStyle → Array (String × String)

@@ -192,7 +192,7 @@ r = w / 2.5, neg = 0pt - 5sp, negh = neg / 2 }")
   t "a length divides by a decimal"
     (d3.tokens.find? "r" == some { width := .ofLength (Dim.pt 96) })
   t "a negative length truncates toward zero, as TeX's \\divide does"
-    (match (d3.tokens.find? "neg").map (·.width.sp), (d3.tokens.find? "negh").map (·.width.sp) with
+    (match (d3.tokens.find? "neg").map (·.width.fixed), (d3.tokens.find? "negh").map (·.width.fixed) with
       | some n, some h => n < 0 && h == n.tdiv 2 && h != n / 2
       | _, _ => false)
   t "a parenthesized numeric divisor evaluates as a scalar"
@@ -457,14 +457,14 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\end{columns}\n\\end{frame}\n\\end{document}"
   let (dp, dps) := elabStr src
   t "a preamble \\setlength reads the engine's paperwidth from the class board"
-    ((dp.tokens.find? "colwidth").map (·.width.sp) == some (Dim.mm 1189 * 3 / 10))
+    ((dp.tokens.find? "colwidth").map (·.width.fixed) == some (Dim.mm 1189 * 3 / 10))
   t "the token names the column width: E0321 closes and W0314 retires"
     (!dps.any (·.code == "E0321") && !dps.any (·.code == "W0314"))
   let (xa, da) := elabStr ("\\documentclass{article}\n\\newlength{\\x}\n" ++
     "\\setlength{\\x}{0.5\\textwidth}\n\\begin{document}\nx\n\\end{document}")
   t "a flow class's preamble textwidth reads the measure its undeclared page takes"
     (!da.any (·.severity == .error) && !da.any (·.code == "W0107") &&
-      (xa.tokens.find? "x").map (·.width.sp) == some (Ir.articleTextBlock / 2))
+      (xa.tokens.find? "x").map (·.width.fixed) == some (Ir.articleTextBlock / 2))
   let (_, db) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
     "\\setlength{\\y}{0.5\\textwidth}\nx\n\\end{document}")
   t "a body \\setlength resolves textwidth from the finished page"
@@ -780,7 +780,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A `[float type]` scope declares the kind's own token, which only that kind reads (`Ir.captionTokenOf`).
   t "compat captionsetup skip declares the scoped caption gap"
     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "tablecaptionsep"
-        == some { width := { sp := Dim.pt 10 } } &&
+        == some { width := { fixed := Dim.pt 10 } } &&
      ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "captionsep").isNone &&
      (elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.all (·.severity == .note))
   t "compat captionsetup skip set to the caption skip itself is honoured"
@@ -789,10 +789,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `margin=` is the caption's both-side margin, one token for the float caption and the HTML figcaption (caption manual §2.4).
   t "compat captionsetup margin declares the caption margin"
     ((elabStr (pre "\\captionsetup{margin=12pt}")).1.tokens.find? "captionmargin"
-        == some { width := { sp := Dim.pt 12 } } &&
+        == some { width := { fixed := Dim.pt 12 } } &&
      (elabStr (pre "\\captionsetup{margin=12pt}")).2.all (·.severity == .note) &&
      (elabStr (pre "\\usepackage[margin=12pt]{caption}")).1.tokens.find? "captionmargin"
-        == some { width := { sp := Dim.pt 12 } } &&
+        == some { width := { fixed := Dim.pt 12 } } &&
      (warnCodes (pre "\\captionsetup{margin={1em,2em}}")).contains "W0354")
   -- geometry centres a declared `textwidth` and splits a declared `textheight` 2:3 (geometry manual §5.2).
   t "compat newgeometry textwidth/textheight place the text block as geometry does"
@@ -816,7 +816,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc2, elabDs) := Elab.runRaws "t" raws2
   t "a local .sty is \\input of its text: its \\geometry reaches \\page"
     (doc2.page.hmargin == (Dim.bp 612 - Dim.pt 396) / 2 && geometrySplit doc2.page (Dim.pt 576) &&
-     doc2.tokens.find? "captionsep" == some { width := { sp := Dim.pt 7 } } &&
+     doc2.tokens.find? "captionsep" == some { width := { fixed := Dim.pt 7 } } &&
      elabDs.all (·.code != "W0103"))
   t "what of the .sty's text is refused is named at the .sty's own file"
     ((elabDs.filter fun d => d.code == "W0357" &&
@@ -1225,7 +1225,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"compat koma parskip={opt} is its share of the class's line, within TeX's sp"
       (((elabStr (s!"\\documentclass[parskip{if opt.isEmpty then "" else "=" ++ opt}]" ++
           "{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip.map
-        fun g => near g.width.sp w && near g.stretch.sp st) == some true)
+        fun g => near g.width.fixed w && near g.stretch.fixed st) == some true)
   t "compat parskip package"
     (((elabStr ("\\documentclass{article}\\usepackage{parskip}\\begin{document}x\\end{document}")).1.page.parskip.map
       (·.width.em)) == some 600)
@@ -1464,16 +1464,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
         some #[.styled .sans #[]]) &&
       dispo.2.all (·.code != "W0111"))
   t "compat koma section spacing"
-    (((koma.1.styles.find? "section").bind (·.before)).map (·.width) == some { sp := Dim.pt 6 })
+    (((koma.1.styles.find? "section").bind (·.before)).map (·.width) == some { fixed := Dim.pt 6 })
   t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some (.color "ink")))
   -- `\hrule` has zero depth, so it is a baseline rule, its `height` the thickness, 0.4 pt by default (TeXbook p. 221).
   t "compat koma section rule is a baseline rule at TeX's default height"
-    ((koma.1.styles.find? "section").map (fun st => (st.rulePosition, st.ruleThickness.map (·.width.sp)))
+    ((koma.1.styles.find? "section").map (fun st => (st.rulePosition, st.ruleThickness.map (·.width.fixed)))
       == some (some .baseline, some ((Dim.pt 1).ofRatioRound 4 10)))
   let ruleH (h : String) := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter" ++
     s!"\\renewcommand\\sectionlinesformat[4]\{#3#4 \\textcolor\{ink}\{\\leaders\\hrule{h}\\hfill\\kern\\z@}}\\makeatother"))
   let thickOf (d : Ir.Doc × Array Diag) : Option Dim.Length :=
-    ((d.1.styles.find? "section").bind (·.ruleThickness)).map (·.width.sp)
+    ((d.1.styles.find? "section").bind (·.ruleThickness)).map (·.width.fixed)
   t "compat koma section rule reads its declared height"
     (thickOf (ruleH " height 1.5pt") == some (Dim.pt 3 / 2))
   t "compat koma section rule reads a \\p@ height"
@@ -1488,7 +1488,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat koma section rule with a depth is not the idiom"
     (errCodes (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter\\renewcommand\\sectionlinesformat[4]" ++
       "{#3#4 \\textcolor{ink}{\\leaders\\hrule height 1pt depth 1pt\\hfill}}\\makeatother")) == ["E0113"])
-  t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.list.itemsep)).map (·.width) == some { sp := Dim.pt 3 } &&
+  t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.list.itemsep)).map (·.width) == some { fixed := Dim.pt 3 } &&
     ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
   t "compat thispagestyle empty starts running content on page 2" (koma.1.headFrom == 2)
   t "compat unrecognised sectionlinesformat body is a dropped loss"
@@ -2091,10 +2091,10 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
     let x : Dim.Length := ((mag : Int) - 2 ^ 31) * Dim.Length.quantum
     match Decl.parseLength (x.toBpString ++ "bp") with
     | some l =>
-      let err := (l.sp - x).abs
+      let err := (l.fixed - x).abs
       worst := max worst err
       unless l.em == 0 && l.ex == 0 && err ≤ Dim.bp 1 / 2000 + Dim.Length.quantum do
-        failed := some s!"dim round-trip: {x} printed {x.toBpString}, reparsed {l.sp} (err {err})"
+        failed := some s!"dim round-trip: {x} printed {x.toBpString}, reparsed {l.fixed} (err {err})"
     | none => failed := some s!"dim round-trip: {x} printed {x.toBpString}, which did not parse"
   if let some msg := failed then failures ref msg
   t "dim round-trip error reaches the print rounding bound" (worst ≥ Dim.bp 1 / 3000)

@@ -260,8 +260,8 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((secStyle.bind (·.font)) == some #[.styled (.size "large") #[.styled .sans
       #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some (.color "ink")) #[]]]])
   t "style section spacing reads tokens"
-    ((secStyle.bind (·.before)).map (·.width) == some { sp := Dim.pt 6 } &&
-     (secStyle.bind (·.after)).map (·.width) == some { sp := Dim.pt 3 })
+    ((secStyle.bind (·.before)).map (·.width) == some { fixed := Dim.pt 6 } &&
+     (secStyle.bind (·.after)).map (·.width) == some { fixed := Dim.pt 3 })
   t "style section rule names the palette entry"
     ((secStyle.bind (·.rule)).map (·.2) == some (some (.color "ink")))
   let listStyle := styled.1.styles.find? "itemize"
@@ -344,7 +344,7 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "css em keeps its unit" (HtmlDoc.cssLength { em := 1500 } == "1.5em")
   t "css ex keeps its unit" (HtmlDoc.cssLength { ex := 1500 } == "1.5ex")
   t "css whole em has no fraction" (HtmlDoc.cssLength { em := 2000 } == "2em")
-  t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.bp 3, em := 500 } == "calc(3pt + 0.5em)")
+  t "css mixed length sums" (HtmlDoc.cssLength { fixed := Dim.bp 3, em := 500 } == "calc(3pt + 0.5em)")
   let (fromDoc, fromDs) := elabStr ("\\documentclass{article}\\runninghead[from = 2]{x}" ++
     "\\begin{document}y\\end{document}")
   t "running from clean" (fromDs.isEmpty && fromDoc.headFrom == 2 && fromDoc.footFrom == 1)

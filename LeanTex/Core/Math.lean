@@ -786,22 +786,22 @@ public def GridKind.gapAfter : GridKind → Nat → Nat → Nat
   | .small, k, n => if k + 1 == n then 0 else 5
 
 /-- amsmath's `\minalignsep`, 10 pt (amsmath.sty): the space `aligned` stands after a pair. -/
-public def minAlignSep : Int := (Dim.pt 10).units
+public def minAlignSep : Dim.Length := Dim.pt 10
 
 /-- The length gap after column `k` of `n`: `aligned`'s `\minalignsep` after each pair. -/
-public def GridKind.pairSep : GridKind → Nat → Nat → Int
+public def GridKind.pairSep : GridKind → Nat → Nat → Dim.Length
   | .aligned t, k, n =>
     if k % 2 == 0 then 0 else if k + 1 == n && !t then 0 else minAlignSep
   | .align, _, _ | .gather, _, _ | .array _ _, _, _ | .small, _, _ => 0
 
 /-- Where column `k` starts: the widths and gaps of every column before it. -/
-public def colOffset (cols : List (Int × Int)) (k : Nat) : Int :=
+public def colOffset (cols : List (Dim.Length × Dim.Length)) (k : Nat) : Dim.Length :=
   match cols, k with
   | _, 0 => 0
   | [], _ + 1 => 0
   | (w, g) :: rest, k + 1 => w + g + colOffset rest k
 
-public theorem colOffset_total (cols : List (Int × Int)) :
+public theorem colOffset_total (cols : List (Dim.Length × Dim.Length)) :
     colOffset cols cols.length = (cols.map fun c => c.1 + c.2).foldr (· + ·) 0 := by
   induction cols with
   | nil => rfl
@@ -809,21 +809,21 @@ public theorem colOffset_total (cols : List (Int × Int)) :
     simp only [colOffset, List.length, List.map, List.foldr, ih]
 
 /-- The kern that places a box `inner` wide inside a column `outer` wide. -/
-public def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
+public def ColAlign.pad (a : ColAlign) (outer inner : Dim.Length) : Dim.Length :=
   match a with
   | .left => 0
   | .right => outer - inner
   | .center => (outer - inner) / 2
 
-public theorem pad_within (a : ColAlign) (outer inner : Int) (h : inner ≤ outer) :
+public theorem pad_within (a : ColAlign) (outer inner : Dim.Length) (h : inner ≤ outer) :
     0 ≤ a.pad outer inner ∧ a.pad outer inner + inner ≤ outer := by
-  cases a <;> simp only [ColAlign.pad] <;> omega
+  cases a <;> simp only [ColAlign.pad] <;> length_omega
 
-public theorem pad_center_symmetric (outer inner : Int) :
+public theorem pad_center_symmetric (outer inner : Dim.Length) :
     0 ≤ outer - (2 * ColAlign.pad .center outer inner + inner) ∧
-    outer - (2 * ColAlign.pad .center outer inner + inner) ≤ 1 := by
+    outer - (2 * ColAlign.pad .center outer inner + inner) ≤ Dim.Length.quantum := by
   simp only [ColAlign.pad]
-  omega
+  length_omega
 
 /-- The first variant at least `target` tall in the font's increasing ladder, else the last. -/
 public def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
@@ -935,7 +935,7 @@ public theorem pickVariant_mem (target : Int) (vs : List (Nat × Int)) (v : Nat 
 public structure FracSpec where
   left : Option Char := none
   right : Option Char := none
-  rule : Option Int := none
+  rule : Option Dim.Length := none
   style : Option MathStyle := none
   deriving Repr, BEq, Inhabited
 

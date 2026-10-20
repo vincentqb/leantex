@@ -164,15 +164,14 @@ theorem lenObj_spelled (x : Length) : PdfContentLex.ValSpelled (lenObj x) := by
       · subst hc; decide
       · exact numByte_digit (fracDigits_digits 3 _ c hc)
 
-theorem spOf_lenObj (x : Length) : spOf (lenObj x) = some (qSp x) := by
-  have hN : bpN = (bp 1).units.toNat := rfl
-  simp only [bp, unitsPerInch, Int.reduceMul, Int.reduceDiv, Int.reduceToNat] at hN
-  unfold lenObj spOf
+theorem len?_lenObj (x : Length) : Obj.len? (lenObj x) = some (qLen x) := by
+  have hN : bpUnits = 407924 := bpUnits_eq
+  unfold lenObj Obj.len?
   split
   · rename_i hf
     simp only [PdfContentLex.numParts?, Option.map_some]
     congr 1
-    simp only [qSp, spOfParts]
+    simp only [qLen, Length.ofBpParts]
     by_cases hm : x.toBpMilli < 0
     · have hip : 0 < x.toBpMilli.natAbs / 1000 := by omega
       generalize hk : x.toBpMilli.natAbs / 1000 = k at hip
@@ -182,7 +181,7 @@ theorem spOf_lenObj (x : Length) : spOf (lenObj x) = some (qSp x) := by
       have hneg : decide (-((k : Nat) : Int) < 0) = true := by simp; omega
       simp only [hneg, ↓reduceIte, Int.natAbs_neg, Int.natAbs_natCast, Nat.mul_one]
       rw [Length.ext_iff']
-      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      simp only [hN, Length.ofBpMilli_units] at *
       split <;> ((try dsimp only) ; omega)
     · generalize hk : x.toBpMilli.natAbs / 1000 = k
       have hmk : x.toBpMilli = ((1000 * k : Nat) : Int) := by omega
@@ -191,7 +190,7 @@ theorem spOf_lenObj (x : Length) : spOf (lenObj x) = some (qSp x) := by
       have hneg : decide (((k : Nat) : Int) < 0) = false := by simp
       simp only [hneg, Bool.false_eq_true, ↓reduceIte, Int.natAbs_natCast, Nat.mul_one]
       rw [Length.ext_iff']
-      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      simp only [hN, Length.ofBpMilli_units] at *
       split <;> ((try dsimp only) ; omega)
   · rename_i hf
     have hfr := fracDigits_value_exact 3 (x.toBpMilli.natAbs % 1000) (Nat.mod_lt _ (by decide)) hf
@@ -211,9 +210,9 @@ theorem spOf_lenObj (x : Length) : spOf (lenObj x) = some (qSp x) := by
       · subst h0
         exact absurd (List.eq_nil_of_length_eq_zero hL) hne
       · exact h0
-    simp only [qSp, spOfParts]
-    have key : ((2 * bpN * (x.toBpMilli.natAbs / 1000 * 10 ^ L + dv) + 10 ^ L) / (2 * 10 ^ L)) =
-        (x.toBpMilli.natAbs * bpN + 500) / 1000 := by
+    simp only [qLen, Length.ofBpParts]
+    have key : ((2 * bpUnits * (x.toBpMilli.natAbs / 1000 * 10 ^ L + dv) + 10 ^ L) / (2 * 10 ^ L)) =
+        (x.toBpMilli.natAbs * bpUnits + 500) / 1000 := by
       generalize x.toBpMilli.natAbs = N at hval ⊢
       obtain rfl | rfl | rfl : L = 1 ∨ L = 2 ∨ L = 3 := by omega
       all_goals (simp only [hN, Nat.reducePow, Nat.reduceSub, Nat.reduceMul] at hval ⊢; omega)
@@ -221,12 +220,12 @@ theorem spOf_lenObj (x : Length) : spOf (lenObj x) = some (qSp x) := by
     · simp only [hneg, decide_true, ↓reduceIte]
       rw [key]
       rw [Length.ext_iff']
-      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      simp only [hN, Length.ofBpMilli_units] at *
       split <;> ((try dsimp only) ; omega)
     · simp only [hneg, decide_false, Bool.false_eq_true, ↓reduceIte]
       rw [key]
       rw [Length.ext_iff']
-      simp only [hN, Length.ofBpMilli, unitsPerInch] at *
+      simp only [hN, Length.ofBpMilli_units] at *
       split <;> ((try dsimp only) ; omega)
 
 /-- What `Dim.ratString` prints of `p / q` before its point is placed: the
@@ -819,12 +818,12 @@ theorem lead_endLine (a : Word) (ws : List Word) (ha : a.sep = 32) (hs : ∀ w �
     simp [lead]
 
 /-- A translation in base units as the fraction of a big point `unitsRatBpString` spells. -/
-@[expose] public def bpPair (r : Rat) : Int × Int := (r.num * 72, (r.den : Int) * 72 * (bp 1).units)
+@[expose] public def bpPair (r : Rat) : Int × Int := (r.num * 72, (r.den : Int) * 72 * bpUnits)
 
 theorem unitsRatBpString_pair (r : Rat) :
     unitsRatBpString r = ratString (bpPair r).1 (bpPair r).2 := by
-  have hU : unitsPerInch = 72 * (bp 1).units := by decide
-  simp only [unitsRatBpString, bpPair, hU, Int.mul_assoc]
+  simp only [bpPair]
+  exact unitsRatBpString_bp r
 
 /-- A matrix's words: its six operands (`Gfx.Affine.operands`) and `cm`. -/
 def cmWords (m : Affine) : List Word :=
@@ -1653,22 +1652,22 @@ theorem stepOp_Q (cx : Ctx) (e : Entered) (st : St) (g : GState) (k : Nat)
   simp [h]
 
 /-- The operands as lengths. -/
-def spAt (st : St) (i : Nat) : Length := (st.ops.filterMap spOf)[i]?.getD 0
+def lenAt (st : St) (i : Nat) : Length := (st.ops.filterMap Obj.len?)[i]?.getD 0
 
 /-- The operands as numbers. -/
 def numAt (st : St) (i : Nat) : Rat := (st.ops.filterMap ratOf)[i]?.getD 0
 
 theorem stepRest_l (cx : Ctx) (e : Entered) (st : St) :
-    stepRest cx e "l" st = { st with path := st.path.push (.lineTo (spAt st 0) (spAt st 1)), cur := (spAt st 0, spAt st 1) } := by
+    stepRest cx e "l" st = { st with path := st.path.push (.lineTo (lenAt st 0) (lenAt st 1)), cur := (lenAt st 0, lenAt st 1) } := by
   rw [stepRest]; rfl
 
 theorem stepRest_c (cx : Ctx) (e : Entered) (st : St) :
-    stepRest cx e "c" st = { st with path := st.path.push (.curveTo (spAt st 0) (spAt st 1) (spAt st 2)
-      (spAt st 3) (spAt st 4) (spAt st 5)), cur := (spAt st 4, spAt st 5) } := by
+    stepRest cx e "c" st = { st with path := st.path.push (.curveTo (lenAt st 0) (lenAt st 1) (lenAt st 2)
+      (lenAt st 3) (lenAt st 4) (lenAt st 5)), cur := (lenAt st 4, lenAt st 5) } := by
   rw [stepRest]; rfl
 
 theorem stepRest_m (cx : Ctx) (e : Entered) (st : St) :
-    stepRest cx e "m" st = st.moveTo (spAt st 0, spAt st 1) := by
+    stepRest cx e "m" st = st.moveTo (lenAt st 0, lenAt st 1) := by
   rw [stepRest]; rfl
 
 theorem stepRest_h (cx : Ctx) (e : Entered) (st : St) :
@@ -1676,11 +1675,11 @@ theorem stepRest_h (cx : Ctx) (e : Entered) (st : St) :
   rw [stepRest]
 
 theorem stepRest_re (cx : Ctx) (e : Entered) (st : St) :
-    stepRest cx e "re" st = { st with path := st.path.push (.rect (spAt st 0) (spAt st 1) (spAt st 2) (spAt st 3)), cur := (spAt st 0, spAt st 1), start := (spAt st 0, spAt st 1) } := by
+    stepRest cx e "re" st = { st with path := st.path.push (.rect (lenAt st 0) (lenAt st 1) (lenAt st 2) (lenAt st 3)), cur := (lenAt st 0, lenAt st 1), start := (lenAt st 0, lenAt st 1) } := by
   rw [stepRest]; rfl
 
 theorem stepRest_w (cx : Ctx) (e : Entered) (st : St) :
-    stepRest cx e "w" st = { st with gs := { st.gs with width := spAt st 0 } } := by
+    stepRest cx e "w" st = { st with gs := { st.gs with width := lenAt st 0 } } := by
   rw [stepRest]; rfl
 
 theorem stepRest_J (cx : Ctx) (e : Entered) (st : St) :
@@ -1698,7 +1697,7 @@ theorem stepRest_M (cx : Ctx) (e : Entered) (st : St) :
   rw [stepRest]; rfl
 
 theorem stepRest_d (cx : Ctx) (e : Entered) (st : St) (ds : Array Obj) (h : st.ops[0]? = some (.arr ds)) :
-    stepRest cx e "d" st = { st with gs := { st.gs with dash := ds.filterMap spOf, phase := (st.ops[1]?.bind spOf).getD 0 } } := by
+    stepRest cx e "d" st = { st with gs := { st.gs with dash := ds.filterMap Obj.len?, phase := (st.ops[1]?.bind Obj.len?).getD 0 } } := by
   rw [stepRest]
   simp only [St.op, h]
 
@@ -1752,11 +1751,11 @@ theorem stepRest_cm (cx : Ctx) (e : Entered) (st : St) (m : Affine)
 
 /-- A path operator as the importer reads it back, its lengths on the milli-point grid. -/
 @[expose] public def pathRead : Pdf.PathOp → Pdf.PathOp
-  | .moveTo x y => .moveTo (qSp x) (qSp y)
-  | .lineTo x y => .lineTo (qSp x) (qSp y)
-  | .curveTo a b c d e f => .curveTo (qSp a) (qSp b) (qSp c) (qSp d) (qSp e) (qSp f)
+  | .moveTo x y => .moveTo (qLen x) (qLen y)
+  | .lineTo x y => .lineTo (qLen x) (qLen y)
+  | .curveTo a b c d e f => .curveTo (qLen a) (qLen b) (qLen c) (qLen d) (qLen e) (qLen f)
   | .close => .close
-  | .rect x y w h => .rect (qSp x) (qSp y) (qSp w) (qSp h)
+  | .rect x y w h => .rect (qLen x) (qLen y) (qLen w) (qLen h)
 
 /-- Tokens read from `st` on. -/
 def run (cx : Ctx) (e : Entered) (st : St) (ws : List Word) : St :=
@@ -1772,34 +1771,34 @@ theorem run_pathWords (cx : Ctx) (e : Entered) (st : St) (p : Pdf.PathOp) (hops 
     ∃ c s, run cx e st (pathWords p) = { st with path := st.path.push (pathRead p), cur := c, start := s } := by
   cases p with
   | moveTo x y =>
-    refine ⟨(qSp x, qSp y), (qSp x, qSp y), ?_⟩
+    refine ⟨(qLen x, qLen y), (qLen x, qLen y), ?_⟩
     simp only [run, pathWords, lenW, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil,
       tokStep_val, tokStep_op]
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_m]
-    simp [hops, St.moveTo, spAt, spOf_lenObj, pathRead]
+    simp [hops, St.moveTo, lenAt, len?_lenObj, pathRead]
   | lineTo x y =>
-    refine ⟨(qSp x, qSp y), st.start, ?_⟩
+    refine ⟨(qLen x, qLen y), st.start, ?_⟩
     simp only [run, pathWords, lenW, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil,
       tokStep_val, tokStep_op]
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_l]
-    simp [hops, spAt, spOf_lenObj, pathRead]
+    simp [hops, lenAt, len?_lenObj, pathRead]
   | curveTo a b c d f g =>
-    refine ⟨(qSp f, qSp g), st.start, ?_⟩
+    refine ⟨(qLen f, qLen g), st.start, ?_⟩
     simp only [run, pathWords, lenW, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil,
       tokStep_val, tokStep_op]
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_c]
-    simp [hops, spAt, spOf_lenObj, pathRead]
+    simp [hops, lenAt, len?_lenObj, pathRead]
   | close =>
     refine ⟨st.start, st.start, ?_⟩
     simp only [run, pathWords, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil, tokStep_op]
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_h]
     simp [hops, pathRead]
   | rect x y w h =>
-    refine ⟨(qSp x, qSp y), (qSp x, qSp y), ?_⟩
+    refine ⟨(qLen x, qLen y), (qLen x, qLen y), ?_⟩
     simp only [run, pathWords, lenW, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil,
       tokStep_val, tokStep_op]
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_re]
-    simp [hops, spAt, spOf_lenObj, pathRead]
+    simp [hops, lenAt, len?_lenObj, pathRead]
 
 theorem run_colorWords_op (cx : Ctx) (e : Entered) (st : St) (c : Ir.Color) (n : String)
     (hq : n ≠ "q") (hQ : n ≠ "Q") (hops : st.ops = #[]) :
@@ -1823,12 +1822,12 @@ def strokeGs (g : GState) (k : Pdf.PaintStroke) : GState :=
   { g with
     strokeSpace := .rgb
     stroke := .color (colorRead (paintColor k.paint))
-    width := qSp k.width
+    width := qLen k.width
     cap := k.cap.getD g.cap
     join := k.join.getD g.join
     miter := (k.miter.map fun r => ratRead r.num r.den).getD g.miter
-    dash := (k.dash.map fun dp => dp.1.map qSp).getD g.dash
-    phase := (k.dash.map fun dp => qSp dp.2).getD g.phase }
+    dash := (k.dash.map fun dp => dp.1.map qLen).getD g.dash
+    phase := (k.dash.map fun dp => qLen dp.2).getD g.phase }
 
 theorem ratOf_nat (n : Nat) : ratOf (.int (n : Int)) = some (n : Rat) := by
   rw [ratOf_eq, numRat_int]
@@ -1855,9 +1854,9 @@ theorem run_one (cx : Ctx) (e : Entered) (st : St) (o : Obj) (n : String) (hq : 
   simp [hops]
 
 theorem run_width (cx : Ctx) (e : Entered) (st : St) (w : Length) (hops : st.ops = #[]) :
-    run cx e st [lenW w, opW "w"] = { st with gs := { st.gs with width := qSp w } } := by
+    run cx e st [lenW w, opW "w"] = { st with gs := { st.gs with width := qLen w } } := by
   rw [run_one cx e st (lenObj w) "w" (by decide) (by decide) hops _ _ rfl rfl, stepRest_w]
-  simp [spAt, spOf_lenObj, hops]
+  simp [lenAt, len?_lenObj, hops]
 
 theorem run_capWords (cx : Ctx) (e : Entered) (st : St) (c : Option Cap) (hops : st.ops = #[]) :
     run cx e st (capWords c) = { st with gs := { st.gs with cap := c.getD st.gs.cap } } := by
@@ -1890,8 +1889,8 @@ theorem run_miterWords (cx : Ctx) (e : Entered) (st : St) (m : Option Rat) (hops
 theorem run_dashWords (cx : Ctx) (e : Entered) (st : St) (dp : Option (Array Length × Length)) (hops : st.ops = #[]) :
     run cx e st (dashWords dp) =
       { st with gs := { st.gs with
-          dash := (dp.map fun dp => dp.1.map qSp).getD st.gs.dash
-          phase := (dp.map fun dp => qSp dp.2).getD st.gs.phase } } := by
+          dash := (dp.map fun dp => dp.1.map qLen).getD st.gs.dash
+          phase := (dp.map fun dp => qLen dp.2).getD st.gs.phase } } := by
   cases dp with
   | none => simp [dashWords, run_nil]
   | some dp =>
@@ -1899,14 +1898,14 @@ theorem run_dashWords (cx : Ctx) (e : Entered) (st : St) (dp : Option (Array Len
     simp only [run, dashWords, dashW, lenW, opW, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil,
       tokStep_val, tokStep_op]
     rw [stepOp_rest _ _ _ _ (by decide) (by decide), stepRest_d _ _ _ (d.map lenObj) (by simp [hops])]
-    have hf0 : (d.map lenObj).filterMap spOf = d.map qSp := by
+    have hf0 : (d.map lenObj).filterMap Obj.len? = d.map qLen := by
       rw [Array.filterMap_map]
-      simp [Function.comp_def, spOf_lenObj]
-    have hf : Array.filterMap spOf (Array.map lenObj d) 0 d.size = Array.map qSp d := by
+      simp [Function.comp_def, len?_lenObj]
+    have hf : Array.filterMap Obj.len? (Array.map lenObj d) 0 d.size = Array.map qLen d := by
       have e : d.size = (d.map lenObj).size := (Array.size_map ..).symm
       rw [e]
       exact hf0
-    simp [hops, hf, spOf_lenObj]
+    simp [hops, hf, len?_lenObj]
 
 theorem run_strokeWords (cx : Ctx) (e : Entered) (st : St) (k : Pdf.PaintStroke) (hops : st.ops = #[]) :
     run cx e st (strokeWords (some k)) = { st with gs := strokeGs st.gs k } := by
@@ -2062,10 +2061,10 @@ def fillRead (f : Pdf.PaintFill) : Fill :=
 /-- A stroke as the importer reads a covered one back: what it states, on
 the print grid, and PDF's initial state for what it leaves unstated. -/
 def strokeRead (k : Pdf.PaintStroke) : Stroke :=
-  { paint := .solid (colorRead (paintColor k.paint)), width := qSp k.width, cap := k.cap.getD .butt
+  { paint := .solid (colorRead (paintColor k.paint)), width := qLen k.width, cap := k.cap.getD .butt
     join := k.join.getD .miter, miterLimit := (k.miter.map fun r => ratRead r.num r.den).getD 10
-    dash := Kit.normDash ((k.dash.map fun dp => dp.1.map qSp).getD #[])
-    phase := (k.dash.map fun dp => qSp dp.2).getD 0, alpha := Alpha.opaque }
+    dash := Kit.normDash ((k.dash.map fun dp => dp.1.map qLen).getD #[])
+    phase := (k.dash.map fun dp => qLen dp.2).getD 0, alpha := Alpha.opaque }
 
 /-- The node the importer builds for a covered `paint`. -/
 def drawRead (fl : Option Pdf.PaintFill) (sk : Option Pdf.PaintStroke) (segs : Array Pdf.PathOp) :
@@ -2707,9 +2706,9 @@ theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain o
 /-- A stroke with every number the writer prints read back, its dash as both readers draw it. -/
 @[expose] public def strokeBack (k : Pdf.PaintStroke) : Pdf.PaintStroke :=
   { k with
-    width := qSp k.width
+    width := qLen k.width
     miter := k.miter.map fun r => ratRead r.num r.den
-    dash := k.dash.map fun dp => (Kit.normDash (dp.1.map qSp), qSp dp.2) }
+    dash := k.dash.map fun dp => (Kit.normDash (dp.1.map qLen), qLen dp.2) }
 
 mutual
 

@@ -284,9 +284,6 @@ private def TextSt.closeTJ (st : TextSt) : TextSt :=
     let q : Nat := (2 * num + den) / (2 * den)
     if neg then -(q : Int) else q
 
-/-- Base units in a big point, the factor between a length and a milli-point count. -/
-private def bpUnits : Nat := (bp 1).units.toNat
-
 private def penTarget (sm tz xm : Int) (x : Length) : Int :=
   let den : Nat := bpUnits * sm.toNat * (1000 + tz).toNat
   let pos : Nat := (x * (1000 : Int)).units.toNat + bpUnits * (-xm).toNat

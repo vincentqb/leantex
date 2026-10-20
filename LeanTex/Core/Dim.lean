@@ -219,6 +219,9 @@ public theorem unitsPerInch_exact : unitsPerInch % 72 = 0 ∧ unitsPerInch % 96 
 /-- The big point, 1⁄72 in: PDF's and CSS's point. -/
 @[expose] public def bp (n : Int) : Length := ⟨n * unitsPerInch / 72⟩
 
+/-- Base units in a big point, PDF's user unit. -/
+@[expose] public def bpUnits : Nat := (bp 1).units.toNat
+
 /-- TeX's point, 1⁄72.27 in. -/
 @[expose] public def pt (n : Int) : Length := ⟨n * unitsPerInch * 100 / 7227⟩
 
@@ -367,6 +370,43 @@ public def ratDecimal (r : Rat) : String := ratString r.num r.den
 /-- A rational count of base units spelled in big points, PDF's user unit, at nine decimals. -/
 public def unitsRatBpString (r : Rat) : String := ratString (r.num * 72) ((r.den : Int) * unitsPerInch)
 
+public theorem unitsRatBpString_bp (r : Rat) :
+    unitsRatBpString r = ratString (r.num * 72) ((r.den : Int) * 72 * (bpUnits : Int)) := by
+  have h : unitsPerInch = 72 * (bpUnits : Int) := by decide
+  simp only [unitsRatBpString, h, Int.mul_assoc]
+
+public theorem bpUnits_eq : bpUnits = 407924 := by decide
+
+public theorem inch_div_bp (n : Int) : inch n / (72 : Nat) = bp n := by
+  simp only [inch, bp, Length.ext_iff', Length.units_divn]
+  rfl
+
+/-- A number's parts `(negative, digits, scale)` in big points as a length, rounded half away from
+zero. -/
+@[expose] public def Length.ofBpParts (p : Bool × Nat × Nat) : Length :=
+  let (neg, n, scale) := p
+  let q : Int := ((2 * bpUnits * n + scale) / (2 * scale) : Nat)
+  ⟨if neg then -q else q⟩
+
+public theorem pt_eq (n : Int) : pt n = ⟨n * 406400⟩ := by
+  simp only [pt, unitsPerInch, Length.ofUnits.injEq]
+  omega
+
+public theorem mm_eq (n : Int) : mm n = ⟨n * 1156320⟩ := by
+  simp only [mm, unitsPerInch, Length.ofUnits.injEq]
+  omega
+
+public theorem px_eq (n : Int) : px n = ⟨n * 305943⟩ := by
+  simp only [px, unitsPerInch, Length.ofUnits.injEq]
+  omega
+
+public theorem Length.ofBpMilli_units (m : Int) : (Length.ofBpMilli m).units =
+    if m < 0 then -(((-m) * bpUnits + 500) / 1000) else (m * bpUnits + 500) / 1000 := by
+  have h : (bpUnits : Int) = 407924 := by decide
+  unfold Length.ofBpMilli
+  simp only [unitsPerInch, h]
+  split <;> (dsimp only; omega)
+
 
 public structure Glue where
   width : Length := 0
@@ -408,26 +448,26 @@ public theorem badness_le (d t : Length) : badness d t ≤ 10000 := by
 
 /-- A length that may depend on the font: an absolute part plus em and ex parts in thousandths. -/
 public structure SymLength where
-  sp : Length := 0
+  fixed : Length := 0
   em : Int := 0
   ex : Int := 0
   deriving Repr, BEq, DecidableEq, Inhabited, Hashable
 
 namespace SymLength
 
-@[expose] public def ofLength (v : Length) : SymLength := { sp := v }
+@[expose] public def ofLength (v : Length) : SymLength := { fixed := v }
 
 @[expose] public def add (a b : SymLength) : SymLength :=
-  { sp := a.sp + b.sp, em := a.em + b.em, ex := a.ex + b.ex }
+  { fixed := a.fixed + b.fixed, em := a.em + b.em, ex := a.ex + b.ex }
 
 /-- Componentwise difference, exact. -/
 @[expose] public def sub (a b : SymLength) : SymLength :=
-  { sp := a.sp - b.sp, em := a.em - b.em, ex := a.ex - b.ex }
+  { fixed := a.fixed - b.fixed, em := a.em - b.em, ex := a.ex - b.ex }
 
 /-- Scale by a rational `num/den`, truncating toward zero as TeX's `\divide` and coefficient
 scaling do (TeX §107). -/
 @[expose] public def scale (l : SymLength) (num : Int) (den : Nat) : SymLength :=
-  { sp := (l.sp * num).tdiv den
+  { fixed := (l.fixed * num).tdiv den
     em := (l.em * num).tdiv den
     ex := (l.ex * num).tdiv den }
 
@@ -437,7 +477,7 @@ scaling do (TeX §107). -/
 
 /-- Resolve against a font size and x-height. -/
 @[expose] public def resolve (l : SymLength) (fontSize xHeight : Length) : Length :=
-  l.sp + l.em * fontSize / 1000 + l.ex * xHeight / 1000
+  l.fixed + l.em * fontSize / 1000 + l.ex * xHeight / 1000
 
 public theorem resolve_ofLength (v fontSize xHeight : Length) :
     (ofLength v).resolve fontSize xHeight = v := by
@@ -680,7 +720,7 @@ the only door from `Affine Measure` to sp. -/
 
 public theorem Affine.resolveWidth_ref_exact (env : MeasureValues) (m : Measure)
     (fontSize xHeight : Length) :
-    (Affine.ref m).resolveWidth env fontSize xHeight = (env.find m).width.sp := by
+    (Affine.ref m).resolveWidth env fontSize xHeight = (env.find m).width.fixed := by
   cases m <;> simp [Affine.resolveWidth, Affine.eval, MeasureValues.find,
     SymLength.resolve, SymLength.ofLength, Length.ext_iff']
 

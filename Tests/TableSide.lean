@@ -206,7 +206,7 @@ private def spOfPt (printed : String) : Dim.Length :=
 
 /-- Whether a fixed length is `want` on TeX's grid of scaled points. -/
 private def onSpGrid (got : Option Dim.SymLength) (want : Dim.Length) : Bool :=
-  got.any fun w => w.em == 0 && w.ex == 0 && w.sp.toSp == want.toSp
+  got.any fun w => w.em == 0 && w.ex == 0 && w.fixed.toSp == want.toSp
 
 /-- A small formal table under every kind of rule. -/
 private def ruledTable : String :=

@@ -170,7 +170,7 @@ public def Val.text : Val → String
 /-- A literal like `0.5cm` as a length, or `none` for a font-relative or unknown unit. -/
 public def unitLen? (m : Int) (u : String) : Option Length :=
   (Decl.parseLength (milliString m ++ u)).bind fun l =>
-    if l.em == 0 && l.ex == 0 then some l.sp else none
+    if l.em == 0 && l.ex == 0 then some l.fixed else none
 
 /-- A unitless milli value read as points where units are declared beside it, as pgfmath reads it. -/
 public def milliPt (m : Int) : Length :=

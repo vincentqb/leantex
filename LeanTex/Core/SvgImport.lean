@@ -100,7 +100,7 @@ public def num? (s : String) : Option Rat :=
   | u => l.value * u.factor
 
 /-- Pixels as `Length` of user space, rounded once, half away from zero. -/
-@[expose] public def spOf (px : Rat) : Length := Length.ofRatRound (px * pxSp.toRat)
+@[expose] public def pxLen (px : Rat) : Length := Length.ofRatRound (px * pxSp.toRat)
 
 /-- The fixed-point factor a bounding-box frame carries: one big point, the side of a raster's
 unit square. -/
@@ -707,12 +707,12 @@ back (CSS Transforms 1 §6.1); the identity stays the identity. -/
 public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Array Xml.Attr) : Read :=
   let fontSize := pick d "font-size" true parent.fontSize Style.initial.fontSize (fontSize? parent.fontSize)
   let len (base : Rat) (s : String) : Option Length :=
-    (length? s).bind fun l => let v := l.toPx fontSize base; if v < 0 then none else some (spOf v)
+    (length? s).bind fun l => let v := l.toPx fontSize base; if v < 0 then none else some (pxLen v)
   let color := pick d "color" true parent.color Style.initial.color (colorValue? parent.color)
   let dash? (s : String) : Option (Array Length) :=
     if s.trimAscii.toString.toLower == "none" then some #[] else
     (lengthList? s).bind fun ls =>
-      let vs := ls.map fun l => spOf (l.toPx fontSize vp.diag)
+      let vs := ls.map fun l => pxLen (l.toPx fontSize vp.diag)
       if vs.any (· < 0) then none else some (Kit.normDash vs)
   let style : Style :=
     { fill := pick d "fill" true parent.fill Style.initial.fill paint?
@@ -729,7 +729,7 @@ public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Ar
         (num? s).bind fun q => if q < 1 then none else some q
       dash := pick d "stroke-dasharray" true parent.dash #[] dash?
       dashOffset := pick d "stroke-dashoffset" true parent.dashOffset 0 fun s =>
-        (length? s).map fun l => spOf (l.toPx fontSize vp.diag)
+        (length? s).map fun l => pxLen (l.toPx fontSize vp.diag)
       color
       visible := pick d "visibility" true parent.visible true fun s => match s.trimAscii.toString with
         | "visible" => some true | "hidden" => some false | "collapse" => some false | _ => none
@@ -783,7 +783,7 @@ public def computeStyle (d : Decls) (parent : Style) (vp : Viewport) (attrs : Ar
     overflowVisible := overflowVisible, origin := origin, losses := losses }
 
 /-- A point of user space, in `Length`. -/
-@[expose] public def pt (x y : Rat) : Pt := (spOf x, spOf y)
+@[expose] public def pt (x y : Rat) : Pt := (pxLen x, pxLen y)
 
 /-- Path commands as absolute subpaths of user space, quadratics elevated and arcs as cubics. -/
 public def subpathsOf (cmds : Array PathData.Cmd) : Array Subpath := Id.run do
@@ -860,7 +860,7 @@ public def subpathsOf (cmds : Array PathData.Cmd) : Array Subpath := Id.run do
           let (bx, by_) := base rel
           let p := (bx + x.toRat, by_ + y.toRat)
           let φ := Trig.divRound (rot.toRat.num * Trig.pi) (180 * (rot.toRat.den : Int))
-          (Kit.arcEndpoint (pt px py) (spOf rx.toRat).abs (spOf ry.toRat).abs φ large sweep
+          (Kit.arcEndpoint (pt px py) (pxLen rx.toRat).abs (pxLen ry.toRat).abs φ large sweep
             (pt p.1 p.2), p, none, none)
         | .move _ _ _ | .close => (#[], (px, py), none, none)
       cur := some { s with segs := s.segs ++ segs }
@@ -903,16 +903,16 @@ public def basicGeom (name : String) (attrs : Array Xml.Attr) (em : Rat) (vp : V
       | none, none => (0, 0)
     let x := l "x" vp.w
     let y := l "y" vp.h
-    if rx ≤ 0 || ry ≤ 0 then some (.rect (spOf x) (spOf y) (spOf w) (spOf h))
-    else some (.path #[Kit.roundedRect (spOf x) (spOf y) (spOf w) (spOf h) (spOf rx) (spOf ry)])
+    if rx ≤ 0 || ry ≤ 0 then some (.rect (pxLen x) (pxLen y) (pxLen w) (pxLen h))
+    else some (.path #[Kit.roundedRect (pxLen x) (pxLen y) (pxLen w) (pxLen h) (pxLen rx) (pxLen ry)])
   | "circle" =>
     let r := l "r" vp.diag
-    if r ≤ 0 then none else some (.ellipse (spOf (l "cx" vp.w)) (spOf (l "cy" vp.h)) (spOf r) (spOf r))
+    if r ≤ 0 then none else some (.ellipse (pxLen (l "cx" vp.w)) (pxLen (l "cy" vp.h)) (pxLen r) (pxLen r))
   | "ellipse" =>
     let rx := l "rx" vp.w
     let ry := l "ry" vp.h
     if rx ≤ 0 || ry ≤ 0 then none
-    else some (.ellipse (spOf (l "cx" vp.w)) (spOf (l "cy" vp.h)) (spOf rx) (spOf ry))
+    else some (.ellipse (pxLen (l "cx" vp.w)) (pxLen (l "cy" vp.h)) (pxLen rx) (pxLen ry))
   | "line" =>
     some (.path #[{ start := pt (l "x1" vp.w) (l "y1" vp.h), segs := #[.line (pt (l "x2" vp.w) (l "y2" vp.h))]
                     closed := false }])
@@ -1432,7 +1432,7 @@ public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array T
     let fill := p.fill.filter (·.alpha.val != 0)
     if text.any needsShaping then st := st.lose shapingLoss
     if s.visible && !text.isEmpty then
-      out := out.push (.label { xf, follows, size := spOf s.fontSize, text
+      out := out.push (.label { xf, follows, size := pxLen s.fontSize, text
                                 face := { families := s.families, weight := s.weight, italic := s.italic }
                                 anchor := s.anchor, fill, stroke := p.stroke, lang := s.lang })
       -- Engine-set text paints a solid fill only.
@@ -1537,7 +1537,7 @@ public def itemBoxOne (env : Env) (cx : Ctx) (acc : Except Gfx.Loss (Option Box)
         let w := lenAttr attrs "width" em cx.vp.w 0
         let h := lenAttr attrs "height" em cx.vp.h 0
         if w ≤ 0 || h ≤ 0 then .ok b
-        else .ok (Box.joinOpt b (some (Box.image xf ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))))
+        else .ok (Box.joinOpt b (some (Box.image xf ((pxLen x, pxLen y), (pxLen (x + w), pxLen (y + h))))))
       | "use" | "text" | "svg" | "switch" | "foreignObject" | "textPath" =>
         .error (unmeasuredClip "a use whose content holds text, a use or a viewport")
       | _ =>
@@ -1611,10 +1611,10 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         | none => { w, h }
       let (st, body) := walkList env bud { inner with vp } false (st, #[]) kids.toList
       let clip : Option Clip := if r.overflowVisible == some true then none
-        else some { geom := .rect (spOf x) (spOf y) (spOf w) (spOf h), rule := .nonzero }
+        else some { geom := .rect (pxLen x) (pxLen y) (pxLen w) (pxLen h), rule := .nonzero }
       let viewport := #[Node.group Affine.unit (clip.toArray) Alpha.opaque #[.group m #[] Alpha.opaque body]]
       -- A nested viewport takes its own transform and clip-path (SVG 2 §8.5).
-      let (clipR, st) := clipFor st fun _ => .ok (some ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))
+      let (clipR, st) := clipFor st fun _ => .ok (some ((pxLen x, pxLen y), (pxLen (x + w), pxLen (y + h))))
       match clipR with
       | none => (st, out)
       | some c => (st, out.append (wrap xf c r.opacity viewport))
@@ -1657,7 +1657,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
               | some v => v.trimAscii.toString != "visible" && v.trimAscii.toString != "auto"
               | none => true
             let clip : Array Clip := if overflowHidden
-              then #[{ geom := .rect 0 0 (spOf w) (spOf hh), rule := .nonzero }] else #[]
+              then #[{ geom := .rect 0 0 (pxLen w) (pxLen hh), rule := .nonzero }] else #[]
             let content : Ctx := { up := subjectOf tname tattrs :: target.up, parent := s, vp }
             let contentBox : Except Gfx.Loss (Option Box) := match target.item with
               | .elem _ _ _ tkids => itemBoxList env content (.ok none) tkids.toList
@@ -1711,8 +1711,8 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         let k := st.rasters.size
         let st := { st with rasters := st.rasters.push ras }
         let clip : Array Clip := if par.slice && par.align.isSome
-          then #[{ geom := .rect (spOf x) (spOf y) (spOf w) (spOf h), rule := .nonzero }] else #[]
-        let (clipR, st) := clipFor st fun _ => .ok (some ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))
+          then #[{ geom := .rect (pxLen x) (pxLen y) (pxLen w) (pxLen h), rule := .nonzero }] else #[]
+        let (clipR, st) := clipFor st fun _ => .ok (some ((pxLen x, pxLen y), (pxLen (x + w), pxLen (y + h))))
         match clipR with
         | none => (st, out)
         | some c =>
@@ -1908,7 +1908,7 @@ cascade. -/
 /-- The figure box an SVG tree reserves: its root viewport from the origin, in `Length`. -/
 @[expose] public def rootBox (t : Xml.Item) : Box :=
   let px := rootPx (Css.RuleIndex.ofRules (sheetsOf t).1) (rootParts t).1
-  ((0, 0), (spOf px.1, spOf px.2))
+  ((0, 0), (pxLen px.1, pxLen px.2))
 
 mutual
 
@@ -2022,8 +2022,8 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
   let m := match vb with
     | some v => viewMap v par 0 0 w h
     | none => Affine.unit
-  let wsp := spOf w
-  let hsp := spOf h
+  let wsp := pxLen w
+  let hsp := pxLen h
   let flip : Affine := ⟨1, 0, 0, -1, 0, hsp.toRat⟩
   let rootXf := flip.compose m
   let clip := r.clipPath.isSome

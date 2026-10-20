@@ -105,10 +105,10 @@ private theorem mul_zero_div (x : Length) (k : Nat) : x * (0 : Nat) / k = 0 := b
 
 /-- A title metric at a leading and cap height. -/
 @[expose] public def metricAt (m : Ir.BlockMetric) (lead cap : Length) : Length :=
-  mathLen (m.resolve lead.units cap.units)
+  m.resolve lead cap
 
 /-- An alignment's share of the slack beside a box. -/
-@[expose] public def slackShare (h : Ir.HAlign) (slack : Length) : Length := mathLen (h.boxOffset slack.units)
+@[expose] public def slackShare (h : Ir.HAlign) (slack : Length) : Length := h.boxOffset slack
 
 /-- A face set's x-height at a size. -/
 @[expose] public def xHeightOf (fs : FontSet) (size : Length) : Length := fs.xHeightAt size
@@ -322,7 +322,7 @@ public theorem slides_lines_survive_bands (a d f : Length)
   simp only [furnitureBand, furnEdge, Option.getD, hv] at hhb hfb
   simp only [Geom.bodyBottom, Geom.bodyTop, Geom.bottomMargin, hm, Option.getD_none, hv]
   simp only [Ir.slidesVMargin, Ir.slidesFontSize, leadingFor, Ir.leadingFor, Ir.leadingMilli,
-    inkClearance, Ir.inkClearance, Dim.mm, Dim.pt, unitsPerInch] at *
+    inkClearance, Ir.inkClearance, Dim.mm_eq, Dim.pt_eq] at *
   length_omega
 
 /-- How a page distributes its leftover vertical space: thousandths of a fil
@@ -3629,9 +3629,9 @@ private def gridAssemble (e : MathEnv) (size raise : Length) (kind : Math.GridKi
   for row in cells do
     for k in [0:row.size] do
       colW := colW.set! k (max colW[k]! (mathItemsWidth row[k]!))
-  let cols : List (Int × Int) := (List.range n).map fun k =>
-    (colW[k]!.units, (muAt size (kind.gapAfter k n : Int) + mathLen (kind.pairSep k n)).units)
-  let total := mathLen (Math.colOffset cols n)
+  let cols : List (Length × Length) := (List.range n).map fun k =>
+    (colW[k]!, muAt size (kind.gapAfter k n : Int) + kind.pairSep k n)
+  let total := Math.colOffset cols n
   let bl := leadingFor size
   -- plain.tex's `\lineskip`, size-relative; a `smallmatrix` declares its own (`GridKind.small`).
   let gridSkip := match kind with
@@ -3668,7 +3668,7 @@ private def gridAssemble (e : MathEnv) (size raise : Length) (kind : Math.GridKi
     for k in [0:row.size] do
       let cellItems := row[k]!
       let cw := mathItemsWidth cellItems
-      let x := mathLen (Math.colOffset cols k) + mathLen ((kind.colAlign k).pad colW[k]!.units cw.units)
+      let x := Math.colOffset cols k + (kind.colAlign k).pad colW[k]! cw
       items := items.push (mathKern e size (x - cur))
       items := items ++ raiseItems (Δ + ys[i]!) cellItems
       cur := x + cw
@@ -3719,8 +3719,8 @@ private def fracAssemble (e : MathEnv) (size : Length) (display : Bool) (raise :
   let denW := mathItemsWidth denItems
   let ruleW := max numW denW
   let nd := size * 12 / 100
-  let numPad := mathLen (Math.ColAlign.pad .center ruleW.units numW.units)
-  let denPad := mathLen (Math.ColAlign.pad .center ruleW.units denW.units)
+  let numPad := Math.ColAlign.pad .center ruleW numW
+  let denPad := Math.ColAlign.pad .center ruleW denW
   let bar : Array Item :=
     if θ == 0 then #[] else #[Item.rule ruleW θ (raise + axis - θ / 2) e.color false, mathKern e size (-ruleW)]
   (#[mathKern e size (if ndLeft then nd else 0), mathKern e size numPad]
@@ -3969,7 +3969,7 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Length)
         (opBot - e.constAt size e.consts.lowerLimitGapMin - subTop)
       let place (items : Array Item) (itemsW : Length) (delta : Length) : Array Item :=
         if items.isEmpty then #[] else
-        let padK := mathLen (Math.ColAlign.pad .center w.units itemsW.units)
+        let padK := Math.ColAlign.pad .center w itemsW
         let shifted := raiseItems delta items
         (#[mathKern e size padK] ++ shifted).push
           (mathKern e size (w - padK - itemsW)) |>.push (mathKern e size (-w))
@@ -4083,10 +4083,10 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     let (denItems, m2) := layMathTail e fst.fracDen 0
       (Math.degrade den.classes) none (#[], m1) den
     if spec.left.isNone && spec.right.isNone then
-      (acc.1 ++ fracAssemble e size display raise (spec.rule.map mathLen) true true numItems
+      (acc.1 ++ fracAssemble e size display raise (spec.rule) true true numItems
         denItems, m2)
     else
-      let bar := fracAssemble e size display 0 (spec.rule.map mathLen) spec.left.isNone
+      let bar := fracAssemble e size display 0 (spec.rule) spec.left.isNone
         spec.right.isNone
         numItems denItems
       let (items, missing) := delimAssembleTo e size raise spec.left spec.right
@@ -9595,34 +9595,34 @@ which point of the page, the shifts, the inner and outer seps, and a declared wi
 public structure SlotSpec where
   anchor : Ir.BoxPoint
   pagePoint : Ir.BoxPoint
-  dx : Int
-  dy : Int
-  sep : Int
-  outerSep : Int
-  box : Option (Int × Int)
+  dx : Length
+  dy : Length
+  sep : Length
+  outerSep : Length
+  box : Option (Length × Length)
   deriving Repr, Inhabited
 
 /-- Where a slot's box goes: its expanded anchor point onto the
 page point, plus the declared shifts (pgf manual §17.2). -/
-public def slotShift (spec : SlotSpec) (pageW pageH left w top h : Int) : Int × Int :=
+public def slotShift (spec : SlotSpec) (pageW pageH left w top h : Length) : Length × Length :=
   let inset := spec.sep + spec.outerSep
   let bw := w + 2 * inset
   let bh := h + 2 * inset
-  let px := Ir.shareOf spec.pagePoint.hshares pageW + spec.dx
-  let py := Ir.shareOf spec.pagePoint.vshares pageH + spec.dy
-  (px - (left - inset + Ir.shareOf spec.anchor.hshares bw),
-   py - (top - inset + Ir.shareOf spec.anchor.vshares bh))
+  let px := Ir.shareLen spec.pagePoint.hshares pageW + spec.dx
+  let py := Ir.shareLen spec.pagePoint.vshares pageH + spec.dy
+  (px - (left - inset + Ir.shareLen spec.anchor.hshares bw),
+   py - (top - inset + Ir.shareLen spec.anchor.vshares bh))
 
-public theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Int) :
+public theorem slotShift_exact (spec : SlotSpec) (pageW pageH left w top h : Length) :
     left + (slotShift spec pageW pageH left w top h).1 - spec.sep - spec.outerSep
-        + Ir.shareOf spec.anchor.hshares (w + 2 * (spec.sep + spec.outerSep))
-      = Ir.shareOf spec.pagePoint.hshares pageW + spec.dx ∧
+        + Ir.shareLen spec.anchor.hshares (w + 2 * (spec.sep + spec.outerSep))
+      = Ir.shareLen spec.pagePoint.hshares pageW + spec.dx ∧
     top + (slotShift spec pageW pageH left w top h).2 - spec.sep - spec.outerSep
-        + Ir.shareOf spec.anchor.vshares (h + 2 * (spec.sep + spec.outerSep))
-      = Ir.shareOf spec.pagePoint.vshares pageH + spec.dy := by
+        + Ir.shareLen spec.anchor.vshares (h + 2 * (spec.sep + spec.outerSep))
+      = Ir.shareLen spec.pagePoint.vshares pageH + spec.dy := by
   unfold slotShift
   dsimp only
-  constructor <;> omega
+  constructor <;> length_omega
 
 /-- Where an empty box (`Op.boxAnchor`) stands below the band above. -/
 private inductive AnchorRule where
@@ -13046,12 +13046,12 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
     let rise := max 0 (h + dn - inset)
     let line := inset + lead * 7 / 10
     let room := texBaselineGap bs (max dn d) next - texBaselineGap bs dn next
-    some { top := (b - lead - h).units, bottom := (box - b - d).units
-           rise := (texBaselineGap bs prev (line + rise) - texBaselineGap bs prev line).units
-           riseMany := (texBaselineGap bs prev (line + lead + rise) -
-             texBaselineGap bs prev (line + lead)).units
-           room := room.units, depth := d.units
-           bodyBelow := (leaded body geom.fontSize).2.units }
+    some { top := b - lead - h, bottom := box - b - d
+           rise := texBaselineGap bs prev (line + rise) - texBaselineGap bs prev line
+           riseMany := texBaselineGap bs prev (line + lead + rise) -
+             texBaselineGap bs prev (line + lead)
+           room, depth := d
+           bodyBelow := (leaded body geom.fontSize).2 }
 
 /-- The part below its baseline of a web block's last line box when
 that line is a listing's (CSS 2.1 §10.8.1); `none` otherwise. -/
@@ -13808,12 +13808,12 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
           let a := collectBlock rs a blk indent
           let spec : SlotSpec :=
             { anchor := pl.anchor, pagePoint := pl.pagePoint
-              dx := ((pl.xshift.map fun g => (r.resolve g).width).getD 0).units
-              dy := (-((pl.yshift.map fun g => (r.resolve g).width).getD 0)).units
-              sep := ((pl.innerSep.map fun g => (r.resolve g).width).getD
-                (Ir.pgfInnerSep r.geom.fontSize)).units
-              outerSep := Ir.pgfOuterSep.units
-              box := w.map fun w => ((r.geom.hmargin + indent).units, w.units) }
+              dx := (pl.xshift.map fun g => (r.resolve g).width).getD 0
+              dy := -((pl.yshift.map fun g => (r.resolve g).width).getD 0)
+              sep := (pl.innerSep.map fun g => (r.resolve g).width).getD
+                (Ir.pgfInnerSep r.geom.fontSize)
+              outerSep := Ir.pgfOuterSep
+              box := w.map fun w => (r.geom.hmargin + indent, w) }
           { a.pushOp (.slotClose spec) with measure := saved }
         | none => collectBlock rs a blk indent
       | none => collectBlock r a blk indent
@@ -16944,11 +16944,8 @@ private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat
       (first.y + (extent first).2)
     let lo := group.foldl (fun m l => min m l.x) first.x
     let hi := group.foldl (fun m l => max m (l.x + l.setWidth)) (first.x + first.setWidth)
-    let (left, w) := spec.box.getD (lo.units, (hi - lo).units)
-    let (dx, dy) := slotShift spec b.geom.pageW.units b.geom.pageH.units left w top.units
-      (bot - top).units
-    let dx := mathLen dx
-    let dy := mathLen dy
+    let (left, w) := spec.box.getD (lo, hi - lo)
+    let (dx, dy) := slotShift spec b.geom.pageW b.geom.pageH left w top (bot - top)
     let lines := b.cur.lines.mapIdx fun i l =>
       if i < l0 then l else { l with x := l.x + dx, y := l.y + dy }
     let fills := b.cur.fills.mapIdx fun i f =>

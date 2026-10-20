@@ -244,7 +244,7 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
       pads grouped == #[Dim.SymLength.ofLength 0, Dim.SymLength.ofLength (pt 3)])
   let viaMacro := doc "\\newcommand\\tightbox[1]{{\\setlength{\\fboxsep}{1pt}\\colorbox{yellow}{#1}}}\n"
     "Alpha \\tightbox{one} and \\colorbox{yellow}{two} end."
-  t s!"box scope: a macro's own group scopes its fboxsep ({(pads viaMacro).map (·.sp.toBpString)})"
+  t s!"box scope: a macro's own group scopes its fboxsep ({(pads viaMacro).map (·.fixed.toBpString)})"
     (paras viaMacro == 1 && pads viaMacro == #[Dim.SymLength.ofLength (pt 1), Dim.SymLength.ofLength (pt 3)])
   let ruled := doc "" "Alpha {\\setlength{\\fboxrule}{2pt}\\fbox{a}} \\fbox{b} end."
   t "box scope: a body fboxrule holds to its group"
@@ -270,7 +270,7 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (pale.size == 1 && pale.all fun d => d.span.any fun sp => sp.pos.line == 5 && sp.pos.col == 19)
   let envTight := doc "\\newenvironment{tight}{\\setlength{\\fboxsep}{0pt}}{}\n"
     "Foxtrot \\begin{tight}\\colorbox{yellow}{six}\\end{tight} words \\colorbox{yellow}{seven}.\n\n\\colorbox{yellow}{eight}"
-  t s!"box scope: an environment's begin code sets its content's boxes and ends with it ({(pads envTight).map (·.sp.toBpString)})"
+  t s!"box scope: an environment's begin code sets its content's boxes and ends with it ({(pads envTight).map (·.fixed.toBpString)})"
     (pads envTight == #[Dim.SymLength.ofLength 0, Dim.SymLength.ofLength (pt 3), Dim.SymLength.ofLength (pt 3)])
   let envNotes := doc "\\newenvironment{probe}{\\footnote{begin note}}{}\n"
     "Alpha \\begin{probe}text\\footnote{inner note}\\end{probe} words\\footnote{after note}."

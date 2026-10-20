@@ -219,7 +219,7 @@ public def Dimen.add? (a b : Dimen) : Option Dimen :=
       font := if a.fonted then a.font else b.font })
 
 public def Dimen.neg (a : Dimen) : Dimen :=
-  { len := { sp := -a.len.sp, em := -a.len.em, ex := -a.len.ex }, line := -a.line
+  { len := { fixed := -a.len.fixed, em := -a.len.em, ex := -a.len.ex }, line := -a.line
     ext := a.ext.map fun (b, e, k) => (b, e, -k), parskip := -a.parskip, lead := -a.lead
     cap := -a.cap, font := a.font }
 
@@ -236,7 +236,7 @@ private def Dimen.scale? (d : Dimen) (num : Int) (den : Nat) : Option Dimen :=
   else
     let f (v : Int) : Int := roundDiv (v * num) den
     some (Dimen.norm
-      { len := { sp := .ofUnits (f d.len.sp.units), em := f d.len.em, ex := f d.len.ex }
+      { len := { fixed := .ofUnits (f d.len.fixed.units), em := f d.len.em, ex := f d.len.ex }
         line := f d.line
         ext := mergeExt (d.ext.map fun (b, e, k) => (b, e, k * num / (den : Int)))
         parskip := f d.parskip, lead := f d.lead, cap := f d.cap, font := d.font })
@@ -291,7 +291,7 @@ private def priorId : Nat := 0
 
 /-- TeX's `\prevdepth` that suppresses the next interline glue, `-1000pt`
 (`\nointerlineskip`, a fresh box's list, a rule). -/
-private def ignoreDepth : Dimen := { len := { sp := -1000 * Dim.pt 1 } }
+private def ignoreDepth : Dimen := { len := { fixed := -1000 * Dim.pt 1 } }
 
 /-- What a `\last…` register holds: the body's trailing item, a skip or penalty the template
 set, or TeX's zero. -/
@@ -620,7 +620,7 @@ private def St.internalAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat)
   | .cs n =>
     if measureRegs.contains n then some ({ line := 1000 }, k + 1)
     else if n == "z@" then some ({}, k + 1)
-    else if n == "p@" then some ({ len := { sp := Dim.pt 1 } }, k + 1)
+    else if n == "p@" then some ({ len := { fixed := Dim.pt 1 } }, k + 1)
     else if n == "parskip" then some ({ parskip := 1000 }, k + 1)
     -- `\prevdepth` reads only in a vertical list, as TeX's does.
     else if n == "prevdepth" then
@@ -915,7 +915,7 @@ private def Chars.relAt (c : Chars) (k : Nat) : Option (Char × Nat) :=
 /-- Whether a length is known to be at least or at most zero, and strictly, from the signs of
 its terms. -/
 private def Dimen.signs (d : Dimen) (packed : List Nat) : (Bool × Bool) × (Bool × Bool) :=
-  let fixed := d.len.sp
+  let fixed := d.len.fixed
   let pos := [d.len.em, d.len.ex, d.line, d.parskip, d.lead, d.cap]
   let known := d.ext.all fun (id, e, _) => packed.contains id && e != .wd
   let terms := pos ++ d.ext.map (·.2.2)
@@ -1310,7 +1310,7 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
       | "vrule" =>
         match s.readRuleSpec s.chars (i + 1) with
         | some ((w, h, d), k) =>
-          let w := w.orElse fun _ => some { len := { sp := Dim.pt 4 / 10 } }
+          let w := w.orElse fun _ => some { len := { fixed := Dim.pt 4 / 10 } }
           s := s.pushH (.rule w h d s.scope.paint s.scope.font)
           i := k
         | none => s := s.miss "\\vrule with a dimension it cannot read"; i := i + 1
@@ -1693,7 +1693,7 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool ×
       | some (font, parskip, strut, strutFont) =>
         let metric (x : Dimen) : Option Ir.BlockMetric :=
           if x.line == 0 && x.len.em == 0 && x.len.ex == 0 && (!x.fonted || x.font == some font)
-          then some { lead := x.lead, cap := x.cap, sp := x.len.sp.units } else none
+          then some { lead := x.lead, cap := x.cap, fixed := x.len.fixed } else none
         let lines := h.ext.length == 2 && h.ext.contains (id, .ht, 1) && h.ext.contains (id, .dp, 1)
         match metric h, metric d with
         | some mh, some md =>
@@ -1796,7 +1796,7 @@ private def Dimen.same (a b : Dimen) : Bool := match a.add? b.neg with
 
 /-- A title metric as the length it reads in the title's font. -/
 private def metricDimen (m : Ir.BlockMetric) (font : Option String) : Dimen :=
-  Dimen.norm { len := { sp := .ofUnits m.sp }, lead := m.lead, cap := m.cap, font := some font }
+  Dimen.norm { len := { fixed := m.fixed }, lead := m.lead, cap := m.cap, font := some font }
 
 /-- The rule a box of no size sets on its baseline: its shift, the rule's lift, size and paint. -/
 private def overlayRule (n : Node) :

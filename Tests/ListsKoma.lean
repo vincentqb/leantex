@@ -170,7 +170,7 @@ def komaListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- lualatex: the class's written options stand over those passed to it before it loads.
   t "koma lists: a class's written option stands over the one passed to it"
     (((elabStr ("\\PassOptionsToClass{parskip=full}{scrartcl}\n" ++
-        doc "[parskip=half]{scrartcl}" "" "Alpha.")).1.page.parskip.map (·.width.sp)) == some (Dim.pt 68 / 10))
+        doc "[parskip=half]{scrartcl}" "" "Alpha.")).1.page.parskip.map (·.width.fixed)) == some (Dim.pt 68 / 10))
   -- enumitem's keys stand over the level's macro: a declared parsep is the next level's parskip.
   let declared := doc "{scrartcl}" "\\usepackage{enumitem}\n\\setlist[1]{parsep=0pt}" nested
   t "koma lists: a declared level-one parsep of zero leaves the second level's own skips"

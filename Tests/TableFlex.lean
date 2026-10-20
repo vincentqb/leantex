@@ -70,7 +70,7 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     let rule := lines.find? fun l => l.segs.any fun s => s matches .rule _ _ _ _ _
     let runs := lines.flatMap lineRuns
     let right := runs.foldl (fun x r => max x (r.2.2.1 + r.2.2.2)) 0
-    let trailing := if c.padR then Ir.tabColSep.sp else 0
+    let trailing := if c.padR then Ir.tabColSep.fixed else 0
     t s!"tabularx {c.name}: last cell reaches the target edge inside its pad"
       (match rule with
        | some l => runs.size > 0 && l.x + pt 200 - ((c.count : Int) - 1) * Dim.Length.quantum ≤ right + trailing &&
@@ -90,7 +90,7 @@ def tableFlexOverflowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     let doc := { doc with page := { doc.page with fontSize := pt points } }
     let out := layoutOf oneFace doc
     let widths := flexRuleWidths out
-    let expected := pt (210 + points) + 4 * Ir.tabColSep.sp
+    let expected := pt (210 + points) + 4 * Ir.tabColSep.fixed
     t s!"impossible tabularx at {points}pt: X retains one em in the shipped rules"
       (widths.size == 2 && widths.all (· == expected))
     t s!"impossible tabularx at {points}pt: both cells still ship"

@@ -920,7 +920,7 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
     if g.fil then
       let acc := if acc.endsWith " " then (acc.dropEnd 1).toString else acc
       acc ++ " — "
-    else if e.anyRef (fun _ => true) || g.width.sp > 0 || g.width.em > 0 || g.width.ex > 0 then
+    else if e.anyRef (fun _ => true) || g.width.fixed > 0 || g.width.em > 0 || g.width.ex > 0 then
       if acc.endsWith " " then acc else acc ++ " "
     else acc
   | .rule _ _ _ => acc
@@ -958,7 +958,7 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
     | .hspace e keep =>
       let zero := Dim.MeasureValues.horizontal 0 0
       let g := e.eval (Dim.MeasureValues.find zero)
-      let bare := !g.fil && !e.anyRef (fun _ => true) && g.width.sp == 0 && g.width.em == 0 &&
+      let bare := !g.fil && !e.anyRef (fun _ => true) && g.width.fixed == 0 && g.width.em == 0 &&
         g.width.ex == 0
       if bare && acc.endsWith "$" && opensInlineMath rest then
         inlinesInto site cites (acc ++ " ") prev after 0 rest

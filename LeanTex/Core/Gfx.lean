@@ -579,8 +579,7 @@ public def regularPolygon (cx cy r : Length) (n : Nat) (θ0 : Int) : Subpath :=
   let n := max 3 n
   let vertex (k : Nat) : Pt :=
     let (c, s) := Trig.cosSin (θ0 + 2 * Trig.pi * (k : Int) / (n : Int))
-    (cx + .ofUnits (Trig.divRound (r.units * c) Trig.unit),
-      cy + .ofUnits (Trig.divRound (r.units * s) Trig.unit))
+    (cx + r.scaleRound c Trig.unit, cy + r.scaleRound s Trig.unit)
   { start := vertex 0, segs := (Array.range (n - 1)).map fun k => .line (vertex (k + 1))
     closed := true }
 
@@ -1013,7 +1012,7 @@ public theorem Node.recolor_geomBox_id {L : Type} (f : Ir.Color → Ir.Color) (f
              symbols := fig.symbols.map fun s => Node.recolorList f fl #[] s.toList }
 
 /-- A length on the milli-point grid both emitters print to. -/
-@[expose] public def qSp (x : Length) : Length := .ofBpMilli x.toBpMilli
+@[expose] public def qLen (x : Length) : Length := .ofBpMilli x.toBpMilli
 
 /-- A matrix entry on the nine-decimal grid of `Dim.ratString`. -/
 @[expose] public def qRat (r : Rat) : Rat :=
@@ -1025,16 +1024,16 @@ public theorem Node.recolor_geomBox_id {L : Type} (f : Ir.Color → Ir.Color) (f
 @[expose] public def Affine.quantize (m : Affine) : Affine :=
   ⟨qRat m.a, qRat m.b, qRat m.c, qRat m.d, qRat m.e, qRat m.f⟩
 
-@[expose] public def qPt (p : Pt) : Pt := (qSp p.1, qSp p.2)
+@[expose] public def qPt (p : Pt) : Pt := (qLen p.1, qLen p.2)
 
 @[expose] public def Geom.quantize : Geom → Geom
-  | .rect x y w h => .rect (qSp x) (qSp y) (qSp w) (qSp h)
-  | .ellipse cx cy rx ry => .ellipse (qSp cx) (qSp cy) (qSp rx) (qSp ry)
+  | .rect x y w h => .rect (qLen x) (qLen y) (qLen w) (qLen h)
+  | .ellipse cx cy rx ry => .ellipse (qLen cx) (qLen cy) (qLen rx) (qLen ry)
   | .path subs => .path (subs.map (Subpath.map qPt))
 
 @[expose] public def Gradient.quantize : Gradient → Gradient
   | .linear p0 p1 stops xf => .linear (qPt p0) (qPt p1) stops xf.quantize
-  | .radial c0 r0 c1 r1 stops xf => .radial (qPt c0) (qSp r0) (qPt c1) (qSp r1) stops xf.quantize
+  | .radial c0 r0 c1 r1 stops xf => .radial (qPt c0) (qLen r0) (qPt c1) (qLen r1) stops xf.quantize
 
 @[expose] public def Paint.quantize : Paint → Paint
   | .solid c => .solid c
@@ -1043,8 +1042,8 @@ public theorem Node.recolor_geomBox_id {L : Type} (f : Ir.Color → Ir.Color) (f
 @[expose] public def Fill.quantize (fl : Fill) : Fill := { fl with paint := fl.paint.quantize }
 
 @[expose] public def Stroke.quantize (st : Stroke) : Stroke :=
-  { st with paint := st.paint.quantize, width := qSp st.width, dash := st.dash.map qSp
-            phase := qSp st.phase, miterLimit := qRat st.miterLimit }
+  { st with paint := st.paint.quantize, width := qLen st.width, dash := st.dash.map qLen
+            phase := qLen st.phase, miterLimit := qRat st.miterLimit }
 
 @[expose] public def Clip.quantize (c : Clip) : Clip := { c with geom := c.geom.quantize }
 

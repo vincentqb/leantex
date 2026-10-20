@@ -303,7 +303,7 @@ private def decMilli (n : Int) : String :=
 and zero as `zero`, `0pt` unless asked, so it composes in `calc()`. -/
 public def cssLengthIn (absolute : Length → String) (l : SymLength) (zero : String := "0pt") : String :=
   let parts :=
-    (if l.sp != 0 then [absolute l.sp] else []) ++
+    (if l.fixed != 0 then [absolute l.fixed] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
   match parts with
@@ -399,8 +399,8 @@ public def Config.groundLiteral (cfg : Config) (c : Ir.Color) : String :=
 /-- The math face's cancel-mark metrics in thousandths of an em, or TeX's defaults without faces. -/
 public def mathMarks (cfg : Config) : MathMl.Marks :=
   let marks : MathMl.Marks := {
-    alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.SymLength.ofLength (.ofUnits Math.minAlignSep))
-      else classLengthCss cfg.page.fontSize (Dim.SymLength.ofLength (.ofUnits Math.minAlignSep))
+    alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.SymLength.ofLength Math.minAlignSep)
+      else classLengthCss cfg.page.fontSize (Dim.SymLength.ofLength Math.minAlignSep)
     metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
     em := cfg.mathEm cfg.measureValues cfg.mathStyles
     textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles
@@ -995,7 +995,7 @@ public theorem single_owner_gap_exact (g : Int) (h : 0 ≤ g) :
 private theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
     0 < gapK "caption" ∧ 0 < gapK "trivlist" ∧
-    0 < screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp := by
+    0 < screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.fixed := by
   rw [Ir.displaySkipDefault_base_exact]
   decide
 
@@ -1544,8 +1544,8 @@ public def thmRules (l : Ir.ListLineage) (size : Length) : List GapRule :=
     let c := "." ++ roleClass (Ir.thmSpaceRole k)
     match Ir.thmSkips l size 1 {} k false with
     | some sk =>
-      let above := screenMilli size sk.above.width.sp
-      let below := screenMilli size sk.below.width.sp
+      let above := screenMilli size sk.above.width.fixed
+      let below := screenMilli size sk.below.width.fixed
       .boundary s!"* + {c}" (if sk.parskipAbove then listSpace above else milliRem above) ::
         ownsBelow [c] (listSpace below) (milliRem below) texParskip
     | none => .boundary s!"* + {c}" trivlistGap :: ownsBelow [c] trivlistGap trivlistOwn
@@ -1554,14 +1554,14 @@ public def thmRules (l : Ir.ListLineage) (size : Length) : List GapRule :=
 trivlist's close and the theorem's own space above. -/
 public def thmAfterTrivRules (l : Ir.ListLineage) (size : Length) : List GapRule :=
   let top := Ir.TrivIn.top l {} size
-  let rem (g : SymGlue) : String := milliRem (screenMilli size g.width.sp)
+  let rem (g : SymGlue) : String := milliRem (screenMilli size g.width.fixed)
   let topsep := s!"var(--{Ir.trivlistSkipName}, {rem top.topsep})"
   let vertical := s!"calc({topsep} + var(--partopsep, {rem top.partopsep}))"
   let triv := "." ++ roleClass Ir.trivlistRole
   let inPar := "." ++ roleClass Ir.inParagraphRole
   Ir.ThmSpace.all.flatMap fun k => match Ir.thmSkips l size 1 {} k true with
     | some sk =>
-      let m := screenMilli size sk.above.width.sp
+      let m := screenMilli size sk.above.width.fixed
       let above := if sk.parskipAbove then listSpace m else milliRem m
       let thm := "." ++ roleClass (Ir.thmSpaceRole k)
       [.boundary s!"{triv}:not({inPar}) + {thm}" s!"max({vertical}, {above})",
@@ -1657,7 +1657,7 @@ public def trivPairRules (l : Ir.ListLineage) (size ex : Length) (tokens : Ir.To
 
 /-- The display's space, TeX's `\abovedisplayskip`, in the screen's quanta. -/
 private def displayGapRem : String :=
-  milliRem (screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp)
+  milliRem (screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.fixed)
 
 /-- The follower past a skip box after a heading or at a container's opening pays nothing. -/
 private def skipFollowerRule : GapRule :=
@@ -2266,12 +2266,12 @@ public def parskipVar (page : Ir.PageSpec) (ex : Length) : String :=
 
 /-- The PDF backend's default gap at a boundary kind; an unknown kind is zero. -/
 public def pdfGapSp : String → Dim.Length
-  | "peer" => (Ir.parskipDefault Ir.baseFontSize).width.sp
-  | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.sp
-  | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.sp
-  | "float" => (Ir.floatSepDefault Ir.baseFontSize).width.sp
-  | "trivlist" => (Ir.parskipDefault Ir.baseFontSize).width.sp
-      + (Ir.trivlistSkipDefault Ir.baseFontSize).width.sp
+  | "peer" => (Ir.parskipDefault Ir.baseFontSize).width.fixed
+  | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.fixed
+  | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.fixed
+  | "float" => (Ir.floatSepDefault Ir.baseFontSize).width.fixed
+  | "trivlist" => (Ir.parskipDefault Ir.baseFontSize).width.fixed
+      + (Ir.trivlistSkipDefault Ir.baseFontSize).width.fixed
   | _ => 0
 
 /-- The screen backend's default gap at a boundary kind, in milli-rem. -/
@@ -2329,7 +2329,7 @@ public def titleSlotCss (doc : Doc) : String :=
   let body := max doc.page.fontSize Length.quantum
   let emOf (l : Dim.SymLength) : String :=
     let e := if l.ex != 0 then s!" + {decMilli l.ex}ex" else ""
-    s!"{decMilli (l.em + Gfx.Trig.divRound (l.sp * (1000 : Int)).units body.units)}em{e}"
+    s!"{decMilli (l.em + Gfx.Trig.divRound (l.fixed * (1000 : Int)).units body.units)}em{e}"
   let zero : Dim.SymLength := {}
   let rules := slots.zipIdx.toList.filterMap fun (sl, i) =>
     let (slotWidth, place) := sl.box
@@ -2342,7 +2342,7 @@ public def titleSlotCss (doc : Doc) : String :=
         (anchorOffset pl.anchor.hshares)
       let dy := (pl.yshift.map (·.width)).getD zero
       -- TikZ's `yshift` is up; the stage's `top` grows down
-      let up0 : Dim.SymLength := { sp := -dy.sp, em := -dy.em, ex := -dy.ex }
+      let up0 : Dim.SymLength := { fixed := -dy.fixed, em := -dy.em, ex := -dy.ex }
       let up := up0.add (anchorOffset pl.anchor.vshares)
       let sep := (pl.innerSep.map (·.width)).getD
         (Dim.SymLength.ofLength (Ir.pgfInnerSep doc.page.fontSize))
@@ -2410,18 +2410,18 @@ public def blockShapeCss (doc : Doc)
     let places := (sh.edges.filter (·.besideTitle)).toList.filterMap fun e => titleRule k e.reach
     let room := (places.map (·.room)).foldl max 0
     let below := if room == 0 then between
-      else s!"calc({between} + {len { width := .ofLength (.ofUnits room) }})"
+      else s!"calc({between} + {len { width := .ofLength room }})"
     let rise := (places.map (·.rise)).foldl max 0
     let riseMany := (places.map (·.riseMany)).foldl max 0
-    let raised (base : String) (r : Int) : String :=
-      if r == 0 then base else s!"calc({base} + {len { width := .ofLength (.ofUnits r) }})"
+    let raised (base : String) (r : Length) : String :=
+      if r == 0 then base else s!"calc({base} + {len { width := .ofLength r }})"
     let boxTop := raised inner rise
-    let titlePlace (r : Int) (e : Ir.BlockEdge) : String × String := match e.reach with
+    let titlePlace (r : Length) (e : Ir.BlockEdge) : String × String := match e.reach with
       | .box => (raised peerGap r, below)
       | .lines .. =>
         let p := (titleRule k e.reach).getD default
-        (s!"calc({peerGap} + {raised inner r} + {len { width := .ofLength (.ofUnits p.top) }})",
-         s!"calc({below} + {len { width := .ofLength (.ofUnits p.bottom) }})")
+        (s!"calc({peerGap} + {raised inner r} + {len { width := .ofLength p.top }})",
+         s!"calc({below} + {len { width := .ofLength p.bottom }})")
     let broken := s!"{sel} > header:has(br)"
     let titleRules := boxRules .title s!"{sel} > header" (titlePlace rise) ++
       (if riseMany == rise then "" else
@@ -2436,10 +2436,10 @@ public def blockShapeCss (doc : Doc)
       let pseudo := if e.side == .left then "before" else "after"
       let p := (titleRule k e.reach).getD default
       let pad := len (sh.inset .title (if e.side == .left then .left else .right))
-      let top (r : Int) : String :=
-        s!"calc({before} + {peerGap} + {raised inner r} + {len { width := .ofLength (.ofUnits p.top) }})"
+      let top (r : Length) : String :=
+        s!"calc({before} + {peerGap} + {raised inner r} + {len { width := .ofLength p.top }})"
       let bottom := s!"calc({after} + var(--block-last-below, \
-{len { width := .ofLength (.ofUnits p.bodyBelow) }}) - {len { width := .ofLength (.ofUnits p.depth) }})"
+{len { width := .ofLength p.bodyBelow }}) - {len { width := .ofLength p.depth }})"
       rule pseudo sel e pad (top rise) bottom ++
         (if riseMany == rise then "" else
           s!"{sel}:has(> header br)::{pseudo} \{ top: {top riseMany}; }\n") ++
@@ -3783,7 +3783,7 @@ public theorem cssPxOfSp_between (l : Length) (h : 0 ≤ l) :
     (cssPxOfSp l : Int) * px 1 ≤ l + px 1 / 2 ∧
       l + px 1 / 2 < ((cssPxOfSp l : Int) + 1) * px 1 := by
   unfold cssPxOfSp
-  simp only [px, unitsPerInch]
+  simp only [px_eq]
   length_omega
 
 /-- The size an `<img>` declares, in CSS pixels: a raster's grid, or a PDF page's box. -/
@@ -5883,7 +5883,7 @@ private def docHasBibliography (doc : Doc) : Bool :=
 private def bibCss (doc : Doc) : String :=
   let hang := s!"var(--{Ir.bibHangName}, {cssLength (Ir.bibHang {}).width})"
   let size := doc.page.fontSize
-  let sepMilli := (Ir.bibSepDefault size).width.sp * 1000 / (max size Length.quantum)
+  let sepMilli := (Ir.bibSepDefault size).width.fixed * 1000 / (max size Length.quantum)
   let sep := s!"var(--{Ir.bibSepName}, {decMilli sepMilli}em)"
   let flush := Ir.foldBlocks (fun b bl => b || match bl with
     | .bibliography _ _ items => items.any (·.labelFlush)
@@ -5922,7 +5922,7 @@ private def captionScopeCss (doc : Doc) : String :=
   let chain (s : Ir.CaptionSkip) (k : Ir.FloatKind) : String :=
     let dflt := match doc.docClass.record.lists, s with
       | .beamer, _ =>
-        lineageLength doc (Ir.CaptionSkip.defaultFor .beamer s doc.page.fontSize).width.sp
+        lineageLength doc (Ir.CaptionSkip.defaultFor .beamer s doc.page.fontSize).width.fixed
       | _, .above => quantaRem (gapK "caption")
       | _, .below => "0px"
     (s.keys k).foldr (fun key acc => s!"var(--{key}, {acc})") dflt
@@ -6810,7 +6810,7 @@ private def boxExtentCss (b : Ir.InlineBox) : String × String :=
 /-- A font length in CSS: on a deck an absolute length as its stage share, else its CSS form. -/
 private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
   if cfg.deck && e.rigidAbsolute && !(e.anyRef fun _ => true) then
-    let length := (e.eval fun _ => {}).width.sp
+    let length := (e.eval fun _ => {}).width.fixed
     stageShare "vh" length cfg.page.height
   else Ir.Track.contextCss e
 
@@ -9354,7 +9354,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         match shape.edges.find? fun e => e.span == .whole && e.besideTitle with
         | none => ""
         | some e =>
-          let para := ((cfg.blockTitleRule kind e.reach).map fun p => stageLength cfg (.ofUnits p.bodyBelow)).getD
+          let para := ((cfg.blockTitleRule kind e.reach).map fun p => stageLength cfg p.bodyBelow).getD
             "0rem"
           s!" --block-last-below: {endBelowList cfg para body.toList};"
       fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)

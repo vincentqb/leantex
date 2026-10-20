@@ -269,7 +269,7 @@ def fontShorthandChecks (ref : IO.Ref (List String)) : IO Unit := do
   | .exact i =>
     check ref "font shorthand: sets the style, size and families, and resets the weight"
       (i.fig.labels.any fun (_, r) => r.text == "Hi" && r.face.italic && r.face.weight == 400 &&
-        r.face.families == #["Example Sans", "sans-serif"] && r.size == Svg.spOf 12)
+        r.face.families == #["Example Sans", "sans-serif"] && r.size == Svg.pxLen 12)
   | _ => check ref "font shorthand: a shorthand the importer reads imports exactly" false
   match Svg.importBytes (svgDocument "<text x=\"1\" y=\"10\" style=\"font: 700 10px serif\">Hi</text>") with
   | .exact i =>

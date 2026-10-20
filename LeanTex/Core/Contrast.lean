@@ -174,7 +174,7 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
     -- premise: contrastChecks — a font-relative size keeps the ordinary threshold
     match size.resolve (fun _ => none) with
     | .ok g =>
-      { cx with size := if g.width.em == 0 && g.width.ex == 0 then g.width.sp else 0 }
+      { cx with size := if g.width.em == 0 && g.width.ex == 0 then g.width.fixed else 0 }
     | .error _ => { cx with size := 0 }
   | _ => cx
 

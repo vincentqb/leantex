@@ -4,6 +4,7 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.PdfReadProof
 public import LeanTex.Core.PdfStreamSpelling
 public import LeanTex.Core.PdfXref
+public import LeanTex.Core.PdfContentLex
 public import Std.Data.HashMap
 public import Std.Data.HashSet
 import LeanTex.Core.PdfFooter
@@ -22,53 +23,8 @@ cross-reference, selects the page and copies its content and resources, claiming
 /-- The cap on a decoded stream's size, 64 MiB; past it the file is refused by name. -/
 @[expose] public def maxDecoded : Nat := 1 <<< 26
 
-/-- A numeric object in big points as a length: `72` or `595.276`, the fraction rounded once. -/
-public def Obj.sp? (o : Obj) : Option Length :=
-  match o with
-  | .int n => some (bp n)
-  | .real raw => Id.run do
-    let s := raw.toList
-    let (neg, s) := match s with
-      | '-' :: rest => (true, rest)
-      | '+' :: rest => (false, rest)
-      | _ => (false, s)
-    let mut ip : Nat := 0
-    let mut seen := false
-    let mut rest := s
-    for _ in [0:raw.length + 1] do
-      match rest with
-      | c :: tl =>
-        if c.isDigit then
-          ip := ip * 10 + (c.toNat - 48)
-          seen := true
-          rest := tl
-        else
-          break
-      | [] => break
-    let mut num : Nat := 0
-    let mut den : Nat := 1
-    match rest with
-    | '.' :: tl =>
-      rest := tl
-      for _ in [0:raw.length + 1] do
-        match rest with
-        | c :: tl =>
-          if c.isDigit && den < 1000000000 then
-            num := num * 10 + (c.toNat - 48)
-            den := den * 10
-            seen := true
-            rest := tl
-          else if c.isDigit then
-            rest := tl
-          else
-            break
-        | [] => break
-    | _ => pure ()
-    if !seen || !rest.isEmpty then
-      return none
-    let v : Length := bp ip + Length.bpRound num den
-    return some (if neg then -v else v)
-  | _ => none
+/-- A numeric object in big points as a length: `72` or `595.276`, rounded once. -/
+@[expose] public def Obj.len? (o : Obj) : Option Length := (PdfContentLex.numParts? o).map Length.ofBpParts
 
 /-- Where an object lives: at a byte offset, or inside an object stream. -/
 public inductive Loc where
@@ -2049,7 +2005,7 @@ public def Doc.pageBox (r : Doc) (page : Page) : Except String (Length × Length
       else
         let mut out : Array Length := #[]
         for e in xs do
-          match (← r.deref e).sp? with
+          match (← r.deref e).len? with
           | some v => out := out.push v
           | none => throw "malformed PDF: an unreadable number in the page box"
         pure out

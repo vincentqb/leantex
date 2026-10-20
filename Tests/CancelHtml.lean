@@ -392,8 +392,8 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         (elemNodesOne (· == "svg") #[] node).isEmpty &&
         MathMl.nodeChars #[] node == #['x', '7'])
 
-  let size : Dim.SymGlue := { width := { sp := Dim.pt 24 } }
-  let leading : Dim.SymGlue := { width := { sp := Dim.pt 28 } }
+  let size : Dim.SymGlue := { width := { fixed := Dim.pt 24 } }
+  let leading : Dim.SymGlue := { width := { fixed := Dim.pt 28 } }
   let sized := Ir.Style.fontSize (.lit size) (.lit leading)
   let role := Ir.titlePartRole 0 0
   let part : Ir.TitlePart := {
@@ -431,7 +431,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       let mk : MathMl.Marks := {
         style := ambient, scales
         em := fun st => some (Math.sizeFor scales (19 * 65536) st) }
-      for rule in [none, some 0, some (-65536), some (8 * 65536)] do
+      for rule in [none, some 0, some (-Dim.pt 1), some (Dim.pt 8)] do
         let fraction : FracSpec := { style := some chosen, rule }
         let node := MathMl.nucNode mk (ambient.rank == 3) .ord
           (.frac fraction (one 'x') (one 'z'))
@@ -448,6 +448,6 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
             match rule with
             | none => (nodeAttr "linethickness" bar).isEmpty
             | some width => (readEm em (nodeAttr "linethickness" bar)).any
-                (fun actual => cancelNear (cancelEpsilon em) actual (max 0 width)))
+                (fun actual => cancelNear (cancelEpsilon em) actual (max 0 width).units))
         t s!"math HTML fraction {label}: style and rule preserve readable operands"
           (MathMl.nodeChars #[] node == #['x', 'z'])
