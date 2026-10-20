@@ -348,6 +348,9 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic format: a compatibility warning carries its command to the human header"
       (human.exitCode == 1 && (human.stderr.splitOn "\n").any
         (·.startsWith s!"⚠ [W0104] - {triggered}:2:1 - \\directlua"))
+    t "diagnostic format: a run shipping beside its errors counts the pages it wrote"
+      ((human.stderr.splitOn "\n").any fun l =>
+        l.startsWith s!"✖ {triggered} — 1 error; wrote " && (l.splitOn ".pdf, 1 page (").length == 2)
     let machine ← run #[triggered.toString, "--porcelain"]
     let warnings := (machine.stdout.splitOn "\n").filterMap fun line =>
       (Lean.Json.parse line).toOption |>.filter (·.getObjValAs? String "code" == .ok "W0104")

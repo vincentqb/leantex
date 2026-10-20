@@ -84,16 +84,20 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
     | none => ""
   head ++ scope ++ location ++ trigger ++ count ++ reason ++ detail ++ recovery ++ suggestion
 
-/-- A run's verdict line; `written` names the artifacts a failed run still wrote. -/
+/-- A run's verdict line; `written` names the artifacts a failed run still wrote, and `pages`
+their page count. -/
 public def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat)
-    (written : Array String := #[]) : String :=
+    (written : Array String := #[]) (pages : Option Nat := none) : String :=
   let file := humanText "\\n" file
   if errors == 0 then
     s!"{sgr color "1;32" "✔"} {file} ({ms} ms)"
   else
     let noun := if errors == 1 then "error" else "errors"
+    let set := match pages with
+      | some n => s!", {n} {if n == 1 then "page" else "pages"}"
+      | none => ""
     let wrote := if written.isEmpty then "" else
-      s!"; wrote {humanText "\\n" (", ".intercalate written.toList)}"
+      s!"; wrote {humanText "\\n" (", ".intercalate written.toList)}{set}"
     s!"{sgr color "1;31" "✖"} {file} — {errors} {noun}{wrote} ({ms} ms)"
 
 public def humanDone (color : Bool) (file output : String) (pages : Option Nat) (ms : Nat)
