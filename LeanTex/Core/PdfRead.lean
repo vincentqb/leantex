@@ -1943,7 +1943,7 @@ public structure FormOc where
   locked : Array Nat
   deriving Inhabited
 
-/-- A selected page ready to embed: its one-based number, its box in sp, its decoded content, its
+/-- A selected page ready to embed: its one-based number, its box, its decoded content, its
 `/Resources` graph renumbered into `objects`' local space, and the optional content configuration
 its groups keep, none where its source has none. -/
 public structure Form where

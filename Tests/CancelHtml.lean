@@ -423,6 +423,10 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((HtmlDoc.mathMarks cfg).metric (.text false) spec (one 'x') (one '7')).isSome &&
       (HtmlDoc.mathMarks cfg).em (.text false) == some metric.em)
 
+  let unmeasured := MathMl.nucNode {} false .ord
+    (.frac { rule := some (Dim.Length.ofBpMilli 400) } (one 'x') (one 'z'))
+  t "math HTML fraction: an unmeasured rule spells its points to the thousandth"
+    ((elemNodesOne (· == "mfrac") #[] unmeasured).any (nodeAttr "linethickness" · == "0.400pt"))
   -- A fraction style's browser transition is relative, so rule widths use the same measured em.
   let scales : ScriptScales := { script := 73, scriptscript := 47 }
   for ambient in allStyles do

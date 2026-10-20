@@ -11,7 +11,7 @@ open LeanTex.Core.PdfRead (Obj Entry)
 /-! The artifact tier: what the produced PDF bytes paint and where, read by a viewer's arithmetic
 from the file alone and judged against the declared geometry. -/
 
-/-- One token of a content stream (ISO 32000-2 §7.2); a number carries its value in sp beside its
+/-- One token of a content stream (ISO 32000-2 §7.2); a number carries its value as a length beside its
 raw spelling. -/
 inductive CTok where
   | num (v : Dim.Length) (raw : String)
@@ -437,7 +437,7 @@ structure ArtPage where
 
 def ArtPage.mediaH (p : ArtPage) : Dim.Length := p.media.2.2.2 - p.media.2.1
 
-/-- A rectangle array read in sp, or the null rectangle. -/
+/-- A rectangle array read as lengths, or the null rectangle. -/
 private def artRect (o : Obj) : Dim.Length × Dim.Length × Dim.Length × Dim.Length :=
   match o with
   | .arr xs =>

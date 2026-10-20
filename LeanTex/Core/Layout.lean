@@ -5633,7 +5633,7 @@ public theorem protrusionLR_covers (c : Char) :
   split <;> decide
 
 /-- How far the line `[a:j)` may hang left of the
-measure: its first glyph's left protrusion, in sp. -/
+measure: its first glyph's left protrusion, as a length. -/
 public def protrudeLeft (items : Array Item) (a j : Nat) : Length := Id.run do
   for k in [a:j] do
     match items[k]? with
@@ -5710,7 +5710,7 @@ public def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
   return m
 
 /-- What a `Measure`'s font boxes may stretch or
-shrink beyond the glue, in sp; zero on a fil line. -/
+shrink beyond the glue, as a length; zero on a fil line. -/
 public def Measure.ex (m : Measure) (expand : Bool) : Length :=
   if expand && !m.fil then m.boxW * expandLimit / 1000 else 0
 
@@ -7621,9 +7621,9 @@ public structure Spacing.Page where
   private geom : Geom
   private ascent : Length
   private descent : Length
-  /-- Body cap height in sp, a line's height as TeX measures it from its glyphs. -/
+  /-- Body cap height, a line's height as TeX measures it from its glyphs. -/
   private capHeight : Length
-  /-- Body x-height in sp, so `ex` tokens resolve against the real font. -/
+  /-- Body x-height, so `ex` tokens resolve against the real font. -/
   private xHeight : Length := 0
   /-- Authored picture openings keyed by the PDF structure leaf. -/
   private pictureSpans : Array (Nat × Span) := #[]

@@ -179,6 +179,9 @@ and one holding it unexpanded is named and replaces it"
   t "a page attribute assigned outside a hook writes its box for every page"
     (bytesContain tpdf "/TrimBox [9 9 261 153]" && codes tds .W0301 == 0 &&
       tds.all (·.severity != .error))
+  let (_, _, dpdf, _) := artifacts oneFace (card (attrHook "/TrimBox [9.5 10.25 260.125 152.5]") "x")
+  t "a box's decimals read to the thousandth of a point and write back as spelled"
+    (bytesContain dpdf "/TrimBox [9.5 10.25 260.125 152.5]")
   let (_, uds, updf, _) := artifacts oneFace (card (attrHook "/TrimBox [9 9 261 153] /ArtBox [10 10") "x")
   let (_, mds, _, _) := artifacts oneFace
     (card (attrHook "\\the\\pdfvariable pageattr \\pbtrim") "x")

@@ -119,7 +119,7 @@ public theorem len?_exact (o : Obj) : Obj.len? o = (ratOf o).map lenOfRat := by
     simp only [Option.map_some]
     exact congrArg some (ofBpParts_rat neg n s)
 
-/-- Six numbers as a matrix (§8.3.4), the translation from points to sp. -/
+/-- Six numbers as a matrix (§8.3.4), the translation from points to base units. -/
 public def affineOf (xs : Array Rat) : Option Affine :=
   if h : xs.size = 6 then
     some ⟨xs[0], xs[1], xs[2], xs[3], xs[4] * bpU, xs[5] * bpU⟩

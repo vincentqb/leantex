@@ -41,7 +41,7 @@ private def paintsOf (out : Layout.Out) : Array (String × Dim.Length × Dim.Len
     | .decoration (.highlight _ _) w t r c _ => some ("mark", w, t, r, c.hex)
     | _ => none
 
-/-- The pt as sp, for a length an expectation states. -/
+/-- TeX points as a length, for a length an expectation states. -/
 private def pt (n : Nat) : Dim.Length := Dim.pt n
 
 private def doc (pre body : String) : String := dvDoc ("\\pagestyle{empty}\\usepackage{xcolor}\n" ++ pre) body

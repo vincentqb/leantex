@@ -246,10 +246,6 @@ public theorem unitsPerInch_exact : unitsPerInch % 72 = 0 ∧ unitsPerInch % 96 
 @[expose] public def Length.bpCeil (num den : Int) : Length :=
   ⟨-Int.fdiv (-(num * unitsPerInch)) (72 * den)⟩
 
-/-- `num / den` of a big point, rounded half up. -/
-@[expose] public def Length.bpRound (num den : Nat) : Length :=
-  ⟨((num * (unitsPerInch / 72).toNat + den / 2) / den : Nat)⟩
-
 /-- A length `num / den` units of `unit`, rounded down. -/
 @[expose] public def Length.ofRatio (unit : Length) (num : Int) (den : Nat) : Length :=
   ⟨unit.units * num / (den : Int)⟩
@@ -713,7 +709,7 @@ public structure MeasureValues where
     columnWidth := measure, textHeight := textHeight }
 
 /-- Resolve a typed affine length against the geometry and font metrics at its consuming site:
-the only door from `Affine Measure` to sp. -/
+the only door from `Affine Measure` to a length. -/
 @[expose] public def Affine.resolveWidth (e : Affine Measure) (env : MeasureValues)
     (fontSize xHeight : Length := 0) : Length :=
   (e.eval env.find).width.resolve fontSize xHeight

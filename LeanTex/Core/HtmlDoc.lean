@@ -2252,7 +2252,7 @@ public theorem listRules_web_exact (size ex : Length) (tokens : Ir.Tokens) :
   simp only [listRules, Ir.listSkips_web_exact]
   rfl
 
-/-- A declared `\parskip`'s natural width in sp, at the body size it was set under and the page's
+/-- A declared `\parskip`'s natural width, at the body size it was set under and the page's
 x-height (`exAt`). -/
 public def parskipSp (page : Ir.PageSpec) (ex : Length) (g : SymGlue) : Dim.Length :=
   g.width.resolve page.fontSize ex
