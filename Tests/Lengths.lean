@@ -120,3 +120,20 @@ def texLengthChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => ""
     t s!"\\the of {spelled} prints TeX's {printed} ({txt})" (txt == s!"A{printed}B")
   t "a TeX document's pixel is a big point" (Decl.parseLength "3px" == some (.ofLength (Dim.bp 3)))
+  -- lualatex 1.24: an edef's dimexpr rounds its division; a dimension past TeX's largest is refused.
+  let edefOf (body : String) : String × Nat :=
+    let (doc, ds) := elabStr ("\\documentclass{article}\n\\newlength\\la\\setlength\\la{50.58878pt}\n" ++
+      "\\newlength\\lh\\setlength\\lh{20000pt}\n\\begin{document}\n" ++ body ++ "\n\\end{document}\n")
+    (match doc.body with
+      | #[.para xs] => Ir.plainText xs
+      | _ => "", (ds.filter (·.code == "W0357")).size)
+  for (body, printed) in [("\\edef\\x{\\the\\dimexpr\\la/7\\relax}A\\x B", "A7.22697ptB"),
+      ("\\edef\\x{\\the\\dimexpr-\\la*3/7\\relax}A\\x B", "A-21.68091ptB"),
+      ("\\edef\\x{\\the\\dimexpr\\la/7 }A\\x B", "A7.22697ptB")] do
+    t s!"an edef's {body} prints {printed}" ((edefOf body).1 == printed)
+  t "a dimension past TeX's largest is refused by name, never printed"
+    ((edefOf "\\edef\\x{\\the\\lh}A\\x B").2 == 1)
+  t "a length times or over a whole number reads, over a fraction it is refused, as TeX refuses it"
+    (Decl.texLength (fun _ => some 1000) "\\la*3/2" == some 1500 &&
+      Decl.texLength (fun _ => some 1000) "\\la*1.5" == none &&
+      Decl.texLength (fun _ => some 1000) "\\la/2.5" == none)

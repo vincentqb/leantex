@@ -3990,7 +3990,7 @@ private def dimexprOpen (lenOf : String → Option Int) (rest : List Raw) : Opti
     | _ => false
   let mut best : Option (Int × Nat) := none
   for k in [1:window.length + 1] do
-    if let some v := Decl.texLength lenOf (rawSrc (window.take k).toArray) then
+    if let some v := Decl.texLength lenOf ("\\dimexpr " ++ rawSrc (window.take k).toArray) then
       let unitSpace := (window[k - 1]? matches some (.word ..)) && (rest[k]? matches some .space)
       best := some (v, if unitSpace then k + 1 else k)
   return best
@@ -4003,7 +4003,7 @@ private def edefDimen (lenOf : String → Option Int) (rs : List Raw) : Option (
   match rs.drop lead with
   | .ctrl "dimexpr" _ :: rest =>
     let closed := (dimexprEnd rest 0 0).bind fun i =>
-      (Decl.texLength lenOf (rawSrc (rest.take i).toArray)).map (·, i + 1)
+      (Decl.texLength lenOf ("\\dimexpr " ++ rawSrc (rest.take i).toArray)).map (·, i + 1)
     ((closed.orElse fun _ => dimexprOpen lenOf rest).map fun (v, used) => (v, lead + 1 + used))
   | .ctrl r _ :: _ => (lenOf r).map (·, lead + 1)
   | _ => none

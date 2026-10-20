@@ -11105,7 +11105,7 @@ private def navSpecOf (ctx : Ctx) (inner : Array Raw) (pos : Pos) :
           diag ctx .E0321
             s!"cannot read 'reveal' in 'nav': {v.quote}" (some pos)
             (help := "reveal = scroll shows the nav after one \
-  viewport of scrolling; a length (reveal = 300px) shows it after that much")
+  viewport of scrolling; a length (reveal = 20em) shows it after that much")
     | some (key, _) =>
       let d := Decl.unknownKey ctx.file "nav" key
         ["label", "pin", "offset", "reveal"] pos

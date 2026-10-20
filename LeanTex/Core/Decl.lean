@@ -952,9 +952,10 @@ private def coefSp (ip f : Nat) (x : Int) : Int := ip * x + (x * f).tdiv 65536
 /-- The scaled points TeX reads for `v` of a unit: `px` as LuaTeX's `\pxdimen` of 1bp; `none` for
 a font-relative or unknown unit. -/
 private def unitSp (v : Rat) (u : String) : Option Int :=
-  let (ip, f) := texDecimal v
-  if u == "px" || u == "truepx" then (ptRatio "bp").map fun r => coefSp ip f (ratioSp 1 0 r)
-  else (ptRatio u).map (ratioSp ip f)
+  let (ip, f) := texDecimal (if v < 0 then -v else v)
+  let x := if u == "px" || u == "truepx" then (ptRatio "bp").map fun r => coefSp ip f (ratioSp 1 0 r)
+    else (ptRatio u).map (ratioSp ip f)
+  x.map fun x => if v < 0 then -x else x
 
 /-- `n / d`, rounded half away from zero as `\dimexpr` divides, else truncated as `\divide`
 and calc do. -/
@@ -972,9 +973,10 @@ private def xApply (round : Bool) (op : Char) (a b : XVal) : Option XVal :=
   | '-', .len x, .len y => some (.len (x - y))
   | '+', .scalar x, .scalar y => some (.scalar (x + y))
   | '-', .scalar x, .scalar y => some (.scalar (x - y))
-  | '*', .scalar x, .len y | '*', .len y, .scalar x => some (.len (spDiv round (y * x.num) x.den))
+  | '*', .len y, .scalar x => if x.den == 1 then some (.len (y * x.num)) else none
   | '*', .scalar x, .scalar y => some (.scalar (x * y))
-  | '/', .len x, .scalar y => if y == 0 then none else some (.len (spDiv round (x * y⁻¹.num) y⁻¹.den))
+  | '/', .len x, .scalar y =>
+    if y == 0 || y.den != 1 then none else some (.len (spDiv round (x * y.num.sign) y.num.natAbs))
   | '/', .scalar x, .scalar y => if y == 0 then none else some (.scalar (x / y))
   | _, _, _ => none
 
@@ -1018,9 +1020,9 @@ private def xClose (vals : Array XVal) (ops : Array Char) (stop : Char) :
     | none => failure
   failure
 
-/-- A length expression's value in TeX's scaled points as TeX computes it, every name through
-`look`: each term rounded as TeX reads it, a division in a `\dimexpr` rounded and one outside it
-truncated as calc's; `none` outside the grammar `exprParse` reads or at a font-relative unit. -/
+/-- A length expression's scaled points as TeX computes them, names through `look`, a `\dimexpr`
+division rounded and calc's truncated; `none` where TeX refuses it, outside `exprParse`'s grammar
+or at a font-relative unit. -/
 public def texLength (look : String → Option Int) (s : String) : Option Int := do
   let toks ← exprToks s.trimAscii.toString
   let mut vals : Array XVal := #[]
@@ -1038,8 +1040,9 @@ public def texLength (look : String → Option Int) (s : String) : Option Int :=
         match unitSp v n with
         | some x => vals := vals.pop.push (.len x)
         | none =>
-          let (ip, f) := texDecimal v
-          vals := vals.pop.push (.len (coefSp ip f (← look n)))
+          let (ip, f) := texDecimal (if v < 0 then -v else v)
+          let x := coefSp ip f (← look n)
+          vals := vals.pop.push (.len (if v < 0 then -x else x))
       | _, true => failure
       | _, false =>
         vals := vals.push (.len (← look n))
@@ -1083,7 +1086,7 @@ public def texLength (look : String → Option Int) (s : String) : Option Int :=
       ops := ops.pop
     | none => break
   match vals.toList with
-  | [.len v] => return v
+  | [.len v] => if v.natAbs < 2 ^ 30 then return v else failure
   | _ => failure
 
 /-- Parses one length expression without resolving its references. -/
