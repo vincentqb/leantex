@@ -11273,8 +11273,9 @@ private def tableCellBlocks (ctx : Ctx) (spec : Option Ir.ColSpec) (cellRaws : A
   return out
 
 private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
-    (pos : Pos) (blocks : Array Block)
-    (envActs : Array ((Nat × Option Nat) × EM (Array Block))) : EM (Array Block) := do
+    (pos : Pos) (blocks : Array Block) (runSite : CellEnvSite body → EM (Array Block)) :
+    EM (Array Block) := do
+  let envActs := (cellEnvSites body).map fun site => (site.1.1, runSite site)
   let mut blocks := blocks
   let mut k := skipSpaces body 0
   let mut flexTarget : Option Ir.TableTarget := none
@@ -13306,6 +13307,28 @@ private def linesLaid (ctx : Ctx) (depth : Nat) :
 termination_by l => sizeOf l
 decreasing_by raws_dec
 
+/-- A minipage's options and width group as its box, opening as a minipage does, and the index past
+them. -/
+private def minipageWidthArm (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    EM (Ir.BoxWidth × Nat) := do
+  let (boxPos, k) ← boxOptsArm ctx body pos "minipage"
+  let m := skipSpaces body k
+  let mut width : Ir.BoxWidth := .share
+  let mut m2 := m
+  if let some (.group wRaws _) := body[m]? then
+    m2 := m + 1
+    let src := rawSrc wRaws
+    let read := columnWidth ctx src
+    width := read.getD .share
+    if read.isNone then
+      warnOnce ctx "env:minipage-width" .W0314
+        s!"minipage width '{src}' does not read as a length or a fraction of \
+the text width; the box takes the whole measure" pos
+        (help := "write a length like {60pt} or a factor like {0.5\\textwidth}")
+  else
+    diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
+  return ({ width with pos := boxPos, minipage := true }, m2)
+
 mutual
 
 /-- Whether a redefinition of a rendered built-in wins: its body, expanded
@@ -13625,10 +13648,9 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
   else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
     have _ := nestedParsList_le body.toList
-    let acts := (cellEnvSites body).map fun site =>
+    blocks ← tabularArm ctx n body pos blocks fun site =>
       have _ := site.2
-      (site.1.1, elabEnvArm ctx site.1.2.1 site.1.2.2.1 site.1.2.2.2 #[])
-    blocks ← tabularArm ctx n body pos blocks acts
+      elabEnvArm ctx site.1.2.1 site.1.2.2.1 site.1.2.2.2 #[]
   else if n == "thebibliography" then
     blocks := blocks ++ (← pendingListedHead ctx pos (← ownBibList ctx body))
   else if n == "frame" then
@@ -13716,27 +13738,10 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
         | some side => .ragged side inner
         | none => .center inner]))
   else if n == "minipage" then
-    let (boxPos, k) ← boxOptsArm ctx body pos "minipage"
-    let m := skipSpaces body k
-    let mut width : Ir.BoxWidth := .share
-    let mut m2 := m
-    if let some (.group wRaws _) := body[m]? then
-      m2 := m + 1
-      let src := rawSrc wRaws
-      let read := columnWidth ctx src
-      width := read.getD .share
-      if read.isNone then
-        warnOnce ctx "env:minipage-width" .W0314
-          s!"minipage width '{src}' does not read as a length or a fraction of \
-the text width; the box takes the whole measure" pos
-          (help := "write a length like {60pt} or a factor like {0.5\\textwidth}")
-    else
-      diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
+    let (width, m2) ← minipageWidthArm ctx body pos
     have _ := tail_measures body m2
     let ⟨boxCtx, _⟩ : MCtx ctx ← pure (parboxCtx ctx)
-    blocks := blocks.push
-      (.columns #[({ width with pos := boxPos, minipage := true },
-        ← elabBlockScope boxCtx (body.extract m2 body.size))])
+    blocks := blocks.push (.columns #[(width, ← elabBlockScope boxCtx (body.extract m2 body.size))])
   else if let some kind := titledKind? n then
     let (head, k) := selectorHead body 0
     let spec ← selectorSpec ctx head pos
