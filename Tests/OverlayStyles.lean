@@ -373,7 +373,8 @@ private def styleRepeatedNotes (ref : IO.Ref (List String)) (fonts : Font.FontSe
       (treeShownOccurs tree "RepeatNote" == maximum &&
         ((elemAttrsList (· == "li") #[] tree.toList).filter fun (_, attrs) =>
           styleAttr attrs "value" == "7").size == maximum)
-    t (label ++ ": every mark and endnote anchor is unique") (styleUniqueIds tree)
+    t (label ++ ": every mark and endnote anchor is unique and reached")
+      (styleUniqueIds tree && ds.all (·.code != "W0326"))
     for (count, i) in [other, first].zipIdx do
       let page := stylePage out i
       let notes : Layout.Out := { page with pages := page.pages.map fun p =>
@@ -383,6 +384,13 @@ private def styleRepeatedNotes (ref : IO.Ref (List String)) (fonts : Font.FontSe
         (styleCopies (styleText notes) "RepeatNote" == count &&
           styleCopies (styleText page) "RepeatProbe7" == count && !glyphs.isEmpty &&
           glyphs.all (fun g => g.glyph > 0 && g.advance > 0))
+  -- The alternatives' note beside an equal one outside them: each its own endnote, both reached.
+  let (_, tree, ds) := styleBuild fonts (deck169Frame (styleAlt "2" (arm 1) (arm 1) ++
+    " Outside\\footnote[7]{RepeatNote}"))
+  t "overlay repeated notes beside an outside one: unique anchors, every link reached"
+    (styleUniqueIds tree && ds.all (·.code != "W0326") &&
+      ((elemAttrsList (· == "li") #[] tree.toList).filter fun (_, attrs) =>
+        styleAttr attrs "value" == "7").size == 2)
 
 /-- Conditional mono punctuation matches ordinary documents, under another font or decoration
 wrapper too. -/

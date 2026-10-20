@@ -9387,8 +9387,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem "div" groups
       #[("class", if groupsEndAlike groups then "alt-pair alt-alike" else "alt-pair")]
   | .note body =>
-    -- hidden: for a speaker view, invisible in the deck and in print
-    Html.elem "aside" (blockNodesInto cfg.into #[] body.toList)
+    -- hidden: for a speaker view, invisible in the deck and in print; its marks have no endnote
+    Html.elem "aside" (blockNodesInto { cfg.into with notes := default } #[] body.toList)
       #[("class", "note"), ("hidden", "hidden")]
   | .pagebreak =>
     Html.text ""
@@ -10105,12 +10105,13 @@ private def outlineNode? (cfg : Config) (doc : Doc) : Option Node :=
         #[("class", s!"level-{e.depth}")])
     #[("class", outlineClass), ("aria-label", cfg.locale.contents), ("tabindex", "0")])
 
-/-- The note marks' state in reading order: how many of each group's marks stood, the places a mark
-standing with its own anchor reaches, and the groups whose marks an overlay's anchor stands for. -/
+/-- The note marks' state in reading order: how many of each group's places were taken, the places
+an anchor reaches, and the place each group's overlay anchor, relocated out of its alternatives,
+took for the marks standing in them. -/
 private structure NoteMarkSt where
   seen : Std.HashMap Nat Nat := {}
   reached : Std.HashSet Nat := {}
-  relocated : Std.HashSet Nat := {}
+  relocated : Std.HashMap Nat Nat := {}
 
 /-- Each note mark, in reading order, linked to the next place its group of equal notes lists (the
 last where marks repeat past them) and named by it; each endnote's back link then names the mark
@@ -10119,27 +10120,36 @@ private def noteMarks (places : Ir.NotePlaces) (nodes : Array Node) : Array Node
   let groups := places.groups
   let groupOf : Std.HashMap Nat Nat :=
     groups.fold (init := {}) fun m g ps => ps.foldl (init := m) fun m p => m.insert p g
+  let next (st : NoteMarkSt) (g : Nat) : NoteMarkSt × Nat :=
+    let ps := groups.getD g #[g]
+    let k := st.seen.getD g 0
+    ({ st with seen := st.seen.insert g (k + 1) }, ps[min k (ps.size - 1)]?.getD g)
   let thread : Html.Thread NoteMarkSt := ⟨fun st _ attrs =>
-    match (attrs.find? (·.1 == "data-note")).bind (·.2.toNat?) with
-    | none => (st, attrs)
-    | some g =>
-      let ps := groups.getD g #[g]
-      let k := st.seen.getD g 0
-      let place := ps[min k (ps.size - 1)]?.getD g
+    let relocatedNote := if !attrs.any (·.1 == "data-alt-anchor") then none else
+      (attrs.find? (·.1 == "id")).bind fun (_, v) =>
+        if v.startsWith "fnref" then (v.drop "fnref".length).toString.toNat? else none
+    match relocatedNote, (attrs.find? (·.1 == "data-note")).bind (·.2.toNat?) with
+    | some g, _ =>
+      -- An overlay's relocated anchor takes its group's next place for both alternatives' marks.
+      let (st, place) := next st g
+      ({ st with reached := st.reached.insert place, relocated := st.relocated.insert g place },
+        attrs.map fun (a, v) => if a == "id" then (a, s!"fnref{place}") else (a, v))
+    | none, none => (st, attrs)
+    | none, some g =>
       let anchored := attrs.any (·.1 == "id")
+      let (st, place) := if anchored then next st g else (st, st.relocated.getD g g)
       let attrs := (attrs.filter (·.1 != "data-note")).map fun (a, v) =>
         if a == "id" then (a, s!"fnref{place}") else if a == "href" then (a, s!"#fn{place}") else (a, v)
-      ({ seen := st.seen.insert g (k + 1)
-         reached := if anchored then st.reached.insert place else st.reached
-         relocated := if anchored then st.relocated else st.relocated.insert g }, attrs)⟩
+      ({ st with reached := if anchored then st.reached.insert place else st.reached }, attrs)⟩
   let (st, nodes) := thread.list {} #[] nodes.toList
   let back : Html.Rewrite := { attrs := fun _ attrs =>
     match (attrs.find? (·.1 == "data-back")).bind (·.2.toNat?) with
     | none => attrs
     | some p =>
-      let g := groupOf.getD p p
       let target := if st.reached.contains p then s!"#fnref{p}"
-        else if st.relocated.contains g then s!"#fnref{g}" else "#"
+        else match st.relocated.get? (groupOf.getD p p) with
+          | some q => s!"#fnref{q}"
+          | none => "#"
       (attrs.filter (·.1 != "data-back")).map fun (a, v) => if a == "href" then (a, target) else (a, v) }
   back.list #[] nodes.toList
 
@@ -10517,7 +10527,7 @@ retitle them apart, or link to the numbered anchor")
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
   -- the endnotes: one `doc-endnotes` section, each note back-linked to its mark
-  let notes := Ir.footnotesOf doc.body
+  let notes := cfg.notes.notes
   -- Each note named by its place, showing the number its mark shows, back to the first mark
   -- reaching it.
   let inner := if notes.isEmpty then inner else

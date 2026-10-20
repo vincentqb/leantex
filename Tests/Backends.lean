@@ -2232,10 +2232,12 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"html: restarted notes keep distinct anchors, each item showing its mark's number"
     ((List.range 3).all (fun i => count s!"id=\"fn{i + 1}\"" == 1 && count s!"id=\"fnref{i + 1}\"" == 1 &&
       count s!"href=\"#fn{i + 1}\"" == 1 && count s!"href=\"#fnref{i + 1}\"" == 1) &&
-     count "value=\"1\"" == 2 && bookDs.all (·.code != "W0326"))
+     count "value=\"1\"" == 2 && bookDs.all (·.code != "W0326") &&
+     ((bookHtml.splitOn "<li ").drop 1).zipIdx.all fun (item, i) =>
+       hasStr item s!"id=\"fn{i + 1}\"" && hasStr item s!"href=\"#fnref{i + 1}\"")
   -- A speaker note's mark has no endnote, so it links nowhere.
   let (deck, _) := elabStr ("\\documentclass{beamer}\\begin{document}\\begin{frame}A\\footnote[5]{shown}" ++
-    "\\note{Speaker\\footnote{hidden}}\\end{frame}\\end{document}")
+    "\\note{Speaker\\footnote[5]{shown}}\\end{frame}\\end{document}")
   let (deckHtml, _) := HtmlDoc.emit {} deck
   t "html: a speaker note's mark takes no note's anchor"
     ((deckHtml.splitOn "id=\"fnref1\"").length == 2 && (deckHtml.splitOn "href=\"#fn1\"").length == 2)

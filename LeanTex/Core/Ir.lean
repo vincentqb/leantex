@@ -13993,11 +13993,12 @@ end
 /-- The places of a document's notes, one past each one's index, grouped by equal notes: the
 names a backend gives them whatever numbers they show. -/
 public structure NotePlaces where
+  notes : Array (Option Nat × Array Inline)
   table : Std.HashMap (Option Nat × String) (Array (Array Inline × Array Nat))
   deriving Inhabited
 
 public def NotePlaces.of (notes : Array (Option Nat × Array Inline)) : NotePlaces :=
-  ⟨notes.zipIdx.foldl (init := {}) fun m ((n, c), i) =>
+  ⟨notes, notes.zipIdx.foldl (init := {}) fun m ((n, c), i) =>
     let key := (n, plainText c)
     let xs := m.getD key #[]
     match xs.findIdx? (·.1 == c) with
