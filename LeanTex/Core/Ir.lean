@@ -655,10 +655,6 @@ public def Tokens.erase (t : Tokens) (key : String) : Tokens :=
 public def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
   { entries := redeclare t.entries key g }
 
-/-- The tokens with no declaration of `key`. -/
-public def Tokens.erase (t : Tokens) (key : String) : Tokens :=
-  { entries := t.entries.filter (·.1 != key) }
-
 public theorem declare_find_eq {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
     (redeclare xs k v).find? (·.1 == k) = some (k, v) := by
   have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by

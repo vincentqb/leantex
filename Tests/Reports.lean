@@ -2268,7 +2268,7 @@ def reports : List Report := [
       "main's binary at bbdd0223 names both W0104, sets the paragraphs at the page's gap and carries a group's column gap on; the checks fail there",
       "the corpus built by main's binary at bbdd0223 and by this tree's: every PDF, web page and diagnostic byte-identical"]
     state := .guarded "bbdd0223" .before .author },
-  { id := "R999", date := "2026-10-20"
+  { id := "R257", date := "2026-10-20"
     what := "a code file's documentation cited into its project's bibliography, the one doc-gen4 reads for Lean and the one its project markers found for any other language, whenever nothing declared otherwise, resolving its citations against a file it never named, and a page or an inclusion declared its bibliography only in a directive or an option the languages' own documentation tools do not read"
     pins := [check% Tests.LeanCite.leanCiteChecks, check% Tests.LeanCite.selfDocChecks,
       check% Tests.LeanCite.citeFootnoteChecks, check% Tests.CodeDoc.docMarkupChecks]
@@ -2276,7 +2276,7 @@ def reports : List Report := [
       "the code-docs train's binary at 3983dcfb on an invented Python project whose module docstring cites and declares nothing: the citation resolved against the project's bibliography; this tree sets it as written and names it once (W0503) with the module docstring's line",
       "the corpus's lean-cite fixtures, moved from the directive and the inclusion option to the docstring's line, built by the binary at 3983dcfb and by this tree's: both PDFs and both web pages byte-identical"]
     state := .guarded "3983dcfb" .before .author },
-  { id := "R999", date := "2026-10-19"
+  { id := "R258", date := "2026-10-20"
     what := "a list in a small size spaced its items by the body size's values; the abstract led at the body's leading; a trivlist's items stood no itemsep apart; a center closing after a float's caption left no space below it; an itemsep, parskip or topsep a list's body set, pandoc's tightlist among them, was named and dropped; the trivlist scope of setlist was named and dropped; and the parskip package's lists and quotes kept the class's topsep, itemsep and partopsep"
     pins := [check% Tests.ItemLabels.itemSpaceChecks, check% listBodyChecks]
     accept := ["lualatex 1.24 on invented probes: a small list's items 14.94pt apart, a trivlist's 15.94pt, the abstract's lines 11pt; lists under tightlist, one after another and nested, 11.95pt apart and 19.93pt below their lead; a topsep set in a list's body spaces its center 22.91pt from the item, and a center after the list as far as without it; the trivlist scope's topsep of 20pt sets a center in a list 35.87pt below its item; under the parskip package every line of a list, a quote, a center and the text around them 17.93pt below the one before; a caption inside a center 35.8pt above the text after the float; this tree sets each the same to the point, but the caption's 34pt",

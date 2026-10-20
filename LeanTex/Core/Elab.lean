@@ -13252,8 +13252,8 @@ private def openLengthScope (ctx : Ctx) (raws : Array Raw) :
       rawParsList body.toList ≤ rawParsList raws.toList ∧
       nestedParsList body.toList ≤ nestedParsList raws.toList } :=
   if let some keys := lengthScopeKeys? raws then
-    let saved := keys.map fun key =>
-      (key, (ctx.tokens.find? key).orElse fun _ => (ctx.engineTokens.find? (·.1 == key)).map (·.2))
+    -- A length no token declared at the opening stands undeclared again at the close.
+    let saved := keys.map fun key => (key, ctx.tokens.find? key)
     (saved, ⟨raws.extract 0 (raws.size - 1),
       extract_weight_le .., extract_pars_le .., extract_nested_le ..⟩)
   else
