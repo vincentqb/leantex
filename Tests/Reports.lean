@@ -2434,6 +2434,13 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes at parskip 0: above and below a lone centred two-line minipage 9.84pt and 8.23pt, below a top-aligned one 8.12pt, above a bottom-aligned one 8.13pt, a one-line minipage beside a four-line one centred on it and the line after 8.13pt below, minipages a comment apart side by side and a space apart 3.33pt apart; this tree sets each within 0.03pt",
       "main's binary at 1e648c76 on the same probes: 11.96pt for each spacing, the undeclared pair top-aligned, the joined and spaced minipages stacked; the guards fail there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: four PDFs move visibly (affine-lengths, alert-mark, boxes, box-sides), toward lualatex where a probe checks it, every web page visually the same and every diagnostic the same"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R270", date := "2026-10-20"
+    what := "a heading before a framed box the page could not hold stayed alone at the page's foot while the box moved to the next page, where LaTeX keeps the heading with what follows it"
+    pins := [check% Tests.InlineBoxes.boxBlockChecks]
+    accept := ["invented probes: a section before a twelve-line framed minipage after 540pt and 560pt of space; main's binary at 1e648c76 sets the heading on page 1 and the box on page 2, this tree both on page 2, and both on page 1 after 480pt as main does; the guard fails there",
+      "lualatex 1.24 on the same probe sets the heading with the box it cannot leave",
+      "the corpus built by the commit before's binary and by this tree's: every artifact byte-identical"]
     state := .guarded "1e648c76" .before .author }
 ]
 

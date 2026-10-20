@@ -465,6 +465,13 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   t s!"box blocks: a framed box is one box, set whole on the next page ({pagesWith turned "Line 0"}, {pagesWith turned "Line 11"})"
     (pagesWith turned "Line 0" == #[1] && pagesWith turned "Line 11" == #[1] &&
       (turned.pages[1]?.map (·.fills.size)) == some 4)
+  let headed (gap : String) := layout (doc ""
+    ("\\noindent Alpha\\vspace{" ++ gap ++ "}\n\n\\section{Kqzv}\n\\noindent\\fbox{\\begin{minipage}{100pt}" ++
+      String.intercalate "\\\\ " ((List.range 12).map fun k => s!"Line {k}") ++ "\\end{minipage}}"))
+  t s!"box blocks: a heading before a framed box the page cannot hold moves with it ({pagesWith (headed "520pt") "Kqzv"})"
+    (pagesWith (headed "520pt") "Kqzv" == #[1] && pagesWith (headed "520pt") "Line 0" == #[1])
+  t "box blocks: a heading before a framed box the page holds stays with it there"
+    (pagesWith (headed "200pt") "Kqzv" == #[0] && pagesWith (headed "200pt") "Line 11" == #[0])
   -- the web page's box
   let (_, _, html, _) := sourceArtifacts fonts
     (doc "" "\\noindent\\fcolorbox{red}{yellow}{\\begin{minipage}{100pt}Alpha\\end{minipage}}")

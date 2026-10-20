@@ -18293,6 +18293,14 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
     | .picture _ pic _ _ =>
       let ((_, py0), (_, py1)) := pictureBox b.geom fs imgs b.xHeight pic
       glue + inkClearance + (py1 - py0)
+    -- An unbreakable box is kept whole: its height as a trial placement below the band sets it.
+    | .floatOpen =>
+      let group := staged.extract (k + 1) (matchingClose staged (k + 1) 1)
+      if !(group[0]? matches some (Op.regionOpen (.box _))) then 0 else
+      let trial := (group.foldl (stepStaged fs imgs) { b := { b with noBreak := true, skip := {} } }).b
+      let height := max 0 (trial.y + trial.prevDepth - b.y)
+      -- A box no page holds goes on whatever page it opens; the heading keeps no reserve for it.
+      if b.bottom - b.geom.bodyTop < height then 0 else glue + height
     | .para j t =>
       if 0 < j.keepNext then
         glue + (t.get.size : Int) * Ir.stepSkip j.lead j.size b.geom.leading
