@@ -24,7 +24,9 @@ doc             := FigureAlt.titled t (Input.resolveBibliography f doc₀ …).1
                    buildFontSet returns (Ir.resolveMathAlphas), the one every backend reads
 fitted          := Layout.runFitted geom fs pats doc imgs;  pdf := Pdf.writeChecked … doc …
 tree            := Struct.ofDoc (Layout.pdfView doc)   -- Ir.keepFor "pdf"
-(html, dHtml)   := prepareHtml f hcfg { doc with body := Ir.squeezeFrames doc.body sq } natives
+docH            := doc, or where a picture withdraws for the page alone a re-elaboration with it
+                   withdrawn, titled and resolved as doc is
+(html, dHtml)   := prepareHtml f hcfg { docH with body := Ir.squeezeFrames docH.body sq } natives
 md              := MarkdownDoc.emit doc bibName
 D               := every diagnostic the run reports: each phase's batch through
                    Diag.resolveAll (Diag.forOutputs outs batch), and the refusals Ui.diag prints
@@ -33,10 +35,11 @@ D               := every diagnostic the run reports: each phase's batch through
 -- label otherwise; doc₀ is the last elaboration on the path taken. The remeasure and the HTML
 -- withdraw elaborations, and resolveMathAlphas there, drop their diagnostics today (U112).
 
--- A text is its characters, each from the source token a span starts at, or the engine's.
-inductive Origin | source (span : Span) | generated
-srcText A ex : List (Char × Origin) := Parse.rawText f ex.raws  -- less other targets' slots
-irText doc   : List (Char × Origin)  -- Ir.locatedText over the body's and furniture's inlines
+-- A text is its characters, each from the source token at a place, a mark the engine adds, or
+-- text no place locates.
+inductive Origin | source (span : Span) | engine | unplaced
+srcText A ex : List (Char × Origin) := Parse.rawTextFor A.target f ex.raws  -- A's target's slots
+irText A     : List (Char × Origin)  -- Ir.locatedText over the inlines of A's doc, docH for HTML
 text A       : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks
 lost D A     : Array Diag :=
   (Diag.forOutputs #[A.output] D).filter fun d => d.kind.loss matches .dropped | .pending
@@ -48,26 +51,28 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
       r.shipped = r.emitted) ∧
     (∀ A ∈ r.shipped,
       Text.view (named r.D A) (text A) = Text.view (named r.D A) (srcText A r.ex) ∧
-      ((lost r.D A).toList.map Diag.piece).Pairwise List.Disjoint) ∧
+      (lost r.D A).toList.Nodup) ∧
     (PdfCensus.census r.pdf).isOk ∧
     HtmlDoc.scripts r.html ⊆ {HtmlDoc.deckScript} ∪ r.boundaryText ∧  -- the file read, if declared
     ∀ cfg', cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
       cfg'.fontDirs = cfg.fontDirs → let r' := compile cfg' src E
       ∀ A ∈ r.shipped, A ∈ r'.shipped → r'.bytes A = r.bytes A
 -- A result exists because every stage is total and terminates. Only dropped and pending losses
--- excuse text: an error or a warning the default run shows, a repeat its shown line counts
--- (Diag.foldRepeats), or a loss the document accepts; W0311, degraded, still replaces a
--- frame title's text, owed reclassified or excused by its piece (U111). srcText is read after
--- execution, so decoding, lexing, includes and execution owe the same equation from the source
--- bytes (U111); Ir.keepFor drops a block aimed at another target with no diagnostic, so srcText A
--- leaves those slots out, owed with the per-target view (U111).
--- Text.view P t: the characters Text.keep P keeps (each source character outside the excused
--- tokens P, and the engine's white space), read through Text.norm: TeX's punctuation spellings
--- as one (Text.canon) and a white-space run as one space (Text.squash); NFC and glyph ligatures
--- are the backends' to read back (U110).
+-- excuse text (Diag.piece): an error or a warning the default run shows, a repeat its shown line
+-- counts (Diag.foldRepeats), or a loss the document accepts; each is reported once, and a place
+-- several losses share is excused by each. srcText reads a source's text slots by their meaning
+-- in TeX: Parse.rawText reads the ones its arms read so far (U111), Parse.rawTextFor leaves out
+-- a block aimed at another target, which Ir.keepFor drops with no diagnostic (owed (U111)), and a
+-- slot a later declaration overwrites, a frame title W0311 names replaced, sets no text in TeX
+-- either. srcText is read after execution, so decoding, lexing, includes and execution owe the
+-- same equation from the source bytes (U111).
+-- Text.view P t: the characters Text.keep P keeps (all but those from an excused place and the
+-- engine's marks, the marks' white space kept), read through Text.norm: TeX's punctuation
+-- spellings as one (Text.canon) and a white-space run as one space (Text.squash); NFC, glyph
+-- ligatures and the hyphen a line break sets are the backends' to read back (U110).
 -- Composition, for each artifact A: surface ∘ elaboration ∘ passes gives
--- Text.view (named dFront A) (irText doc) = Text.view (named dFront A) (srcText A ex); each
--- backend gives Text.view (named D A) (text A) = Text.view (named D A) (irText doc), the PDF
+-- Text.view (named dFront A) (irText A) = Text.view (named dFront A) (srcText A ex); each
+-- backend gives Text.view (named D A) (text A) = Text.view (named D A) (irText A), the PDF
 -- through Ir.keepFor "pdf" and the page through Ir.squeezeFrames; the accounting gives
 -- src.diags ⊆ dFront ⊆ D, up to site counts and demotion, so named dFront A ⊆ named D A.
 ```
@@ -97,22 +102,27 @@ Three gaps keep the composition open:
   Modules: `scripts/ProofAudit.lean`, `LeanTex/Core/Elab.lean` and the loops' own, most in
   `LeanTex/Core/Layout.lean`.
 - Elaboration conservation: for each artifact A, through execution, both of Elab's knots and the
-  driver's IR passes, Text.view (named dFront A) (irText doc) = Text.view (named dFront A) (srcText
-  A ex), the pieces of distinct diagnostics disjoint, and execution keeps the decoded source's text
-  slots the same way. The decomposition follows the knots: an arm accounts for its raws
-  (Elab.Accounts) when the diagnostics it adds name only tokens of those raws and, their pieces
-  excused, the text it appends reads as theirs; arms compose along the spine (`Text.view_congr`), a
-  group's or a scope's inner run standing for its body. The plain-text arms of the inline knot are
-  proved (`Elab.elabInlines_plain_text`). `Parse.rawText` reads a group's text whatever control
-  precedes it, so the control arms owe its signature-typed slots, a `\label` or `\ref` key, a length
-  or a file name being no text; a diagnostic's piece is the token its span starts at, so a loss
-  covering more owes its range. owed (U111): `Elab.elabInlines_ctrl_text`,
+  driver's IR passes, Text.view (named dFront A) (irText A) = Text.view (named dFront A) (srcText A
+  ex), and execution keeps the decoded source's text slots the same way. The decomposition follows
+  the knots: an arm accounts for its raws (Elab.Accounts) when the places its diagnostics excuse are
+  places of those raws' text and, those excused, the text it appends reads as theirs; arms compose
+  along the spine (`Text.view_congr`), a group's or a scope's inner run standing for its body. The
+  plain-text arms of the inline knot are proved (`Elab.elabInlines_plain_text`), whatever expansion
+  marks their raws. The model's open terms are owed with the arms that read them: `Parse.rawText`
+  reads a group's text whatever control precedes it, so the control arms owe signature-typed slots,
+  a `\label` or `\ref` key, a length or a file name being no text, and a control's own text (an
+  escape, a text symbol, a break); a formula's text is the floor its source reads, so the formula
+  arm owes the parsed formula's floor reading as it; a command's expansion sets its text at its
+  call's place, so the call arm owes srcText reading a call through its definition; a piece is a
+  place, so where the compatibility pass sets several raws at one place a refusal there excuses them
+  all, and token identity is owed. owed (U111): `Elab.elabInlines_ctrl_text`,
   `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`,
   `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`, `Elab.elabBlocks_text_accounts`,
-  `Ir.locatedBlocks`, `Compat.executeInputs_text_accounts`, `Elab.runPrepared_text_accounts`,
-  `Driver.passes_text_accounts`. Modules: `LeanTex/Core/ElabTextContract.lean`,
-  `LeanTex/Core/TextAccount.lean`, `LeanTex/Core/Elab.lean`, `LeanTex/Core/Compat.lean`,
-  `LeanTex/Core/Diag.lean`, `LeanTex/Cli/Input.lean`, `LeanTex/Cli/Driver.lean`.
+  `Ir.locatedBlocks`, `Parse.rawTextFor`, `Compat.executeInputs_text_accounts`,
+  `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts`. Modules:
+  `LeanTex/Core/ElabTextContract.lean`, `LeanTex/Core/TextAccount.lean`, `LeanTex/Core/Elab.lean`,
+  `LeanTex/Core/Compat.lean`, `LeanTex/Core/Diag.lean`, `LeanTex/Cli/Input.lean`,
+  `LeanTex/Cli/Driver.lean`.
 - Artifact text: a model of what a viewer extracts, against which each backend's census is proved.
   For the PDF, PDF 2.0's text extraction: content-stream strings through each font's ToUnicode map
   in marked-content order, Artifact content generated, origins from the structure tree's marked
@@ -148,7 +158,7 @@ Three gaps keep the composition open:
 | Termination | Owed: elaboration terminates. No declaration is marked partial and both knots recurse on lexicographic measures the kernel checks, but do-notation repeat loops still compile to a partial combinator. | owed (U72): a semantic lint over reachable constants, the repeat loops rewritten |
 | Macro visibility | Owed: a call resolves to the definition visible at that point. | owed (U77): `lookupUser_latest_exact` |
 | Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
-| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers and outside a command's call, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal naming one token of that source; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike. | `Elab.elabInlines_plain_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_ctrl_text`, `Elab.elabBlocks_text_accounts` |
+| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike. | `Elab.elabInlines_plain_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_ctrl_text`, `Elab.elabBlocks_text_accounts` |
 | Group scope | A group's end, block or inline, restores the declaration state its start held, with the global assignments logged inside replayed over it; with none logged, a group, an environment holding block content and a braced group of block content with no paragraph end inside each leave the state as they found it. | `texGroup_scope_id`, `elabBlocks_env_scope_id`, `elabBlocks_group_scope_id`; by unfolding: `texGroup_scope_exact`, `inlineGroup_scope_exact` |
 
 ## IR

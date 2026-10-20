@@ -42,12 +42,19 @@ theorem smartPunctAfter_canon (lead : Option Char) (s : String) :
     obtain ⟨x, hx, hs, _⟩ := smartPunct_go_canon s.toList [c]
     simp [Ir.smartPunctAfter, hx, hs]
 
-theorem keep_generated (named : List Span) (s : String) :
-    keep named (chars .generated s) = s.toList.filter (·.isWhitespace) := by
+theorem keep_engine (named : List Span) (s : String) :
+    keep named (chars .engine s) = s.toList.filter (·.isWhitespace) := by
   simp only [keep, chars, List.filterMap_map, Function.comp_def]
   induction s.toList with
   | nil => rfl
   | cons c rest ih => by_cases hc : c.isWhitespace = true <;> simp [hc, ih]
+
+theorem keep_unplaced (named : List Span) (s : String) :
+    keep named (chars .unplaced s) = s.toList := by
+  simp only [keep, chars, List.filterMap_map, Function.comp_def]
+  induction s.toList with
+  | nil => rfl
+  | cons c rest ih => simp [ih]
 
 /-- Smart punctuation reads alike from either origin. -/
 theorem chars_smart (named : List Span) (o : Origin) (s : String) :
@@ -58,8 +65,11 @@ theorem chars_smart (named : List Span) (o : Origin) (s : String) :
     split
     · rfl
     · exact (smartPunct_canon s).1
-  | generated =>
-    rw [keep_generated, keep_generated, (smartPunct_canon s).2]
+  | engine =>
+    rw [keep_engine, keep_engine, (smartPunct_canon s).2]
+  | unplaced =>
+    rw [keep_unplaced, keep_unplaced]
+    exact (smartPunct_canon s).1
 
 end LeanTex.Core.Text
 
@@ -166,7 +176,7 @@ private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : 
     simp only [Parse.rawTextList_cons, List.append_assoc]
 
 private theorem locatedText_flushText (acc : Array Inline) (sb : String) :
-    locatedText (flushText acc sb) = locatedText acc ++ chars .generated sb := by
+    locatedText (flushText acc sb) = locatedText acc ++ chars .unplaced sb := by
   unfold flushText
   split
   · rename_i h
@@ -203,16 +213,16 @@ private theorem moveMacroRuns_located (active : Array MacroRun) (desired : List 
 private theorem step_located (c : Bool) (roles roles' : MacroRoles) (acc acc2 : Array Inline)
     (sb : String) (h : locatedText acc2 = locatedText (flushText acc sb)) :
     locatedText (if c then (roles, acc, sb) else (roles', acc2, "")).2.1 ++
-        chars .generated (if c then (roles, acc, sb) else (roles', acc2, "")).2.2 =
-      locatedText acc ++ chars .generated sb := by
+        chars .unplaced (if c then (roles, acc, sb) else (roles', acc2, "")).2.2 =
+      locatedText acc ++ chars .unplaced sb := by
   cases c <;> simp [h, locatedText_flushText]
 
 /-- Moving the macro runs at a token only wraps what is set under roles. -/
 private theorem inlineMacroStep_located (roles : MacroRoles) (raw : Option Raw)
     (acc : Array Inline) (sb : String) (following : List MacroOrigin) :
     locatedText (inlineMacroStep roles raw acc sb following).2.1 ++
-        chars .generated (inlineMacroStep roles raw acc sb following).2.2 =
-      locatedText acc ++ chars .generated sb := by
+        chars .unplaced (inlineMacroStep roles raw acc sb following).2.2 =
+      locatedText acc ++ chars .unplaced sb := by
   unfold inlineMacroStep
   dsimp only
   exact step_located _ _ _ _ _ _ (moveMacroRuns_located _ _ _ _)
@@ -220,8 +230,8 @@ private theorem inlineMacroStep_located (roles : MacroRoles) (raw : Option Raw)
 private theorem inlineMacroAt_located (roles : MacroRoles) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) :
     locatedText (inlineMacroAt roles raws i acc sb).2.1 ++
-        chars .generated (inlineMacroAt roles raws i acc sb).2.2 =
-      locatedText acc ++ chars .generated sb :=
+        chars .unplaced (inlineMacroAt roles raws i acc sb).2.2 =
+      locatedText acc ++ chars .unplaced sb :=
   inlineMacroStep_located _ _ _ _ _
 
 private theorem ends_space (t : String) (h : t.endsWith " " = true) :
@@ -232,31 +242,27 @@ private theorem ends_space (t : String) (h : t.endsWith " " = true) :
   exact ⟨u, by simpa using hu.symm⟩
 
 private theorem view_space_after (named : List Span) (x tail : List (Char × Origin))
-    (h : ∃ y, x = y ++ [(' ', .generated)]) :
-    view named (x ++ (' ', .generated) :: tail) = view named (x ++ tail) := by
+    (h : ∃ y, x = y ++ [(' ', .unplaced)]) :
+    view named (x ++ (' ', .unplaced) :: tail) = view named (x ++ tail) := by
   obtain ⟨y, rfl⟩ := h
   simpa only [List.append_assoc, List.cons_append, List.nil_append] using
     view_space_run named y tail
 
 private theorem chars_ends (sb : String) (h : sb.endsWith " " = true) :
-    ∃ y, chars .generated sb = y ++ [(' ', .generated)] := by
+    ∃ y, chars .unplaced sb = y ++ [(' ', .unplaced)] := by
   obtain ⟨u, hu⟩ := ends_space sb h
-  exact ⟨u.map (·, .generated), by simp [chars, hu]⟩
-
-private theorem chars_push (o : Origin) (sb : String) (c : Char) :
-    chars o (sb.push c) = chars o sb ++ [(c, o)] := by
-  simp [chars]
+  exact ⟨u.map (·, .unplaced), by simp [chars, hu]⟩
 
 /-- A pending space's reading: one engine space, or none against a space already pending. -/
 private theorem view_pending_space (named : List Span) (l : List (Char × Origin)) (sb : String)
     (tail : List (Char × Origin)) :
-    view named ((l ++ chars .generated (if spaceSeps sb then sb.push ' ' else sb)) ++ tail) =
-      view named (l ++ chars .generated sb ++ [(' ', .generated)] ++ tail) := by
+    view named ((l ++ chars .unplaced (if spaceSeps sb then sb.push ' ' else sb)) ++ tail) =
+      view named (l ++ chars .unplaced sb ++ [(' ', .unplaced)] ++ tail) := by
   split
   · simp [chars, List.append_assoc]
   · rename_i hs
     have he : sb.endsWith " " = true := by simpa [spaceSeps] using hs
-    have := view_space_after named (l ++ chars .generated sb) tail
+    have := view_space_after named (l ++ chars .unplaced sb) tail
       (by obtain ⟨y, hy⟩ := chars_ends sb he; exact ⟨l ++ y, by simp [hy]⟩)
     simpa [chars] using this.symm
 
@@ -270,7 +276,7 @@ private theorem core_plain (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (h : ∀ st, Accounts ctx.file (raws.toList.drop 0)
       ((elabInlinesFrom { { ctx with macroRoles := ctx.macroRoles.enter } with
         callSite := none, literalWhen := none } raws 0 #[] "").run st) st
-      (locatedText #[] ++ chars .generated "")) :
+      (locatedText #[] ++ chars .unplaced "")) :
     Accounts ctx.file raws.toList
       ((elabInlinesCore { ctx with callSite := none, literalWhen := none } raws).run st) st [] := by
   have hrun : (elabInlinesCore { ctx with callSite := none, literalWhen := none } raws).run st =
@@ -294,6 +300,19 @@ private theorem core_plain (ctx : Ctx) (raws : Array Raw) (st : ESt)
   · exact this
   · rw [view_mapSmartText]
     exact this
+
+private theorem core_enter (ctx : Ctx) (raws : Array Raw) (st : ESt)
+    (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
+    (h : ∀ st, Accounts ctx.file (raws.toList.drop 0)
+      ((elabInlinesFrom { { ctx with macroRoles := ctx.macroRoles.enter } with
+        callSite := none, literalWhen := none } raws 0 #[] "").run st) st
+      (locatedText #[] ++ chars .unplaced "")) :
+    Accounts ctx.file raws.toList ((elabInlinesCore ctx raws).run st) st [] := by
+  have hctx : ctx = { ctx with callSite := none, literalWhen := none } := by
+    cases ctx
+    simp_all
+  rw [hctx]
+  exact core_plain ctx raws st h
 
 private theorem accounts_inner (file innerFile : String) (r : Raw) (body : Array Raw)
     (src : List Raw) (run : Array Inline × ESt) (st stI st1 : ESt) (pre : List (Char × Origin))
@@ -324,14 +343,9 @@ private theorem run_bind' (act : EM β) (k : β → EM α) (st : ESt) :
   rfl
 
 private theorem pre_inner (acc inner : Array Inline) (sb : String) :
-    locatedText (flushText acc sb ++ inner) ++ chars .generated "" =
-      locatedText acc ++ chars .generated sb ++ locatedText inner := by
+    locatedText (flushText acc sb ++ inner) ++ chars .unplaced "" =
+      locatedText acc ++ chars .unplaced sb ++ locatedText inner := by
   simp [locatedText_append, locatedText_flushText]
-
-/-- The context an input wrapper's body reads in, before its call site and selector are cleared. -/
-@[reducible] private def inputCtx (ctx : Ctx) (name file : String) : Ctx :=
-  { ctx with file := file, kept := ctx.kept || Parse.isKeptInput name,
-             owned := Compat.ownsInput ctx.owned ctx.file name }
 
 private theorem wordAfter_canon (ctx : Ctx) (acc : Array Inline) (sb w : String) :
     canon (wordAfter ctx acc sb w).toList = canon w.toList := by
@@ -352,7 +366,7 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
     (sb : String) (st : ESt) (hr : ∀ r ∈ raws, PlainRaw r) :
     Accounts ctx.file (raws.toList.drop i)
       ((elabInlinesFrom { ctx with callSite := none, literalWhen := none } raws i acc sb).run st) st
-      (locatedText acc ++ chars .generated sb) := by
+      (locatedText acc ++ chars .unplaced sb) := by
   rw [elabInlinesFrom]
   have hstep := inlineMacroAt_located
     ({ ctx with callSite := none, literalWhen := none } : Ctx).macroRoles raws i acc sb
@@ -418,7 +432,7 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
             simpa [chars] using this.symm
           · simp at hs
         · have he : sb'.endsWith " " = true := by simpa using hs
-          have := view_space_after named (locatedText acc' ++ chars .generated sb') tail
+          have := view_space_after named (locatedText acc' ++ chars .unplaced sb') tail
             (by obtain ⟨y, hy⟩ := chars_ends sb' he; exact ⟨locatedText acc' ++ y, by simp [hy]⟩)
           simpa [chars] using this.symm
     case h_4.sym p | h_5.sym p | h_6.sym p =>
@@ -447,7 +461,7 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
           exact ⟨c, by simp [hc]⟩
         · intro named hn tail
           have hs : (⟨ctx.file, p⟩ : Span) ∈ named := hn _ (List.mem_singleton_self _)
-          have := view_named named _ hs [c] (locatedText acc' ++ chars .generated sb') tail
+          have := view_named named _ hs [c] (locatedText acc' ++ chars .unplaced sb') tail
           simpa [hc, List.append_assoc] using this.symm
     case h_9.group body p _ =>
       have hb : ∀ r ∈ body, PlainRaw r := by assumption
@@ -483,10 +497,11 @@ private theorem spine_plain (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Arra
         cases hf
       simp only [hs, hmode, hf, Bool.false_eq_true, ↓reduceIte]
       rw [run_bind']
+      let base : Ctx := { ctx with macroRoles := roles, callSite := none, literalWhen := none }
+      let ictx : Ctx := base.enterInput name f
       refine accounts_inner ctx.file f _ body _ _ st _ _ _ _
-        (core_plain (inputCtx { ctx with macroRoles := roles } name f) body st fun st =>
-          spine_plain { inputCtx { ctx with macroRoles := roles } name f with
-            macroRoles := roles.enter } body 0 #[] "" st hb)
+        (core_enter ictx body st rfl rfl fun st =>
+          spine_plain { ictx with macroRoles := roles.enter } body 0 #[] "" st hb)
         (by simp [hf]) rfl ?_
       rw [← pre_inner]
       exact spine_plain { ctx with macroRoles := roles } raws (i + 1) _ "" _ hr
@@ -513,11 +528,8 @@ public theorem elabInlines_plain_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
     (hr : ∀ r ∈ raws, PlainRaw r) :
     Accounts ctx.file raws.toList ((elabInlines ctx raws).run st) st [] := by
-  have hctx : ctx = { ctx with callSite := none, literalWhen := none } := by
-    cases ctx
-    simp_all
-  rw [elabInlines, hctx]
-  exact core_plain ctx raws st fun st =>
+  rw [elabInlines]
+  exact core_enter ctx raws st hsite hwhen fun st =>
     spine_plain { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] "" st hr
 
 end LeanTex.Core.Elab

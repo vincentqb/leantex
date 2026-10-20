@@ -5,16 +5,25 @@ public import LeanTex.Core.Parse
 
 namespace LeanTex.Core
 
-/-- Where a character of a text comes from: the source token a span starts at, or the engine. -/
+/-- Where a character of a text comes from: the source token at a place, a mark the engine adds,
+or text no place locates. -/
 public inductive Origin where
   | source (span : Span)
-  | generated
+  | engine
+  | unplaced
   deriving Repr, DecidableEq
 
 /-- The source tokens a diagnostic excuses: the token its span starts at, where its loss leaves
 content absent. -/
 @[expose] public def Diag.piece (d : Diag) : List Span :=
   if d.kind.loss matches .dropped | .pending then d.span.toList else []
+
+/-- Whether two spans start at one place of one file, as `Pos`'s equality reads a place. -/
+@[expose] public def Span.samePlace (a b : Span) : Bool :=
+  a.file == b.file && a.pos.line == b.pos.line && a.pos.col == b.pos.col
+
+public theorem Span.samePlace_self (s : Span) : Span.samePlace s s = true := by
+  simp [Span.samePlace]
 
 namespace Text
 
@@ -44,12 +53,13 @@ read alike. -/
 space. -/
 @[expose] public def norm (s : List Char) : List Char := squash false (canon s)
 
-/-- The characters a text keeps once the source tokens `named` are excused: every other source
-character, and the engine's white space. -/
+/-- The characters a text keeps once the places `named` are excused: every character but those
+from an excused place and the engine's marks, the marks' white space kept. -/
 @[expose] public def keep (named : List Span) (t : List (Char × Origin)) : List Char :=
   t.filterMap fun (c, o) => match o with
-    | .source s => if named.any (fun t => decide (t = s)) then none else some c
-    | .generated => if c.isWhitespace then some c else none
+    | .source s => if named.any (Span.samePlace · s) then none else some c
+    | .engine => if c.isWhitespace then some c else none
+    | .unplaced => some c
 
 @[expose] public def view (named : List Span) (t : List (Char × Origin)) : List Char :=
   norm (keep named t)
@@ -130,10 +140,10 @@ public theorem view_congr (named : List Span) {a a' b b' : List (Char × Origin)
 
 /-- An engine space after an engine space reads as one. -/
 public theorem view_space_run (named : List Span) (a b : List (Char × Origin)) :
-    view named (a ++ (' ', .generated) :: (' ', .generated) :: b) =
-      view named (a ++ (' ', .generated) :: b) := by
+    view named (a ++ (' ', .unplaced) :: (' ', .unplaced) :: b) =
+      view named (a ++ (' ', .unplaced) :: b) := by
   simp only [view, norm, keep_append, canon_append]
-  have h : ∀ l : List (Char × Origin), keep named ((' ', .generated) :: l) = ' ' :: keep named l :=
+  have h : ∀ l : List (Char × Origin), keep named ((' ', .unplaced) :: l) = ' ' :: keep named l :=
     fun l => by simp [keep]
   rw [h, h]
   have hs : canon (' ' :: ' ' :: keep named b) = ' ' :: ' ' :: canon (keep named b) := by
@@ -145,9 +155,9 @@ public theorem view_space_run (named : List Span) (a b : List (Char × Origin)) 
 
 public theorem keep_source (named : List Span) (s : Span) (w : String) :
     keep named (chars (.source s) w) =
-      if named.any (fun t => decide (t = s)) then [] else w.toList := by
-  unfold keep chars
-  split <;> simp_all [List.filterMap_map, Function.comp_def]
+      if named.any (Span.samePlace · s) then [] else w.toList := by
+  cases h : named.any (Span.samePlace · s) <;>
+    simp only [keep, chars, List.filterMap_map, Function.comp_def, h] <;> simp
 
 /-- Two spellings TeX reads alike, from one source token, read alike. -/
 public theorem view_token (named : List Span) (s : Span) {w w' : String}
@@ -165,7 +175,8 @@ public theorem view_named (named : List Span) (s : Span) (hs : s ∈ named)
     simp only [keep, List.filterMap_map, Function.comp_def]
     rw [List.filterMap_eq_nil_iff]
     intro c _
-    have : named.any (fun t => decide (t = s)) = true := List.any_eq_true.mpr ⟨s, hs, by simp⟩
+    have : named.any (Span.samePlace · s) = true :=
+      List.any_eq_true.mpr ⟨s, hs, Span.samePlace_self s⟩
     simp [this]
   simp only [view, norm, keep_append, hk, List.nil_append]
 
@@ -178,7 +189,7 @@ namespace Ir
 mutual
 
 /-- `plainTextList`'s characters onto `acc`, each from the innermost `.located` span holding it,
-`o` outside any; a reference's, citation's or icon's own words and a break's space are generated. -/
+`o` outside any; a reference's, citation's or icon's words and a break's space are the engine's. -/
 @[expose] public def locatedListOnto (o : Origin) (acc : Array (Char × Origin)) :
     List Inline → Array (Char × Origin)
   | [] => acc
@@ -201,13 +212,13 @@ mutual
     locatedListOnto o (locatedListOnto o acc firstPage.toList) otherPage.toList
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount => acc
   | .image _ _ _ => acc
-  | .icon _ label => acc ++ (Text.chars .generated label).toArray
+  | .icon _ label => acc ++ (Text.chars .engine label).toArray
   | .label _ => acc
-  | .ref _ _ text _ => acc ++ (Text.chars .generated text).toArray
-  | .cite _ keys => acc ++ (Text.chars .generated (citeMarks keys)).toArray
+  | .ref _ _ text _ => acc ++ (Text.chars .engine text).toArray
+  | .cite _ keys => acc ++ (Text.chars .engine (citeMarks keys)).toArray
   | .cited _ _ ink => locatedListOnto o acc ink.toList
   | .footnote _ body => locatedListOnto o acc body.toList
-  | .linebreak _ => acc.push (' ', .generated)
+  | .linebreak _ => acc.push (' ', .engine)
 
 end
 
@@ -219,7 +230,7 @@ end
 
 /-- Inline content's characters with their origins. -/
 @[expose] public def locatedText (xs : Array Inline) : List (Char × Origin) :=
-  locatedList .generated xs.toList
+  locatedList .unplaced xs.toList
 
 mutual
 
@@ -303,7 +314,7 @@ end
 /-- Erasing the origins leaves `plainText`. -/
 public theorem locatedText_erased (xs : Array Inline) :
     (locatedText xs).map (·.1) = (plainText xs).toList := by
-  have h := locatedListOnto_erased .generated #[] xs.toList
+  have h := locatedListOnto_erased .unplaced #[] xs.toList
   simpa [locatedText, locatedList, plainText] using h
 
 public theorem locatedList_append (o : Origin) (a b : List Inline) :
@@ -315,7 +326,7 @@ public theorem locatedList_append (o : Origin) (a b : List Inline) :
 @[simp] public theorem locatedText_empty : locatedText #[] = [] := rfl
 
 public theorem locatedText_push (xs : Array Inline) (x : Inline) :
-    locatedText (xs.push x) = locatedText xs ++ locatedOne .generated x := by
+    locatedText (xs.push x) = locatedText xs ++ locatedOne .unplaced x := by
   simp [locatedText, Array.toList_push, locatedList_append, locatedList_cons]
 
 public theorem locatedText_append (xs ys : Array Inline) :
@@ -323,7 +334,7 @@ public theorem locatedText_append (xs ys : Array Inline) :
   simp [locatedText, locatedList_append]
 
 public theorem locatedText_mergeStep (out : Array Inline) (x : Inline) :
-    locatedText (mergeStep out x) = locatedText out ++ locatedOne .generated x := by
+    locatedText (mergeStep out x) = locatedText out ++ locatedOne .unplaced x := by
   unfold mergeStep
   split
   · rename_i s t hb
@@ -334,7 +345,7 @@ public theorem locatedText_mergeStep (out : Array Inline) (x : Inline) :
 public theorem locatedText_mergeTexts (xs : Array Inline) :
     locatedText (mergeTexts xs) = locatedText xs := by
   have fold : ∀ (l : List Inline) (acc : Array Inline),
-      locatedText (l.foldl mergeStep acc) = locatedText acc ++ locatedList .generated l := by
+      locatedText (l.foldl mergeStep acc) = locatedText acc ++ locatedList .unplaced l := by
     intro l
     induction l with
     | nil => intro acc; simp
@@ -350,9 +361,9 @@ namespace Parse
 
 mutual
 
-/-- The text slots of raws read in `file`, onto `acc`: a word's and a symbol's characters (a tie as
-the no-break space it sets) from its token, a space or a break as an engine space, and a group's or
-environment's body, an input's in its file; a control word, formula or verbatim reads its own. -/
+/-- The text slots of raws read in `file`, onto `acc`: a word's, symbol's (a tie as its no-break
+space), formula's floor and verbatim's characters from their place, a space or break as a space,
+and a group's or environment's body, an input's in its file; a control word sets none here. -/
 @[expose] public def rawTextListOnto (file : String) (acc : Array (Char × Origin)) :
     List Raw → Array (Char × Origin)
   | [] => acc
@@ -362,11 +373,13 @@ environment's body, an input's in its file; a control word, formula or verbatim 
     Array (Char × Origin) :=
   match r with
   | .word s p => acc ++ (Text.chars (.source ⟨file, p⟩) s).toArray
-  | .space | .par _ => acc.push (' ', .generated)
+  | .space | .par _ => acc.push (' ', .unplaced)
   | .sym c p => acc.push (if c = '~' then '\u00a0' else c, .source ⟨file, p⟩)
   | .group body _ => rawTextListOnto file acc body.toList
   | .env name body _ => rawTextListOnto ((inputEnvFile? name).getD file) acc body.toList
-  | .ctrl _ _ | .math _ _ _ | .verb _ _ _ => acc
+  | .math _ body p => acc ++ (Text.chars (.source ⟨file, p⟩) (Ir.mathFloor (rawSrc body))).toArray
+  | .verb _ v p => acc ++ (Text.chars (.source ⟨file, p⟩) v.text).toArray
+  | .ctrl _ _ => acc
 
 end
 
@@ -415,10 +428,10 @@ public theorem rawTextList_cons (file : String) (r : Raw) (rest : List Raw) :
   simp [rawTextOne, rawTextOnto]
 
 @[simp] public theorem rawTextOne_space (file : String) :
-    rawTextOne file .space = [(' ', .generated)] := rfl
+    rawTextOne file .space = [(' ', .unplaced)] := rfl
 
 @[simp] public theorem rawTextOne_par (file : String) (p : Pos) :
-    rawTextOne file (.par p) = [(' ', .generated)] := rfl
+    rawTextOne file (.par p) = [(' ', .unplaced)] := rfl
 
 @[simp] public theorem rawTextOne_sym (file : String) (c : Char) (p : Pos) :
     rawTextOne file (.sym c p) = [(if c = '~' then '\u00a0' else c, .source ⟨file, p⟩)] := rfl
