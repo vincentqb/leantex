@@ -55,11 +55,10 @@ space. -/
 @[expose] public def norm (s : List Char) : List Char := squash false (canon s)
 
 /-- The characters a text keeps once the places `named` are excused: every character but those
-from an excused place and the engine's marks, white space always kept. -/
+from an excused place and the engine's marks, the marks' white space kept. -/
 @[expose] public def keep (named : List Span) (t : List (Char × Origin)) : List Char :=
   t.filterMap fun (c, o) => match o with
-    | .source s =>
-      if c.isWhitespace then some c else if named.any (Span.samePlace · s) then none else some c
+    | .source s => if named.any (Span.samePlace · s) then none else some c
     | .engine => if c.isWhitespace then some c else none
     | .unplaced => some c
 
@@ -157,12 +156,9 @@ public theorem view_space_run (named : List Span) (a b : List (Char × Origin)) 
 
 public theorem keep_source (named : List Span) (s : Span) (w : String) :
     keep named (chars (.source s) w) =
-      if named.any (Span.samePlace · s) then w.toList.filter (·.isWhitespace) else w.toList := by
-  simp only [keep, chars, List.filterMap_map, Function.comp_def]
-  cases h : named.any (Span.samePlace · s) <;> simp only [Bool.false_eq_true, ↓reduceIte] <;>
-    induction w.toList with
-    | nil => rfl
-    | cons c rest ih => by_cases hc : c.isWhitespace = true <;> simp [hc, ih]
+      if named.any (Span.samePlace · s) then [] else w.toList := by
+  cases h : named.any (Span.samePlace · s) <;>
+    simp only [keep, chars, List.filterMap_map, Function.comp_def, h] <;> simp
 
 public theorem keep_engine (named : List Span) (s : String) :
     keep named (chars .engine s) = s.toList.filter (·.isWhitespace) := by
@@ -195,25 +191,23 @@ public theorem view_spaces (named : List Span) (a b : List (Char × Origin)) (k 
 
 /-- Two spellings TeX reads alike, from one source token, read alike. -/
 public theorem view_token (named : List Span) (s : Span) {w w' : String}
-    (h : canon w'.toList = canon w.toList)
-    (hw : w'.toList.filter (·.isWhitespace) = w.toList.filter (·.isWhitespace))
-    (a b : List (Char × Origin)) :
+    (h : canon w'.toList = canon w.toList) (a b : List (Char × Origin)) :
     view named (a ++ (chars (.source s) w' ++ b)) =
       view named (a ++ (chars (.source s) w ++ b)) := by
   simp only [view, norm, keep_append, canon_append, keep_source]
-  split <;> simp [h, hw]
+  split <;> simp [h]
 
 /-- A named token's characters are excused. -/
 public theorem view_named (named : List Span) (s : Span) (hs : s ∈ named)
-    (l : List Char) (hl : ∀ c ∈ l, c.isWhitespace = false) (a b : List (Char × Origin)) :
+    (l : List Char) (a b : List (Char × Origin)) :
     view named (a ++ (l.map (·, .source s) ++ b)) = view named (a ++ b) := by
   have hk : keep named (l.map (·, .source s)) = [] := by
     simp only [keep, List.filterMap_map, Function.comp_def]
     rw [List.filterMap_eq_nil_iff]
-    intro c hc
+    intro c _
     have : named.any (Span.samePlace · s) = true :=
       List.any_eq_true.mpr ⟨s, hs, Span.samePlace_self s⟩
-    simp [this, hl c hc]
+    simp [this]
   simp only [view, norm, keep_append, hk, List.nil_append]
 
 @[simp] public theorem chars_empty (o : Origin) : chars o "" = [] := rfl
@@ -395,10 +389,11 @@ end Ir
 
 namespace Parse
 
-/-- A control word's own text from its place: a paragraph break's space, none for `\hfill`, else
-the escape or text symbol it names. -/
-@[expose] public def ctrlText (file name : String) (p : Pos) : List (Char × Origin) :=
-  if name = "par" then [(' ', .unplaced)]
+/-- A control word's own text, read under its overlay-free name: a break's or a control space's
+space, none for `\hfill`, else the escape or text symbol it names from its place. -/
+@[expose] public def ctrlText (file name0 : String) (p : Pos) : List (Char × Origin) :=
+  let name := Compat.overlayName name0
+  if name = "par" ∨ name = "\\" ∨ name = " " then [(' ', .unplaced)]
   else if name = "hfill" then []
   else match Elab.escapeOf name with
     | some lit => Text.chars (.source ⟨file, p⟩) lit

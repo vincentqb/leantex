@@ -52,7 +52,7 @@ theorem chars_smart (named : List Span) (o : Origin) (s : String) :
   | source sp =>
     simp only [keep_source]
     split
-    · rw [(smartPunct_canon s).2]
+    · rfl
     · exact (smartPunct_canon s).1
   | engine =>
     rw [keep_engine, keep_engine, (smartPunct_canon s).2]
@@ -117,13 +117,13 @@ theorem view_mapSmartText (named : List Span) (xs : Array Inline) :
   rw [mapSmartTextList_canon]
 
 /-- The raws the plain-text arms of the inline knot read: words, spaces, paragraph breaks, symbols
-other than white space and the control words `K` admits, whatever expansion marks them, and
+and the control words `K` admits, whatever expansion marks them, and
 groups, declaration scopes and input wrappers of them. -/
 public inductive PlainRaw (K : String → Prop) : Parse.Raw → Prop
   | word (s : String) (p : Pos) : PlainRaw K (Parse.Raw.word s p)
   | space : PlainRaw K Parse.Raw.space
   | par (p : Pos) : PlainRaw K (Parse.Raw.par p)
-  | sym (c : Char) (p : Pos) : c.isWhitespace = false → PlainRaw K (Parse.Raw.sym c p)
+  | sym (c : Char) (p : Pos) : PlainRaw K (Parse.Raw.sym c p)
   | group (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw K r) →
       PlainRaw K (Parse.Raw.group body p)
   | scope (body : Array Raw) (p : Pos) : (∀ r ∈ body, PlainRaw K r) →
@@ -156,28 +156,6 @@ are tokens of `src`, and once they are excused its text reads as `pre` then `src
     ∀ named : List Span, (∀ s ∈ added, s ∈ named) →
       view named (locatedText run.1) = view named (pre ++ Parse.rawTextList file src)
 
-private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : Array Inline × ESt)
-    (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
-    (h : Accounts file src run st1 pre')
-    (hd : st1.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added0)
-    (hd0 : ∀ s ∈ added0, ∃ c s', Span.samePlace s s' ∧ (c, .source s') ∈ Parse.rawTextOne file r)
-    (hview : ∀ named : List Span, (∀ s ∈ added0, s ∈ named) →
-      ∀ tail, view named (pre' ++ tail) = view named (pre ++ Parse.rawTextOne file r ++ tail)) :
-    Accounts file (r :: src) run st pre := by
-  obtain ⟨added, hdiags, hsrc, hv⟩ := h
-  refine ⟨added0 ++ added, ?_, ?_, ?_⟩
-  · rw [hdiags, hd, List.append_assoc]
-  · intro s hs
-    rcases List.mem_append.mp hs with hs | hs
-    · obtain ⟨c, s', hp, hc⟩ := hd0 s hs
-      exact ⟨c, s', hp, by rw [Parse.rawTextList_cons]; exact List.mem_append_left _ hc⟩
-    · obtain ⟨c, s', hp, hc⟩ := hsrc s hs
-      exact ⟨c, s', hp, by rw [Parse.rawTextList_cons]; exact List.mem_append_right _ hc⟩
-  · intro named hn
-    rw [hv named (fun s hs => hn s (List.mem_append_right _ hs)),
-      hview named (fun s hs => hn s (List.mem_append_left _ hs))]
-    simp only [Parse.rawTextList_cons, List.append_assoc]
-
 private theorem accounts_prefix (file : String) (rs src : List Raw) (run : Array Inline × ESt)
     (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
     (h : Accounts file src run st1 pre')
@@ -199,6 +177,19 @@ private theorem accounts_prefix (file : String) (rs src : List Raw) (run : Array
     rw [hv named (fun s hs => hn s (List.mem_append_right _ hs)),
       hview named (fun s hs => hn s (List.mem_append_left _ hs))]
     simp only [Parse.rawTextList_append, List.append_assoc]
+
+private theorem accounts_cons (file : String) (r : Raw) (src : List Raw) (run : Array Inline × ESt)
+    (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
+    (h : Accounts file src run st1 pre')
+    (hd : st1.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added0)
+    (hd0 : ∀ s ∈ added0, ∃ c s', Span.samePlace s s' ∧ (c, .source s') ∈ Parse.rawTextOne file r)
+    (hview : ∀ named : List Span, (∀ s ∈ added0, s ∈ named) →
+      ∀ tail, view named (pre' ++ tail) = view named (pre ++ Parse.rawTextOne file r ++ tail)) :
+    Accounts file (r :: src) run st pre := by
+  have hone : Parse.rawTextList file [r] = Parse.rawTextOne file r := by
+    simp [Parse.rawTextList_cons]
+  exact accounts_prefix file [r] src run st st1 pre pre' added0 h hd (by simpa [hone] using hd0)
+    (by simpa [hone] using hview)
 
 private theorem drop_skipSpaces (raws : Array Raw) (i : Nat) :
     ∃ k, raws.toList.drop i = List.replicate k .space ++ raws.toList.drop (skipSpaces raws i) := by
@@ -500,7 +491,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
         Parse.rawTextOne_word, Option.map_none, Option.getD_none, List.append_nil,
         List.append_assoc, chars_empty]
       rw [← List.append_assoc (locatedText acc'), ← List.append_assoc (locatedText acc')]
-      exact view_token named _ (wordAfter_canon _ _ _ _).1 (wordAfter_canon _ _ _ _).2 _ _
+      exact view_token named _ (wordAfter_canon _ _ _ _).1 _ _
     case h_2.space =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
         (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hfit hr)
@@ -556,7 +547,8 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
           (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
           (by simp) (by simp) ?_
         intro named _ tail
-        simp [locatedText_push, locatedText_flushText, locatedOne, locatedOnto, Parse.ctrlText]
+        simp [locatedText_push, locatedText_flushText, locatedOne, locatedOnto, Parse.ctrlText,
+          hover]
       by_cases hpar : name = "par"
       · subst hpar
         simp only [show ("par" == "addcontentsline" || "par" == "addtocontents") = false by decide,
@@ -572,7 +564,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
             (sliceWeight_lt raws h (by omega)) hfit hr) (by simp) (by simp) ?_
         intro named _ tail
         simp only [locatedText_push, locatedText_flushText, chars_empty, List.append_nil,
-          Parse.rawTextList_cons, Parse.rawTextOne_ctrl, Parse.ctrlText, ↓reduceIte,
+          Parse.rawTextList_cons, Parse.rawTextOne_ctrl, Parse.ctrlText, hover, true_or, ↓reduceIte,
           List.append_assoc, List.cons_append, List.nil_append, Parse.rawTextList_spaces]
         have hl : locatedOne .unplaced (Inline.linebreak {}) = [(' ', .engine)] := rfl
         rw [hl, List.singleton_append, ← List.append_assoc, ← List.append_assoc,
@@ -603,33 +595,37 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
             (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hfit hr)
             (by simp) (by simp) ?_
           intro named _ tail
-          simp [Parse.ctrlText, hesc, chars, view, keep]
+          simp [Parse.ctrlText, hover, chars]
         · simp only [beq_eq_false_iff_ne.mpr hsp, Bool.false_eq_true, ↓reduceIte]
           refine accounts_cons ctx.file _ _ _ st st _ _ []
             (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
             (by simp) (by simp) ?_
           intro named _ tail
           simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
-            locatedList_cons, Parse.ctrlText, hesc, hhf, hpar]
+            locatedList_cons, Parse.ctrlText, hover, hesc, hhf, hpar, n5, hsp]
       | none =>
         have hsym : (Lex.textSymbols.lookup name).isSome = true := by
           simpa [hesc] using hown
         obtain ⟨t, ht⟩ := Option.isSome_iff_exists.mp hsym
+        have hsp' : name ≠ " " := by
+          rintro rfl
+          have hl : escapes.lookup " " = some " " := by decide
+          simp [escapeOf, hl] at hesc
         simp only [ht, Option.getD_some]
         refine accounts_cons ctx.file _ _ _ st st _ _ []
           (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
           (by simp) (by simp) ?_
         intro named _ tail
         simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
-          locatedList_cons, Parse.ctrlText, hesc, hhf, hpar, ht]
-    case h_4.sym p _ | h_5.sym p _ | h_6.sym p _ =>
+          locatedList_cons, Parse.ctrlText, hover, hesc, hhf, hpar, n5, hsp', ht]
+    case h_4.sym p | h_5.sym p | h_6.sym p =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
         (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
         (by simp) (by simp) ?_
       intro named _ tail
       simp [locatedText_push, locatedText_flushText, sourceInline, Ctx.sourceSpan,
         locatedList_cons, chars]
-    case h_7.sym c p h1 h2 h3 hwc =>
+    case h_7.sym c p h1 h2 h3 =>
       have hc : c ≠ '~' := h3
       split
       · refine accounts_cons ctx.file _ _ _ st st _ _ []
@@ -649,8 +645,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
           exact ⟨c, ⟨ctx.file, p⟩, Span.samePlace_self _, by simp [hc]⟩
         · intro named hn tail
           have hs : (⟨ctx.file, p⟩ : Span) ∈ named := hn _ (List.mem_singleton_self _)
-          have := view_named named _ hs [c] (by simpa using hwc) (locatedText acc' ++
-            chars .unplaced sb') tail
+          have := view_named named _ hs [c] (locatedText acc' ++ chars .unplaced sb') tail
           simpa [hc, List.append_assoc] using this.symm
     case h_9.group body p _ =>
       have hb : ∀ r ∈ body, PlainRaw K r := by assumption
@@ -731,8 +726,8 @@ public theorem elabInlines_plain_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
       "" st ⟨fun _ _ h => h, fun _ _ h => h⟩ hr
 
 /-- Control words that set their own text conserve it too: with no parameter or document command
-taking their names, `\hfill`, `\par`, escapes and text symbols read as their source among the
-plain-text arms. -/
+taking their names, `\hfill`, `\par`, and escapes and text symbols no accent shares read as their
+source among the plain-text arms. -/
 public theorem elabInlines_ctrl_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none) (hfit : Fits PlainCtrl ctx)
     (hr : ∀ r ∈ raws, PlainRaw PlainCtrl r) :
