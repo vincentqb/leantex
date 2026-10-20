@@ -245,8 +245,9 @@ def cancelBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
             t s!"cancel box: {label} arrow clears its target"
               (arrowClearsTarget line)
           if hasStr opts "makeroom" then
-            -- A band's corner or a head's barb stands off the centre line, up to half the back.
-            let slack := Math.cancelHeadHalf true
+            -- A band's corner stands off its centre line, an arrowhead's barb up to half its back.
+            let slack := if cmd == "cancelto{7}" then Math.cancelHeadHalf true
+              else Math.cancelRule true
             t s!"cancel box: {label}/{cmd} holds every mark before the next atom"
               (match glyphX line "𝑦" with
                 | some yx => placed.all fun (pen, pts) =>

@@ -79,6 +79,13 @@ public def cramp : MathStyle → MathStyle
   | .script _ => .script true
   | .scriptscript _ => .scriptscript true
 
+/-- The uncramped variant of a style, how a fresh formula in a box starts. -/
+public def uncramp : MathStyle → MathStyle
+  | .display _ => .display false
+  | .text _ => .text false
+  | .script _ => .script false
+  | .scriptscript _ => .scriptscript false
+
 /-- The style of a fraction's numerator (TeXbook Appendix G rule 15); cramping carries. -/
 public def fracNum : MathStyle → MathStyle
   | .display c => .text c
@@ -956,7 +963,7 @@ public inductive CancelSize where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 public def CancelSize.style : CancelSize → MathStyle → MathStyle
-  | .same, .display _ => .display false
+  | .same, .display _ => .text false
   | .same, .text _ => .text false
   | .same, .script _ => .script false
   | .same, .scriptscript _ => .scriptscript false
@@ -1253,6 +1260,14 @@ public theorem cancelto_anchor_exact (room : Bool) (i : CancelIn) :
   simp only [cancelGeom, Array.mem_singleton] at hs ⊢
   subst hs
   dsimp only
+  omega
+
+/-- A value deeper than half a point rises by the excess, as its `\boxmaxdepth` makes it. -/
+public theorem cancelto_depth_lift_exact (room : Bool) (i : CancelIn) (d : Int) :
+    (cancelGeom .to room { i with vdepth := d }).valueY =
+      (cancelGeom .to room { i with vdepth := 0 }).valueY + max 0 (d - cancelTenths 5) := by
+  simp only [cancelGeom, cancelToRow]
+  have : max 0 (0 - cancelTenths 5) = 0 := by simp only [cancelTenths, cancelPt]; decide
   omega
 
 /-- With room made, the value's advance ends inside the mark's and the vector starts at or after

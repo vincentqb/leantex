@@ -337,9 +337,12 @@ def nonpaintingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
           zero.size == controlZero.size && zero.advance == controlZero.advance)
       -- Two base units of rounding, one per laid side.
       let slack := 2 * Dim.Length.quantum
-      -- Vertically the value's depth past half a point raises it, so only the run is compared.
+      -- An empty fraction deepens the value, which its depth cap raises; a space leaves its depth.
+      let deepens := p.item == .emptyRule || p.item == .anchoredEmptyRule
       check ref s!"{name} moves the visible glyph from the tip as its own list moves it"
-        ((zero.x - w.tip.1 - (controlZero.x - c.tip.1) - (at_.1 - controlAt.1)).abs ≤ slack)
+        ((zero.x - w.tip.1 - (controlZero.x - c.tip.1) - (at_.1 - controlAt.1)).abs ≤ slack &&
+          (deepens ||
+            (-zero.y - w.tip.2 - (-controlZero.y - c.tip.2) - (at_.2 - controlAt.2)).abs ≤ slack))
       let all := shippedBodyGlyphs out
       check ref s!"{name} preserves the remaining source census"
         ((all.filter (·.scalar != ' ')).map ShippedGlyph.scalar ==

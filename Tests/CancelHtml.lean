@@ -138,20 +138,19 @@ private def cancelEpsilon (em : Int) : Int := (em + 1999999) / 2000000 + 1
 
 private def cancelNear (eps a b : Int) : Bool := (a - b).natAbs ≤ eps.toNat
 
-/-- Source parity as a projection check: the points SVG maps against the shared geometry, after the
-one common room translation. -/
+/-- Source parity as a projection check: the points SVG maps, the operand and the value against
+the shared geometry, untranslated. -/
 private def cancelProjection (em : Int) (i : CancelIn) (room : Bool)
     (r : CancelHtmlRead) : Bool :=
   let g := Math.cancelGeom .to room i
-  let pad := r.body.1 - g.shift
   let eps := 4 * cancelEpsilon em
   r.polys.size == g.polys.size &&
     (List.zip r.polys.toList g.polys.toList).all (fun (got, want) =>
       got.size == want.size &&
       (List.zip got.toList want.toList).all (fun (p, q) =>
-        cancelNear eps p.1 (q.1 + pad) && cancelNear eps p.2 q.2)) &&
-    cancelNear eps r.body.2 0 &&
-    cancelNear eps r.value.1 (g.valueX + pad) && cancelNear eps r.value.2 g.valueY
+        cancelNear eps p.1 q.1 && cancelNear eps p.2 q.2)) &&
+    cancelNear eps r.body.1 g.shift && cancelNear eps r.body.2 0 &&
+    cancelNear eps r.value.1 g.valueX && cancelNear eps r.value.2 g.valueY
 
 private def cancelContained (metric : CancelMetric) (room : Bool)
     (r : CancelHtmlRead) : Bool :=
@@ -300,8 +299,8 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
                let bad := cancelRead em (cancelSetChild 2 value node)
                bad.isSome && !(bad.any (cancelProjection em input room)))
             t s!"cancel HTML measured {label}: a stretched strike is unreadable"
-              ((cancelRead em (cancelSetChild 0 (cancelSetChild 0
-                (cancelSetAttr "preserveAspectRatio" "none" r.svg) (nodeKids node)[0]!)
+              ((nodeKids node)[0]?.all fun text => (cancelRead em (cancelSetChild 0
+                (cancelSetChild 0 (cancelSetAttr "preserveAspectRatio" "none" r.svg) text)
                 node)).isNone)
             t s!"cancel HTML measured {label}: bounds judge rejects clipped height"
               (let bad := cancelRead em (cancelSetAttr "height" "0" node)

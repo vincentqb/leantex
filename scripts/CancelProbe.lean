@@ -29,8 +29,9 @@ def cases : List Case :=
   , ⟨"to-fraction", s!"\\cancelto\{{v}\{0}}\{\\frac\{r}\{s}}", true⟩
   , ⟨"to-sum", s!"\\cancelto\{{v}\{0}}\{\\sum_\{n} c_n (z_n - w)}", true⟩ ]
 
-/-- The two package options a case is set under. -/
-def rooms : List (String × String) := [("mk", "makeroom"), ("ov", "overlap")]
+/-- The package options a case is set under. -/
+def rooms : List (String × String) :=
+  [("mk", "makeroom"), ("ov", "overlap"), ("tk", "makeroom,thicklines")]
 
 /-- A case's formula in math delimiters. -/
 def mathOf (c : Case) : String :=

@@ -4137,8 +4137,8 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Length)
     let (cells, missing) := layGridRows { e with gridDepth := e.gridDepth + 1 } cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
   | .cancel mark spec value body =>
-    -- cancel.sty boxes its argument in the current style (`\mathpalette`).
-    let (bItems, m1) := layMathTail e st 0 (Math.degrade body.classes) none (#[], acc.2) body
+    -- cancel.sty boxes its argument in the current style, uncramped (`\mathpalette`).
+    let (bItems, m1) := layMathTail e st.uncramp 0 (Math.degrade body.classes) none (#[], acc.2) body
     let ink := keepHidden e.color ((spec.color.map (·.1)).getD e.color)
     let (vItems, m2) := layMathTail { e with color := ink } (spec.size.style st) 0
       (Math.degrade value.classes) none (#[], m1) value
@@ -4345,7 +4345,7 @@ public def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
   (measures : Option MeasureValues := none) : Option Math.CancelMetric := do
   let e ← MathEnv.forStyles geom fs styles measures
   if e.sizeAt st ≤ 0 then none else
-    let (bs, missing) := layMathTail e st 0
+    let (bs, missing) := layMathTail e st.uncramp 0
       (Math.degrade body.classes) none (#[], #[]) body
     let (vs, _) := layMathTail e (spec.size.style st) 0
       (Math.degrade value.classes) none (#[], missing) value
