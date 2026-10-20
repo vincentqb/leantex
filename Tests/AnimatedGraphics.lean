@@ -108,13 +108,13 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       d.code == "W0110" && d.severity == .warning &&
       d.output == some .pdf && d.triggerText == some "\\animategraphics" &&
       d.recovery == some (.replacedBy "the selected static poster") &&
-      !hasStr d.message "HTML" && !hasStr d.message "SVG" && d.help.isNone)
+      !hasStr (saidText d) "HTML" && !hasStr (saidText d) "SVG" && d.help.isNone)
   t "animation HTML diagnostic names only its ignored playback settings"
     (htmlPlayback.size == 1 && htmlPlayback.all fun d =>
       d.code == "W0110" && d.severity == .warning &&
       d.output == some .html && d.triggerText == some "\\animategraphics" &&
-      d.recovery == some .ignored && hasStr d.message "frame rate '17'" &&
-      !hasStr d.message "PDF" && d.help.any (hasStr · "SVG"))
+      d.recovery == some .ignored && hasStr (saidText d) "frame rate '17'" &&
+      !hasStr (saidText d) "PDF" && d.help.any (hasStr · "SVG"))
   let (_, repeatedDiags) := elabStr (dvDoc ""
     "\\animategraphics{17}{animation-probe}{}{} \\animategraphics{17}{animation-probe}{}{}")
   let repeated := repeatedDiags.filter (·.subject == some "animategraphics:playback")
@@ -207,7 +207,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (selected controlled 3 (Dim.bp 64) (Dim.bp 40) &&
       ((Diag.forOutputs #[.html] controlled.diags).filter (·.code == "W0110")).size == 1 &&
       (Diag.forOutputs #[.html] controlled.diags).any fun d => d.subject == some "animategraphics:playback" &&
-        ["controls", "autoplay", "loop", "palindrome", "nomouse"].all (hasStr d.message))
+        ["controls", "autoplay", "loop", "palindrome", "nomouse"].all (hasStr (saidText d)))
   let native := page "\\usepackage{animate}\n" (animate "" "" "")
   t "native animate loading still diagnoses playback at the command"
     (selected native 0 (Dim.bp 64) (Dim.bp 40) &&
@@ -218,7 +218,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   t "unsupported package defaults are named and do not masquerade as local selection"
     (globalDefaults.images == native.images && imageSrcs globalDefaults == imageSrcs native &&
       ["poster", "controls"].all (fun k => globalDefaults.diags.any fun d => d.code == "W0110" &&
-        d.subject == some s!"param:usepackage:animate:{k}" && hasStr d.message k) &&
+        d.subject == some s!"param:usepackage:animate:{k}" && hasStr (saidText d) k) &&
       globalDefaults.diags.all fun d => d.severity == .note ||
         (d.code == "W0110" &&
           ((d.subject.any (·.startsWith "param:usepackage:animate:")) ||
@@ -248,7 +248,7 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     t s!"refused animation '{why}' carries one keyed loss and no error"
       ((p.diags.filter (·.code == "W0307")).size == 1 &&
         p.diags.any (fun d => d.code == "W0307" &&
-          d.subject == some "animategraphics:source" && hasStr d.message why) &&
+          d.subject == some "animategraphics:source" && hasStr (saidText d) why) &&
         p.diags.all fun d => d.severity == .note || d.code == "W0307")
   for keys in ["page=0", "page=-1", "page=1.5", "page=last", "page=bad"] do
     let p := page "" ("Lead" ++ graphic keys ++ "Tail")

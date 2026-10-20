@@ -60,7 +60,7 @@ def keyValChecks (ref : IO.Ref (List String)) : IO Unit := do
     (metadata.2.any fun d => d.code == "W0101" && hasStr (saidText d) "=x")
   t "keyval: a spaced frame option is the tight one"
     ((elabStr (dvDeck "" "\\begin{frame}[fragile = true]Words.\\end{frame}")).2.all
-      fun d => !hasStr d.message "fragile")
+      fun d => !hasStr (saidText d) "fragile")
   t "keyval: a spaced covered fraction is the tight one"
     ((elabStr (dvDeck "\\setbeamercovered{transparent = 30}\n" "Words.")).2.all
       (·.code != "W0104"))

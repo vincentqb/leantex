@@ -361,7 +361,8 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     "\\begin{document}\nx\n\\end{document}"
   let (wordDoc, wordDs) := elabStr worded
   let (_, _, wordPdf) := written oneFace worded none
-  let notes := wordDs.filter fun d => d.code == DiagCode.N0100.code && d.message.startsWith "'\\hypersetup'"
+  let notes := wordDs.filter fun d => d.code == DiagCode.N0100.code &&
+    d.message.startsWith (Diag.translated "\\hypersetup")
   t "hyperref's dates and trapping reach the file as written, an offset's apostrophes kept, beside a title set as text"
     (wordDoc.info.created == some "D:20260131090000+01'00'" && wordDoc.info.modified == some "2026-02-01" &&
       wordDoc.info.trapped == some false && wordDoc.info.title == some "O’Brien’s card" &&
@@ -369,8 +370,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
       bytesContain (pdfText wordPdf) "<xmp:CreateDate>2026-01-31T09:00:00+01:00</xmp:CreateDate>" &&
       bytesContain (pdfText wordPdf) "/ModDate (D:20260201)" && bytesContain (pdfText wordPdf) "/Trapped /False")
   t "one note names what the setup lowers, its title, dates and trapping in one declaration"
-    (notes.size == 1 && notes.all fun d => hasStr (saidText d) ("\\pdfmeta{ title = \"O’Brien’s \
-card\", " ++
+    (notes.size == 1 && notes.all fun d => hasStr (saidText d) ("\\pdfmeta{ title = \"O’Brien’s card\", " ++
       "created = \"D:20260131090000+01'00'\", modified = \"2026-02-01\", trapped = \"false\" }"))
   for setup in ["\\hypersetup{pdftitle={T}, pdftrapped=True}", "\\hypersetup{pdftrapped=True}",
       "\\ExplSyntaxOn\\prop_const_from_keyval:cn{c__pdfmeta_colorprofile_probe.icc}{Info={x}}\\ExplSyntaxOff"] do

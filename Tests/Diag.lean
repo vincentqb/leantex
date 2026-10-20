@@ -430,12 +430,12 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
                      type := some (.apps (.const "sorryAx") []) }] })).2
   -- A Lean file's facts written for another text of it, and a file whose facts were never written.
   | .W0433 => (LeanFacts.judge "Tide" "/p/.lake/build/leantex/Tide.facts" "theorem t : True := trivial\n"
-      "its code is set without statements" (LeanFactsFile.helpFor "lake exe leantex-export Tide"
+      (LeanFactsFile.helpFor "lake exe leantex-export Tide"
         "/p/.lake/build/leantex/Tide.facts" false)
       (some ("{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
         "{\"leantex-lean-export-end\":0}\n").toUTF8)).2
   | .N0032 => (LeanFacts.judge "Tide" "/p/.lake/build/leantex/Tide.facts" "theorem t : True := trivial\n"
-      "its code is set without statements" (LeanFactsFile.helpFor "lake exe leantex-export Tide"
+      (LeanFactsFile.helpFor "lake exe leantex-export Tide"
         "/p/.lake/build/leantex/Tide.facts" false) none).2
   -- A linked statement in a file whose changes its commit does not hold.
   | .W0431 => (Surface.readCode .lean "t.lean"
@@ -908,93 +908,33 @@ def dvForm? (s : String) : Option Diag.Words := do
 
 /-- Codes whose messages are still free prose: a baseline that may fall and never rise. -/
 def formDebt : List String :=
-  ["E0303",
-   "E0304",
-   "E0305",
-   "E0306",
-   "E0309",
-   "E0310",
-   "E0311",
-   "E0312",
-   "E0313",
-   "E0321",
-   "E0324",
-   "E0325",
-   "E0326",
-   "E0327",
-   "E0328",
-   "E0329",
-   "E0331",
-   "E0332",
-   "E0333",
-   "E0334",
-   "E0336",
-   "E0340",
-   "E0347",
-   "E0390",
+  ["E0333",
    "E0395",
    "E0405",
-   "N0017",
    "N0018",
-   "N0019",
    "N0021",
-   "N0023",
    "N0024",
    "N0026",
    "N0027",
-   "N0029",
-   "N0030",
-   "N0032",
-   "N0102",
-   "N0103",
-   "N0105",
    "N0200",
-   "N0359",
    "N0376",
    "N0448",
-   "W0001",
    "W0003",
    "W0005",
    "W0007",
    "W0009",
    "W0010",
-   "W0012",
-   "W0014",
-   "W0015",
    "W0016",
-   "W0102",
-   "W0104",
-   "W0105",
-   "W0108",
-   "W0110",
    "W0201",
    "W0202",
-   "W0301",
-   "W0302",
-   "W0303",
-   "W0304",
-   "W0306",
-   "W0307",
    "W0308",
-   "W0309",
-   "W0310",
-   "W0311",
-   "W0312",
-   "W0314",
    "W0315",
-   "W0316",
-   "W0317",
-   "W0318",
-   "W0319",
    "W0320",
    "W0321",
-   "W0322",
-   "W0323",
    "W0325",
    "W0326",
    "W0327",
    "W0328",
-   "W0329",
    "W0330",
    "W0331",
    "W0332",
@@ -1002,75 +942,25 @@ def formDebt : List String :=
    "W0334",
    "W0335",
    "W0336",
-   "W0337",
    "W0338",
-   "W0342",
-   "W0343",
    "W0345",
-   "W0346",
-   "W0348",
    "W0349",
-   "W0350",
-   "W0351",
-   "W0352",
-   "W0353",
-   "W0354",
-   "W0355",
    "W0358",
    "W0361",
-   "W0362",
    "W0363",
-   "W0368",
-   "W0370",
-   "W0371",
    "W0372",
-   "W0373",
-   "W0374",
    "W0377",
-   "W0380",
-   "W0383",
    "W0384",
-   "W0385",
    "W0386",
-   "W0387",
    "W0388",
-   "W0389",
-   "W0391",
-   "W0392",
    "W0394",
    "W0396",
    "W0399",
    "W0400",
-   "W0411",
-   "W0412",
-   "W0413",
-   "W0414",
-   "W0415",
-   "W0416",
-   "W0420",
-   "W0421",
-   "W0422",
-   "W0423",
-   "W0425",
-   "W0426",
-   "W0427",
-   "W0429",
-   "W0431",
-   "W0432",
-   "W0433",
-   "W0435",
-   "W0436",
-   "W0440",
-   "W0441",
    "W0442",
    "W0444",
    "W0445",
    "W0446",
-   "W0450",
-   "W0451",
-   "W0452",
-   "W0453",
-   "W0454",
    "W0601",
    "W0602",
    "W0603",
@@ -1366,9 +1256,9 @@ first body note carries the group's rule")]
 or the probe has a row. -/
 def visibleRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let visible (pre body : String) : Array (String × String) :=
+  let visible (pre body : String) : Array (String × String × Option String) :=
     ((elabStr (dvDoc pre body)).2.filter (·.severity != .note)).map
-      fun d => (d.code, d.message)
+      fun d => (d.code, d.message, d.help)
   for (what, pre, withRun, without) in visibleRunProbes do
     let hidden := visible pre withRun == visible pre without
     if visibleRunAccounting.any (·.1 == what) then
@@ -1408,10 +1298,12 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let plainFirst := mixedMsg "Alpha \\zzmix{Bravo} charlie." "Delta \\zzmix[16]{Echo} foxtrot."
   t "option run: mixed shapes read the same in either order"
     (runFirst.isSome && runFirst == plainFirst)
-  t "option run: the mixed line states the rule, not one site's event"
-    (match runFirst with
-     | some m => (m.splitOn "any [...] options were dropped").length == 2
-     | none => false)
+  t "option run: the mixed line names the command, not one site's event"
+    (runFirst == some "undefined command \\zzmix")
+  let mixedHelp := ((visible ((elabStr (dvDoc "" ("Alpha \\zzmix[16]{Bravo} charlie.\n\n" ++
+    "Delta \\zzmix{Echo} foxtrot."))).2.filter (·.subject == some "ctrl:zzmix")))[0]?).bind (·.help)
+  t "option run: the mixed line's help says where a run's '[' belongs"
+    (mixedHelp.any fun h => (h.splitOn "start the '[' on the next line").length == 2)
   let uniformMsg (body : String) : Option String :=
     let (_, ds) := elabStr (dvDoc "" body)
     let vis := visible (ds.filter (·.subject == some "ctrl:zzsame"))
@@ -1419,9 +1311,7 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "option run: a group of one shape keeps its own sentence"
     (match uniformMsg "Alpha \\zzsame[1]{Bravo}.\n\nDelta \\zzsame[2]{Echo}.",
            uniformMsg "Alpha \\zzsame{Bravo}.\n\nDelta \\zzsame{Echo}." with
-     | some a, some b =>
-       (a.splitOn "any [...] options were dropped").length == 1 &&
-       (b.splitOn "options were dropped").length == 1
+     | some a, some b => a == "undefined command \\zzsame" && b == a
      | _, _ => false)
   let edgeLine (body : String) : Option String :=
     let (_, ds) := elabStr (dvDoc "" body)
@@ -2417,8 +2307,7 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
         !(dvE (seeds s!", {k} = #102030")).any (·.kind == .E0320))
   let blockDs := dvE (seeds ", blocks = zz")
   t "block style help: an unknown block style names every style"
-    (((blockDs.find? (·.kind == .E0321)).any fun d =>
-        ends d.message "the styles are " (Diag.prose "and" blockStyles)) &&
+    (((blockDs.find? (·.kind == .E0321)).any fun d => d.message == "invalid value 'zz' for key blocks") &&
       helpOf .E0321 blockDs == ", or ".intercalate (blockStyles.map ("blocks = " ++ ·)))
   -- url.sty's `\urlstyle` values, written out.
   let urlStyles := ["tt", "rm", "sf", "same"]
@@ -2428,6 +2317,6 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
       urlStyles.all fun u => !(dvE (dvDoc "" s!"\\urlstyle\{{u}}x")).any (·.kind == .W0104))
   t "url style message: a style left out names every url.sty style"
     ((dvE (dvDoc "" "x \\urlstyle")).any fun d => d.kind == .E0304 &&
-      spells d.message "a {" ("|".intercalate urlStyles) "} group")
+      spells (saidText d) "a {" ("|".intercalate urlStyles) "} group")
   t "BibTeX styles: the surfaces' list is the reference list's, which sits above them"
     (Bib.Style.byName.map (·.1) == CiteDecl.bibtexStyles)

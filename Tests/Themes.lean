@@ -695,8 +695,8 @@ def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabStr (deck169 pre "\\begin{frame}{T}\nx\n\\end{frame}")).2
   t "a theme replacing a document-declared colour names both"
     ((ds "\\palette{ alert = #112233 }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "'alert'").length == 2 &&
-        (d.message.splitOn "moloch").length == 2)
+      d.code == "W0348" && (d.message.splitOn "alert").length == 2 &&
+        ((saidText d).splitOn "moloch").length == 2)
   t "the help points past theme"
     ((ds "\\palette{ alert = #112233 }\\theme{moloch}").any fun d =>
       d.code == "W0348" && ((d.help.getD "").splitOn "\\theme").length == 2)
@@ -1182,7 +1182,7 @@ def fragileNoopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let unsupported (opt : String) : Bool :=
     let ds := (elabStr (source ("[" ++ opt ++ "]"))).2
     ds.map (·.code) == #["N0102"] && ds.any fun d =>
-      d.severity == .note && hasStr d.message s!"frame option '{opt}'"
+      d.severity == .note && d.message == Diag.say .N0102 .option opt (some (some .environment, "frame"))
   t "fragile=false and page-affecting fragile options stay named losses"
     (unsupported "fragile=false" && unsupported "fragile=singleslide" &&
       unsupported "containsverbatim")
@@ -2041,7 +2041,7 @@ def roleShadowChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}\nx\n\\end{document}")).2
   let fires (ds : Array Diag) : Bool := ds.any fun d =>
     d.code == "W0342" && d.severity == .warning &&
-      (d.message.splitOn "palette").length > 1
+      (d.message.splitOn "\\muted").length > 1
   t "a definition shadowing a theme role is named"
     (fires (diags "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"))
   t "declaration order cannot hide the shadow"

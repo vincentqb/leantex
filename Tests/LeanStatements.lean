@@ -278,8 +278,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
       !mathLines.any (fun (_, ink) => ink.startsWith "Rising twice") &&
       fallback == #["theorem placeholder (n : Nat) : n = Nat.notAThing n := rfl",
         "theorem refused (n : Nat) : n + (1 : String) = n := rfl"] &&
-      (mathDs.filter (·.kind == .W0414)).all fun d => (d.message.splitOn "in its place").length == 2 ||
-        (d.message.splitOn "in place of a statement").length == 2)
+      (mathDs.filter (·.kind == .W0414)).all fun d => d.subject.any (·.startsWith "lean:"))
   let (unansweredDoc, unansweredDs) := readWith "show = math" none
   t "statements: a page that shows math alone shows the file's code when it has no facts"
     ((listings unansweredDoc).size == (listings codeDoc).size &&

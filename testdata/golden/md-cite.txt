@@ -81,4 +81,4 @@ bibliography "md-cite.bib" style "plainnat"
       text "An Uncited Handbook"
     text ". Example Press, 2016."
 -- diagnostics
-warning[W0351] - citation 'ghost' has no entry in the bibliography; it shows as '?' | help: add an entry with key 'ghost' to the .bib file, or fix the spelling in @ghost
+warning[W0351] - undefined citation ghost | help: add an entry with key 'ghost' to the .bib file, or fix the spelling in @ghost

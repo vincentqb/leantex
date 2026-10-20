@@ -57,12 +57,12 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     (Ir.abstractBodySize bad.styles == "small" && badDs.any (·.code == "E0323"))
   let refusal (begin : String) : Option String × Option Ir.ElementStyle :=
     let (d, ds) := elabStr (venue begin)
-    ((ds.find? (·.code == "W0303")).map (·.message), d.styles.find? "abstract")
+    ((ds.find? (·.code == "W0303")).map saidText, d.styles.find? "abstract")
   let (runin, runinStyle) := refusal "\\noindent\\textbf{Summary.}\\ "
   t "a run-in heading is not read; the refusal names only the size read"
     (match runin, runinStyle with
      | some m, some st =>
-       hasStr m "only its body size is read" && !hasStr m "style it" &&
+       hasStr m "only its body size is read" && !hasStr m "its heading" &&
          hasStr m "'Abstract', not 'Summary.'" && st.font.isNone && st.align.isNone
      | _, _ => false)
   let (empty, _) := refusal ""
@@ -73,23 +73,23 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let (renamed, _) := refusal "\\small\\begin{center}\\textbf{Overview}\\end{center}\\begin{quote}"
   t "another centred heading word styles the built-in, the replaced word named"
     (match renamed with
-     | some m => hasStr m "style it" && hasStr m "'Abstract', not 'Overview'"
+     | some m => hasStr m "its heading" && hasStr m "'Abstract', not 'Overview'"
      | none => false)
   let (same, _) := refusal (heading ++ "\\begin{quote}")
   t "a heading writing the built-in's own word names no replacement"
     (match same with
-     | some m => hasStr m "style it" && !hasStr m "not '"
+     | some m => hasStr m "its heading" && !hasStr m "not '"
      | none => false)
   let (inkless, _) := refusal ("\\vskip 2ex plus 1ex\\centerline{\\large\\bf Abstract}" ++
     "\\addcontentsline{toc}{section}{Abstract}\\begin{quote}")
   t "skip glue and inkless commands' arguments are not heading words"
     (match inkless with
-     | some m => hasStr m "style it" && !hasStr m "not '"
+     | some m => hasStr m "its heading" && !hasStr m "not '"
      | none => false)
   let (italic, _) := refusal (heading ++ "\\itshape")
   t "a read heading's refusal names the built-in's kept margins and body font"
     (match italic with
-     | some m => hasStr m "style it" && hasStr m "margins, body font"
+     | some m => hasStr m "its heading" && hasStr m "margins, body font"
      | none => false)
 
 

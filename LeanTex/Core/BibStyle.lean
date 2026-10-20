@@ -2199,9 +2199,9 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
           undefined := undefined.insert k ((undefined.getD k #[]).push n)
       preambles := preambles ++ parsed.preambles
       for (pos, msg) in parsed.errors do
-        diags := diags.push (Diag.of .W0352 s!"malformed .bib entry: {msg}; \
-          the entry is skipped and the rest of '{sourceName src}' is kept"
-          (some ⟨sourceName src, pos⟩))
+        diags := diags.push (Diag.of .W0352
+          (Diag.say .W0352 .entry (obj := some (some .file, sourceName src)))
+          (some ⟨sourceName src, pos⟩) (detail := some msg))
       for e in parsed.entries do
         if seen.contains e.key then
           if let some (f, first) := firstAt.get? e.key then
@@ -2217,9 +2217,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     | none => pure none
     | some (_, some s) => pure (some s)
     | some (name, none) =>
-        let cites := if doc.citeSetup.isSome then ", and its citations as author-year ones" else ""
-        diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
-          one the engine knows; the reference list is set as 'unsrtnat'{cites}"
+        diags := diags.push (Diag.of .W0353 (Diag.say .W0353 .style name)
           (help := s!"styles known: {", ".intercalate (Style.byName.map (·.1))}"))
         pure (some Style.unsrtnat)
   let p := CitePunct.ofDoc doc.citeSetup ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
@@ -2319,8 +2317,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     return seen
   for (k, at_, first) in repeats do
     if reads.contains k then
-      diags := diags.push (Diag.of .W0450 s!"'{k}' is already the key of an earlier entry; the \
-        first entry stands" (some at_)
+      diags := diags.push (Diag.of .W0450 (Diag.say .W0450 .entry k) (some at_)
         (help := "one entry per key: delete this one or give it a key of its own")
         (subject := some ("bibkey:" ++ k)) (detail := some s!"the first at {first}"))
   let findEntry (k : String) : Option Entry := db.entries.get? k
@@ -2402,7 +2399,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       let d := if d.kind != .W0429 then d else match findEntry it.key with
         | some e => nameUnread (entries.find? (·.key == it.key)) e d
         | none => d
-      let site := s!"{d.code}\u0000{d.message}\u0000{Diag.spanKey d.span}\u0000{d.subject}"
+      let site := s!"{d.code}\u0000{d.message}\u0000{d.detail}\u0000{Diag.spanKey d.span}\u0000{d.subject}"
       unless reported.contains site do
         reported := reported.insert site
         diags := diags.push d
@@ -2432,8 +2429,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   for (f, ks, ts) in dropped do
     let shown := String.intercalate ", " (ks.toList.take 5) ++ (if ks.size > 5 then ", …" else "")
     let types := " or ".intercalate (ts.toList.map (s!"@{·}"))
-    diags := diags.push (Diag.of .N0029 s!"{styleName} prints no '{f}' field in {types} \
-      entries; {ks.size} {if ks.size == 1 then "entry keeps" else "entries keep"} one ({shown})"
+    diags := diags.push (Diag.of .N0029 (Diag.say .N0029 .field f)
+      (detail := some s!"{styleName} prints it for no {types} entry: {shown}")
       (subject := some ("bibfield:" ++ f)))
   -- A reference a listed entry's reading left unresolved is named (W0425).
   for r in db.broken do
@@ -2443,58 +2440,45 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     let xf := r.source
     let atEntry : Option Span := (origin.get? k).map fun src => ⟨sourceName src, (positions.get? k).getD {}⟩
     let near := entries.find? fun e => e.key != m && e.key.toLower == m.toLower
-    let takes := s!"the {fld} of '{k}' takes the {xf} of '{m}'"
-    let (what, help) : String × String := match r.fault with
+    let via := if xf.isEmpty then fld else s!"{fld} takes {xf}"
+    let (fault, help) : String × String := match r.fault with
       | .missing =>
-        (if xf.isEmpty then s!"the {fld} '{m}' that '{k}' names is no entry of the bibliography; \
-            '{k}' is set without the fields it would inherit"
-          else s!"{takes}, which is no entry of the bibliography; '{k}' is set without it",
+        ("no such entry",
          match near with
           | some e => s!"the entry '{e.key}' differs only in case; biber matches keys exactly: \
             write '{if xf.isEmpty then s!"{fld} = \{{e.key}}" else e.key}'"
           | none => s!"add an entry with key '{m}' to the .bib file, or fix the spelling in '{fld}'")
       | .unread =>
-        (s!"the {fld} '{m}' that '{k}' names stands before it in the .bib, where BibTeX, which \
-            reads the file once in order, has passed it before anything asks for it; '{k}' is set \
-            without the fields it would inherit",
+        (s!"'{m}' stands before '{k}', which BibTeX reads in one pass",
          s!"move '{m}' after the entries that cross-reference it, or cite '{m}' as well")
       | .notData =>
-        (if xf.isEmpty then s!"the xdata '{m}' that '{k}' names is no @xdata entry, which biber \
-            refuses; '{k}' is set without its fields"
-          else s!"{takes}, which is no @xdata entry; '{k}' is set without it",
+        ("not an @xdata entry",
          s!"make '{m}' an @xdata entry, or name the data '{k}' needs in '{fld}'")
       | .cycle path =>
-        let chain := " → ".intercalate (path.toList.map (s!"'{·}'"))
-        (if xf.isEmpty then s!"the xdata '{m}' that '{k}' names closes a cycle ({chain}), \
-            where biber stops; the engine skips it"
-          else s!"{takes}, which closes a cycle ({chain}), where biber stops; the engine skips it",
+        (s!"a cycle, where biber stops: {" → ".intercalate (path.toList.map (s!"'{·}'"))}",
          s!"remove the reference to '{m}' from the {fld} of '{k}'")
       | .noField _ =>
-        (s!"{takes}, which '{m}' does not hold; '{k}' is set without it",
+        (s!"'{m}' holds no {xf}",
          s!"add '{xf}' to '{m}', or write the {fld} of '{k}' out")
-      | .noPosition _ _ =>
-        (s!"the {fld} of '{k}' takes an item the {xf} of '{m}' does not hold; \
-          '{k}' is set without it",
+      | .noPosition _ n =>
+        (s!"the {xf} of '{m}' holds no item {n}",
          s!"name an item '{m}' holds, or write the {fld} of '{k}' out")
       | .shapes _ =>
-        (s!"{takes}, a field of another kind, which biber refuses; '{k}' is set without it",
+        (s!"{xf} is a field of another kind",
          s!"take a field of the kind '{fld}' is, or write the {fld} of '{k}' out")
       | .malformed =>
-        (s!"the {fld} of '{k}' is '{m}', an xdata reference naming no field to take; \
-          '{k}' is set without it",
+        ("it names no field to take",
          s!"write it 'xdata=<key>-<field>', or write the {fld} of '{k}' out")
-    let detail : Option String := match r.fault with
-      | .noPosition _ n => some s!"item {n}"
-      | _ => none
-    diags := diags.push (Diag.of .W0425 what atEntry (help := help)
+    diags := diags.push (Diag.of .W0425
+      (Diag.say .W0425 .reference (Diag.Name.of m) (some (some .entry, k))) atEntry (help := help)
       (subject := some (if xf.isEmpty then s!"bibref:{m}" else s!"bibref:{m}-{xf}"))
-      (detail := detail))
+      (detail := some s!"{via}: {fault}"))
   -- A value naming an undefined macro prints the name where BibTeX prints nothing (W0426).
   for k in db.list do
     for n in undefined.getD k #[] do
       let atEntry : Option Span := (origin.get? k).map fun src => ⟨sourceName src, (positions.get? k).getD {}⟩
-      diags := diags.push (Diag.of .W0426 s!"the string '{n}' that '{k}' uses is defined by \
-        no @string read before it; its name prints in its place" atEntry
+      diags := diags.push (Diag.of .W0426
+        (Diag.say .W0426 .string (Diag.Name.of n) (some (some .entry, k))) atEntry
         (help := s!"define it before its first use: '@string\{{n} = \"...\"}', in the .bib \
           file named first")
         (subject := some s!"bibstring:{n}"))
@@ -2502,9 +2486,10 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     for r in bblListed resolved do
       let mine := (db.own.get? r.key).getD r.entry
       if let some rel := mine.field? "related" then
-        diags := diags.push (Diag.of .W0423 s!"biblatex sets the entries '{text rel}' that \
-          '{r.key}' names as related after it; the engine does not set related entries"
+        diags := diags.push (Diag.of .W0423
+          (Diag.say .W0423 .field "related" (some (some .entry, r.key)))
           ((origin.get? r.key).map fun src => ⟨sourceName src, mine.pos⟩)
+          (detail := some s!"biblatex sets '{text rel}' after it")
           (subject := some ("bibrelated:" ++ r.key)))
   -- premise: biblatexOracleChecks — the strings and dates set are english.lbx's
   if let some o := (if requested.isEmpty then none else bbl) then
@@ -2516,8 +2501,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     if let some m := main then
       if m != "english" then
         worded := worded.push m
-        diags := diags.push (Diag.of .W0421 s!"biblatex words this reference list's strings \
-          and dates in '{m}'; the engine sets the English ones"
+        diags := diags.push (Diag.of .W0421
+          (Diag.say .W0421 .language "English" (some (none, m)))
           (subject := some ("bibstrings:" ++ m ++ if o.language.any (· != "autodetect") then ":language" else ""))
           (help := help))
     if ["other", "other*", "langname"].contains o.autolang then
@@ -2527,21 +2512,21 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         if let some l := lang.map (text · |>.trimAscii.toString) then
           if !l.isEmpty && l != "english" && some l != main && !worded.contains l then
             worded := worded.push l
-            diags := diags.push (Diag.of .W0421 s!"under 'autolang={o.autolang}' biblatex words \
-              entries with langid '{l}' in it; the engine sets the English strings"
+            diags := diags.push (Diag.of .W0421
+              (Diag.say .W0421 .language "English" (some (none, l)))
+              (detail := some s!"autolang={o.autolang}, langid '{l}'")
               (subject := some ("bibstrings:" ++ l ++ ":autolang")) (help := help))
   -- premise: biblatexLocaleSortChecks — carried tailorings sort as biber does
   if let some o := (if requested.isEmpty then none else bbl) then
     let file := bblSortFile o
     if Collate.outsideRows file then
-      diags := diags.push (Diag.of .W0427 s!"biber sorts this reference list by the '{file}' \
-        collation, which the engine does not carry; it is sorted by the default one"
+      diags := diags.push (Diag.of .W0427 (Diag.say .W0427 .collation file)
         (help := "load biblatex with 'sortlocale=en_US' to sort the list by the default collation")
         (subject := some ("bibsort:" ++ file)))
   for k in cited do
     if let some ms := sets.get? k then
-      diags := diags.push (Diag.of .W0422 s!"biblatex sets the @set entry '{k}' as one entry \
-        of its members; the engine lists each member as an entry of its own"
+      diags := diags.push (Diag.of .W0422
+        (Diag.say .W0422 .entryType "@set" (some (some .entry, k)))
         (((origin.get? k).map fun src => ⟨sourceName src, ((db.own.get? k).map (·.pos)).getD {}⟩))
         (subject := some ("bibset:" ++ k)) (detail := some s!"{ms.size} members"))
   -- A date biber cannot read prints as written, named (W0420).
@@ -2551,16 +2536,18 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     for f in ["date", "urldate", "eventdate", "origdate"] do
       if let some v := mine.value? f then
         if (DateValue.parse v).isNone then
-          diags := diags.push (Diag.of .W0420 s!"the {f} '{text v}' of '{r.key}' is not one \
-            biblatex reads; it prints as written" atEntry
+          diags := diags.push (Diag.of .W0420
+            (Diag.say .W0420 .date (Diag.Name.value (text v)) (some (some .entry, r.key))) atEntry
+            (detail := if f == "date" then none else some s!"field {f}")
             (help := s!"write it as YYYY, YYYY-MM or YYYY-MM-DD, a range with '/': \
               '{f} = \{2020-03}'")
             (subject := some s!"bibdate:{r.key}:{f}"))
     if proc == .biber then
       if let some m := mine.value? "month" then
         if (monthNumber months m).isNone then
-          diags := diags.push (Diag.of .W0420 s!"the month '{text m}' of '{r.key}' is not one \
-            biblatex reads; it prints as written" atEntry
+          diags := diags.push (Diag.of .W0420
+            (Diag.say .W0420 .date (Diag.Name.value (text m)) (some (some .entry, r.key))) atEntry
+            (detail := some "field month")
             (help := "write it as a number, 1 to 12, or as a month's name: 'month = {3}'")
             (subject := some s!"bibdate:{r.key}:month"))
   let citedBy : Std.HashMap String String := (fieldCites rendered).foldl (init := {})
@@ -2580,16 +2567,14 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             (site.map (·.surface)).getD doc.surface
           else .tex
         let md := surface != .tex
-        let (cmd, loss) := if shownHere || citedBy.contains k then ("cite", "it shows as '?'")
-          else ("nocite", if md then "its 'nocite' adds nothing" else "\\nocite adds nothing for it")
+        let cmd := if shownHere || citedBy.contains k then "cite" else "nocite"
         let atEntry : Option Span := if shownHere || !citedBy.contains k then site.map (·.span) else
           (citedBy.get? k).bind fun e => (origin.get? e).map fun src =>
             ⟨sourceName src, (positions.get? e).getD {}⟩
         -- The fix is spelled in the surface the citation was written in, its own command's name.
         let written := (site.bind (·.span.pos.command)).filter (·.startsWith "\\")
         let spelling := if md then s!"@{k}" else written.getD s!"\\{cmd}"
-        diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
-          bibliography; {loss}" atEntry
+        diags := diags.push (Diag.of .W0351 (Diag.say .W0351 .citation k) atEntry
           (help := if own.isEmpty then s!"add an entry with key '{k}' to the .bib file, \
             or fix the spelling in {spelling}"
             else s!"add \\bibitem\{{k}} to the reference list, or fix the spelling in {spelling}")

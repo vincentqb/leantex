@@ -228,10 +228,10 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, unread) := elabStr (article "\\palette{ ink = #333333, surface = #F4F4F4 }\n" "Probe.")
   t "palette keys: an unread ink is named once, pointing at fg"
     ((named unread "ink").size == 1 &&
-      (named unread "ink").all fun d => hasStr d.message "'fg'" && d.span.isSome)
+      (named unread "ink").all fun d => hasStr (saidText d) "'fg'" && d.span.isSome)
   t "palette keys: an unread surface is named once, pointing at bg"
     ((named unread "surface").size == 1 &&
-      (named unread "surface").all fun d => hasStr d.message "'bg'")
+      (named unread "surface").all fun d => hasStr (saidText d) "'bg'")
   let (_, read) := elabStr (article "\\palette{ ink = #333333 }\n" "\\textcolor{ink}{Probe}.")
   t "palette keys: an ink the document names says nothing" (named read "ink").isEmpty
   let (_, xcolor) := elabStr (article "\\definecolor{ink}{HTML}{333333}\n" "Probe.")
@@ -275,15 +275,14 @@ public def missingBothWaysChecks (ref : IO.Ref (List String)) : IO Unit := do
   let misses (pre body : String) : Array Diag :=
     (elabStr (article pre body)).2.filter (·.code == "W0304")
   let says (ds : Array Diag) (words : String) : Array Diag :=
-    ds.filter fun d => d.severity == .warning && hasStr d.message "'nosuchshade'" &&
-      hasStr d.message words && d.help.isSome
+    ds.filter fun d => d.severity == .warning && d.message == words && d.help.isSome
   let orders : List (String × String × String) :=
     [("text first", "", ink ++ ground), ("ground first", "", ground ++ ink),
      ("a preamble ground first", "\\pagecolor{nosuchshade}\n", ink)]
   for (order, pre, body) in orders do
     for (log, ds) in [("elaborated", misses pre body), ("printed", Diag.foldRepeats (misses pre body))] do
-      let inkLoss := says ds "content kept uncoloured"
-      let groundLoss := says ds "the page ground is unchanged"
+      let inkLoss := says ds "undefined colour nosuchshade"
+      let groundLoss := says ds "undefined colour nosuchshade for \\pagecolor"
       t s!"a colour missing as text and as page ground is named both ways ({order}, {log})"
         (ds.size == 2 && inkLoss.size == 1 && groundLoss.size == 1)
       t s!"each loss of a colour missing both ways counts its own site ({order}, {log})"
@@ -294,8 +293,8 @@ public def missingBothWaysChecks (ref : IO.Ref (List String)) : IO Unit := do
           inkLoss.map (·.help) != groundLoss.map (·.help))
   let again := misses "" (ground ++ ink ++ ground ++ ink)
   t "a further use of a colour missing both ways is a further site of its own loss"
-    ((says again "content kept uncoloured").map (·.sites) == #[2] &&
-      (says again "the page ground is unchanged").map (·.sites) == #[2] &&
+    ((says again "undefined colour nosuchshade").map (·.sites) == #[2] &&
+      (says again "undefined colour nosuchshade for \\pagecolor").map (·.sites) == #[2] &&
       (again.filter (·.severity == .note)).size == 2)
 
 /-- The artifact two builds are compared by: the PDF's bytes and the HTML body and stylesheet rules,

@@ -610,10 +610,8 @@ statement to carry it, facts nothing reads, keys only a Lean file's page reads w
 language, a `decls` naming nothing, and on a page a `decls` with no statement to choose. -/
 public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (page : Bool := true) :
     Array Diag :=
-  let sets := if page then "the page sets as if it were not written"
-    else "the file is included as if it were not written"
   let note (key what help : String) : Diag :=
-    Diag.of .W0110 s!"`{key}` {what}; {sets}" (some request) (help := help)
+    Diag.of .W0110 (Diag.say .W0110 .key key) (some request) (help := help) (detail := some what)
       (subject := some s!"code:{key}")
   let foreign := if lang == .lean then [] else
     ((showKeys.filter (!["show", "bibliography", "biblio-style"].contains ·)).filter
@@ -631,10 +629,11 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
       [note "biblio-style" "names a page's citation style, and an inclusion's citations set in its \
 document's" "delete it"]
     else []
+  -- premise: Tests.LeanCite.leanCiteChecks — an inclusion's docs view beside another sets as its page
   let docsAlone := if lang == .lean && !page && s.docs &&
       (s.views.length > 1 || s.decls.isSome || s.proofs != .show) then
-      [Diag.of .W0110 "`show` names `docs` with another view, `decls` or `proofs`; the file is \
-included as its page sets it, documentation as prose, without them" (some request)
+      [Diag.of .W0110 (Diag.say .W0110 .key "show") (some request)
+        (detail := some "`docs` with another view, `decls` or `proofs`")
         (help := "write `show = docs` alone, or drop `docs`") (subject := some "code:show")]
     else []
   let unlinked := if lang == .lean && s.link.isSome && !s.statements then
@@ -653,24 +652,6 @@ included as its page sets it, documentation as prose, without them" (some reques
         "write `show = math, code`"]
     else []
   (foreign ++ unlinked ++ unread ++ uncited ++ restyled ++ docsAlone ++ empty ++ unchosen).toArray
-
-/-- What a page that reads its facts sets when it has none that line up. -/
-public def Showing.lost (s : Showing) : String :=
-  match s.statements, s.proofs != .show with
-  | true, true => "its code is set without statements and its proofs as written"
-  | true, false => "its code is set without statements"
-  | false, _ => "its proofs are set as written"
-
-/-- What an inclusion sets with no facts that line up: the whole file, in place of the declarations
-a `decls` chooses, without statements and with its proofs as written where it asked for either. -/
-public def Showing.lostIncluded (s : Showing) : String :=
-  match s.decls with
-  | none => if s.asks then s.lost else "it is included whole"
-  | some _ =>
-    let parts := (if s.statements then [", without statements"] else []) ++
-      (if s.proofs != .show then [", its proofs as written"] else [])
-    let said := String.join parts
-    "it is included whole in place of the declarations `decls` names" ++ said
 
 /-! ### Lean -/
 
@@ -1689,7 +1670,7 @@ public def bibLineNotes (lang : Ir.CodeLang) (file text : String) : Array Diag :
   let starts := lineStarts text.toList.toArray
   let note (pr : Prose) (k : Nat) (what help : String) : Diag :=
     let (line, col) := pr.lines.getD k (0, 0)
-    Diag.of .W0110 s!"a line opening on `Bibliography:` {what}; it sets as written"
+    Diag.of .W0110 (Diag.say .W0110 .line "Bibliography:") (detail := some what)
       (some ⟨file, { line, col := col + 1 }⟩) (help := help) (subject := some "code:bibliography-line")
   (segmentsOf lang text).foldl (init := #[]) fun out s =>
     match s.kind with
@@ -1721,14 +1702,12 @@ public def lossDiag (file : String) (d : DocMarkup.Dialect) (l : DocMarkup.Loss)
     | .doxygen | .rustdoc | .javadocMarkdown => "`[text](https://example.org)`"
   match l.lost with
   | .unlinked ref =>
-    Diag.of .W0454 "a documentation comment's cross-reference names a program element no target on \
-the page stands for; its text sets unlinked" span
+    Diag.of .W0454 (Diag.say .W0454 .target ref) span
       (help := s!"name the element as code, {code}, or link a URL, {url}")
-      (subject := some s!"doc:link:{ref}") (detail := some s!"`{ref}`")
+      (subject := some s!"doc:link:{ref}")
   | .unread what =>
-    Diag.of .W0453 "a documentation comment holds a tag or command its reader does not read; its \
-text, if any, sets in its place" span (help := s!"delete it, or write its text as code, {code}")
-      (subject := some s!"doc:unread:{what}") (detail := some s!"`{what}`")
+    Diag.of .W0453 (Diag.say .W0453 .tag what) span (help := s!"delete it, or write its text as code, {code}")
+      (subject := some s!"doc:unread:{what}")
 
 /-- A documentation comment's prose lowered into markdown by its markup's reader, a code block naming
 no language set in the file's, citing by `known`, and the losses the reader names. -/
@@ -2338,39 +2317,37 @@ public def directivePos (lang : Ir.CodeLang) (src : Array Char) : Pos :=
   | none => {}
 
 /-- Why a declared phrase is refused, as its note says it, with its help. -/
-private def refusalWords (name : String) : LeanProse.Refusal → String × String
-  | .unknown => (s!"'phrase.{name}' names no constant a statement of this file names; the \
-phrase is not used", "write the constant's name as a statement uses it after `phrase.`")
-  | .ambiguous => (s!"'phrase.{name}' names more than one constant; the phrase is not used",
-    "write the constant's full name after `phrase.`")
-  | .twice => (s!"'phrase.{name}' gives its constant a second phrase; the first stands",
+private def refusalWords : LeanProse.Refusal → String × String
+  | .unknown => ("no statement of this file names its constant",
+    "write the constant's name as a statement uses it after `phrase.`")
+  | .ambiguous => ("it names more than one constant", "write the constant's full name after `phrase.`")
+  | .twice => ("its constant already has a phrase",
     "keep one `phrase.` entry for each constant")
-  | .shape => (s!"'phrase.{name}' is no template the prose view reads; its constant is set as \
-mathematics", "number its slots `#1`, `#2`, … once each, write no comma, parenthesis, brace or \
-quote, and open it with a word, or a slot then a word, the grammar keeps for itself none of, as \
-`if`, `and`, `both`")
-  | .arity _ _ => (s!"the slots of 'phrase.{name}' are not its constant's explicit arguments; its \
-constant is set as mathematics", "write one slot `#k` for the k-th explicit argument, for each")
-  | .clash => (s!"the words of 'phrase.{name}' open as another template's do; its constant is \
-set as mathematics", "open it with words no other `phrase.` entry or relation opens with")
-  | .connective => (s!"'phrase.{name}' names a connective or quantifier the prose view says \
-itself; the phrase is not used", "drop this `phrase.` entry")
-  | .unused => (s!"no sentence this page sets uses 'phrase.{name}'; the phrase changes nothing",
+  | .shape => ("no template the prose view reads", "number its slots `#1`, `#2`, … once each, write \
+no comma, parenthesis, brace or quote, and open it with a word, or a slot then a word, the grammar \
+keeps for itself none of, as `if`, `and`, `both`")
+  | .arity _ _ => ("its slots are not its constant's explicit arguments",
+    "write one slot `#k` for the k-th explicit argument, for each")
+  | .clash => ("its words open as another template's do",
+    "open it with words no other `phrase.` entry or relation opens with")
+  | .connective => ("a connective or quantifier the prose view says itself",
+    "drop this `phrase.` entry")
+  | .unused => ("no sentence this page sets uses it",
     "check its constant's name and explicit arguments, or drop this `phrase.` entry")
-  | .unshown true => (s!"'phrase.{name}' stands on a page that says no statement in words; the \
-phrase is not used", "add `prose` to `show`, or drop this `phrase.` entry")
-  | .unshown false => (s!"'phrase.{name}' stands in a file whose statements are never said in \
-words; the phrase is not used", "drop this `phrase.` entry: only a Lean file's statements are")
+  | .unshown true => ("the page says no statement in words",
+    "add `prose` to `show`, or drop this `phrase.` entry")
+  | .unshown false => ("the file's statements are never said in words",
+    "drop this `phrase.` entry: only a Lean file's statements are")
 
 /-- The note naming a declared phrase a page refuses, at the directive. -/
 public def refusalNote (file : String) (pos : Pos) (name : String) (r : LeanProse.Refusal) :
     Diag :=
-  let (msg, help) := refusalWords name r
+  let (why, help) := refusalWords r
   let detail := match r with
-    | .arity slots args => some s!"slots: {slots}; explicit arguments: {args}"
-    | .unknown | .ambiguous | .twice | .shape | .clash | .connective | .unused | .unshown _ => none
-  Diag.of .W0416 msg (some ⟨file, pos⟩) (help := help) (subject := some s!"code:phrase:{name}")
-    (detail := detail)
+    | .arity slots args => s!"{why}: slots {slots}, explicit arguments {args}"
+    | .unknown | .ambiguous | .twice | .shape | .clash | .connective | .unused | .unshown _ => why
+  Diag.of .W0416 (Diag.say .W0416 .phrase s!"phrase.{name}") (some ⟨file, pos⟩) (help := help)
+    (subject := some s!"code:phrase:{name}") (detail := some detail)
 
 /-- Why a declaration's statement is not said in words, as its note says it. -/
 private def unsaidWhy : LeanProse.Unsaid → String
@@ -2381,7 +2358,7 @@ private def unsaidWhy : LeanProse.Unsaid → String
 
 /-- The note naming a declaration whose statement words cannot say. -/
 public def unsaidNote (file : String) (d : LeanFacts.Decl) (u : LeanProse.Unsaid) : Diag :=
-  Diag.of .W0415 s!"words cannot say '{d.name}', which {unsaidWhy u}; it is set as mathematics"
+  Diag.of .W0415 (Diag.say .W0415 .statement d.name) (detail := some s!"it {unsaidWhy u}")
     (some ⟨file, posOf d⟩) (subject := some s!"prose:{d.name}")
 
 /-- A view's paragraph for a declaration whose statement the facts give, the note when its words fall
@@ -2434,16 +2411,17 @@ public def linkNotes (request : Span) (showing : Showing) (place : LinkPlace) : 
   | some l =>
     let template := linkTemplate l
     let names (part : String) : Bool := (template.splitOn part).length > 1
-    let unlinked := "a link names the file's commit or path, which git could not give; the names \
-set unlinked"
     let unlinkedHelp := "build the file in the git repository that tracks it, or write a `link` with \
 no `{commit}` or `{path}`"
-    let changed := "the file has changes its commit does not hold; its links show the committed text"
     if !placeGives template place then
-      #[Diag.of .W0432 unlinked (some request) (subject := some s!"code:link:{request.file}")
+      #[Diag.of .W0432 (Diag.say .W0432 .commit)
+          (some request) (subject := some s!"code:link:{request.file}")
+          (detail := some "git could not give the file's commit or path")
           (help := unlinkedHelp)]
     else if names "{commit}" && place.dirty == some true then
-      #[Diag.of .W0431 changed (some request) (subject := some s!"code:link:{request.file}")
+      #[Diag.of .W0431 (Diag.say .W0431 .link (Diag.Name.value l))
+          (some request) (subject := some s!"code:link:{request.file}")
+          (detail := some "the file has changes its commit does not hold")
           (help := "commit the file, or write a `link` that names no `{commit}`")]
     else #[]
 
@@ -2456,8 +2434,9 @@ public def unnamedNotes (showing : Showing) (facts : LeanFacts.Facts) (request :
     Array Diag :=
   ((showing.decls.getD []).filter fun n =>
     !facts.decls.any (namedAs ·.name n) && !facts.failed.any (namedAs ·.name n)).toArray.map fun n =>
-      Diag.of .W0110 s!"`decls` names '{n}', which is no theorem, definition or axiom in the \
-file's facts; nothing is set for it" (some request) (subject := some s!"code:decls:{n}")
+      Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value n) (some (some .key, "decls")))
+        (some request) (subject := some s!"code:decls:{n}")
+        (detail := some "no theorem, definition or axiom of the file's facts")
         (help := "name a theorem, definition or axiom the file declares")
 
 /-- Each declaration's paragraphs before and after its code by index, then each failed one's, the
@@ -2506,17 +2485,16 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
   let unused := declared.phrases.filterMap fun (name, t) =>
     if showing.prose && !used.contains t then some (refusalNote request.file request.pos name .unused)
     else none
-  let instead := if code then "its code is set without it" else "its code is set in its place"
-  let insteadOfNone := if code then "its code is set without a statement"
-    else "its code is set in place of a statement"
   let unsetNotes := ds.filterMap fun d =>
     if wanted d then (unset? d).map fun why => (d.start,
-      Diag.of .W0414 s!"the statement of '{d.name}' {why} in Lean; {instead}"
+      Diag.of .W0414 (Diag.say .W0414 .statement d.name)
+        (detail := some s!"it {why} in Lean")
         (some ⟨file, posOf d⟩) (subject := some s!"lean:{d.name}"))
     else none
   let failedNotes := facts.failed.filterMap fun f =>
     if chosen f.name then some (f.start,
-      Diag.of .W0414 s!"Lean added nothing for '{f.name}'; {insteadOfNone}"
+      Diag.of .W0414 (Diag.say .W0414 .statement f.name)
+        (detail := some "Lean added nothing for it")
         (some ⟨file, posAt f.start⟩) (subject := some s!"lean:{f.name}"))
     else none
   let notes := (unsetNotes ++ failedNotes ++ viewNotes.toArray).qsort fun a b =>
@@ -2842,19 +2820,19 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
   let src := text.toList.toArray
   let starts := lineStarts src
   let unread := showing.unread.toArray.map fun (k, v) =>
-    Diag.of .W0110 s!"`{k}` takes no value '{v}'; the file is included as if it were not written"
+    Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value v) (some (some .key, k)))
       (some request) (help := "write `proofs = show`, `collapse` or `remove`")
       (subject := some s!"code:{k}:{v}")
   let strange := showing.strange.toArray.map fun k =>
     let valueless := inclusionKeys.contains k
-    let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
-    Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
+    let what := if valueless then "written without a value" else s!"{entry} has no such key"
+    Diag.of .W0110 (Diag.say .W0110 .key k) (some request) (detail := some what)
       (help := if valueless then s!"write `{k} = …`"
         else s!"name {", ".intercalate (inclusionKeys.map (s!"`{·}`"))} or a `{phraseKey}` entry")
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
-    Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \
-it" (some request) (help := s!"name {namesOr (View.all.map (·.name))}")
+    Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value n) (some (some .key, "show")))
+      (some request) (detail := some "no view of a Lean file") (help := s!"name {namesOr (View.all.map (·.name))}")
       (subject := some s!"code:show:{n}")
   let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
@@ -3061,17 +3039,19 @@ the preamble's declarations, the file's name the title where no description open
   let preamble : Array Raw := #[.ctrl "title" origin, .group titleRaws origin] ++ directive
   let stray := (strayDirective? lang src).map fun off =>
     let (line, col) := lineCol starts off
-    Diag.of .W0387 "a leantex directive is read only on a file's first line, or the line after \
-'#!'; this one stays as written" (some ⟨file, { line, col }⟩)
+    let written := String.ofList ((src.extract off src.size).toList.takeWhile (· != '\n'))
+    Diag.of .W0387 (Diag.say .W0387 .comment (Diag.Name.value written.trimAscii.toString))
+      (some ⟨file, { line, col }⟩)
+      (detail := some "a leantex directive is read only on a file's first line, or after '#!'")
       (help := s!"move it to the file's first line, or the line after `#!`: `{directiveMarker lang} …`")
       (subject := some "code:directive")
   let views := showing.unknown.toArray.map fun n =>
-    Diag.of .W0110 s!"`show` names '{n}', which is no view of this file; the page sets without it"
-      (some ⟨file, directivePos lang src⟩)
+    Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value n) (some (some .key, "show")))
+      (some ⟨file, directivePos lang src⟩) (detail := some "no view of this file")
       (help := s!"name {namesOr ((View.all.filter (·.setBy lang false)).map (·.name))}")
       (subject := some s!"code:show:{n}")
   let unread := showing.unread.toArray.map fun (k, v) =>
-    Diag.of .W0110 s!"`{k}` takes no value '{v}'; the page sets as if it were not written"
+    Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value v) (some (some .key, k)))
       (some ⟨file, directivePos lang src⟩) (help := "write `proofs = show`, `collapse` or `remove`")
       (subject := some s!"code:{k}:{v}")
   let idle := showing.idle lang ⟨file, directivePos lang src⟩

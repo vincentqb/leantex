@@ -93,4 +93,4 @@ bibliography "md-cite,lean-cite.bib" style "unsrtnat"
     text ", 7(2):41–58, 2024."
 -- diagnostics
 info[N0100] 8:1 translated package natbib | detail: natbib's citation punctuation, read at \begin{document}
-warning[W0450] 15:1 'roe2020' is already the key of an earlier entry; the first entry stands | detail: the first at md-cite.bib:14 | help: one entry per key: delete this one or give it a key of its own
+warning[W0450] 15:1 duplicate entry roe2020 | detail: the first at md-cite.bib:14 | help: one entry per key: delete this one or give it a key of its own

@@ -96,8 +96,9 @@ decreasing_by raws_dec
 
 /-- A `W0307`: a markdown construct the surface AST cannot express and whose
 content does not reach the page. -/
-private def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
-  Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject))
+private def route (file : String) (subject : String) (what : String) (pos : Pos)
+    (detail : Option String := none) : Diag :=
+  Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject)) (detail := detail)
 
 /-- The characters a docstring's formula may hold beside words, spaces, groups and controls. -/
 @[expose] public def docMathSyms : List Char := ['^', '_', '~', '[', ']']
@@ -143,9 +144,10 @@ public def docMathRaw (display : Bool) (src : String) (p : Pos) : Option Raw :=
 
 /-- A `W0392`: the construct sets, with part of its declaration dropped. -/
 private def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
-    (help : Option String := none) (output : Option Diag.Output := none) : Diag :=
+    (help : Option String := none) (output : Option Diag.Output := none)
+    (detail : Option String := none) : Diag :=
   Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
-    (output := output)
+    (output := output) (detail := detail)
 
 /-- Literal text as surface words and spaces, one `word` per
 run of non-space characters. -/
@@ -364,8 +366,9 @@ private def citeWorksRaws (file : String) (items : Array CiteRaws) (p : Pos) :
   let bad := items.filter (!keyCrosses ·.key)
   if bad.isEmpty then (natbibRaws items.toList p, #[]) else
   let diags := bad.map fun c => routeDegraded file "cite-key"
-    s!"the citation key '{c.key}' holds a comma or a brace no bibliography key can hold: the \
-work sets as its key, uncited" p (help := some "spell the key as its .bib entry writes it")
+    (Diag.say .W0392 .citation (Diag.Name.value c.key)) p
+    (help := some "spell the key as its .bib entry writes it")
+    (detail := some "a comma or a brace no .bib key holds")
   match items[0]? with
   | some first =>
     if first.mode == .authorInText then
@@ -381,9 +384,9 @@ Pandoc's citation processing reads one in the text. -/
 private def citeGroupRaws (file : String) (items : Array CiteRaws) (p : Pos) :
     Array Raw × Array Diag :=
   let unset := if items.all (·.key != "*") then #[] else
-    #[routeDegraded file "cite-every"
-      "a citation of every entry in the text prints nothing and lists nothing, as Pandoc's citation \
-processing reads it" p (help := some "list every entry with nocite: '@*' in the metadata")]
+    #[routeDegraded file "cite-every" (Diag.say .W0392 .citation "@*") p
+      (help := some "list every entry with nocite: '@*' in the metadata")
+      (detail := some "in the text Pandoc prints and lists nothing for it")]
   let (rs, ds) := citeWorksRaws file (items.filter (·.key != "*")) p
   (rs, ds ++ unset)
 
@@ -470,16 +473,15 @@ private def inlRaws (file : String) (dialect : Dialect) : Inl → Array Raw × A
     | none =>
       let delim := if display then "$$" else "$"
       (#[.ctrl "texttt" p, .group (textRaws (delim ++ src ++ delim) p) p],
-        #[routeDegraded file "docstring-math" "a formula sets as its source: it does not parse as \
-a formula, or holds a control or a character the math model does not read" p])
+        #[routeDegraded file "docstring-math" (Diag.say .W0392 .math) p
+          (detail := some "the math model does not read it")])
   | .soft _ => (#[.space], #[])
   | .hard p => (#[.ctrl "\\" p], #[])
   | .anchor key p =>
     match anchorRaws? key p with
     | some rs => (rs, #[])
     | none =>
-      (#[], #[Diag.of .E0390
-        "this HTML target's key cannot be carried unchanged"
+      (#[], #[Diag.of .E0390 (Diag.say .E0390 .anchor (Diag.Name.value key))
         (some ⟨file, p⟩) (some "use letters, digits, :, ., - or _ in the target key")
         (some "md:raw-html")])
   | .emph body p =>
@@ -491,15 +493,13 @@ a formula, or holds a control or a character the math model does not read" p])
   | .link dest title body p =>
     let (rs, ds) := inlListRaws file dialect #[] #[] body.toList
     let ds := if title.isEmpty then ds else
-      ds.push (routeDegraded file "link-title"
-        "a link's title is not carried: the link sets without it" p)
+      ds.push (routeDegraded file "link-title" (Diag.say .W0392 .title) p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest title alt p =>
     -- The alternative rides `\includegraphics`'s own `alt` key as one group, which no text cuts.
     let text := String.ofList ((inlText alt).toList.map fun c => if c == '\t' then ' ' else c)
     let ds := if title.isEmpty then #[] else
-      #[routeDegraded file "image-title"
-        "an image's title is not carried: the image sets without it" p]
+      #[routeDegraded file "image-title" (Diag.say .W0392 .title) p]
     -- An alternative holding a citation rides its own control, which the elaborator reads whole.
     if citesInls alt.toList then
       let (rs, ads) := inlListRaws file dialect #[] #[] alt.toList
@@ -523,8 +523,8 @@ a formula, or holds a control or a character the math model does not read" p])
       if items.size == 1 then it.mode != .authorInText else it.mode == .normal
     let styled := if items.all (fun it => lowers it || (plain it.pre && plain it.post)) then #[] else
       #[routeDegraded file "cite-note"
-        "an author-in-text or year-only citation's note sets as plain text: its emphasis, code or \
-links are dropped" p]
+        (Diag.say .W0392 .markup (obj := (items[0]?).map fun it => (some .citation, Diag.Name.of it.key))) p
+        (detail := some "an author-in-text or year-only citation's note")]
     (g.1, cs.2 ++ g.2 ++ styled)
 
 /-- Each citation of a group with its notes as raws, accumulating. -/
@@ -697,9 +697,10 @@ public theorem tableRaws_contract (cell : Array Inl → Array Raw × Array Diag)
 private def listLosses (file : String) (ordered : Bool) (start : Nat) (tight : Bool) (p : Pos) :
     Array Diag :=
   (if ordered && start != 1 then #[routeDegraded file "list-start"
-      "an ordered list's start number is not carried and the list counts from one" p] else #[]) ++
+      (Diag.say .W0392 .number (Diag.Name.of (toString start))) p
+      (detail := some "the list counts from one")] else #[]) ++
   (if tight then #[] else #[routeDegraded file "loose-list"
-      "a loose list sets as a tight one: its items' paragraph spacing is not carried" p])
+      (Diag.say .W0392 .spacing) p (detail := some "between a loose list's items")])
 
 mutual
 
@@ -724,12 +725,10 @@ private def blkRaws (file : String) (refs : Array Raw) (dialect : Dialect) :
       | none =>
         (#[.verb "verbatim" (.plain ("\n" ++ text)) p],
          #[routeDegraded file "code-info"
-            s!"the info word '{w}' is not a language a listing can carry: the code sets \
-without a language" p
+            (Diag.say .W0392 .language (Diag.Name.value w)) p
             (help := some "spell it as letters, digits, +, #, - or . (python, c++, c#)")])
   | .rule p =>
-    (#[], #[route file "thematic-break"
-      "a thematic break has no block in this engine and is not drawn" p])
+    (#[], #[route file "thematic-break" (Diag.say .W0307 .markup) p])
   | .quote body p =>
     let (rs, ds) := blkListRaws file refs dialect #[] #[] body.toList
     (#[.env "quote" rs p], ds)
@@ -916,7 +915,7 @@ private def texInl (file : String) (dialect : Dialect) (st : TexStream) : Inl �
       let st := (texInls file dialect (st.tok file .lbrace p) body.toList).tok file .rbrace p
       if title.isEmpty then st else
         { st with diags := st.diags.push (routeDegraded file "link-title"
-          "a link's title is not carried: the link sets without it" p) }
+          (Diag.say .W0392 .title) p) }
   | x@(.citeText key body p) => match st.spelled? file x p with
     | some st => st
     | none =>
@@ -1097,14 +1096,14 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
   for (f, k) in fields.zipIdx do last := last.insert f.key k
   let declared := bibDeclared fields
   let unread (f : MetaField) (why : String) (help : Option String := none) : Diag :=
-    Diag.of .W0307 s!"the metadata key '{f.key}' is not read: {why}" (some ⟨file, f.pos⟩) help
+    Diag.of .W0307 (Diag.say .W0307 .key f.key) (some ⟨file, f.pos⟩) help (detail := some why)
       (subject := some ("md:meta:" ++ f.key))
   let mut out : MetaRead := {}
   for (f, k) in fields.zipIdx do
     if f.key.endsWith "_" then continue
     if last.get? f.key != some k then
       out := { out with diags := out.diags.push (routeDegraded file ("meta-twice:" ++ f.key)
-        s!"the metadata key '{f.key}' is written again below: its last value is read" f.pos) }
+        (Diag.say .W0392 .key f.key) f.pos (detail := some "written again below")) }
       continue
     let known := metaKeys.any fun (k, r) => k == f.key && r == role
     if !known then
@@ -1139,9 +1138,9 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         let path := path.trimAscii.toString
         if path.isEmpty then continue
         if !path.endsWith ".bib" || path.any (· == ',') then
-          let d := Diag.of .W0307
-            s!"the bibliography '{path}' is not read: the engine reads BibTeX .bib files named \
-without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib file beside the document")
+          let d := Diag.of .W0307 (Diag.say .W0307 .bibliography (Diag.Name.of path))
+            (some ⟨file, f.pos⟩) (some "convert the entries to a .bib file beside the document")
+            (detail := some "the engine reads BibTeX .bib files named without a comma")
             (subject := some ("md:meta:bibliography:" ++ path))
           out := { out with diags := out.diags.push d }
         else out := { out with sources := out.sources.push path }
@@ -1152,7 +1151,7 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         | .list items => items.toList.map fun (o : String) => o.trimAscii.toString
         | .unread => []
       let (decls, unread) := CiteDecl.natbibLoad given
-      let ds := unread.toArray.map fun o =>
+      let ds := unread.toArray.map fun (o : String) =>
         Diag.of .W0104 (Diag.notHonoured .option (Diag.Name.of o)
           (some (some .package, "natbib"))) (some ⟨file, f.pos⟩)
           (subject := some ("md:meta:natbiboptions:" ++ o))
@@ -1170,8 +1169,8 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
     | "link-citations", v =>
       match v.bool? with
       | some false =>
-        let d := routeDegraded file "link-citations"
-          "a citation links to its reference-list entry whatever 'link-citations' declares" f.pos
+        let d := routeDegraded file "link-citations" (Diag.say .W0392 .key "link-citations") f.pos
+          (detail := some "a citation links to its entry whatever it declares")
         out := { out with diags := out.diags.push d }
       | some true => pure ()
       | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
@@ -1345,8 +1344,8 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
   -- premise: mdMetadataChecks — a division with no bibliography to place is named
   let unplaced := match placed with
     | some p => if m.sources.isEmpty then
-        #[route file "refs" "a '::: {#refs}' division places the reference list, and no \
-bibliography is declared for this file: nothing sets there" p] else #[]
+        #[route file "refs" (Diag.say .W0307 .division "{#refs}") p
+          (detail := some "no bibliography is declared")] else #[]
     | none => #[]
   (m.layout ++ m.prelude ++ body.1 ++ m.tail file dialect cited placed.isSome,
     read.2 ++ m.diags ++ unused ++ body.2 ++ unplaced)

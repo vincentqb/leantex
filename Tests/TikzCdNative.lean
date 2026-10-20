@@ -75,12 +75,12 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
     ((Ir.pictureRefs routed).size == 1 && routedDs.any (·.code == "N0023"))
   let (closed, closedDs) := firstPass (dvDoc ("\\pictures{ tool = none }\n" ++ pre) lossy)
   t "diagram natively: with the boundary closed it draws here and names the key"
-    ((Ir.pictureRefs closed).isEmpty && closedDs.any (fun d => d.code == "W0334" && hasStr d.message "hook") &&
+    ((Ir.pictureRefs closed).isEmpty && closedDs.any (fun d => d.code == "W0334" && hasStr (saidText d) "hook") &&
       hasStr (censusText (page closed)) "Alpha")
   let (opted, optDs) := firstPass (dvDoc ("\\pictures{ tool = none }\n" ++ pre)
     "\\[\\begin{tikzcd} |[red]| \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]")
   t "diagram natively: a cell's |[...]| options are named, never set as its mathematics"
-    (optDs.any (fun d => d.code == "W0334" && hasStr d.message "cell options") &&
+    (optDs.any (fun d => d.code == "W0334" && hasStr (saidText d) "cell options") &&
       hasStr (censusText (page opted)) "Alpha" && !hasStr (censusText (page opted)) "red")
   let labelled := "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n" ++
     pre ++ "\\begin{document}\n\\section{One}\nSee \\ref{cd} and \\ref{al}.\n" ++
@@ -131,7 +131,7 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
         (bc[0]?.map (·.paths == 2)).getD false)
     if what == "among a paragraph's text" then
       t "diagram block: among a paragraph's text, the break is named"
-        (bds.any fun d => d.code == "W0334" && hasStr d.message "inside a paragraph")
+        (bds.any fun d => d.code == "W0334" && hasStr (saidText d) "paragraph")
   let (sdoc, _) := firstPass (dvDoc pre (short ++ "\n" ++ diagram ++ "\nAfter."))
   t "diagram display: on the web page the display paragraph holds the drawing"
     (sdoc.body.any fun b =>

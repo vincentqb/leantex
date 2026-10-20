@@ -104,13 +104,6 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Code.showingOfEntries .lean (Decl.splitEntries "show = math, decls = {}")).decls == none)
   t "views: an inclusion keeps a key written without a value to be named by the key"
     ((Code.showingOfEntries .lean (Decl.splitEntries "link") true).strange == ["link"])
-  t "views: an inclusion that chose declarations and has no answer says it is included whole"
-    ((Code.showingOfEntries .lean (Decl.splitEntries "decls = {a}, proofs = remove")).lostIncluded ==
-        "it is included whole in place of the declarations `decls` names, its proofs as written" &&
-      (Code.showingOfEntries .lean (Decl.splitEntries "decls = {a}")).lostIncluded ==
-        "it is included whole in place of the declarations `decls` names" &&
-      (Code.showingOfEntries .lean (Decl.splitEntries "proofs = remove")).lostIncluded ==
-        "its proofs are set as written")
   t "views: a directive's other keys belong to its other declarations and are never strange"
     ((Code.showingOfEntries .lean (Decl.splitEntries "theme = gemini, show = math")).strange.isEmpty)
   t "views: only statements and folded or removed proofs read facts"
@@ -440,7 +433,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, barelyDs) := docOf (incl "link" none)
   t "views: an inclusion names a key written without a value by the key"
     (barelyDs.any fun d => d.subject == some "code:option:link" &&
-      (d.message.splitOn "`link` is written without a value").length == 2)
+      d.message == "ignored key link" && d.detail == some "written without a value")
   let (all, allDs) := docOf (incl "show = {math, code}, proofs = collapse" (some facts))
   let allText := String.join (listingTexts all).toList
   t s!"views: an inclusion with no decls sets the whole file, each statement at its declaration, every line not folded ({(listingTexts all).size} listings)"
@@ -557,7 +550,8 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\inputlean[biblio-style]{ex.lean}\n\\end{document}\n")
     let pageKey := bareDs.find? (·.subject == some "code:option:biblio-style")
     t s!"views: a page's key an inclusion is given bare is named as no option of it ({pageKey.map (·.message)})"
-      (pageKey.any fun d => hasStr d.message "has no option 'biblio-style'")
+      (pageKey.any fun d => d.message == "ignored key biblio-style" &&
+        hasStr (d.detail.getD "") "has no such key")
     IO.FS.writeFile (tmp / "frag.md") "::: {.lean file=ex.lean}\n:::\n"
     let (hosted, _) ← build "host.tex" ("\\documentclass{article}\n\\usepackage{markdown}\n" ++
       "\\renewcommand{\\inputlean}[2][]{Zed}\n\\begin{document}\n\\markdownInput{frag.md}\n" ++

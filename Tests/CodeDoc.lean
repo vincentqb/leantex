@@ -410,7 +410,7 @@ its citation as written ({repr (named.map (·.help))})"
   let (_, ds) := elabCode "t.rs" "/// Bibliography: [r.bib](r.bib)\nfn f() {}\n"
   t "citations: a Rust outer doc's bibliography line declares nothing, named"
     (ds.any fun d => d.subject == some "code:bibliography-line" &&
-      d.message.contains "an inner doc comment")
+      (d.detail.getD "").contains "an inner doc comment")
   let (_, ds) := elabCode "t.rs" "// leantex: bibliography = r.bib\n//! Notes.\nfn f() {}\n"
   t "citations: a Rust directive's bibliography is refused, its help the inner doc's line"
     (ds.any fun d => d.subject == some "code:bibliography" &&

@@ -330,14 +330,16 @@ def standoutAlignNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
     s!"\\begin\{frame}[{opts}]\nKilo words.\n\\end\{frame}\n\\end\{document}\n"
   let notes (opts : String) : Array Diag := (elabStr (deckOf opts)).2.filter fun d =>
-    d.kind == .N0102 && hasStr d.message "standout"
+    d.kind == .N0102 && hasStr (saidText d) "standout"
   let centred (opts : String) : Bool := (elabStr (deckOf opts)).1.body.any fun b =>
     match b with
     | .frame _ true v _ _ => (v matches .center)
     | _ => false
   t "standout alignment: an alignment before or after standout is named once, by its letter"
-    ((notes "b,standout").size == 1 && (notes "b,standout").all (hasStr ·.message "'b'") &&
-     (notes "standout,t").size == 1 && (notes "standout,t").all (hasStr ·.message "'t'"))
+    ((notes "b,standout").size == 1 &&
+      (notes "b,standout").all (·.message == Diag.say .N0102 .option "b" (some (some .environment, "frame"))) &&
+     (notes "standout,t").size == 1 &&
+      (notes "standout,t").all (·.message == Diag.say .N0102 .option "t" (some (some .environment, "frame"))))
   t "standout alignment: a standout frame that loses no alignment raises no note"
     ((notes "standout").isEmpty && (notes "c,standout").isEmpty)
   t "standout alignment: every standout frame centres"

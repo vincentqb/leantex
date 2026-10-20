@@ -163,10 +163,10 @@ d = a - a / 2 }")).1
        d.tokens.find? "d" == some { width := .ofLength (Dim.pt 2) })
   t "an unknown token in an expression is named"
     (let ds := (elabStr (pre "\\tokens{ a = b + 1pt }")).2
-     ds.any fun d => d.code == "E0321" && (d.message.splitOn "'b' is not a declared token").length > 1)
+     ds.any fun d => d.code == "E0321" && ((saidText d).splitOn "'b' is not a declared token").length > 1)
   t "a token cycle is a diagnosed forward reference, not a hang"
     (let ds := (elabStr (pre "\\tokens{ a = b + 1pt, b = a + 1pt }")).2
-     ds.any fun d => d.code == "E0321" && (d.message.splitOn "'b'").length > 1)
+     ds.any fun d => d.code == "E0321" && ((saidText d).splitOn "'b'").length > 1)
   t "a self-reference reads the earlier value, as TeX's 2\\x does"
     ((elabStr (pre "\\tokens{ a = 4pt, a = 2a }")).1.tokens.find? "a"
       == some { width := .ofLength (Dim.pt 8) })
@@ -205,10 +205,10 @@ r = w / 2.5, neg = 0pt - 5sp, negh = neg / 2 }")
     (let (d5, ds5) := elabStr (pre "\\tokens{ a = 4pt, b = a / 0 }")
      d5.tokens.find? "b" == none &&
        ds5.any fun d => d.code == "E0321" &&
-         (d.message.splitOn "division by zero").length > 1)
+         ((saidText d).splitOn "division by zero").length > 1)
   t "a number divided by a length is refused"
     (let ds6 := (elabStr (pre "\\tokens{ a = 4pt, b = 8 / a }")).2
-     ds6.any fun d => d.code == "E0321" && (d.message.splitOn "no meaning").length > 1)
+     ds6.any fun d => d.code == "E0321" && ((saidText d).splitOn "no meaning").length > 1)
   -- e-TeX's `\dimexpr` division rounds to nearest, so it is refused by name (E0375).
   t "\\dimexpr division is refused by name"
     (let ds7 := (elabStr (pre
@@ -306,7 +306,7 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\begin{abstract}Words.\\end{abstract}\\end{document}")
   t "a refused abstract redefinition says the built-in stands styled"
     (vDs.any fun d => d.code == "W0303" &&
-      (d.message.splitOn "heading, body size and quotation margins style it").length > 1)
+      ((saidText d).splitOn "heading, body size and quotation margins are read").length > 1)
   t "the refused redefinition's large bold centreline lands on the heading"
     ((Ir.abstractHeadingStyle vDoc.styles).font ==
       some #[.styled (.size "large") #[.styled .bold #[]]] &&
@@ -776,7 +776,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (pre ("\\captionsetup[table]{labelfont=bf}\n" ++
       "\\captionsetup[subtable]{labelfont=bf}")) == ["W0354"] &&
      ((elabStr (pre "\\captionsetup[table]{labelfont=bf}")).2.map (·.message)).any
-      (fun m => (m.splitOn "'labelfont'").length == 2))
+      (fun m => (m.splitOn "labelfont").length == 2))
   -- A `[float type]` scope declares the kind's own token, which only that kind reads (`Ir.captionTokenOf`).
   t "compat captionsetup skip declares the scoped caption gap"
     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "tablecaptionsep"
@@ -996,7 +996,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\renewcommand{\\small}{\\@setfontsize\\small\\@xiipt{14}}")
      (d.page.scale.lookup "small") == some 900 &&
        ds.any fun dg => dg.code == "W0361" &&
-         (dg.message.splitOn "out of order").length > 1)
+         ((saidText dg).splitOn "out of order").length > 1)
   -- The venue's ladder is one declaration: steps that order only against each other land whole.
   t "a venue ladder ordered against itself lands whole"
     (let d := (elabStr (ladderPre
@@ -1151,7 +1151,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      Ir.headingLevels iDoc.body == #[0])
   t "the refusal says what the declared appearance gave it"
     (iDs.any fun d => d.code == "W0361" &&
-      (d.message.splitOn "styled by the redefinition's rules and spacing").length == 2)
+      ((saidText d).splitOn "styled by the redefinition's rules and spacing").length == 2)
   t "an insert-spelled title reads its rules onto the built-in title page"
     (inTitleBlock iDoc fun b => match b with
       | .rule _ _ g => g.value.width == Dim.SymLength.ofLength (Dim.pt 3)
@@ -2175,7 +2175,7 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   t "dropped begin-line groups are named precisely, count included"
     (let ds := (elabStr "Two: \\begin{card}{First}{Second}kept body\\end{card} end.").2
-     ds.any fun d => d.code == "E0336" && d.message.startsWith "2 ")
+     ds.any fun d => d.code == "E0336" && d.detail.any (·.startsWith "2 "))
   t "the block path warns about dropped begin-line groups too"
     ((elabStr "\\begin{wrap}{arg}\none\n\ntwo\n\\end{wrap}").2.any (·.code == "E0336"))
   t "no dropped-argument warning without begin-line groups"
@@ -2751,8 +2751,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A theme's slides furniture under article is named at the install; the document's own `\chrome` stays W0318.
   t "a theme's slides furniture under article is named at the install"
     ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.any fun d =>
-      d.code == "W0355" && (d.message.splitOn "chrome").length > 1 &&
-        (d.message.splitOn "frametitle").length > 1)
+      d.code == "W0355" && ((saidText d).splitOn "chrome").length > 1 &&
+        ((saidText d).splitOn "frametitle").length > 1)
   t "the same theme under slides installs drawing furniture, silently"
     ((elabStr (dvDeck "\\theme{moloch}\n" "\\begin{frame}{T}\nx\n\\end{frame}")).2.all
       (·.code != "W0355"))
@@ -4512,7 +4512,7 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
      dsT.any fun d => d.code == "W0361" && d.span.any (·.file.endsWith ".sty"))
   t "the refusal names what the theme's declared appearance gave the built-in"
     (dsT.any fun d => d.code == "W0361" &&
-      (d.message.splitOn "styled by the redefinition's rules and spacing").length == 2)
+      ((saidText d).splitOn "styled by the redefinition's rules and spacing").length == 2)
   -- A theme the engine absorbs nothing of is no unknown theme; the default bundle floors it.
   let (docH, dsH, _) ← run "themehollow"
   t "a theme that yields no role is read, not called unknown"
@@ -4604,12 +4604,12 @@ def beamerColorChecks (ref : IO.Ref (List String)) : IO Unit := do
       (d.message.splitOn "palette primary").length == 2)
   t "a key whose side has no role is named with the element and the key"
     (dsP.any fun d => d.code == "W0104" &&
-      (d.message.splitOn "alerted text").length == 2 &&
-      (d.message.splitOn "bg").length ≥ 2)
+      ((saidText d).splitOn "alerted text").length == 2 &&
+      ((saidText d).splitOn "bg").length ≥ 2)
   t "supported beamer colour inheritance does not report a false loss"
     (dsP.all fun d => d.code != "W0104" ||
-      !(d.message.contains "\\setbeamercolor") ||
-      (d.message.splitOn "parent").length != 2)
+      d.triggerText != some "\\setbeamercolor" ||
+      ((saidText d).splitOn "parent").length != 2)
   -- `fg=` alone leaves `bg` standing, since `\palette` installs per role.
   let (docC, _) := Elab.run "d.tex" (deck169
     "\\palette{frametitlebg = #010203}\\setbeamercolor{frametitle}{fg=#FFFFFF}" "x")
@@ -7268,6 +7268,14 @@ def pictureMacroReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   t "a loop variable is the picture's, not the document's macro of that name"
     (pageHas loopC 0 "Eta1" && pageHas loopC 0 "Eta2" && !pageHas loopC 0 "Eta9")
 
+/-- Whether a diagnostic names a picture setting's unread key, by its census subject. -/
+def pictureKeySubject (d : Diag) : Bool := (d.subject.getD "").startsWith "picture:set:"
+
+/-- The unread key a picture-setting diagnostic names, from its census subject. -/
+def pictureKeyOf (d : Diag) : String :=
+  let k := ((d.subject.getD "").drop "picture:set:".length).toString
+  if k.length ≥ 2 && k.startsWith "'" && k.endsWith "'" then ((k.drop 1).dropEnd 1).toString else k
+
 /-- A key name the document writes is the key name the walk reads: `-` is an ordinary pgf key-name
 character (pgf manual §87.2). -/
 def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
@@ -7291,9 +7299,8 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let inlineOut := layoutOf oneFace inlineDoc
   let inlineC := censusOf (coveredColorsOf inlineDoc) inlineOut
   let keyNames : List String :=
-    ((ds.filter fun d => d.code == DiagCode.W0334.code &&
-      hasStr (saidText d) "picture key").map fun d =>
-        (d.message.splitOn "'").getD 1 "").toList
+    ((ds.filter fun d => d.code == DiagCode.W0334.code && pictureKeySubject d).map
+      pictureKeyOf).toList
   t "a hyphenated style definition is not named as a dropped key"
     (keyNames == [])
   t "no name is reported cut at its hyphen"
@@ -7336,8 +7343,7 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((elabStr (s ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++
       "\\draw (0, 0) -- (3, 0);\n\\end{tikzpicture}\n\\end{document}")).2.filter
         fun d => d.code == DiagCode.W0334.code &&
-          hasStr (saidText d) "picture key").toList.map fun d =>
-        (d.message.splitOn "'").getD 1 ""
+          pictureKeySubject d).toList.map pictureKeyOf
   t "a two-word key with no loop is named by both its words"
     (namesOf "\\tikzset{every label/.style={draw}}\n" == ["every label"])
   t "a hyphenated key outside the subset is named whole"
@@ -7358,13 +7364,15 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let openSrc := dvDoc keys body
   let refusedSrc := dvDoc ("\\pictures{ tool = none }\n" ++ keys) body
   let keyNames (ds : Array Diag) : List String :=
-    ((ds.filter fun d => d.code == DiagCode.W0334.code &&
-      hasStr (saidText d) "picture key").map fun d =>
-        (d.message.splitOn "'").getD 1 "").toList
+    ((ds.filter fun d => d.code == DiagCode.W0334.code && pictureKeySubject d).map
+      pictureKeyOf).toList
   let (openDoc, openDs) := elabStr openSrc
   let (refusedDoc, refusedDs) := elabStr refusedSrc
   t "the engine's own drawing names every key it did not read"
     (keyNames openDs == ["overlay", "sloped"])
+  t "a picture key's message is its form"
+    (openDs.all fun d => d.code != DiagCode.W0334.code || !pictureKeySubject d ||
+      d.message == Diag.say .W0334 .key (pictureKeyOf d))
   t "the declared refusal names the same keys, no more"
     (keyNames refusedDs == keyNames openDs)
   -- Same bytes either way, so only the naming depends on the tool.
@@ -7416,8 +7424,7 @@ def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
     "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
   t "a tip kind the subset cannot draw is still named as dropped"
-    (otherTip.2.any fun d => d.code == DiagCode.W0334.code &&
-      hasStr (saidText d) "picture key")
+    (otherTip.2.any fun d => d.code == DiagCode.W0334.code && pictureKeySubject d)
   let ladder := censusSrc (box ++ "\\tikzset{draw=blue}\n" ++
     "\\tikzset{wire/.style={draw=green}}\n" ++
     "\\begin{document}\n" ++
@@ -7465,8 +7472,7 @@ def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mixedKeys (s : String) : List String :=
     ((elabStr (box ++ s ++ "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
       "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")).2.filter fun d =>
-        d.code == DiagCode.W0334.code && hasStr (saidText d) "picture key").toList.map
-      fun d => (d.message.splitOn "'").getD 1 ""
+        d.code == DiagCode.W0334.code && pictureKeySubject d).toList.map pictureKeyOf
   t "a document key the subset reads is not named as dropped"
     (mixedKeys "\\tikzset{->, overlay}\n" == ["overlay"])
   t "a document key outside the subset is still named from the same line"

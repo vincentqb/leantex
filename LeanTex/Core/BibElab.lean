@@ -167,8 +167,8 @@ private def reservedNote (span : Span) (c : Char) : Diag :=
     | '_' => ("as a subscript outside a formula and stops there", "\\_")
     | '$' => ("as opening a formula no '$' closes and stops there", "\\$")
     | _ => ("as a comment and drops the rest of the line", "\\%")
-  Diag.of .N0030 s!"'{c}' in a .bib field sets as the character; LaTeX reads it {reads.1}"
-    (some span) (help := s!"write it '{reads.2}' if the .bib must also build with LaTeX")
+  Diag.of .N0030 (Diag.say .N0030 .character (Diag.Name.of c.toString)) (some span)
+    (help := s!"LaTeX reads it {reads.1}: write it '{reads.2}' if the .bib must also build with LaTeX")
     (subject := some s!"bibfield:reserved:{c}")
 
 /-- A block's own text, run into a line. -/
@@ -196,26 +196,26 @@ private def settle (inline : Unit → Array Ir.Inline) (ds : Array Diag)
     (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)
     (blocks : Unit → Array Ir.Inline × Array Diag × Array (String × Ir.PicSrc))
-    (plain : Unit → Array Ir.Inline × FieldReport) (unread : Option String → Diag) :
+    (plain : Unit → Array Ir.Inline × FieldReport) (unread : Diag) :
     Array Ir.Inline × FieldReport :=
   match ds.find? (·.severity == .error) with
   | none => (inline (), { diags := ds ++ marks ++ notes (), pictures := pics () })
-  | some refusal =>
+  | some _ =>
     let b := blocks ()
     if b.2.1.any (·.severity == .error) then
       let p := plain ()
-      (p.1, { diags := (p.2.diags ++ marks).push (unread (some refusal.message)) })
-    else (b.1, { diags := (b.2.1 ++ marks).push (unread none), pictures := b.2.2 })
+      (p.1, { diags := (p.2.diags ++ marks).push unread })
+    else (b.1, { diags := (b.2.1 ++ marks).push unread, pictures := b.2.2 })
 
 private theorem settle_contract (inline : Unit → Array Ir.Inline) (ds : Array Diag)
     (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)
     (blocks : Unit → Array Ir.Inline × Array Diag × Array (String × Ir.PicSrc))
-    (plain : Unit → Array Ir.Inline × FieldReport) (unread : Option String → Diag)
+    (plain : Unit → Array Ir.Inline × FieldReport) (unread : Diag)
     (hn : (notes ()).any (·.severity == .error) = false)
     (hm : marks.any (·.severity == .error) = false)
     (hp : (plain ()).2.diags.any (·.severity == .error) = false)
-    (hu : ∀ c, ((unread c).severity == .error) = false) :
+    (hu : (unread.severity == .error) = false) :
     (settle inline ds pics notes marks blocks plain unread).2.diags.any
       (·.severity == .error) = false := by
   unfold settle
@@ -228,7 +228,7 @@ private theorem settle_contract (inline : Unit → Array Ir.Inline) (ds : Array 
       obtain ⟨x, hx, he⟩ := Array.any_eq_true'.mp ha
       exact h x hx he
     simp only [Array.any_append, hds, hm, hn, Bool.or_false]
-  | some refusal =>
+  | some _ =>
     by_cases hb : (blocks ()).2.1.any (·.severity == .error) = true
     · simp only [hb, ↓reduceIte, Array.any_push, Array.any_append, hp, hm, hu, Bool.or_false]
     · simp only [Bool.not_eq_true] at hb

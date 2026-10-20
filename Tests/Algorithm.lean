@@ -96,7 +96,7 @@ def algorithmReadChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     ((Layout.docScalars (elabStr labelled).1).contains '∀')
   let floatLines (src : String) : Array String := (algArtifacts fonts src).1
   let floatNotes (src : String) : Bool :=
-    (algArtifacts fonts src).2.2.any fun d => d.code == "N0102" && hasStr d.message "[placement]"
+    (algArtifacts fonts src).2.2.any fun d => d.code == "N0102" && hasStr (d.detail.getD "") "[placement]"
   let figure := dvDoc "" ("\\begin{figure}\n[ht]\nalpha words\n\\caption{An invented caption}\n" ++
     "\\end{figure}\n\\begin{table}\n% an invented remark\n[!b]\nbravo words\n" ++
     "\\caption{Another invented caption}\n\\end{table}")

@@ -56,5 +56,5 @@ para
   math inline "\\overset {?}{=}"
   text " sets its characters and names the construct, and no control sequence reaches the page."
 -- diagnostics
-warning[W0385] 24:1 '{align*}': '\textbf' inside math sets in the surrounding style
-warning[W0012] 40:59 math with \overset is not rendered yet; the formula sets as its text content
+warning[W0385] 24:1 unsupported command \textbf
+warning[W0012] 40:59 unsupported command \overset | detail: set as its text content

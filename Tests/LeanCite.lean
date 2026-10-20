@@ -198,7 +198,7 @@ def leanCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.subject == some "code:biblio-style"))
   t "lean cite: a docs view beside another view is named, the docs view set"
     ((inclusion "show = {docs, math}" (some refs)).2.any fun d =>
-      d.subject == some "code:show" && hasStr d.message "documentation as prose, without them")
+      d.subject == some "code:show" && hasStr (d.detail.getD "") "`docs` with another view")
   t "lean cite: a phrase under the docs view, which sets no statement, is named"
     ((inclusion "show = docs, phrase.x = \"an x\"" (some refs)).2.any
       (·.subject == some "code:phrase:x"))

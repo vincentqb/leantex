@@ -95,8 +95,7 @@ public def fieldInlines (v : String) : Array Ir.Inline := Id.run do
 
 /-- The diagnostic naming a formula the math parser cannot model (W0012). -/
 private def mathFloorDiag (src : String) : Diag :=
-  Diag.of .W0012 s!"math in a reference-list entry is not rendered yet; the formula sets as \
-    its text content" (subject := some ("math:" ++ src))
+  Diag.of .W0012 (Diag.say .W0012 .math (Diag.Name.value src)) (subject := some ("math:" ++ src))
 
 /-- The reading with no elaborator behind it. -/
 public def plainField : FieldText := fun v =>
@@ -117,25 +116,16 @@ public theorem plainField_ships_contract (v : String) :
 
 public def plainReading : FieldReading := fun _ => plainField
 
-/-- The words a refused field's diagnostic opens with until
-the list names its field. -/
-private def unreadWho : String := "a .bib field"
-
 /-- The key prefix of a refused field's text until the list names its field. -/
 private def unreadKey : String := "bibfield:unread:"
 
 /-- A field the document's elaborator refused, set as its text (W0429). -/
-public def unreadDiag (span : Span) (src : String) (cause : Option String) : Diag :=
-  let what := match cause with
-    | none => "holds markup this engine sets only between paragraphs; it sets as its text, \
-        run into the entry"
-    | some c => s!"is not TeX this engine sets in an entry ({c}); it sets as its plain text"
-  Diag.of .W0429 s!"{unreadWho} {what}" (some span)
-    (subject := some (unreadKey ++ src))
+public def unreadDiag (span : Span) (src : String) : Diag :=
+  Diag.of .W0429 (Diag.say .W0429 .field) (some span) (subject := some (unreadKey ++ src))
 
-public theorem unreadDiag_ships (span : Span) (src : String) (cause : Option String) :
-    ((unreadDiag span src cause).severity == .error) = false := by
-  rw [show (unreadDiag span src cause).severity = DiagCode.W0429.loss.severity from
+public theorem unreadDiag_ships (span : Span) (src : String) :
+    ((unreadDiag span src).severity == .error) = false := by
+  rw [show (unreadDiag span src).severity = DiagCode.W0429.loss.severity from
     Diag.of_severity_full .W0429 _ _ _ _ _ _ _ _]
   exact DiagCode.fieldReading_ships.1
 
@@ -150,10 +140,11 @@ public def nameUnread (written : Option Entry) (e : Entry) (d : Diag) : Diag :=
     (x.fields.find? (·.2.trimAscii.toString == src)).map (·.1)
   match (written.bind holds).orElse fun _ => holds e with
   | some f =>
-    let rest := (d.message.drop unreadWho.length).toString
-    { d with message := s!"the '{f}' field of '{e.key}'{rest}"
+    { d with message := Diag.say .W0429 .field f (some (some .entry, e.key))
              subject := some s!"bibfield:unread:{e.key}:{f}" }
-  | none => { d with subject := some s!"bibfield:unread:{e.key}" }
+  | none =>
+    let message := Diag.say .W0429 .field none (some (some .entry, e.key))
+    { d with message, subject := some s!"bibfield:unread:{e.key}" }
 
 /-- A URL or DOI as `\url` reads it: braces dropped, escapes resolved,
 everything else verbatim. -/

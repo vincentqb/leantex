@@ -384,7 +384,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
           if verbose then #["-v"] else #["-q"])
         let lines := result.stderr.splitOn "\n"
         let expected := s!"{source}:4:1: {if allow then "info" else "warning"}: " ++
-          "unknown command '\\oddity'; its {...} arguments were kept as text [W0301]"
+          "undefined command \\oddity [W0301]"
         t s!"diagnostic format: emitted warning and acceptance {allow}/{verbose}"
           (result.exitCode == 1 && result.stdout.isEmpty &&
            if !allow || verbose then (result.stderr.splitOn expected).length == 2 &&

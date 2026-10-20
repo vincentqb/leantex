@@ -11,6 +11,6 @@ para
 para
   text "A closing paragraph after the last rule."
 -- diagnostics
-warning[W0307] 5:1 a thematic break has no block in this engine and is not drawn
-warning[W0307] 9:1 a thematic break has no block in this engine and is not drawn
-warning[W0307] 13:1 a thematic break has no block in this engine and is not drawn
+warning[W0307] 5:1 unsupported markup
+warning[W0307] 9:1 unsupported markup
+warning[W0307] 13:1 unsupported markup

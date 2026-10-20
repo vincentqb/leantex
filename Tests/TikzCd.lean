@@ -59,7 +59,7 @@ def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         !hasStr w "\\begin{tikzpicture}" && hasStr w "\\usepackage{tikz-cd}")
     t s!"no text floor is named and the package load is not refused: {form}"
       (ds.all (·.code != "W0012") && ds.all (·.code != "W0103") &&
-       ds.any fun d => d.code == "N0023" && hasStr d.message "this diagram is drawn by")
+       ds.any fun d => d.code == "N0023" && hasStr (saidText d) "drawn by")
     t s!"the diagram is a fallback the driver may withdraw: {form}"
       (rs.fallbacks == refs.map (·.1))
     let img := (picImages doc).getD 0 ""

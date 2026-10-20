@@ -34,4 +34,4 @@ para
   italicCorr maybe
   text " inside it."
 -- diagnostics
-warning[W0392] 3:19 a link's title is not carried: the link sets without it
+warning[W0392] 3:19 ignored title

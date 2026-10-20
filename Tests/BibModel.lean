@@ -524,7 +524,7 @@ def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let (_, plainDs) := build "\\usepackage{url}" "\\bibliographystyle{plain}\\bibliography{refs}" "web,dated"
   let urlNotes := plainDs.filter fun d => d.code == "N0029" && d.subject == some "bibfield:url"
   t s!"named: plain names the url it prints nowhere, once ({urlNotes.map (·.message)})"
-    (urlNotes.size == 1 && urlNotes.all (hasStr ·.message "web"))
+    (urlNotes.size == 1 && urlNotes.all fun d => hasStr (d.detail.getD "") "web")
   let (_, natDs) := build "\\usepackage{natbib}" "\\bibliographystyle{plainnat}\\bibliography{refs}" "web"
   t "named: plainnat prints the url and names nothing about it"
     (!natDs.any fun d => d.code == "N0029" && d.subject == some "bibfield:url")
@@ -540,7 +540,8 @@ def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (hentries.any (hasStr · "Handed out") && !hentries.any (hasStr · "Posted"))
   t s!"named: the note names the @manual keeping one, by its type ({hnotes.map (·.message)})"
     (hnotes.size == 1 && hnotes.all fun d =>
-      hasStr d.message "no 'howpublished' field in @manual entries" && hasStr d.message "(hn)")
+      d.message == "unused field howpublished" &&
+        hasStr (d.detail.getD "") "prints it for no @manual entry: hn")
   let (sdoc, sds) := build "\\usepackage[style=authoryear]{biblatex}\n\\addbibresource{refs.bib}"
     "\\printbibliography" "season,dated"
   let (sentries, _) := bibShipped oneFace sdoc
@@ -599,7 +600,7 @@ def bibNamedChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (dropped.any (·.subject == some "bibfield:school") &&
       dropped.any (·.subject == some "bibfield:eventdate") &&
       !dropped.any (·.subject == some "bibfield:institution") &&
-      dropped.all (hasStr ·.message "biblatex's authoryear style prints no"))
+      dropped.all fun d => hasStr (d.detail.getD "") "biblatex's authoryear style prints it for no")
 
 /-- A list biblatex words in another language is named once. -/
 def bibLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -1166,7 +1167,7 @@ def biblatexXdataChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     -- an entry naming itself is refused as biber refuses it: no @xdata entry
     if probe == "xdata" then
       t s!"xdata {probe}: the entry naming itself is no @xdata entry, as biber says"
-        (w.any fun d => d.subject == some "bibref:x15" && hasStr d.message "no @xdata entry")
+        (w.any fun d => d.subject == some "bibref:x15" && hasStr (d.detail.getD "") "not an @xdata entry")
     t s!"xdata {probe}: the build ships with no error" (!ds.any (·.severity == .error))
   -- xdata2: biber's line where the engine matches it, the declared line
   -- where it departs
@@ -1203,7 +1204,8 @@ def biblatexXdataChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let lw := lds.filter (·.code == "W0425")
   t s!"xdata: a granular cycle is named once, as the field it lends ({lw.map (·.message)})"
     (lw.size == 1 && lw.all fun d =>
-      hasStr d.message "the note of 'yl2' takes the note of 'yl1', which closes a cycle")
+      d.message == "invalid reference yl1 for entry yl2" &&
+        hasStr (d.detail.getD "") "note takes note: a cycle")
   t s!"xdata: a granular cycle's spelling never reaches the page ({lentries})"
     (lentries == #["[1] Jo Kappa. Granular Loop. 2007."])
 
@@ -1629,7 +1631,7 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       let named := ds.filter (·.code == "W0429")
       t s!"{what}: one warning names the note of 'k' ({named.map (·.message)})"
         (named.size == 1 && named.all fun d => d.subject == some "bibfield:unread:k:note" &&
-          hasStr d.message "'note' field of 'k'" && d.trigger.isNone)
+          d.message == "invalid field note for entry k" && d.trigger.isNone)
   -- A tabular in a field is a block in a line: its cells set there, named once (W0451).
   let tab := "\\begin{tabular}{ll}a&b\\\\c&d\\end{tabular}"
   for (name, pre, list) in lists do

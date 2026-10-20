@@ -83,11 +83,11 @@ def fontSizeAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let nonlinear := dvE (metricDoc
     "{\\fontsize{\\linewidth * \\columnwidth}{14pt}\\selectfont Alpha}")
   t "nonlinear fontsize arithmetic is refused by name"
-    (nonlinear.any fun d => d.code == "E0331" && hasStr d.message "length times a length")
+    (nonlinear.any fun d => d.code == "E0331" && hasStr (saidText d) "length times a length")
   let register := dvE (metricDoc
     "{\\fontsize{\\wd\\strutbox}{14pt}\\selectfont Alpha}")
   t "register fontsize arithmetic is refused by name"
-    (register.any fun d => d.code == "E0331" && hasStr d.message "register")
+    (register.any fun d => d.code == "E0331" && hasStr (saidText d) "register")
 
 /-- The face index, size, colour, link and underline of the shipped run whose glyphs spell `w`. -/
 private def runLook (out : Layout.Out) (w : String) :

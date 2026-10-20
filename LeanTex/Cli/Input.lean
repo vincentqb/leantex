@@ -232,10 +232,9 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
     modify fun log => { log with reads := log.reads.push path.toString }
     let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
     let showing := ask.showing
-    let lost := showing.lostIncluded
     let declared := showing.facts.map fun p => (dir / p).toString
     let (facts, factDiags, factsRead) ← if showing.asks || showing.decls.isSome then
-        Host.runIO (LeanFactsFile.factsFor path.toString text declared lost)
+        Host.runIO (LeanFactsFile.factsFor path.toString text declared)
       else pure (none, #[], none)
     if let some p := factsRead then modify fun log => { log with reads := log.reads.push p }
     let place ← match showing.link with
@@ -541,7 +540,7 @@ public def readDocument (file : String) (bytes : ByteArray)
       let asks := lang == .lean && showing.asks
       let (facts, factDiags, factsRead) ← if asks then
           Host.runIO (LeanFactsFile.factsFor file text (showing.facts.map fun p =>
-            ((System.FilePath.mk file).parent.getD "." / p).toString) showing.lost)
+            ((System.FilePath.mk file).parent.getD "." / p).toString))
         else pure (none, #[], none)
       if phases && asks then
         phase "lean" s!"{(facts.map (·.decls.size)).getD 0} declarations" (← since t)

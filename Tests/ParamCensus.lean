@@ -963,7 +963,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
       named (art "\\page{ tmargin = 1in, bmargin = 3in, textheight-under = 400pt }") "bmargin")
   t "text block: a kernel height leaving no text block is named as a text height"
     ((elabStr (art "\\usepackage{geometry}\n\\setlength{\\textheight}{30in}")).2.any fun d =>
-      d.code == "W0104" && hasStr (saidText d) "declared text height leaves the page no text block")
+      d.code == "W0104" && d.message == Diag.say .W0104 .key "textheight" (some (none, "\\page")) &&
+        hasStr (d.detail.getD "") "no text block left")
   t "text block: a key an earlier call spelled is not named again, nor geometry's own default"
     (quiet (calls "textheight=500pt,vmarginratio=1:1" "\\geometry{top=1in}") &&
       quiet (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}") &&

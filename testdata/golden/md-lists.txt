@@ -63,6 +63,6 @@ list ordered
     para
       text "An item after the code."
 -- diagnostics
-warning[W0392] 18:1 an ordered list's start number is not carried and the list counts from one
-warning[W0392] 21:1 a loose list sets as a tight one: its items' paragraph spacing is not carried
-warning[W0392] 27:1 a loose list sets as a tight one: its items' paragraph spacing is not carried
+warning[W0392] 18:1 ignored number 7 | detail: the list counts from one
+warning[W0392] 21:1 ignored spacing | detail: between a loose list's items
+warning[W0392] 27:1 ignored spacing | detail: between a loose list's items

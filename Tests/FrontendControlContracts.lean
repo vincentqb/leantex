@@ -100,7 +100,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bare := Elab.run file ("\\documentclass{article}\\begin{document}alpha \\usepackage omega" ++
     "\\end{document}")
   t "body declaration: a body \\usepackage naming no package is left to elaboration"
-    (bare.2.any (fun d => d.kind == .W0301 && (d.message.splitOn "'\\usepackage'").length > 1) &&
+    (bare.2.any (fun d => d.kind == .W0301 && d.message == "undefined command \\usepackage") &&
       !bare.2.any (·.kind == .W0340))
   let deferred := Elab.run file ("\\documentclass{article}\\usepackage{natbib}\\begin{document}" ++
     "\\newcommand{\\zzmac}{\\bibpunct{(}{)}}alpha \\zzmac{;} omega\\end{document}")
@@ -305,7 +305,7 @@ def ctrlLeaveChecks (ref : IO.Ref (List String)) : IO Unit := do
   let noted (ds : Array Diag) (s : String) : Bool :=
     ds.any fun d => d.kind == .N0100 && ((d.message ++ "\n" ++ (d.detail.getD "")).splitOn s).length > 1
   let unknown (ds : Array Diag) (n : String) : Bool :=
-    ds.any fun d => d.kind == .W0301 && (d.message.splitOn s!"'\\{n}'").length > 1
+    ds.any fun d => d.kind == .W0301 && d.message == Diag.say .W0301 .command s!"\\{n}"
   let defined := "\\newcommand{\\zzmac}{\\usepackage{xcolor}}"
   t "control leave: a load in a definition body waits for the definition's use"
     (!noted (run defined "Alpha.") "package xcolor" &&

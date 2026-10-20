@@ -95,5 +95,5 @@ info[N0100] 10:1 translated command \setbeamercovered | detail: \palette{ covere
 info[N0100] 11:1 translated command \newcommand{\dim} | detail: \define \dim(a1: content) {...}
 info[N0100] 12:1 translated command \newenvironment{banner} | detail: \defineenv{banner}(a1: content) {begin} {end}
 info[N0100] 35:19 translated command \alert | detail: {\bfseries ...}
-warning[W0319] 9:1 unknown theme 'example'; the document is unthemed | help: themes: moloch, plain, daylight, gemini
-warning[W0304] 47:21 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }
+warning[W0319] 9:1 undefined theme example | help: themes: moloch, plain, daylight, gemini
+warning[W0304] 47:21 undefined colour quiet!50 | help: declare colours with \palette{ name = #RRGGBB }

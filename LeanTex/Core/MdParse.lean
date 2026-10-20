@@ -1994,9 +1994,7 @@ def Strict.subject : Strict → String
   | .lazyContinuation => "md:lazy-continuation"
 
 def Strict.message : Strict → String
-  | .rawHtml => "raw HTML in markdown is refused: document content can never become markup here"
-  | .indentedCode => "an indented code block is refused: four spaces of indent mean continuation inside a list and code outside one"
-  | .lazyContinuation => "a lazy continuation line is refused: a paragraph line inside a container repeats the container's marker"
+  | .rawHtml | .indentedCode | .lazyContinuation => Diag.say .E0390 .markup
 
 def Strict.fixit : Strict → String
   | .rawHtml => "write it in markdown (**bold**, *emphasis*, [text](url), ![alt](src)), quote it as a code span with `...`, or delete the tags"
@@ -3033,10 +3031,11 @@ def nestedCites (file : String) (cpairs : Array CPair) : Array Diag := Id.run do
       -- A group's own key, read in-text by the scan before its bracket closed, is no inner one.
       let own := cp.spans.size == 1 && (cp.spans[0]?).any (places.contains ·.preFrom)
       unless own do
-        out := out.push (Diag.of .W0392 "a citation inside another citation's prefix or suffix \
-sets as its text, and its work is not cited" (some ⟨file, cp.pos⟩)
+        out := out.push (Diag.of .W0392
+          (Diag.say .W0392 .citation ((cp.spans[0]?).map (Diag.Name.of ·.key))) (some ⟨file, cp.pos⟩)
           (some "close the first citation's brackets before it, or list both in one bracket \
-separated by ';'") (subject := some "md:cite-nested"))
+separated by ';'") (subject := some "md:cite-nested")
+          (detail := some "inside another citation's prefix or suffix"))
     open_ := open_.push (cp, cp.spans.foldl (fun s sp => s.insert sp.preTo) {})
   return out
 
@@ -3955,11 +3954,11 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       leaf := .none
       let p := { lpos with col := j + 1 }
       if refsSeen then
-        diags := diags.push (Diag.of .W0392 "a second '::: {#refs}' division holds no list: the \
-reference list stands in the first" (some ⟨file, p⟩) (subject := some "md:refs-second"))
+        diags := diags.push (Diag.of .W0392 (Diag.say .W0392 .division "{#refs}") (some ⟨file, p⟩)
+          (subject := some "md:refs-second") (detail := some "a second one; the first holds the list"))
       else if extra then
-        diags := diags.push (Diag.of .W0392 "the reference list's division sets without its \
-other attributes" (some ⟨file, p⟩) (subject := some "md:refs-attrs"))
+        diags := diags.push (Diag.of .W0392 (Diag.say .W0392 .division "{#refs}")
+          (some ⟨file, p⟩) (subject := some "md:refs-attrs") (detail := some "its other attributes"))
       divs := divs.push !refsSeen
       refsSeen := true
     else if doc && !divs.isEmpty && ind ≤ 3 && closesDiv cs j then
@@ -4220,8 +4219,8 @@ def resolveNotes (file : String) (blocks : Array Blk) : Array Blk × Array Diag 
   for b in blocks do
     if let .note label body p := b then
       if let some earlier := placed.get? label then
-        diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing: a later \
-definition of its label stands, as Pandoc's reader takes it" (some ⟨file, earlier⟩)
+        diags := diags.push (Diag.of .W0392 (Diag.say .W0392 .footnote label) (some ⟨file, earlier⟩)
+          (detail := some "a later definition of its label stands")
           (some "give each footnote a label of its own") (subject := some "md:note-again"))
       else order := order.push label
       let mut lines : Array (Array Inl) := #[]
@@ -4231,8 +4230,8 @@ definition of its label stands, as Pandoc's reader takes it" (some ⟨file, earl
         | .para inl _ => lines := lines.push inl
         | other =>
           let (kind, q) := blkKind other
-          lost := lost.push (Diag.of .W0392 s!"a {kind} in footnote '{label}' {blockLoss other}: a \
-footnote holds text" (some ⟨file, q⟩)
+          lost := lost.push (Diag.of .W0392 (Diag.say .W0392 .block (obj := some (some .footnote, label)))
+            (some ⟨file, q⟩) (detail := some s!"a {kind} {blockLoss other}")
             (some "write the footnote's content as paragraphs") (subject := some "md:note-block"))
           lines := noteLines lines other
       let content := lines.foldl (init := #[]) fun acc l =>
@@ -4247,14 +4246,13 @@ footnote holds text" (some ⟨file, q⟩)
   for label in order do
     if st.used.contains label then diags := diags ++ losses.getD label #[]
     else
-      diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing: no reference names \
-it" (placed.get? label |>.map fun p => ⟨file, p⟩) (some s!"name it where it belongs with [^{label}], or remove it")
+      diags := diags.push (Diag.of .W0392 (Diag.say .W0392 .footnote label)
+        (detail := some "no reference names it") (placed.get? label |>.map fun p => ⟨file, p⟩) (some s!"name it where it belongs with [^{label}], or remove it")
         (subject := some "md:note-unused"))
   let named := dropped ++ st.dropped
   for (label, q) in named do
-    let what := if label.isEmpty then "an inline note sets nothing where it stands"
-      else s!"footnote '{label}' sets nothing where it is named"
-    diags := diags.push (Diag.of .W0392 s!"{what}: an image's text alternative holds text"
+    let what := if label.isEmpty then Diag.say .W0392 .note else Diag.say .W0392 .footnote label
+    diags := diags.push (Diag.of .W0392 what (detail := some "inside an image's text alternative")
       (some ⟨file, q⟩) (some "write the footnote outside the alternative")
       (subject := some "md:note-in-text"))
   return (filled, diags)

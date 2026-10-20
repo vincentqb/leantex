@@ -25,7 +25,8 @@ private def lineHasColor (out : Layout.Out) (text : String) (c : Ir.Color) : Boo
       | _ => false
 
 private def colorLoss (ds : Array Diag) (fragment : String) : Bool :=
-  ds.any fun d => d.code == "W0104" && (d.message.splitOn fragment).length > 1
+  ds.any fun d => d.code == "W0104" &&
+    ((d.message ++ "\n" ++ (d.detail.getD "")).splitOn fragment).length > 1
 
 private def colorTree (doc : Ir.Doc) : Html.Node :=
   let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -93,7 +94,8 @@ def beamerReachChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     for element in elements do
       let (p, h, ds) := artifacts (siteDeck theme
         s!"\\setbeamercolor\{{element}}\{fg=ProbeInk,bg=ProbePaper}")
-      let named := colorLoss ds s!"element '{element}' has no supported paint site"
+      let named := ds.any fun d => d.code == "W0104" &&
+        d.message == Diag.say .W0104 .element element (some (none, "\\setbeamercolor"))
       t s!"beamer reach: under {themeName}, '{element}' is named unused exactly when the shipped pages do not change ({named}, {p == pages})"
         (named == (p == pages))
       t s!"beamer reach: under {themeName}, a named '{element}' changes no HTML either"

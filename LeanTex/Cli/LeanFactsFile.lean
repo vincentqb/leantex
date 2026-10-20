@@ -51,8 +51,7 @@ of this leantex" }
 
 /-- A Lean file's facts, from the file `declared` names, placed by its declaring document, or the
 exporter's standard one, with the note or warning `LeanFacts.judge` owes and the path read. -/
-public def factsFor (file text : String) (declared : Option String)
-    (lost : String := "its code is set without statements") :
+public def factsFor (file text : String) (declared : Option String) :
     Prog (Option LeanFacts.Facts × Array Diag × Option String) := do
   let cwd := (← ask .cwd).toOption
   let placed (p : String) : String :=
@@ -67,7 +66,7 @@ public def factsFor (file text : String) (declared : Option String)
   let path := (declared.map placed).getD standard
   let help := helpFor s!"lake exe leantex-export {abs}" standard declared.isSome
   let read := (← ask (.readFile path)).toOption
-  let (facts, ds) := LeanFacts.judge file path text lost help read
+  let (facts, ds) := LeanFacts.judge file path text help read
   return (facts, ds, read.map fun _ => path)
 
 /-- A bibliography file a Lean file's documentation cites into: the name its document gives it, the

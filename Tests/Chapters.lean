@@ -147,7 +147,7 @@ and its folio ({heads ps 3})"
     (off.size ≥ 2 && head off 1 == "")
   t "twoside: a verso's field on one-sided pages is named"
     ((elabStr (doc "{article}" "\\runninghead[pages = even]{E}" "x")).2.any fun d =>
-      d.code == "W0104" && hasStr d.message "one-sided")
+      d.code == "W0104" && hasStr (d.message ++ "\n" ++ (d.detail.getD "")) "one-sided")
   let cdp (cls : String) := pages (doc cls "" "Alpha.\n\\cleardoublepage\nBravo.")
   t s!"twoside: cleardoublepage opens a recto on two-sided pages, the next page on one-sided ones \
 ({(cdp "[twoside]{article}").size}, {(cdp "{article}").size})"
@@ -511,8 +511,8 @@ line below ({head - ktop}, {body - head}, {bare - ktop})"
     ((elabStr declared).2.any (·.subject == some "chapters:thefigure"))
   let grouped := doc "{article}" "Text {\\pagenumbering{roman}} more."
   t "\\pagenumbering in a group is named under its own spelling"
-    ((elabStr grouped).2.any fun d => d.code == "W0104" && hasStr d.message "'\\pagenumbering' in a group" &&
-      !hasStr d.message "pagenumbering roman")
+    ((elabStr grouped).2.any fun d => d.code == "W0104" &&
+      d.message == "ignored command \\pagenumbering")
   let minted := doc "{article}" ("\\begin{minted}[firstline=2,lastline=3]{text}\nline one\nline two\n" ++
     "line three\nline four\n\\end{minted}") "\\usepackage{minted}\n"
   t s!"minted: firstline and lastline set the source's lines between them ({lines minted})"

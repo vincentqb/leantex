@@ -75,10 +75,10 @@ def inlineRuleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       (.lit (ptGlue 1)) (.lit {}) , .text "B"] == "AB")
   let nonlinear := dvE (metricDoc "A\\rule{\\linewidth * \\columnwidth}{1pt}B")
   t "nonlinear rule arithmetic is refused by name"
-    (nonlinear.any fun d => d.code == "E0331" && hasStr d.message "length times a length")
+    (nonlinear.any fun d => d.code == "E0331" && hasStr (saidText d) "length times a length")
   let register := dvE (metricDoc "A\\rule{\\wd\\strutbox}{1pt}B")
   t "register rule arithmetic is refused by name"
-    (register.any fun d => d.code == "E0331" && hasStr d.message "register")
+    (register.any fun d => d.code == "E0331" && hasStr (saidText d) "register")
 where
   ptGlue (n : Int) : Dim.SymGlue := { width := .ofLength (Dim.pt n) }
 

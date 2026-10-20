@@ -34,34 +34,38 @@ error: unexpected character } [E0202]
 ── E0205 (dropped) malformed or mismatched environment name
 error: invalid environment name [E0205]
 ── E0303 (dropped) malformed \define signature
-error: malformed signature '(a b' [E0303]
+error: invalid signature '(a b' [E0303]
   note: expected (name: type, ..., opt?: type)
 ── E0304 (dropped) missing argument for a command
-error: '\page' needs a {...} block [E0304]
+error: missing argument for \page [E0304]
+  note: a {...} block
 ── E0305 (dropped) parameter expects text
-error: parameter 'who' of '\role' expects text [E0305]
+error: invalid parameter who for \role [E0305]
+  note: expects text
 ── E0306 (dropped) unknown parameter reference in a definition body
-error: unknown parameter '\b' [E0306]
+error: undefined parameter \b [E0306]
 ── E0309 (dropped) unknown document class
-error: unknown document class 'proseplate' [E0309]
+error: unsupported class proseplate [E0309]
   note: classes: article, slides, card, resume, webpage, poster, scrartcl
 ── E0310 (dropped) content before the first \item in a list
-error: content before the first '\item' [E0310]
+error: unexpected text for \item [E0310]
 ── E0311 (dropped) reserved character in text
-error: reserved character '&' [E0311]
+error: unexpected character & [E0311]
   note: escape it as '\&'
 ── E0312 (dropped) block-level command used inline
-error: '\section' is not allowed here [E0312]
+error: unexpected command \section [E0312]
   note: it is a block-level command: use it between paragraphs, not inside inline content
 ── E0313 (dropped) only declarations may appear before \begin{document}
-error: only declarations may appear before '\begin{document}' [E0313]
+error: unexpected text [E0313]
+  note: before '\begin{document}', where only declarations stand
 ── E0316 (dropped) unclosed optional argument
-error: unclosed optional argument for '\x' [E0316]
+error: unclosed optional argument for \x [E0316]
 ── E0320 (dropped) invalid key or missing value in a declaration block
 error: invalid entry oops for \page [E0320]
   note: it has no value
 ── E0321 (dropped) unreadable value for a declaration key
-error: 'scale' needs a number, got "big" [E0321]
+error: invalid value 'big' for key scale [E0321]
+  note: a number
 ── E0322 (dropped) unknown key in a declaration block
 error: '\page' has no key 'zoom' [E0322]
   note: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings, web
@@ -71,47 +75,47 @@ error: undefined key zoom for \page [E0322]
 error: invalid value for key vmargin [E0323]
   note: \page expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
-error: unknown page size 'quarto' [E0324]
+error: undefined page size quarto [E0324]
   note: known sizes: letter, legal, a4, a5, b5, executive, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2
 ── E0325 (dropped) unreadable \assert expression
-error: cannot read assertion: "pages =~ 1" [E0325]
+error: invalid assertion 'pages =~ 1' [E0325]
   note: '=~' is not a comparison (== != <= < >= >)
 ── E0326 (dropped) name not in the palette where a colour is required
-error: 'missingname' is not in the palette [E0326]
+error: undefined colour missingname [E0326]
   note: aliases read earlier entries: declare \palette{ missingname = #RRGGBB } first
 ── E0327 (dropped) not a \page key
-error: 'header' is not a '\page' key [E0327]
+error: undefined key header for \page [E0327]
   note: \runninghead{...} declares it; \hfill pushes content to the right
 ── E0328 (dropped) not a styleable element
-error: 'banana' is not a styleable element or a '\define'd name [E0328]
+error: undefined element banana [E0328]
   note: elements: {,sub,subsub}section, heading{1,5,6}, abstract, {list,itemize,enumerate,description}{,1..4}, frametitle, sectionpage, standout, titlepage, nav, logo, link, url, cite, block, alertblock, exampleblock
 ── E0329 (dropped) unknown diagnostic code in \allow
-error: '\allow' names no diagnostic code 'W9999' [E0329]
+error: undefined code W9999 for \allow [E0329]
   note: codes look like 'E0333'; each names the one loss it accepts
 ── E0330 (dropped) layout assertion failed against the shipped pages
 error: failed assertion 'pages == 1' [E0330]
   note: actual: 2
 ── E0331 (dropped) unreadable length
-error: cannot read a length from 'banana' [E0331]
+error: invalid length 'banana' [E0331]
   note: image sizes look like 3cm or 0.8\textwidth
 ── E0332 (dropped) covered fraction outside 0–99 percent
-error: covered fraction must be 0–99 percent, got '100\%' [E0332]
+error: invalid value '100\%' for key covered [E0332]
   note: the fraction of each covered colour kept over the page; 0\%, the default, hides it
 ── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
 error: in '\fill', unknown macro '\nope'; the shape is not drawn [E0333]
 ── E0334 (dropped) \begin{ifbackend} content addressed to no backend
-error: this content is addressed to no backend; no output will carry it [E0334]
+error: ignored environment ifbackend [E0334]
   note: name at least one of pdf, html, md; a nested '\begin{ifbackend}' intersects with its enclosing one; \allow{E0334} accepts the loss
 ── E0336 (dropped) {...} groups went with an unknown wrapper
-error: 1 {...} group on the '\begin{banner}' line went with the unknown wrapper [E0336]
-  note: content, not an argument? put it after the '\begin' line
+error: ignored argument for environment banner [E0336]
+  note: 1 {...} group on its line
 ── E0340 (dropped) unknown icon name; nothing is rendered
-error: unknown icon 'no-such-icon'; nothing is rendered [E0340]
+error: undefined icon no-such-icon [E0340]
   note: icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'
 ── E0347 (dropped) a running head or foot declared in the body is dropped with its content
-error: '\runninghead' in the body is dropped with its content [E0347]
+error: ignored command \runninghead [E0347]
   note: declare it before \begin{document}
-error: '\runningfoot' in the body is dropped with its content [E0347]
+error: ignored command \runningfoot [E0347]
   note: declare it before \begin{document}
 ── E0365 (dropped) \data file not found; its records are absent
 error: missing file records [E0365]
@@ -120,7 +124,7 @@ error: missing file records [E0365]
 error: unsupported division for \dimexpr [E0375]
   note: \dimexpr rounds to nearest, the engine truncates as \divide does
 ── E0390 (dropped) a markdown construct this dialect refuses by design; its content is dropped
-error: raw HTML in markdown is refused: document content can never become markup here [E0390]
+error: unsupported markup [E0390]
   note: write it in markdown (**bold**, *emphasis*, [text](url), ![alt](src)), quote it as a code span with `...`, or delete the tags
 ── E0395 (dropped) picture label produced no line
 error: picture label produced no line [E0395]
@@ -158,13 +162,13 @@ info: default math font 'Fira Math' [N0016]
 info: default math font 'Fira Math' [N0016]
   note: the first installed face with an OpenType MATH table
 ── N0017 (info) no document class declared; the article page model is assumed
-info: no '\documentclass'; the article page model is assumed [N0017]
+info: default class article [N0017]
   note: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl) to choose it
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
 info: 'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand [N0018]
   note: write \fonts{ math = "..." } with a face that carries this alphabet
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
-info: content addressed per backend encodes a per-medium decision by hand [N0019]
+info: resolved environment ifbackend [N0019]
   note: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── N0020 (info) a local style file is read as part of the preamble
 info: translated file venueguide.sty [N0020]
@@ -172,8 +176,8 @@ info: translated file venueguide.sty [N0020]
 ── N0021 (info) header and footer gaps differ as declared; equal gaps are the default
 info: header and footer gaps differ by 10pt as declared; equal gaps are the default [N0021]
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
-info: this picture is drawn by lualatex at the boundary; its text is not in the document's census [N0023]
-  note: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
+info: translated picture [N0023]
+  note: drawn by lualatex at the boundary; its text is not in the census
 ── N0024 (info) a figure is drawn by an external converter, because the engine does not draw one of its features
 info: figure 'figures/plot.pdf' is drawn by pdftocairo, because the engine does not draw its 'type1' font [N0024]
 info: figure 'figures/chart.svg' is drawn by rsvg-convert, because the engine does not draw its 'filter' property [N0024]
@@ -186,32 +190,34 @@ info: 'Example Grotesk' in figure 'figures/chart.svg' is no family of the docume
 ── N0027 (info) an SVG figure holds a link, which its drawing does not carry; the figure draws the link's content
 info: figure 'figures/chart.svg' holds a link, which its drawing does not carry; its content is drawn [N0027]
 ── N0029 (info) a .bib field the bibliography style prints nowhere for its entry's type; the reference list is the style's own
-info: the bibliography style 'plain' prints no 'url' field in @misc entries; 1 entry keeps one (k) [N0029]
+info: unused field url [N0029]
+  note: the bibliography style 'plain' prints it for no @misc entry: k
 ── N0030 (info) a character TeX reserves, in a .bib field, set as the character it is where LaTeX reads it as markup or a comment
-info: '&' in a .bib field sets as the character; LaTeX reads it as an alignment tab outside a table and stops there [N0030]
-  note: write it '\&' if the .bib must also build with LaTeX
+info: translated character & [N0030]
+  note: LaTeX reads it as an alignment tab outside a table and stops there: write it '\&' if the .bib must also build with LaTeX
 ── N0031 (info) the typewriter family the engine took for an undeclared slot has no italic face; italic code sets upright in it, unslanted
 info: missing face italic for family 'DejaVu Sans Mono' [N0031]
   note: install the family's italic faces, or declare a typewriter family that has them: \fonts{ mono = "<family>" }
 ── N0032 (info) a Lean file whose page asks for its facts has no facts file where its project's exporter writes one, or where the document declares it; its page sets the file's code alone
-info: no facts for 'Tide' stand at '/p/.lake/build/leantex/Tide.facts'; its code is set without statements [N0032]
+info: missing facts /p/.lake/build/leantex/Tide.facts [N0032]
   note: run `lake exe leantex-export Tide` in a project that requires leantex-export, or declare `facts = <path>`
 ── N0100 (info) LaTeX idiom translated to its native declaration
 info: translated package geometry [N0100]
   note: \tokens{ headsep = 25pt, footskip = 30pt }\page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
-info: frame option 'shrink' is not modelled; ignored [N0102]
+info: ignored option shrink for environment frame [N0102]
 ── N0103 (info) \paragraph short title unused: nothing consumes it yet
-info: '\paragraph[short]' short title is unused: nothing consumes it yet [N0103]
+info: unused short title for \paragraph [N0103]
 ── N0104 (info) a frame declared for another mode ships no page in this one
 info: ignored frame <presentation:0> [N0104]
   note: it declares no presentation slides
 ── N0105 (info) \allow names a retired code; its successor answers
-info: '\allow' names the retired code 'W0341'; 'W0301' reports this now, so this accepts nothing [N0105]
-  note: remove 'W0341' from \allow and review the 'W0301' diagnostic
-info: '\allow' names the retired code 'W0344'; the loss it named cannot occur [N0105]
-info: '\allow' names the retired code 'W0376'; 'N0376' reports this now, so this accepts nothing [N0105]
-  note: remove 'W0376' from \allow and review the 'N0376' diagnostic
+info: unused code W0341 [N0105]
+  note: retired; W0301 reports its loss now
+info: unused code W0344 [N0105]
+  note: retired; its loss cannot occur
+info: unused code W0376 [N0105]
+  note: retired; N0376 reports its loss now
 ── N0114 (info) a TeX conditional resolved from the document's own definitions and loads
 info: resolved conditional \ifdefined\shiny [N0114]
   note: \shiny is undefined
@@ -225,7 +231,7 @@ info: resolved conditional \IfPackageLoadedF [N0114]
 info: a page set short of its height: its skips gave part of their shrink [N0200]
   note: page 1: 3pt short, its skips gave 22% of their 16pt of shrink
 ── N0359 (info) a \note nested inside another note's frame is dropped, as beamer drops it
-info: a '\note' inside this note's frame is dropped: one note carries no other, as in beamer [N0359]
+info: ignored command \note [N0359]
   note: move the inner '\note' out of the enclosing '\note', beside its frame
 ── N0376 (info) an image ships no text alternative (WCAG 2.2)
 info: image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) [N0376]
@@ -236,7 +242,8 @@ info: this picture ships no text alternative; assistive technology reads nothing
 info: the file claims its PDF/X standard on the engine's checks; a print service's preflight judges the rest [N0448]
   note: under PDF/X-4, unjudged: ink coverage, line weights, image resolution, overprint
 ── W0001 (config) content after \end{document} is ignored
-warning: content after '\end{document}' is ignored [W0001]
+warning: ignored text [W0001]
+  note: after '\end{document}'
 ── W0002 (degraded) bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD
 warning: invalid character for file doc.tex [W0002]
   note: not text in UTF-8: byte 0xE9 at offset 44
@@ -277,18 +284,20 @@ warning: lists nest more than four levels; a deeper level reuses the fourth's ma
 warning: unsupported math font 'Open Sans' [W0011]
   note: testdata/corpus/fonts/OpenSans-Regular.ttf has no OpenType MATH table
 ── W0012 (degraded) math construct not rendered yet; set as its text content
-warning: math with \overset is not rendered yet; the formula sets as its text content [W0012]
-warning: math with \overset is not rendered yet; the formula sets as a placeholder: it has no text content [W0012]
+warning: unsupported command \overset [W0012]
+  note: set as its text content
+warning: unsupported command \overset [W0012]
+  note: set as a placeholder, having no text content
 ── W0013 (config) an \allow'd code never fired
 warning: unused code E0333 [W0013]
   note: the document no longer needs it; drop the entry from \allow
 ── W0014 (degraded) alignment row disagrees with its grid's columns; padded
-warning: '{align*}': a row has fewer cells than its widest; padded with empty cells [W0014]
+warning: invalid row for environment align* [W0014]
   note: row 2 has 1 cell(s) where 2 align
-warning: an alignment row has more cells than the column spec declares; extra columns centre [W0014]
+warning: invalid row [W0014]
   note: 2 cells where the column spec declares 1
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
-warning: equation numbers are not rendered yet; '{align}' sets unnumbered [W0015]
+warning: unsupported numbering for environment align [W0015]
   note: '{align*}' spells the unnumbered form, which renders the same
 ── W0016 (degraded) math alphabet glyph absent from the covered face; a stand-in keeps the letter
 warning: 'Fira Math' has no double-struck glyph for U+1D538 [W0016]
@@ -297,7 +306,8 @@ warning: 'Fira Math' has no double-struck glyph for U+1D538 [W0016]
 warning: ignored argument s for \bibpunct [W0101]
   note: superscript citations are set on the baseline
 ── W0102 (degraded) unsupported colour model
-warning: colour model 'hsb' is not supported; use HTML, RGB, rgb, gray, cmyk [W0102]
+warning: unsupported colour model hsb [W0102]
+  note: models: HTML, RGB, rgb, gray, cmyk
 ── W0103 (config) unsupported package skipped
 warning: unsupported package nosuchpkg [W0103]
 ── W0104 (config) unsupported TeX construct skipped
@@ -310,10 +320,12 @@ warning: ignored command \usecolortheme [W0104]
 warning: ignored covering 'again covered' for \setbeamercovered [W0104]
   note: \palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' and 'transparent=<n>' are understood
 warning: ignored command \titlegraphic{} [W0104]
-warning: class option 'twocolumn' asks for a two-column page; the text is set in one column [W0104]
-warning: class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full [W0104]
+warning: ignored option twocolumn for \documentclass [W0104]
+  note: the text is set in one column
+warning: ignored option draft for \documentclass [W0104]
+  note: the document is rendered in full
 ── W0105 (degraded) overlay specification does not name a step
-warning: overlay specification '<zz>' does not name a step; its content is shown on every step [W0105]
+warning: invalid overlay '<zz>' [W0105]
   note: write a numbered spec: <2>, <2->, or <2-3>; incremental specs are not modelled
 ── W0106 (config) expl3 code skipped
 warning: unsupported syntax 'expl3' [W0106]
@@ -321,15 +333,15 @@ warning: unsupported syntax 'expl3' [W0106]
 ── W0107 (degraded) a length value the engine cannot read; the setting is skipped and the length keeps its value
 warning: invalid length 'foo' for \parskip [W0107]
 ── W0108 (degraded) \centering is inert inside an argument
-warning: '\centering' centres nothing inside an argument; content stays left-aligned [W0108]
-  note: move '\centering' to the start of the group or environment body
+warning: ignored command \centering [W0108]
+  note: inside an argument
 ── W0109 (degraded) a beamer covering set at one share: a covering graded by each step's distance at its next steps' share, a share past 99% at 99%
 warning: unsupported covering dynamic for \setbeamercovered [W0109]
   note: 10%
 ── W0110 (degraded) unsupported command option; ignored
-warning: '\includegraphics' option 'angle=45' is not modelled; ignored [W0110]
+warning: ignored option 'angle=45' for \includegraphics [W0110]
   note: modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact
-warning: class option 'parskip=half' leaves space free after a paragraph's last line; here the last line may run to the margin [W0110]
+warning: ignored option parskip=half for \documentclass [W0110]
   note: 1em free
 ── W0111 (config) a styling declaration names no styleable element; ignored
 warning: undefined element banana for \setkomafont [W0111]
@@ -341,58 +353,58 @@ warning: the measure holds more characters per line than the readable band [W020
 warning: 'section' sets more space below the heading than above it [W0202]
   note: 10pt below, 2pt above
 ── W0301 (degraded) unknown command; {...} arguments kept as text
-warning: unknown command '\mystery'; its {...} arguments were kept as text [W0301]
+warning: undefined command \mystery [W0301]
   note: \define \name(...) {body} declares it
-warning: unknown command '\mystery'; its [...] options were dropped and its {...} arguments were kept as text [W0301]
+warning: undefined command \mystery [W0301]
   note: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
-warning: unknown command '\mystery'; any [...] options were dropped and its {...} arguments were kept as text [W0301] (2 sites)
+warning: undefined command \mystery [W0301] (2 sites)
   note: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
-info: unknown command '\mystery'; its {...} arguments were kept as text [W0301]
+info: undefined command \mystery [W0301]
 ── W0302 (degraded) unknown environment; body kept
-warning: unknown environment '{banner}'; its body is kept [W0302]
+warning: unsupported environment banner [W0302]
   note: \defineenv{name}(...) {begin} {end} declares one
 ── W0303 (config) built-in name cannot be redefined
-warning: '\underline' is built in; this definition is ignored [W0303]
+warning: ignored definition \underline [W0303]
   note: the built-in already does this; \define it under another name
 ── W0304 (degraded) colour name not in the palette; content kept uncoloured
-warning: 'nope' is not in the palette; content kept uncoloured [W0304]
+warning: undefined colour nope [W0304]
   note: declare colours with \palette{ name = #RRGGBB }
 ── W0306 (degraded) a palette's seeds generate no palette — a role they derive cannot meet what its sites owe, or a seed has no sRGB tones to derive from; the seeds stand as the page's text, ground and accent
-warning: '\palette[seeds]' generates no palette: its muted-on-inverse fails its check; the seeds stand as given [W0306]
-  note: no neutral tone reads on the ink
+warning: invalid seeds for \palette[seeds] [W0306]
+  note: its muted-on-inverse fails its check; no neutral tone reads on the ink
 ── W0307 (pending) construct not implemented yet; its content is not rendered
-warning: '{external}' is not implemented yet; its content is not rendered [W0307]
+warning: unsupported environment external [W0307]
 ── W0308 (degraded) a colour scheme the web page offers cannot carry a colour legibly; the page ships without that scheme
 warning: the lightMore scheme cannot carry 'fg' legibly on 'bg'; the page ships without it [W0308]
   note: 1.01:1, below 7.00:1
 ── W0309 (config) \maketitle with nothing declared
-warning: '\maketitle' with nothing declared; no title is set [W0309]
+warning: missing title for \maketitle [W0309]
   note: declare \title{...} (and \author, \date, ...) before it
 ── W0310 (degraded) '[' never closes; not an argument
-warning: '[' after '\section' never closes; it is not an argument [W0310]
+warning: unclosed optional argument for \section [W0310]
   note: add the matching ']'
 ── W0311 (degraded) a second \frametitle replaces the first
-warning: this '\frametitle' replaces the frame's earlier title [W0311]
+warning: duplicate command \frametitle [W0311]
   note: the last one wins; remove the other '\frametitle'
 ── W0312 (degraded) no {...} group after a command; skipped
-warning: no {...} group after '\title'; it is skipped [W0312]
+warning: missing argument for \title [W0312]
   note: write \title{...}
 ── W0314 (degraded) column width is not a fraction of the text width
-warning: column width 'banana' is not a fraction of the text width; the column shares the leftover [W0314]
+warning: invalid width 'banana' for environment column [W0314]
   note: write a factor like {0.5\textwidth}
 ── W0315 (standard) low-contrast colour pairing (WCAG 2.2)
 warning: text coloured 'yellow!50' reads on the page below the contrast WCAG 2.2 asks of text (SC 1.4.3) [W0315]
   note: #FFFF80 on #FFFFFF: 1.05:1, below 4.50:1
 ── W0316 (config) unknown option in \palette; block skipped
-warning: unknown option in '\palette': "dark"; block skipped [W0316]
+warning: undefined option dark for \palette [W0316]
   note: options: decorative, seeds
 ── W0317 (config) a card carries no running head or foot; declaration dropped
-warning: a card carries no running head or foot; the declaration is dropped [W0317]
+warning: ignored running head for class card [W0317]
 ── W0318 (config) \chrome outside the slides class; ignored
-warning: '\chrome' is slides furniture; the article class never draws it [W0318]
+warning: ignored command \chrome for class article [W0318]
   note: \runninghead / \runningfoot are the page furniture
 ── W0319 (degraded) unknown theme; the document is unthemed
-warning: unknown theme 'banana'; the document is unthemed [W0319]
+warning: undefined theme banana [W0319]
   note: themes: moloch, plain, daylight, gemini
 ── W0320 (degraded) heading levels skip a step (HTML §4.3.11, WCAG G141)
 warning: heading levels skip a step: a rank-two heading is followed by a rank-four heading [W0320]
@@ -401,10 +413,9 @@ warning: heading levels skip a step: a rank-two heading is followed by a rank-fo
 warning: the document title follows another heading [W0321]
   note: put \maketitle before the first \section, so the outline starts at its top
 ── W0322 (config) a second \maketitle is ignored; the title is typeset once
-warning: a second '\maketitle' is ignored; the title is typeset once [W0322]
-  note: LaTeX's \maketitle disables itself after use (classes.dtx)
+warning: duplicate command \maketitle [W0322]
 ── W0323 (config) unknown backend name in \begin{ifbackend}; ignored
-warning: unknown backend 'banana' in '\begin{ifbackend}'; ignored [W0323]
+warning: undefined backend banana for environment ifbackend [W0323]
   note: backends: pdf, html, md
 ── W0325 (degraded) more than one <nav> landmark on one page
 warning: unlabeled <nav> landmarks repeat on one page, indistinguishable to assistive technology [W0325]
@@ -419,7 +430,7 @@ warning: sections share the anchor 'signal-path'; each after the first takes a n
 warning: running content wraps at the text width; only its first line is kept [W0328]
   note: the head, foot, and chrome bands hold one line each: shorten the content
 ── W0329 (config) reserved layout-only construct skipped; no content is affected
-warning: '\fontfallback' is not implemented yet; skipped [W0329]
+warning: ignored command \fontfallback [W0329]
 ── W0330 (degraded) declared page with a defaulted ink is illegible (WCAG 2.2)
 warning: the declared page keeps the defaulted ink, below the contrast WCAG 2.2 asks of text (SC 1.4.3) [W0330]
   note: #000000 on #18181B: 1.18:1, below 4.50:1
@@ -442,10 +453,12 @@ warning: the picture is larger than the text area; it may overrun the page [W033
 warning: node labels overlap: a relative placement parts node centres, not the text they set [W0336]
   note: 1 pair of labels
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
-warning: a row carries more cells than the column spec declares; the grid widens [W0337]
+warning: invalid row for environment tabular [W0337]
   note: 3 cells where the spec declares 2
-warning: a row carries fewer cells than the column spec; it is padded with empty cells [W0337]
-warning: '\multicolumn' span is not a numeral the engine reads: its text fills one cell in its column's alignment [W0337]
+warning: invalid row for environment tabular [W0337]
+  note: fewer cells than the column spec's 3
+warning: invalid number for \multicolumn [W0337]
+  note: its text fills one cell
 warning: invalid command \multicolumn [W0337]
   note: write \multicolumn first in a tabular cell
 ── W0338 (degraded) table is wider than the measure
@@ -457,12 +470,12 @@ warning: ignored declaration \page [W0340]
 warning: ignored declaration \usepackage [W0340]
   note: load the package in the preamble, before '\begin{document}'
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
-warning: '\muted' is also a palette role; this definition freezes it, so the palette and the contrast check no longer reach it [W0342]
+warning: duplicate command \muted [W0342]
   note: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, progressfg, progressbg, separator, standoutfg, standoutbg, muted
 ── W0343 (config) one setting is given two different values; the later declaration wins
-warning: 'margin' in '\page' was already set to '20pt'; this later value wins [W0343]
-  note: one value per key: keep the 'margin = ...' you mean
-warning: a second '\runningfoot' replaces the first [W0343]
+warning: duplicate key margin for \page [W0343]
+  note: was '20pt'; the later value is used
+warning: duplicate command \runningfoot [W0343]
   note: one '\runningfoot' declares the line; delete the one you do not mean
 ── W0345 (standard) a themed element's resolved colour pairing is illegible (WCAG 2.2)
 warning: covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one [W0345]
@@ -470,35 +483,36 @@ warning: covering 'covered' does not quiet it: the covered form reads as loud on
 warning: covered 'fg' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11) [W0345]
   note: #4E4A49 against #292524: 1.73:1, below 3.00:1
 ── W0346 (config) a declaration inside inline content is ignored
-warning: '\palette' is a declaration; inside inline content it is ignored [W0346]
+warning: ignored declaration \palette [W0346]
   note: write '\palette' between paragraphs, after a blank line; there it applies from where it stands
-warning: '\page' is a declaration; inside inline content it is ignored [W0346]
+warning: ignored declaration \page [W0346]
   note: declare it before \begin{document}
 ── W0348 (config) a theme replaces a key the document already declared; the theme wins
-warning: theme 'moloch' replaces the document's earlier 'alert' from '\palette' [W0348]
-  note: overrides go after '\theme': move the declaration below it
+warning: ignored key alert for \palette [W0348]
+  note: theme moloch replaces it
 ── W0349 (degraded) reference to a key no \label numbers; set as '??'
 warning: no \label{nowhere} in the document; set as '??' [W0349]
   note: declare \label{nowhere} after the numbered thing it names
 ── W0350 (config) a key is \label'ed more than once; the first wins
-warning: 'twice' is already a \label'ed key; the first wins [W0350]
+warning: duplicate label twice [W0350]
   note: one \label{twice} per key: give this one its own name
 ── W0351 (degraded) a citation names no bibliography entry; its mark shows as ?
-warning: citation 'ghost' has no entry in the bibliography; it shows as '?' [W0351]
+warning: undefined citation ghost [W0351]
   note: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite
-warning: citation 'ghost' has no bibliography to resolve against; it shows as '?' [W0351]
+warning: undefined citation ghost [W0351]
   note: the document declares no bibliography; \bibliography{file} names the .bib file
 ── W0352 (degraded) a malformed .bib entry is skipped; the rest of the file is kept
-warning: malformed .bib entry: in 'broken': unreadable value for 'year'; the entry is skipped and the rest of 'refs.bib' is kept [W0352]
+warning: invalid entry for file refs.bib [W0352]
+  note: in 'broken': unreadable value for 'year'
 ── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat
-warning: bibliography style 'mystery' is not one the engine knows; the reference list is set as 'unsrtnat' [W0353]
+warning: undefined style mystery [W0353]
   note: styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv, alpha
 ── W0354 (config) a caption option the engine does not honour; named and ignored
-warning: '\captionsetup[table]' key 'labelfont' is not honoured; the caption keeps its declared layout [W0354]
+warning: ignored key labelfont for \captionsetup[table] [W0354]
   note: \tokens{ captionsep = ... } declares the caption gap
 ── W0355 (config) a theme's slides furniture cannot draw under the class in force
-warning: theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it [W0355]
-  note: the palette and tokens apply either way; \documentclass{slides} draws the furniture
+warning: ignored theme moloch for class article [W0355]
+  note: chrome, frametitle, sectionpage, standout
 ── W0357 (config) a definition is expansion-time TeX; refused by design
 warning: unsupported definition \edef [W0357]
   note: its text reaches past what the engine expands
@@ -511,8 +525,8 @@ warning: a figure or table is taller than the text block; it overruns its page [
 warning: the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands [W0361]
   note: '\venuetitlebox' at t:2
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
-warning: no part of this picture is inside the rendered subset; a placeholder box marks its place [W0362]
-  note: the box holds the diagram's place; \allow{W0362} accepts the loss
+warning: unsupported picture [W0362]
+  note: \allow{W0362} accepts the placeholder
 ── W0363 (degraded) a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place
 warning: the title-page template's title node is not pinned to the page; the title sets in the title page's flow [W0363]
   note: pin the node to a point of the page: \node[anchor=west] at (current page.west) {\inserttitle}
@@ -534,27 +548,29 @@ warning: ignored option debug for package beamerposter [W0367]
 ── W0368 (degraded) a language the engine ships no locale for; English captions and patterns stand in
 warning: substituted language English for klingon [W0368]
   note: the engine ships locale records for: en, fr, de
-warning: no locale for language 'xx'; English captions and patterns stand in [W0368]
+warning: substituted language English for xx [W0368]
   note: the engine ships locale records for: en, fr, de
 ── W0369 (degraded) a per-language font binding; one face serves every language, so the binding is dropped
 warning: ignored option french for \babelfont [W0369]
   note: one face serves every language
 ── W0370 (pending) \footnotemark and \footnotetext are not paired yet; kept as text
-warning: '\footnotemark' is not paired with its partner yet; its text is kept in place [W0370]
+warning: unsupported command \footnotemark [W0370]
   note: \footnote{...} where the mark should stand sets the note at the page foot
-warning: '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place [W0370]
+warning: unsupported command \footnotemark [W0370]
   note: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
 ── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin, a heading as a bold line
 warning: a paragraph break inside '\footnote' is set as a space [W0371]
+── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin
+warning: unsupported paragraph break for \footnote [W0371]
   note: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
 warning: a footnote is taller than the text block; it overruns its page [W0372]
   note: 60.123pt taller
 ── W0373 (degraded) \thanks is kept inline in the title block
-warning: '\thanks' content is kept inline in the title block [W0373]
-  note: a plain \footnote in the body text renders as a page footnote
+warning: unsupported command \thanks [W0373]
+  note: kept inline in the title block
 ── W0374 (degraded) a footnote on a card face is kept inline; a face has no note apparatus
-warning: a footnote on this card is kept inline; a card face has no note apparatus [W0374]
+warning: unsupported footnote for class card [W0374]
   note: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
 warning: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4) [W0377]
@@ -570,8 +586,8 @@ warning: missing drawing for HTML [W0378]
 warning: missing tool lualatex [W0379]
   note: its version was not read: no executable file by this name on PATH
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
-warning: 'stepped' names a bare counter step, not a heading, equation, or float; the plain number is set [W0380]
-  note: reference it with \ref, or move the \label after the numbered thing it should name
+warning: unsupported reference stepped [W0380]
+  note: a bare counter step, not a heading, equation or float
 ── W0381 (degraded) a unit outside the siunitx table; set as its ASCII spelling
 warning: undefined unit \banana [W0381]
   note: write the symbol as literal text in the unit braces: \qty{1}{kPa}
@@ -581,35 +597,36 @@ warning: missing drawing for tool lualatex [W0382]
 warning: missing drawing for tool lualatex [W0382]
   note: exit code 3
 ── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
-warning: '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines [W0383]
+warning: unsupported command \lIf [W0383]
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
 warning: a frame is taller than its page; it continues on the next page [W0384]
   note: frame 1: 174.016pt taller
 warning: a frame is taller than its page; it continues on the next page [W0384]
   note: frame standout: 329.494pt taller
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
-warning: '\textbf' inside math sets in the surrounding style [W0385]
+warning: unsupported command \textbf [W0385]
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed, and any line of it still past the measure is its overrun too
 warning: a declared line did not fit the measure and re-flowed [W0386]
   note: it ships as 3 lines
 ── W0387 (config) a known construct was read and had no effect
 warning: ignored command \thispagestyle [W0387]
   note: \allow{W0387} accepts the skip
-warning: palette key 'codestring' still names a colour, but listings now colour each token by its code role [W0387]
-  note: declare \palette{ codeliteral = #RRGGBB } to colour the literal role
+warning: ignored key codestring for \palette [W0387]
+  note: listings colour each token by its code role
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
 warning: the \framefoot note reaches off the page: what stands past its edge cannot be shown, whatever reads the file [W0388]
   note: on page 2, 268.759pt past its edge
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
-warning: math with \raisebox is not rendered yet; its content operand sets in its place [W0389]
+warning: unsupported command \raisebox [W0389]
+  note: its content operand sets in its place
 ── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
 warning: missing family mono [W0390]
   note: typewriter runs set in the body face, which is not fixed-pitch
 ── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
-info: unknown command '\@venueprobe' in package code; any [...] options and its {...} arguments were dropped, not set as text [W0391]
+info: ignored command \@venueprobe [W0391]
   note: \define \name(...) {body} declares it
 ── W0392 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
-warning: a link's title is not carried: the link sets without it [W0392]
+warning: ignored title [W0392]
 ── W0393 (degraded) the installed syntax highlighter cannot classify a listing; its source is set as plain text
 warning: missing highlighter for language bash [W0393]
   note: Pygments is unavailable
@@ -632,92 +649,95 @@ warning: missing family 'Sourse Serif Pro' [W0403]
 warning: missing family 'Kaputt Grotesk' [W0403]
   note: 12 families are installed — `leantex fonts` lists every family
 ── W0411 (standard) a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent
-warning: '\begin{minted}' within a line of text or an argument does not compile under LaTeX; it is set as inline code [W0411]
-  note: write \mintinline{python}{…} for inline code
-warning: '\begin{minted}' with its code on the same line does not compile under LaTeX; it is set as a display listing [W0411]
-  note: put the code on lines of its own between '\begin{minted}{python}' and '\end{minted}'
-warning: '\begin{verbatim}' within a line of text or an argument does not compile under LaTeX; it is set as inline code [W0411]
-  note: write \verb|…| for inline code
+warning: unexpected environment minted [W0411]
+  note: within a line of text or an argument; set as inline code
+warning: unexpected environment minted [W0411]
+  note: its code on the same line; set as a display listing
+warning: unexpected environment verbatim [W0411]
+  note: within a line of text or an argument; set as inline code
 ── W0412 (degraded) a listing's language names no lexer the engine or Pygments' registry has; its code is set as plain text
-warning: 'pyhton' names no lexer the engine or Pygments has; its code is set as plain text [W0412]
+warning: undefined language pyhton [W0412]
   note: spell it 'python', the lexer name nearest it
 ── W0413 (degraded) minted's one-line display command written within a line of text or an argument, where LaTeX sets a display or cannot set it, is set as inline code
-warning: '\mint' within a line of text or an argument is set as inline code; LaTeX sets a display there, or cannot set it [W0413]
-  note: write \mintinline{python}{…} for inline code, or put '\mint' on a line of its own for a display
+warning: unexpected command \mint [W0413]
+  note: within a line of text or an argument; set as inline code
 ── W0414 (degraded) a Lean declaration's statement is not set as mathematics, Lean having given no faithful one; its code is set without it
-warning: the statement of 't' did not elaborate in Lean; its code is set without it [W0414]
+warning: missing statement t [W0414]
+  note: it did not elaborate in Lean
 ── W0415 (degraded) a Lean declaration's statement the prose view cannot say in words is set as mathematics
-warning: words cannot say 't', which refers to its hypothesis 'h'; it is set as mathematics [W0415]
+warning: unsupported statement t [W0415]
+  note: it refers to its hypothesis 'h'
 ── W0416 (degraded) a phrase a Lean file's directive declares is refused, or used by no sentence; the page says its statements without it
-warning: 'phrase.zz' names no constant a statement of this file names; the phrase is not used [W0416]
-  note: write the constant's name as a statement uses it after `phrase.`
+warning: unused phrase phrase.zz [W0416]
+  note: no statement of this file names its constant
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 warning: unsupported picture [W0419]
   note: '\pattern' is outside the rendered picture subset; not drawn
 ── W0420 (degraded) a .bib date or month biber does not read; it prints as written
-warning: the date 'Spring 2020' of 'k' is not one biblatex reads; it prints as written [W0420]
+warning: invalid date 'Spring 2020' for entry k [W0420]
   note: write it as YYYY, YYYY-MM or YYYY-MM-DD, a range with '/': 'date = {2020-03}'
 ── W0421 (degraded) a biblatex reference list worded in a language the engine has no bibliography strings for; English ones stand in
-warning: biblatex words this reference list's strings and dates in 'ngerman'; the engine sets the English ones [W0421]
+warning: substituted language English for ngerman [W0421]
   note: load biblatex with 'language=english' and 'autolang=hyphen' to word the list in English, as biblatex then does
 ── W0422 (degraded) a biblatex @set entry; its members are listed each as an entry of its own
-warning: biblatex sets the @set entry 's' as one entry of its members; the engine lists each member as an entry of its own [W0422]
+warning: unsupported entry type @set for entry s [W0422]
   note: 2 members
 ── W0423 (degraded) a biblatex entry's related entries, which its style sets after it; the engine does not set them
-warning: biblatex sets the entries 'r' that 'k' names as related after it; the engine does not set related entries [W0423]
+warning: unsupported field related for entry k [W0423]
+  note: biblatex sets 'r' after it
 ── W0424 (degraded) a .bib file among the bibliography's is not there; the list holds the other files' entries
 warning: missing file references [W0424]
   note: put the file at ./references.bib, or drop 'references' from the list of files
 ── W0425 (degraded) a .bib entry's crossref or xdata reference biber does not resolve: no such entry, no @xdata entry, no such field, or a cycle; the entry is set without what it would inherit
-warning: the crossref 'nowhere' that 'k' names is no entry of the bibliography; 'k' is set without the fields it would inherit [W0425]
-  note: add an entry with key 'nowhere' to the .bib file, or fix the spelling in 'crossref'
-warning: the xdata 'd' that 'e' names closes a cycle ('k' → 'd' → 'e' → 'd'), where biber stops; the engine skips it [W0425]
-  note: remove the reference to 'd' from the xdata of 'e'
-warning: the xdata 'r' that 'k' names is no @xdata entry, which biber refuses; 'k' is set without its fields [W0425]
-  note: make 'r' an @xdata entry, or name the data 'k' needs in 'xdata'
-warning: the note of 'k' takes the note of 'd', which 'd' does not hold; 'k' is set without it [W0425]
-  note: add 'note' to 'd', or write the note of 'k' out
-warning: the editor of 'k' takes the publisher of 'd', a field of another kind, which biber refuses; 'k' is set without it [W0425]
-  note: take a field of the kind 'editor' is, or write the editor of 'k' out
-warning: the origlocation of 'k' takes an item the location of 'd' does not hold; 'k' is set without it [W0425]
-  note: item 3
-warning: the addendum of 'k' is 'xdata=d', an xdata reference naming no field to take; 'k' is set without it [W0425]
-  note: write it 'xdata=<key>-<field>', or write the addendum of 'k' out
+warning: invalid reference nowhere for entry k [W0425]
+  note: crossref: no such entry
+warning: invalid reference d for entry e [W0425]
+  note: xdata: a cycle, where biber stops: 'k' → 'd' → 'e' → 'd'
+warning: invalid reference r for entry k [W0425]
+  note: xdata: not an @xdata entry
+warning: invalid reference d for entry k [W0425]
+  note: note takes note: 'd' holds no note
+warning: invalid reference d for entry k [W0425]
+  note: editor takes publisher: publisher is a field of another kind
+warning: invalid reference d for entry k [W0425]
+  note: origlocation takes location: the location of 'd' holds no item 3
+warning: invalid reference xdata=d for entry k [W0425]
+  note: addendum: it names no field to take
 ── W0426 (degraded) a .bib value names an @string no file defines before it; the name prints in its place
-warning: the string 'undefinedjt' that 'k' uses is defined by no @string read before it; its name prints in its place [W0426]
+warning: undefined string undefinedjt for entry k [W0426]
   note: define it before its first use: '@string{undefinedjt = "..."}', in the .bib file named first
 ── W0427 (degraded) a biblatex list sorted by a locale whose collation of its script the engine does not carry; the default collation sorts it
-warning: biber sorts this reference list by the 'ja' collation, which the engine does not carry; it is sorted by the default one [W0427]
+warning: unsupported collation ja [W0427]
   note: load biblatex with 'sortlocale=en_US' to sort the list by the default collation
 ── W0428 (degraded) a biblatex \supercite sets as \cite, in brackets on the line; the style's superscript is not carried
 warning: unsupported command \supercite [W0428]
   note: set as \cite, in brackets on the line
 ── W0429 (degraded) a .bib field the document's elaborator refuses where an entry stands; the field sets as its text
-warning: the 'note' field of 'k' holds markup this engine sets only between paragraphs; it sets as its text, run into the entry [W0429]
+warning: invalid field note for entry k [W0429]
 ── W0431 (degraded) a Lean file's links reach the commit its repository holds it at, from which the file has changed since; the links show the committed text
-warning: the file has changes its commit does not hold; its links show the committed text [W0431]
-  note: commit the file, or write a `link` that names no `{commit}`
+warning: invalid link 'https://github.com/acme/tides' [W0431]
+  note: the file has changes its commit does not hold
 ── W0432 (degraded) a Lean file's link names the file's commit or path in its repository, which the host could not give; its declarations' names are set without links
-warning: a link names the file's commit or path, which git could not give; the names set unlinked [W0432]
-  note: build the file in the git repository that tracks it, or write a `link` with no `{commit}` or `{path}`
+warning: missing commit [W0432]
+  note: git could not give the file's commit or path
 ── W0433 (degraded) a Lean file's facts file no longer lines up with its source, or does not read; its page sets the file's code alone
-warning: the facts for 'Tide' at '/p/.lake/build/leantex/Tide.facts' no longer line up with it; its code is set without statements [W0433]
-  note: run `lake exe leantex-export Tide` again in a project that requires leantex-export
+warning: invalid facts /p/.lake/build/leantex/Tide.facts [W0433]
+  note: does not match the file
 ── W0434 (degraded) leanblueprint's dependency graph is not drawn, nor the proof buttons its showmore option asks for; the web page names beside each statement what it uses and proves
 warning: unsupported graph for package blueprint [W0434]
   note: each statement's uses stand as cross-references beside it; \allow{W0434} accepts the loss
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
-warning: '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display [W0435]
-  note: an unnumbered \[ ... \] sets it beside the formula
+warning: unsupported command \qedhere for environment align* [W0435]
+  note: the QED stands on a line of its own after the display
 ── W0436 (degraded) a blueprint's link template names a part a Lean name alone cannot fill; its names are set without links
-warning: the link template names a part a Lean name alone cannot fill; its names are set without links [W0436]
+warning: unsupported template for package blueprint [W0436]
   note: it names {path}, {line}, {endline}, {commit}
 ── W0440 (degraded) a mix of an ink with a colour other than the paper or a tint of the ink; it prints as a process colour, the ink's alternate standing in for it
-warning: 'ink!50!black' mixes the ink 'Probe Ink' with a colour other than the paper or its own tint; it prints as a process colour [W0440]
-  note: mix an ink only with the paper, as 'name!50'; a mix of two colours is a third
+warning: unsupported mix 'ink!50!black' for ink 'Probe Ink' [W0440]
+  note: a colour other than the paper or the ink's own tint
 ── W0441 (degraded) an ink declared again with another alternate; a colorant names one ink, and its first alternate stands
-warning: the ink 'Probe Ink' is declared again with another alternate; its first alternate stands [W0441]
-  note: a colorant names one ink: give each ink its own colorant, as \definespotcolor{name}{Other Ink}{c,m,y,k}
+warning: duplicate ink 'Probe Ink' [W0441]
+  note: another alternate; the first stands
 ── W0442 (degraded) a declared page box outside the page's medium or with no area there; the PDF writes it inside the medium, or not at all
 warning: the TrimBox reaches past the page's medium; it is written inside it [W0442]
   note: [9 9 700 400] against the medium's [0 0 612 792]
@@ -756,23 +776,25 @@ warning: unused face mono [W0449]
 warning: unused face math [W0449]
   note: the document sets no mathematics
 ── W0450 (degraded) a .bib key names a second entry setting other fields; the first entry stands
-warning: 'k' is already the key of an earlier entry; the first entry stands [W0450]
+warning: duplicate entry k [W0450]
   note: the first at refs.bib:1
 ── W0451 (degraded) a block environment inside a line of text, a table cell or a note; its words are set in the line
-warning: '{center}' inside a line of text, a table cell or a note sets its words in the line; its own layout is lost [W0451]
-  note: write it as text there, or '\begin{...}' between paragraphs, where it sets as a block
+warning: unexpected environment center [W0451]
+  note: in a line of text, a table cell or a note; its words set in the line
 ── W0452 (degraded) a box holding a block stands on a line of its own; the text beside it is set apart from it
-warning: '\fbox' holding a minipage or a table stands on a line of its own here, where LaTeX sets the text beside it on the same line [W0452]
-  note: write the box in a paragraph of its own, or move the text into its '{...}'
+warning: unexpected box \fbox [W0452]
+  note: holding a minipage or a table, it stands on a line of its own
 ── W0453 (degraded) a documentation comment's tag, command or HTML element its dialect's reader does not read; its text, if any, sets in its place
-warning: a documentation comment holds a tag or command its reader does not read; its text, if any, sets in its place [W0453]
-  note: `{@inheritDoc}`
+warning: unsupported tag {@inheritDoc} [W0453]
+  note: delete it, or write its text as code, `{@code text}`
 ── W0454 (degraded) a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
 warning: a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked [W0454]
   note: `Other`
 ── W0455 (degraded) a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block
 warning: unexpected environment itemize for command \fbox [W0455]
   note: LaTeX refuses it in LR mode, and here the box holds it as a block; set it in a minipage inside the box's content: \begin{minipage}{...}...\end{minipage}
+warning: undefined target Other [W0454]
+  note: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography
