@@ -10047,46 +10047,32 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
       return some (#[], start)
     return none
 
-/-- The groups a LaTeX box command reads, its last one the content it sets in LR mode. -/
-private def lrBoxGroups? : String → Option Nat
-  | "mbox" | "fbox" | "makebox" | "framebox" => some 1
-  | "raisebox" | "colorbox" | "sbox" | "savebox" => some 2
-  | "fcolorbox" => some 3
+mutual
+
+/-- The first list-based environment content set in LR mode holds, through its groups but not into
+another environment, which opens a mode of its own. -/
+public def lrRefusedIn : List Raw → Option String
+  | [] => none
+  | r :: rest => (lrRefusedOne r).orElse fun _ => lrRefusedIn rest
+
+private def lrRefusedOne : Raw → Option String
+  | .env e _ _ => if blockOnlyEnvs.contains e then some e else none
+  | .group g _ => lrRefusedIn g.toList
   | _ => none
 
-/-- The first `n` groups a control word reads from `start`, past spaces and bracketed options. -/
-private def argGroups (raws : Array Raw) (start n : Nat) : Array (Array Raw) := Id.run do
-  let mut out : Array (Array Raw) := #[]
-  let mut k := start
-  for _ in [0:raws.size] do
-    if out.size == n then break
-    k := skipSpaces raws k
-    match raws[k]? with
-    | some (.sym '[' _) =>
-      match (List.range (raws.size - k)).find? fun d => raws[k + d]? matches some (.sym ']' _) with
-      | some d => k := k + d + 1
-      | none => break
-    | some (.group g _) => out := out.push g; k := k + 1
-    | _ => break
-  return out
+end
 
-/-- Names a list-based environment in a box command's content, which LaTeX's LR mode refuses. -/
-private def lrBoxList (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) : M Unit := do
-  let some n := lrBoxGroups? name | return
-  let env? := (argGroups raws start n).back?.bind fun g => g.findSome? fun r => match r with
-    | .env e _ _ => if blockOnlyEnvs.contains e then some e else none
-    | _ => none
-  if let some env := env? then
-    -- premise: boxBlockChecks — LaTeX stops at a list in a box's line
-    sayOnce ("lrbox:" ++ name ++ ":" ++ env) .W0455
-      s!"LaTeX refuses '\\begin\{{env}}' inside '\\{name}' as not allowed in LR mode; here the box \
-holds it as a block" pos
-      (help := s!"set it in a minipage inside the box: \\{name}\{\\begin\{minipage}\{...}...\\end\{minipage}}")
+/-- The loss of a list-based environment in a box's LR content, one wording for every box. -/
+public def lrRefusedMessage (env box : String) : String :=
+  s!"LaTeX refuses '\\begin\{{env}}' inside '\\{box}' as not allowed in LR mode; here the box \
+holds it as a block"
+
+public def lrRefusedHelp : String :=
+  "set it in a minipage inside the box's content: \\begin{minipage}{...}...\\end{minipage}"
 
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if let some result ← styOptionsRequest name pos raws start then return some result
-  lrBoxList name pos raws start
   -- A style command over block content is its declaration over a group (latex.ltx `\textbf`).
   if let some decl := textStyleDecl? name then
     if (nextArgGroup raws start).any (holdsBlockEnv · blockOnlyEnvs) &&
@@ -11697,7 +11683,14 @@ native equivalent were dropped: {dropped}" c.pos
   -- hyperref's `\texorpdfstring`: the page sets its TeX string.
   | .texOrPdf => return #[.group (c.arg 0) c.pos]
   | .box => do
-    lrBoxList c.name c.pos c.raws c.stop
+    -- premise: boxBlockChecks — LaTeX stops at a list in a box's line
+    let inDef := (← get).inDef
+    let refused := match c.raws[skipSpaces c.raws c.stop]? with
+      | some (.group body _) => if inDef then none else lrRefusedIn body.toList
+      | _ => none
+    if let some env := refused then
+      sayOnce ("lrbox:" ++ c.name ++ ":" ++ env) .W0455 (lrRefusedMessage env c.name) c.pos
+        (help := lrRefusedHelp)
     -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
     if c.args.any (·.isSome) then
       sayOnce ("ctrl:" ++ c.name) .W0104
@@ -11708,7 +11701,7 @@ native equivalent were dropped: {dropped}" c.pos
       if body.all (· matches .space) then
         became s!"\\{c.name}" "an empty box" c.pos
         return #[.ctrl "hspace" c.pos, .word "*" c.pos, .group #[.word "0pt" c.pos] c.pos]
-    became s!"\\{c.name}" "its content" c.pos
+    if refused.isNone then became s!"\\{c.name}" "its content" c.pos
     return #[]
   | .beamerFont => lowerBeamerFont c
   | .columnRatio => do

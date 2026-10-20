@@ -437,13 +437,18 @@ def boxBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let lrLists := ["\\noindent\\fbox{\\begin{itemize}\\item Kqzv\\end{itemize}}",
     "\\noindent\\mbox{\\begin{center}Kqzv\\end{center}}",
     "\\noindent\\raisebox{1pt}{\\begin{quote}Kqzv\\end{quote}}",
-    "\\noindent\\colorbox{yellow}{\\begin{enumerate}\\item Kqzv\\end{enumerate}}"]
+    "\\noindent\\colorbox{yellow}{\\begin{enumerate}\\item Kqzv\\end{enumerate}}",
+    "Alpha \\fbox{\\textbf{\\begin{itemize}\\item Kqzv\\end{itemize}}} beside."]
   t s!"box blocks: a list in a box's line, which LaTeX refuses, sets its words, named once ({lrLists.map fun b => said (doc "" b)})"
     (lrLists.all fun body => (said (doc "" body)).count "W0455" == 1 &&
+      !(said (doc "" body)).contains "W0452" &&
       (bodyLines (layout (doc "" body))).any fun l => hasStr (lineText l) "Kqzv")
   let inMinipage := doc "" "\\noindent\\fbox{\\begin{minipage}{100pt}\\begin{itemize}\\item Kqzv\\end{itemize}\\end{minipage}}"
   t "box blocks: a list in a minipage inside a box is LaTeX's own, unnamed"
     (!(said inMinipage).contains "W0455")
+  let unused := doc "\\newcommand{\\unusedbox}{\\fbox{\\begin{itemize}\\item a\\end{itemize}}}\n" "Alpha."
+  t "box blocks: a list in a box inside a definition nothing calls is unnamed"
+    (!(said unused).contains "W0455")
   let row := fillsOf (layout (doc ""
     ("\\noindent\\fbox{\\begin{minipage}{100pt}Alpha\\end{minipage}}\\hfill" ++
       "\\fbox{\\begin{minipage}{100pt}Bravo\\end{minipage}}")))

@@ -10928,6 +10928,12 @@ private def boxInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : N
   if !(Ir.boxCommands.contains n && (lookupUser ctx n).isNone && boxTakesBlocks ctx n raws i) then
     return
   let some k := boxContentAt n raws i | return
+  -- premise: boxBlockChecks — LaTeX stops at a list in a box's line, one loss with the text beside it
+  if let some (.group g _) := raws[k]? then
+    if let some env := Compat.lrRefusedIn g.toList then
+      warnOnce ctx ("lrbox:" ++ n ++ ":" ++ env) .W0455 (Compat.lrRefusedMessage env n) pos
+        (help := Compat.lrRefusedHelp)
+      return
   -- A line break or a vertical skip ends the box's line, a tie is a space.
   let ends (r : Raw) : Bool := match r with
     | .par _ | .env .. => true

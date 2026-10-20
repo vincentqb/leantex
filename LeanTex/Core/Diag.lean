@@ -515,9 +515,9 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0450 => ("0450", .degraded, "a .bib key names a second entry setting other fields; the first entry stands")
   | .W0451 => ("0451", .degraded, "a block environment inside a line of text, a table cell or a note; its words are set in the line")
   | .W0452 => ("0452", .degraded, "a box holding a block stands on a line of its own; the text beside it is set apart from it")
-  | .W0455 => ("0455", .degraded, "a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block")
   | .W0453 => ("0453", .degraded, "a documentation comment's tag, command or HTML element its dialect's reader does not read; its text, if any, sets in its place")
   | .W0454 => ("0454", .degraded, "a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked")
+  | .W0455 => ("0455", .degraded, "a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
