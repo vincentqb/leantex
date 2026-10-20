@@ -2358,40 +2358,40 @@ def reports : List Report := [
       "main's binary at 1e648c76 on the same probes: W0301 and the calls' text missing; the checks fail there",
       "the corpus and three private documents (two decks and a long markdown report) built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical, and every diagnostic the same"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R999", date := "2026-10-20"
+  { id := "R269", date := "2026-10-20"
     what := "a TeX length was read as an exact value where TeX reads it on its grid of scaled points, so the length printer printed 252.945pt where TeX prints 252.94499pt and 1in as 72.27pt where TeX prints 72.26999pt, a coefficient, a unit other than pt or a division a scaled point or more off, a calc division rounded where calc truncates; and a px was the CSS pixel where TeX's is a big point, so an image 300px wide was set 225bp wide"
     pins := [check% texLengthChecks]
     accept := ["lualatex 1.24 on invented probes: the printed value of 3.5truein, 1px, 1bp, 1cm, 1mm, 1dd, 1cc, 1pc, a twenty-digit third of a point, 12345sp, -1.5in, 2.5 and -0.7 times a length, five dimexpr and four calc expressions, 7.2bp, 0.1in and 25.4mm prints 252.94499pt, 1.00374pt, 1.00374pt, 28.45274pt, 2.84526pt, 1.07pt, 12.8401pt, 12.0pt, 0.33333pt, 0.18837pt, -108.405pt, 2.50934pt, -35.41199pt, 33.72585pt, 7.22697pt, -7.22697pt, 7.22696pt, -7.22696pt, 21.6809pt, 103.18503pt, 2.00748pt, -13.42992pt, 7.22699pt, 7.22743pt and 72.26997pt, and an image 300px wide is set 300bp wide; this tree prints and sets each the same",
       "main's binary at 1e648c769 on the same probes: 18 of the 25 differ, among them 252.945pt, 0.7528pt, 1.00375pt, 28.45276pt, 2.50937pt, 7.22697pt for calc's division and 72.27pt, and the image is 225bp wide; the guards fail there",
       "the corpus built by main's binary at 1e648c769 and by this tree's: every PDF and web page byte-identical but the web navigation fixture's page, whose reveal range of 300px reads 300pt for 225pt, visually the same"]
     state := .guarded "1e648c769" .before .author },
-  { id := "R999", date := "2026-10-20"
+  { id := "R270", date := "2026-10-20"
     what := "where footnote numbers restart, as a book's do at each chapter, the web page named two notes alike, so a second chapter's mark linked to the first chapter's note and its back link to the first chapter's mark, and the endnote list counted on past the numbers its marks showed, a fixed number included; the gapless numbering of a chapter's figures and tables was owed"
     pins := [check% footnoteBackendChecks]
     accept := ["main's binary at 1e648c76 on an invented book with two chapters of notes, one note's words repeated in the second chapter, and a note numbered 7: ids fn1, fn2, fn1, fn7 and endnotes numbered 1 to 4; the guard fails there; this tree names each mark and note by its place, fn1 to fn4, each back link reaching its own mark, and numbers the endnotes 1, 2, 1, 7 as the marks and the PDF show them; a speaker note's mark links nowhere",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF byte-identical; the footnotes fixture's web page numbers its endnote for the mark showing 12 as 12, where main's showed 3 (visualdiff: visible on the third screen, the intended change); one more page differs invisibly; every diagnostic the same"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R999", date := "2026-10-20"
+  { id := "R271", date := "2026-10-20"
     what := "an image, a rule, a frame or a ground inside a raised box declaring its height and depth, zero for both, still claimed its own height and depth on its line, pushing the lines around it apart where LaTeX keeps their pitch"
     pins := [check% Tests.InlineBoxes.boxScopeChecks]
     accept := ["lualatex 1.24 on invented probes: a 2cm rule, a 2cm image lowered by half its height and a frame lowered 1cm, each in a box declaring no height or depth, leave every line 11.96pt below the one before; this tree sets the same pitch, the ink overlapping the lines around it as lualatex's does",
       "main's binary at 1e648c76 on the same probes: the lines 58.57pt, 30.22pt and 38.42pt, and 41.92pt apart; the guard fails there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R268", date := "2026-10-20"
+  { id := "R272", date := "2026-10-20"
     what := "a list or another list-based environment, a center, a quote or a verse among them, written in a box command's content, which LaTeX refuses in LR mode, was set as a block with nothing said, or with only the text beside the box named"
     pins := [check% Tests.InlineBoxes.boxBlockChecks]
     accept := ["lualatex 1.24 on invented probes: an itemize, an enumerate, a description, a trivlist, a center, a flushleft, a quote, a quotation and a verse in the content of fbox and of mbox each stop the run with LaTeX's not allowed in LR mode; this tree names each once (W0455) and sets it, a list in a minipage inside the box unnamed",
       "main's binary at 1e648c76 on the same probes: W0452 for the framed box beside text and nothing for the list, nothing at all for mbox; the guard fails there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact and diagnostic byte-identical"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R268", date := "2026-10-20"
+  { id := "R273", date := "2026-10-20"
     what := "enumitem's label key on a list or in a setlist that counts its items, its start, resume, widest and leftmargin=* keys, and a class's redefined labelenumi were read as nothing, every list numbered 1., 2. at the level's margin; and a second unstarred setlist for a scope kept the first's label and margin"
     pins := [check% Tests.ListLabels.checks]
     accept := ["lualatex 1.24 on invented probes: a counting Roman label sets I. and II., an alphabetic one in parentheses (a), start=4 4., resume the next number, a redefined labelenumi (a) and (b), leftmargin=* the label's widest width and labelsep, a bullet and 0. at the outer margin, (viii) for a roman label, widest=III III., a description's next lines at the outer margin, a second setlist for itemize the bullet at 25pt; this tree sets every label and text start the same to a hundredth of a point",
       "main's binary at 1e648c76 on the same probes: 1., 2. at the level's margin and the first setlist's label and margin; the guards fail there"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R268", date := "2026-10-20"
+  { id := "R274", date := "2026-10-20"
     what := "a list item inside bold, emphasised or coloured text and a heading inside a footnote stopped as block commands used inline (E0312), where LaTeX starts the next item or sets the heading in the note; a listing environment inside an mbox or a makebox, which LaTeX cannot read, was set with nothing said; and an environment defined over verbatim's halves, the verbatim package's idiom, set its body as TeX, or with the environment spelled stopped as a definition missing its halves (E0303)"
     pins := [check% argumentBlockChecks]
     accept := ["lualatex 1.24 on invented articles: an item in bold text starts the next item with the text after it bold; a section in a footnote sets in the note; a verbatim in an mbox is refused in LR mode; an environment over verbatim's halves with the verbatim package sets its body verbatim, without the package or with the environment spelled stops the run; this tree sets the items byte-identically to the same items written apart, the footnote's heading as a bold line of the note (W0371, unnumbered, where LaTeX numbers it), names the boxed listing once (W0411), sets both verbatim definitions' bodies verbatim and names the spelled one (W0411)",

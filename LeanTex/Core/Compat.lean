@@ -10126,11 +10126,11 @@ end
 
 /-- The loss of a list-based environment in a box's LR content, one wording for every box. -/
 public def lrRefusedMessage (env box : String) : String :=
-  s!"LaTeX refuses '\\begin\{{env}}' inside '\\{box}' as not allowed in LR mode; here the box \
-holds it as a block"
+  Diag.say .W0455 .environment (Diag.Name.of env) (some (some .command, Diag.Name.of ("\\" ++ box)))
 
 public def lrRefusedHelp : String :=
-  "set it in a minipage inside the box's content: \\begin{minipage}{...}...\\end{minipage}"
+  "LaTeX refuses it in LR mode, and here the box holds it as a block; set it in a minipage inside \
+the box's content: \\begin{minipage}{...}...\\end{minipage}"
 
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do

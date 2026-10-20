@@ -532,19 +532,9 @@ warning: '\footnotemark' is not paired with its partner yet; its text is kept in
   note: \footnote{...} where the mark should stand sets the note at the page foot
 warning: '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place [W0370]
   note: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
-── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin
+── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin, a heading as a bold line
 warning: a paragraph break inside '\footnote' is set as a space [W0371]
   note: a footnote is one paragraph; split a long note into two \footnote calls
-⚠ [W0370] - \footnotemark
-  '\footnotemark' is not paired with its partner yet; its text is kept in place
-  suggestion: \footnote{...} where the mark should stand sets the note at the page foot
-⚠ [W0370] - \footnotemark
-  '\footnotemark' is not paired with its partner yet; its [...] options were dropped and its text is kept in place
-  suggestion: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
-── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin, a heading as a bold line
-⚠ [W0371] - \footnote
-  a paragraph break inside '\footnote' is set as a space
-  suggestion: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
 warning: a footnote is taller than the text block; it overruns its page [W0372]
   note: 63.053pt taller
@@ -767,14 +757,9 @@ warning: a documentation comment holds a tag or command its reader does not read
 ── W0454 (degraded) a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
 warning: a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked [W0454]
   note: `Other`
-⚠ [W0454]
-  a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
-  `Other`
-  suggestion: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
 ── W0455 (degraded) a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block
-⚠ [W0455] - \fbox
-  LaTeX refuses '\begin{itemize}' inside '\fbox' as not allowed in LR mode; here the box holds it as a block
-  suggestion: set it in a minipage inside the box's content: \begin{minipage}{...}...\end{minipage}
+warning: unexpected environment itemize for command \fbox [W0455]
+  note: LaTeX refuses it in LR mode, and here the box holds it as a block; set it in a minipage inside the box's content: \begin{minipage}{...}...\end{minipage}
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography

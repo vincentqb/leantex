@@ -559,7 +559,7 @@ public def DiagCode.qual : DiagCode → Diag.Qual
   | .E0102 | .E0201 | .E0316 | .W0310 =>
     .unclosed
   | .E0101 | .E0202 | .E0310 | .E0311 | .E0312 | .E0313 | .W0321 | .W0398 | .W0411 | .W0413 |
-    .W0451 | .W0452 =>
+    .W0451 | .W0452 | .W0455 =>
     .unexpected
   | .W0004 | .W0006 | .W0009 | .W0016 | .W0366 | .W0368 | .N0026 | .W0421 | .W0447 =>
     .substituted
