@@ -13990,19 +13990,34 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
 
 end
 
-/-- Each note's place: one past the index of the first equal note among a document's notes, the
-name a backend gives it whatever number it shows. -/
+/-- The places of a document's notes, one past each one's index, grouped by equal notes: the
+names a backend gives them whatever numbers they show. -/
 public structure NotePlaces where
-  table : Std.HashMap (Option Nat × String) (Array (Array Inline × Nat))
+  table : Std.HashMap (Option Nat × String) (Array (Array Inline × Array Nat))
   deriving Inhabited
 
 public def NotePlaces.of (notes : Array (Option Nat × Array Inline)) : NotePlaces :=
   ⟨notes.zipIdx.foldl (init := {}) fun m ((n, c), i) =>
-    let xs := m.getD (n, plainText c) #[]
-    if xs.any (·.1 == c) then m else m.insert (n, plainText c) (xs.push (c, i + 1))⟩
+    let key := (n, plainText c)
+    let xs := m.getD key #[]
+    match xs.findIdx? (·.1 == c) with
+    | some j => m.insert key (xs.modify j fun (c, ps) => (c, ps.push (i + 1)))
+    | none => m.insert key (xs.push (c, #[i + 1]))⟩
 
+/-- The places of the notes equal to one, in reading order; empty for a note outside the list. -/
+public def NotePlaces.places (t : NotePlaces) (n : Option Nat) (c : Array Inline) : Array Nat :=
+  (((t.table.getD (n, plainText c) #[]).find? (·.1 == c)).map (·.2)).getD #[]
+
+/-- The place of the first note equal to one. -/
 public def NotePlaces.place (t : NotePlaces) (n : Option Nat) (c : Array Inline) : Option Nat :=
-  ((t.table.getD (n, plainText c) #[]).find? (·.1 == c)).map (·.2)
+  (t.places n c)[0]?
+
+/-- Each group of equal notes' places, by its first. -/
+public def NotePlaces.groups (t : NotePlaces) : Std.HashMap Nat (Array Nat) :=
+  t.table.fold (init := {}) fun m _ xs =>
+    xs.foldl (init := m) fun m (_, ps) => match ps[0]? with
+      | some p => m.insert p ps
+      | none => m
 
 mutual
 

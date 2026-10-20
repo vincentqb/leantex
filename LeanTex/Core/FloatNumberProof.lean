@@ -157,67 +157,9 @@ private theorem numberFloatOne_within (c : FloatCtr) (b : Block)
     obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatCols_within c #[] #[] cols.toList h (fun _ _ => rfl)
     exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
       by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .center body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .ragged _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .quote _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .abstract body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .titled _ _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .disclosure _ _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .role _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .link _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .spaced _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .onSteps _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .only _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .nav _ body =>
-    simp only [floatsInOne] at h
-    obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
-    exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,
-      by simpa [numberFloatOne] using hs⟩, fun k out => by simpa [numberFloatOne, floatNumsOne] using hn k out⟩
-  | .frame _ _ _ _ body =>
+  | .center body | .ragged _ body | .quote _ body | .abstract body | .titled _ _ body
+  | .disclosure _ _ body | .role _ body | .link _ body | .spaced _ body | .onSteps _ body
+  | .only _ body | .nav _ body | .frame _ _ _ _ body =>
     simp only [floatsInOne] at h
     obtain ⟨⟨hc, hw, hs⟩, hn⟩ := numberFloatList_within c #[] #[] body.toList h (fun _ _ => rfl)
     exact ⟨⟨by simpa [numberFloatOne] using hc, by simpa [numberFloatOne] using hw,

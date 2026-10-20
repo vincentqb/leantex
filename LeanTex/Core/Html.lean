@@ -406,6 +406,31 @@ public def Rewrite.list (r : Rewrite) (acc : Array Node) : List Node → Array N
 
 end
 
+/-- A rewrite threading a state through the elements in document order, each element's attributes
+rewritten before its children. -/
+public structure Thread (σ : Type) where
+  attrs : σ → String → Array (String × String) → σ × Array (String × String)
+
+mutual
+
+public def Thread.node {σ : Type} (t : Thread σ) (st : σ) : Node → σ × Node
+  | .text s => (st, .text s)
+  | .style css => (st, .style css)
+  | .script attrs js => (st, .script attrs js)
+  | .elem tag attrs kids =>
+    let (st, attrs) := t.attrs st tag attrs
+    let (st, kids) := t.list st #[] kids.toList
+    (st, .elem tag attrs kids)
+
+public def Thread.list {σ : Type} (t : Thread σ) (st : σ) (acc : Array Node) :
+    List Node → σ × Array Node
+  | [] => (st, acc)
+  | n :: rest =>
+    let (st, n) := t.node st n
+    t.list st (acc.push n) rest
+
+end
+
 public theorem Walk.list_nil_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) :
     w.list ctx acc [] = acc := by
   simp only [Walk.list]

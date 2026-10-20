@@ -373,6 +373,7 @@ private def styleRepeatedNotes (ref : IO.Ref (List String)) (fonts : Font.FontSe
       (treeShownOccurs tree "RepeatNote" == maximum &&
         ((elemAttrsList (· == "li") #[] tree.toList).filter fun (_, attrs) =>
           styleAttr attrs "value" == "7").size == maximum)
+    t (label ++ ": every mark and endnote anchor is unique") (styleUniqueIds tree)
     for (count, i) in [other, first].zipIdx do
       let page := stylePage out i
       let notes : Layout.Out := { page with pages := page.pages.map fun p =>

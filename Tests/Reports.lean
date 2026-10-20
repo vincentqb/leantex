@@ -2367,7 +2367,7 @@ def reports : List Report := [
   { id := "R999", date := "2026-10-20"
     what := "where footnote numbers restart, as a book's do at each chapter, the web page named two notes alike, so a second chapter's mark linked to the first chapter's note and its back link to the first chapter's mark, and the endnote list counted on past the numbers its marks showed, a fixed number included; the gapless numbering of a chapter's figures and tables was owed"
     pins := [check% footnoteBackendChecks]
-    accept := ["main's binary at 1e648c76 on an invented book with two chapters of notes and a note numbered 7: ids fn1, fn2, fn1, fn7 and endnotes numbered 1 to 4; the guard fails there; this tree names each note by its place, fn1 to fn4, and numbers the endnotes 1, 2, 1, 7 as the marks and the PDF show them",
+    accept := ["main's binary at 1e648c76 on an invented book with two chapters of notes, one note's words repeated in the second chapter, and a note numbered 7: ids fn1, fn2, fn1, fn7 and endnotes numbered 1 to 4; the guard fails there; this tree names each mark and note by its place, fn1 to fn4, each back link reaching its own mark, and numbers the endnotes 1, 2, 1, 7 as the marks and the PDF show them; a speaker note's mark links nowhere",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF byte-identical; the footnotes fixture's web page numbers its endnote for the mark showing 12 as 12, where main's showed 3 (visualdiff: visible on the third screen, the intended change); one more page differs invisibly; every diagnostic the same"]
     state := .guarded "1e648c76" .before .author }
 ]

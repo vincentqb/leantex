@@ -7060,13 +7060,18 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   -- the mark links to the note's endnote entry (DPUB-ARIA `doc-noteref`)
   | .footnote num body =>
     let n := num.getD 0
-    let k := (cfg.notes.place num body).getD n
-    -- Inside a link's text the mark is its number alone, as no anchor nests.
-    if cfg.inLink then acc.push (Html.elem "sup" #[Html.text (toString n)] #[("id", s!"fnref{k}")])
-    else acc.push (Html.elem "sup"
-      #[Html.elem "a" #[Html.text (toString n)]
-        #[("href", s!"#fn{k}"), ("id", s!"fnref{k}"),
-          ("role", "doc-noteref"), ("style", "color: inherit")]])
+    -- A mark outside the endnotes (a speaker note's) links nowhere; the others name their group,
+    -- each taking its own anchor once the page is whole (`noteMarks`).
+    match cfg.notes.place num body with
+    | none => acc.push (Html.elem "sup" #[Html.text (toString n)])
+    | some g =>
+      -- Inside a link's text the mark is its number alone, as no anchor nests.
+      if cfg.inLink then
+        acc.push (Html.elem "sup" #[Html.text (toString n)] #[("data-note", toString g), ("id", s!"fnref{g}")])
+      else acc.push (Html.elem "sup"
+        #[Html.elem "a" #[Html.text (toString n)]
+          #[("data-note", toString g), ("href", s!"#fn{g}"), ("id", s!"fnref{g}"),
+            ("role", "doc-noteref"), ("style", "color: inherit")]])
   -- page furniture has no meaning in a continuous document
   | .pageNumber => acc
   | .pageCount => acc
@@ -10100,6 +10105,44 @@ private def outlineNode? (cfg : Config) (doc : Doc) : Option Node :=
         #[("class", s!"level-{e.depth}")])
     #[("class", outlineClass), ("aria-label", cfg.locale.contents), ("tabindex", "0")])
 
+/-- The note marks' state in reading order: how many of each group's marks stood, the places a mark
+standing with its own anchor reaches, and the groups whose marks an overlay's anchor stands for. -/
+private structure NoteMarkSt where
+  seen : Std.HashMap Nat Nat := {}
+  reached : Std.HashSet Nat := {}
+  relocated : Std.HashSet Nat := {}
+
+/-- Each note mark, in reading order, linked to the next place its group of equal notes lists (the
+last where marks repeat past them) and named by it; each endnote's back link then names the mark
+reaching it, else its group's relocated anchor, else the page's top. -/
+private def noteMarks (places : Ir.NotePlaces) (nodes : Array Node) : Array Node :=
+  let groups := places.groups
+  let groupOf : Std.HashMap Nat Nat :=
+    groups.fold (init := {}) fun m g ps => ps.foldl (init := m) fun m p => m.insert p g
+  let thread : Html.Thread NoteMarkSt := ⟨fun st _ attrs =>
+    match (attrs.find? (·.1 == "data-note")).bind (·.2.toNat?) with
+    | none => (st, attrs)
+    | some g =>
+      let ps := groups.getD g #[g]
+      let k := st.seen.getD g 0
+      let place := ps[min k (ps.size - 1)]?.getD g
+      let anchored := attrs.any (·.1 == "id")
+      let attrs := (attrs.filter (·.1 != "data-note")).map fun (a, v) =>
+        if a == "id" then (a, s!"fnref{place}") else if a == "href" then (a, s!"#fn{place}") else (a, v)
+      ({ seen := st.seen.insert g (k + 1)
+         reached := if anchored then st.reached.insert place else st.reached
+         relocated := if anchored then st.relocated else st.relocated.insert g }, attrs)⟩
+  let (st, nodes) := thread.list {} #[] nodes.toList
+  let back : Html.Rewrite := { attrs := fun _ attrs =>
+    match (attrs.find? (·.1 == "data-back")).bind (·.2.toNat?) with
+    | none => attrs
+    | some p =>
+      let g := groupOf.getD p p
+      let target := if st.reached.contains p then s!"#fnref{p}"
+        else if st.relocated.contains g then s!"#fnref{g}" else "#"
+      (attrs.filter (·.1 != "data-back")).map fun (a, v) => if a == "href" then (a, target) else (a, v) }
+  back.list #[] nodes.toList
+
 /-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
 private def emitTreeCore (cfg : Config) (doc : Doc)
     (styles : (Ir.Color → String) → String × Array Diag) :
@@ -10475,17 +10518,19 @@ retitle them apart, or link to the numbered anchor")
   diags := diags ++ sectionDiags
   -- the endnotes: one `doc-endnotes` section, each note back-linked to its mark
   let notes := Ir.footnotesOf doc.body
-  -- Each note named by its place, showing the number its mark shows, back to its mark's place.
+  -- Each note named by its place, showing the number its mark shows, back to the first mark
+  -- reaching it.
   let inner := if notes.isEmpty then inner else
     inner.push (Html.elem "section"
       #[Html.elem "ol" (notes.zipIdx.map fun ((num, content), i) =>
           Html.elem "li"
             ((inlineNodesInto cfg #[] content.toList).push (Html.text " ")
               |>.push (Html.elem "a" #[Html.text "\u21a9"]
-                #[("href", s!"#fnref{(cfg.notes.place num content).getD (i + 1)}"), ("role", "doc-backlink"),
+                #[("data-back", toString (i + 1)), ("href", ""), ("role", "doc-backlink"),
                   ("aria-label", "back to the text"), ("style", "color: inherit")]))
             #[("id", s!"fn{i + 1}"), ("value", toString (num.getD 0))]) #[]]
       #[("role", "doc-endnotes")])
+  let inner := noteMarks cfg.notes inner
   let mainAttrs := (if bodyClass.isEmpty then #[] else #[("class", bodyClass)]) ++
     #[("style", "container-type: inline-size")]
   let main := Html.elem "main" inner mainAttrs

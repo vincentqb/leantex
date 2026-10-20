@@ -2223,14 +2223,22 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
      (html.splitOn "value=\"7\"").length == 2)
   t "html: the note anchors resolve both ways (W0326 silent)"
     (hds.all (·.code != "W0326"))
-  -- A book restarts its notes at each chapter: anchors follow each note's place, items its number.
-  let (book, _) := elabStr ("\\documentclass{book}\\begin{document}\\chapter{One}A\\footnote{first}" ++
-    " B\\footnote{second}.\n\n\\chapter{Two}C\\footnote{third}.\\end{document}")
-  let (bookHtml, _) := HtmlDoc.emit {} book
-  t "html: restarted notes keep distinct anchors, each item showing its mark's number"
-    ((bookHtml.splitOn "id=\"fn1\"").length == 2 && (bookHtml.splitOn "id=\"fnref1\"").length == 2 &&
-     (bookHtml.splitOn "href=\"#fn3\"").length == 2 && (bookHtml.splitOn "id=\"fn3\"").length == 2 &&
-     (bookHtml.splitOn "value=\"1\"").length == 3)
+  -- A book restarts its notes at each chapter: each mark takes its own anchor and its note's place,
+  -- equal words in two chapters included, and each item shows its mark's number.
+  let (book, _) := elabStr ("\\documentclass{book}\\begin{document}\\chapter{One}A\\footnote{Same}" ++
+    " B\\footnote{second}.\n\n\\chapter{Two}C\\footnote{Same}.\\end{document}")
+  let (bookHtml, bookDs) := HtmlDoc.emit {} book
+  let count (s : String) : Nat := (bookHtml.splitOn s).length - 1
+  t s!"html: restarted notes keep distinct anchors, each item showing its mark's number"
+    ((List.range 3).all (fun i => count s!"id=\"fn{i + 1}\"" == 1 && count s!"id=\"fnref{i + 1}\"" == 1 &&
+      count s!"href=\"#fn{i + 1}\"" == 1 && count s!"href=\"#fnref{i + 1}\"" == 1) &&
+     count "value=\"1\"" == 2 && bookDs.all (·.code != "W0326"))
+  -- A speaker note's mark has no endnote, so it links nowhere.
+  let (deck, _) := elabStr ("\\documentclass{beamer}\\begin{document}\\begin{frame}A\\footnote[5]{shown}" ++
+    "\\note{Speaker\\footnote{hidden}}\\end{frame}\\end{document}")
+  let (deckHtml, _) := HtmlDoc.emit {} deck
+  t "html: a speaker note's mark takes no note's anchor"
+    ((deckHtml.splitOn "id=\"fnref1\"").length == 2 && (deckHtml.splitOn "href=\"#fn1\"").length == 2)
   t "html: the apparatus ships no script"
     ((html.splitOn "<script").length == 1)
   let md := MarkdownDoc.emit doc
