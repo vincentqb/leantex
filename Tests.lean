@@ -103,6 +103,8 @@ import Tests.LabelLines
 import Tests.ListGaps
 import Tests.ListLabels
 import Tests.ItemBoxes
+import Tests.Tabbing
+import Tests.ScrExtend
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -561,6 +563,8 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.ListGaps.checks ref oneFace
   Tests.ListLabels.checks ref oneFace
   Tests.ItemBoxes.checks ref oneFace
+  Tests.Tabbing.checks ref oneFace
+  Tests.ScrExtend.checks ref oneFace
   Tests.ItemLabels.cellChecks ref oneFace
   Tests.ItemLabels.itemSpaceChecks ref oneFace
   nativeCarrierChecks ref oneFace

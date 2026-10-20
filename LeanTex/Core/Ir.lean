@@ -4813,7 +4813,14 @@ public inductive TableRule where
   | bottom
   | cmid (a : Nat) (b : Nat) (trimL : Bool) (trimR : Bool)
   | gap (space : SymGlue)
+  /-- The row at its index sets no ink and takes no space, its cells only widening their columns, as
+  a tabbing line `\kill` ends does. -/
+  | measured
   deriving Repr, BEq, Inhabited
+
+/-- The control a table row opens with when only its widths count (`TableRule.measured`), unforgeable
+because it holds a space. -/
+public def measuredRowMark : String := "measured row"
 
 /-- `\multicolumn{n}{spec}{…}`: the cell at `col` of row `row` spans `n`
 columns and sets by its own `spec`. -/
@@ -4860,6 +4867,7 @@ public theorem firstMidRow_eq_none_of_no_mid (rules : List (Nat × TableRule))
     | bottom => exact ih hrest
     | cmid a b l rt => exact ih hrest
     | gap s => exact ih hrest
+    | measured => exact ih hrest
 
 public theorem tableHeaderRows_between {β : Type} (rows : Array (Array (Array β)))
     (rules : Array (Nat × TableRule)) :
@@ -11228,6 +11236,7 @@ private def dumpTableRule (r : TableRule) : String :=
     let trim := (if tl then "l" else "") ++ (if tr then "r" else "")
     s!"cmid {a}-{b}{if trim.isEmpty then "" else s!"({trim})"}"
   | .gap g => s!"gap {dumpGlue g}"
+  | .measured => "measured"
 
 mutual
 

@@ -28,7 +28,7 @@ body impl \begin{minipage}{2cm}x\end{minipage}
 body refuse:W0302 \begin{picture}(10,10)\put(0,0){x}\end{picture}
 body impl \begin{quotation}x\end{quotation}
 body impl \begin{quote}x\end{quote}
-body refuse:W0302 \begin{tabbing}a\=b\\c\>d\end{tabbing}
+body impl \begin{tabbing}a\=b\\c\>d\end{tabbing}
 body impl \begin{table}x\end{table}
 body impl \begin{tabular}{l}x\end{tabular}
 body impl \begin{thebibliography}{9}\bibitem{k} x\end{thebibliography}

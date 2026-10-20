@@ -8,6 +8,8 @@ import Tests.LabelLines
 import Tests.ListGaps
 import Tests.ListLabels
 import Tests.ItemBoxes
+import Tests.Tabbing
+import Tests.ScrExtend
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2404,6 +2406,12 @@ def reports : List Report := [
     pins := [check% Tests.ItemBoxes.checks]
     accept := ["lualatex 1.24 on invented probes: the bullet on a top tabular's first row, on a bottom one's last, 0.1pt below a centred one's middle row, the tabular and its bullet moved whole to the next page, and a description's label before a listing 25pt in, at the listing's own indent; this tree sets each the same, the code after the label 1.4pt nearer it",
       "main's binary at 1e648c76 on the same probes: the bullet on the middle row of each, 1.2pt below a centred one's, the rows split over two pages, and the label at the outer margin; the guards fail there"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R270", date := "2026-10-20"
+    what := "a tabbing environment was unknown, its tab commands kept as text and no entry aligned at a stop; and scrextend's fontsize option and its size command were unknown, the body left at the class's size"
+    pins := [check% Tests.Tabbing.checks, check% Tests.ScrExtend.checks]
+    accept := ["lualatex 1.24 on invented probes: a tabbing's entries at the stops a kill line sets, its kill text nowhere, plus and minus lines a stop in and out, its rows 12pt apart; this tree sets every stop the same where no entry is wider than its stop, a wider one widening its column where LaTeX overprints the next, and the block 1.8pt higher, its first row a table's; scrextend's fontsize 12pt and its size command in the preamble set lines and lists as the 12pt class option",
+      "main's binary at 1e648c76 on the same probes: the tabbing unknown (W0302), its commands unknown (W0301), every entry run together; scrextend skipped (W0103), its size command unknown; the guards fail there"]
     state := .guarded "1e648c76" .before .author }
 ]
 

@@ -45,7 +45,7 @@ public def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint"]
+   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend"]
 
 /-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
 public def optionSpelling (item : String) : String :=
@@ -8319,7 +8319,7 @@ public inductive Lowering where
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
-  | texOrPdf
+  | texOrPdf | changeFontSizes
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8452,6 +8452,7 @@ private def ctrlRows2 : List CtrlRow :=
      .lower .natbibStyle declared⟩,
    ⟨"bigskip", [], .skip "bigskipamount"⟩,
    ⟨"cfoot", [.group], .lower .runningField {}⟩,
+   ⟨"changefontsizes", [.opt, .group], .lower .changeFontSizes {}⟩,
    ⟨"chead", [.group], .lower .runningField {}⟩,
    ⟨"citestyle", [.needed], .lower .natbibStyle declared⟩,
    -- `\cleardoublepage` breaks the page and, on two-sided pages, opens a recto.
@@ -10268,6 +10269,15 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
   let given := offered ++ own
   if p == "geometry" then
     out := out ++ (← geometry optRaws pos)
+  else if p == "scrextend" then
+    -- scrextend's fontsize sets the body size as a KOMA-Script class's option does.
+    for o in own do
+      match KeyVal.entry o with
+      | ("fontsize", some v) =>
+        write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
+        out := out ++ (← setting s!"\\usepackage[fontsize={v}]\{scrextend}" (.page #[(.fontsize, v)]) pos)
+      | _ => pure ()
+    out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "fontsize") pos)
   else if p == "crop" then
     out := out ++ (← crop (opt.getD "") pos)
   else if p == "colorspace" then
@@ -11900,6 +11910,12 @@ and 'transparent=<n>' are understood")
 '\\inputencoding\{{arg}}'")
     return #[]
   | .komaOptions => komaEntries "KOMAoptions" (Entries.items .keyval (c.arg 0)).toList c.pos
+  | .changeFontSizes => do
+    -- scrextend's `\changefontsizes` sets the body size as its fontsize option does; its leading
+    -- is the size file's.
+    if let some lead := c.optSrc 0 then
+      unreadParam "changefontsizes" "baselineskip" s!"'\\changefontsizes[{lead}]' leading" c.pos
+    komaEntries "changefontsizes" ["fontsize=" ++ (c.src 1).trimAscii.toString] c.pos
   | .komaOption =>
     let key := (c.src 0).trimAscii.toString
     komaEntries "KOMAoption" ((Entries.items .keyval (c.arg 1)).toList.map (key ++ "=" ++ ·)) c.pos
@@ -11962,6 +11978,7 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .texOrPdf => some { args := [some "zza", some "zzb"], inDoc := true }
   | .komaOptions => some { args := [some "fontsize=12pt"], inDoc := false }
   | .komaOption => some { args := [some "fontsize", some "12pt"], inDoc := false }
+  | .changeFontSizes => some { args := [none, some "12pt"], inDoc := false }
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
@@ -15495,6 +15512,53 @@ private def trivlistItems (body : Array Raw) : Array Raw := Id.run do
     | none => pure ()
   return out
 
+/-- A `{tabbing}` as the table its tab stops make in a trivlist: a row per line, a column per stop,
+`\+`, `\-` and `\<` its leading columns, a `\kill` line widths alone (`Ir.measuredRowMark`). -/
+private def tabbingRaws (body : Array Raw) (p : Pos) : Array Raw := Id.run do
+  let mut lines : Array (Array (Array Raw) × Bool) := #[]
+  let mut cells : Array (Array Raw) := #[]
+  let mut cell : Array Raw := #[]
+  let mut margin := 0
+  let mut lead := 0
+  let mut fresh := true
+  for r in body do
+    match r with
+    | .ctrl "=" q | .ctrl ">" q =>
+      -- The space before a stop is its column's width, so it stands as a control space.
+      cells := cells.push (if cell.back? matches some .space then cell.pop.push (.ctrl " " q) else cell)
+      cell := #[]
+      fresh := false
+    | .ctrl "+" _ => margin := margin + 1
+    | .ctrl "-" _ => margin := margin - 1
+    | .ctrl "<" _ => if fresh then lead := lead - 1
+    | .ctrl "\\" _ | .ctrl "kill" _ =>
+      let closed := cells.push cell
+      let row := Array.replicate lead #[] ++ closed
+      lines := lines.push (row, r matches .ctrl "kill" _)
+      cells := #[]
+      cell := #[]
+      lead := margin
+      fresh := true
+    | .space | .par _ => unless fresh && cells.isEmpty && cell.isEmpty do cell := cell.push r
+    | _ =>
+      cell := cell.push r
+      fresh := false
+  unless cells.isEmpty && cell.all (· matches .space | .par _) do
+    let closed := cells.push cell
+    lines := lines.push (Array.replicate lead #[] ++ closed, false)
+  let cols := lines.foldl (fun n (row, _) => max n row.size) 1
+  let rows := lines.zipIdx.foldl (init := #[]) fun out ((row, kill), i) =>
+    let row := row ++ Array.replicate (cols - row.size) #[]
+    let cellsRaws := row.zipIdx.foldl (init := #[]) fun acc (c, k) =>
+      (if k == 0 then acc else acc.push (.sym '&' p)) ++ c
+    (if i == 0 then out else out.push (.ctrl "\\" p)) ++
+      (if kill then #[.ctrl Ir.measuredRowMark p] else #[]) ++ cellsRaws
+  let spec := #[.group (#[.sym '@' p, .group #[] p, .word (String.ofList (List.replicate cols 'l')) p,
+    .sym '@' p, .group #[] p]) p]
+  let table := #[.group #[.ctrl "setlength" p, .group #[.ctrl "tabcolsep" p] p, .group #[.word "0pt" p] p,
+    .env "tabular" (spec ++ rows) p] p]
+  return #[.env "trivlist" (trivlistItems (#[.ctrl "item" p] ++ table)) p]
+
 mutual
 
 /-- Every `{trivlist}` in a raw sequence with its items set as paragraphs (`trivlistItems`). -/
@@ -15507,7 +15571,8 @@ private def trivlistEnvsRaw : Raw → Array Raw
   | .group body p => #[.group (trivlistEnvsList body.toList #[]) p]
   | .env n body p =>
     let inner := trivlistEnvsList body.toList #[]
-    #[.env n (if n == "trivlist" then trivlistItems inner else inner) p]
+    if n == "tabbing" then tabbingRaws inner p
+    else #[.env n (if n == "trivlist" then trivlistItems inner else inner) p]
   | r => #[r]
 termination_by structural r => r
 

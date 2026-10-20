@@ -11591,7 +11591,10 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
           cellRaws := cellRaws.push body[j]
           j := j + 1
       | .ctrl name rpos =>
-        if ruleNames.contains name &&
+        if name == Ir.measuredRowMark && cellRaws.all isSpaceOrPar && cells.isEmpty then
+          rules := rules.push (rows.size, .measured)
+          j := j + 1
+        else if ruleNames.contains name &&
             cellRaws.all isSpaceOrPar && cells.isEmpty then
           j := j + 1
           cellRaws := #[]

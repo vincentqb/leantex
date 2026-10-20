@@ -11171,6 +11171,7 @@ private def collectTable (r : Rd) (a0 : Acc)
     for _ in [0:here.size] do
       if h : hi < here.size then
         match here[hi] with
+        | .measured => hi := hi + 1
         | .gap g =>
           pendBelow := none
           a := { a with ops := a.ops.push (.skip { width := (r.resolve g).width }) }
@@ -11221,7 +11222,9 @@ private def collectTable (r : Rd) (a0 : Acc)
           pendBelow := some be
           prev := 1
           hi := hi + 1
+    -- A row only its widths count sets nothing (`Ir.TableRule.measured`).
     if h : i < rows.size then
+      if rules.any (fun (k, tr) => k == i && tr matches .measured) then continue
       if let some pb := pendBelow then
         a := { a with ops := a.ops.push (.skip { width := pb }) }
         pendBelow := none

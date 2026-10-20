@@ -1441,7 +1441,10 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
     let head := if title.isEmpty then "" else ind ++ "## " ++ headingText title tw.cites ++ "\n\n"
     blocksInto tw summary ind (acc ++ head) none body.toList
   -- The GFM pipe table: one line per row, the separator after the first.
-  | .table cols _ _ rows _ _ =>
+  | .table cols _ _ rows rules _ =>
+    -- A row only its widths count sets nothing (`Ir.TableRule.measured`).
+    let rows := (rows.zipIdx.filter fun (_, i) =>
+      !rules.any fun (k, tr) => k == i && tr matches .measured).map (·.1)
     let line (row : Array (Array Block)) : String := rowLine (row.toList.map (cellBlocksText tw.cites))
     let sep := "|" ++ String.join (cols.toList.map fun c =>
       match c.align with

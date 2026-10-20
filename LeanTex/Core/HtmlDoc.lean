@@ -7286,7 +7286,7 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
   let ruleAt (i : Nat) : Array Ir.TableRule :=
     rules.foldl (fun out (k, r) => if k == i then out.push r else out) #[]
   let drawn (r : Ir.TableRule) : Bool := match r with
-    | .gap _ => false
+    | .gap _ | .measured => false
     | .top | .mid | .bottom | .cmid .. => true
   let target := cols.findSome? fun c => match c.width with
     | .flex t => some t
@@ -7299,21 +7299,24 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
         match r with
         | .top | .bottom => cls := cls.push "bt-heavy-above"
         | .mid => cls := cls.push "bt-light-above"
-        | .cmid .. | .gap _ => pure ()
+        | .cmid .. | .gap _ | .measured => pure ()
       if i + 1 == rows.size then
         for r in ruleAt rows.size do
           match r with
           | .top | .bottom => cls := cls.push "bt-heavy-below"
           | .mid => cls := cls.push "bt-light-below"
-          | .cmid .. | .gap _ => pure ()
+          | .cmid .. | .gap _ | .measured => pure ()
       else if (ruleAt (i + 1)).any drawn then
         cls := cls.push "bt-pre"
       return String.intercalate " " cls.toList
     let cmids := (ruleAt i).foldl (fun out r => match r with
       | .cmid a b _ _ => out.push (a, b)
-      | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
+      | .top | .mid | .bottom | .gap _ | .measured => out) (#[] : Array (Nat × Nat))
+    -- a row only its widths count is collapsed, its columns kept
+    let hidden := (ruleAt i).any (· matches .measured)
     Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row (bodies[i]?.getD #[]))
-      (if cls.isEmpty then #[] else #[("class", cls)])
+      ((if cls.isEmpty then #[] else #[("class", cls)]) ++
+        (if hidden then #[("style", "visibility: collapse")] else #[]))
   -- a markdown table too wide sets at the page's step, and overhangs on paper if still too wide
   let (step, overhang) :=
     cfg.tableFit (cfg.measureValues.lineWidth - cfg.inset) cols padL padR rows spans

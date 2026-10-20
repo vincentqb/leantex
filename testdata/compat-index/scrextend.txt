@@ -1,0 +1,4 @@
+# source: KOMA-Script manual ch. 10 (scrextend) — the fontsize option and \changefontsizes,
+# which set the body size as a KOMA-Script class's fontsize does; in the body the change is named.
+pre impl \changefontsizes{12pt}
+body refuse:W0104 \changefontsizes{12pt}
