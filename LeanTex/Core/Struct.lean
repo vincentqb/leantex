@@ -39,6 +39,8 @@ public inductive Kind where
   | quote
   /-- A footnote's body. -/
   | note
+  /-- A margin note's body, set beside the text. -/
+  | margin
   /-- A speaker note: a side channel, never page content. -/
   | aside
   /-- A navigation landmark. -/
@@ -97,7 +99,7 @@ def Leaf.altCensus (out : Array (Option String × Alt)) :
 def Kind.outlineEmit (out : Array Ir.HeadingLevel) : Kind → Array Ir.HeadingLevel
   | .heading level => out.push level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
-  | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
+  | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .margin
   | .aside | .nav | .bibEntry | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _
   | .artifact => out
 
@@ -106,7 +108,7 @@ def Kind.outlineEmit (out : Array Ir.HeadingLevel) : Kind → Array Ir.HeadingLe
   | .aside => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
-  | .note | .nav | .bibEntry | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _
+  | .note | .margin | .nav | .bibEntry | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _
   | .artifact => true
 
 theorem Kind.outlineEmit_acc (out : Array Ir.HeadingLevel) (kind : Kind) :
@@ -165,6 +167,7 @@ mutual
   | .cite _ keys => out.push (.leaf 0 (.text (citeMarks keys)))
   | .cited _ _ ink => inlinesRaw out ink.toList
   | .footnote _ body => out.push (.node .note (inlinesRaw #[] body.toList))
+  | .marginNote _ body => out.push (.node .margin (inlinesRaw #[] body.toList))
 
 end
 
@@ -400,6 +403,8 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   iCite : ∀ a tx keys, G.inline a (.cite tx keys) = F.leaf a 0 (.text (citeMarks keys))
   iCited : ∀ a tx keys ink, G.inline a (.cited tx keys ink) = G.inlines a ink.toList
   iFootnote : ∀ a n body, G.inline a (.footnote n body) = F.node a .note (G.inlines · body.toList)
+  iMarginNote : ∀ a m body,
+    G.inline a (.marginNote m body) = F.node a .margin (G.inlines · body.toList)
   cellsNil : ∀ a, G.cells a [] = a
   cellsCons : ∀ a c rest, G.cells a (c :: rest) = G.cells (F.node a .cell (G.cell · c)) rest
   cellEq : ∀ a c, G.cell a c = match c.toList with
@@ -718,6 +723,9 @@ private theorem inlineRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (
   | .cited tx keys ink => rw [h.iCited]; exact inlinesRaw_fold_exact h a out ink.toList
   | .footnote n body =>
     simp only [inlineRaw, foldNodeList_push, foldNode_node, h.iFootnote]
+    exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] body.toList)
+  | .marginNote m body =>
+    simp only [inlineRaw, foldNodeList_push, foldNode_node, h.iMarginNote]
     exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] body.toList)
 
 end
@@ -1162,6 +1170,7 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
     simp only [inlineRaw]
     exact inlinesRaw_acc out ink.toList
   | .footnote num body => simp [inlineRaw]
+  | .marginNote m body => simp [inlineRaw]
 
 end
 

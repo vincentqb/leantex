@@ -83,6 +83,7 @@ private def inlineReads (acc : Shown) : Inline → Shown
   | .cite _ _ | .cited _ _ _ => acc.element "cite"
   | .role name _ => acc.element name
   | .footnote _ _ => acc.element "enumerate"
+  | .marginNote _ _ => acc
   | .styled _ _ | .colored _ _ _ | .located _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _
   | .altSteps _ _ _ | .text _ | .icon _ _ | .label _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount

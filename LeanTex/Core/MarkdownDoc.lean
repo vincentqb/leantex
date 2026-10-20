@@ -546,6 +546,7 @@ private def monoInto (acc : String) (run : Array Inline) : List Inline → Strin
   | .footnote num _ :: rest =>
     let span := codeSpan (twinPlain run)
     monoInto (acc ++ span ++ s!"[^{num.getD 0}]") #[] rest
+  | .marginNote _ _ :: rest => monoInto acc run rest
   | .label key :: rest =>
     let span := codeSpan (twinPlain run)
     monoInto (acc ++ span ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>") #[] rest
@@ -936,6 +937,8 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
     ink.toList
   -- The mark in footnote syntax; the body is a `[^k]: ...` definition after the document.
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
+  -- A margin note is MyST's aside after its paragraph (`asidesText`).
+  | .marginNote _ _ => acc
   | .linebreak _ =>
     if site == .flow then acc ++ "\\\n" else acc ++ "<br>"
 
@@ -1207,6 +1210,15 @@ private def paraText (first ind text : String) : String :=
   | l :: ls =>
     ls.foldl (fun acc x => acc ++ "\n" ++ ind ++ escapeLineStart x) (first ++ escapeLineStart l)
 
+/-- The margin notes a paragraph holds as MyST's asides after it, each its number and text. -/
+private def asidesText (ind : String) (cites : Bool) (xs : Array Inline) : String :=
+  (Ir.marginNotesIn xs).foldl (init := "") fun out (m, body) =>
+    let num := match m.num with
+      | some n => s!"{n} "
+      | none => ""
+    out ++ ind ++ ":::{aside}\n" ++ paraText ind ind (num ++ inlineText body cites) ++ "\n" ++ ind ++
+      ":::\n\n"
+
 /-- A disclosure's summary as its line in the twin: one line, `&` and `<`
 written as references. -/
 private def summaryHtml (head : Array Inline) : String :=
@@ -1355,7 +1367,9 @@ mutual
 /-- One block onto `acc`; `ind` is the line prefix every
 line of the block carries. -/
 private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
-  | .para xs => acc ++ paraText ind ind (inlineText xs tw.cites) ++ "\n\n"
+  | .para xs =>
+    let asides := asidesText ind tw.cites xs
+    acc ++ paraText ind ind (inlineText xs tw.cites) ++ "\n\n" ++ asides
   | .lines ls => acc ++ paraText ind ind (linesText tw.cites "" ls.toList) ++ "\n\n"
   -- the number rides beside the formula, as it does on the page
   | .equation num xs => acc ++ paraText ind ind (inlineText xs tw.cites ++ " " ++ inlineText num tw.cites) ++ "\n\n"
@@ -1722,6 +1736,9 @@ private theorem append_nil (a : String) : ∃ r, a = a ++ r :=
 private theorem append_chain₂ (a b c : String) : ∃ r, a ++ b ++ c = a ++ r :=
   ⟨b ++ c, by simp [String.append_assoc]⟩
 
+private theorem append_chain₃ (a b c d : String) : ∃ r, a ++ b ++ c ++ d = a ++ r :=
+  ⟨b ++ (c ++ d), by simp [String.append_assoc]⟩
+
 private theorem append_chain₆ (a b c d e f g : String) :
     ∃ r, a ++ b ++ c ++ d ++ e ++ f ++ g = a ++ r :=
   ⟨b ++ (c ++ (d ++ (e ++ (f ++ g)))), by simp [String.append_assoc]⟩
@@ -1746,7 +1763,7 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
     (b : Block) → ∃ r, blockInto tw summary ind acc b = acc ++ r
   | .para _ => by
     simp only [blockInto]
-    exact append_chain₂ _ _ _
+    exact append_chain₃ _ _ _ _
   | .lines _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _

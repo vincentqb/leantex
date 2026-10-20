@@ -31,6 +31,7 @@ import LeanTex.Core.Listing
 import LeanTex.Core.LexerName
 public import LeanTex.Core.BeamerColor
 public import LeanTex.Core.UnusedSetting
+public import LeanTex.Core.MarginNote
 import LeanTex.Core.Definer
 public import LeanTex.Core.Blueprint
 import LeanTex.Core.Split
@@ -555,6 +556,8 @@ public structure Counters where
   lstNum : Nat := 0
   /-- The footnote counter, stepped by `Ir.footnoteMark`. -/
   fnNum : Nat := 0
+  /-- The sidenotes package's `sidenote` counter. -/
+  sideNum : Nat := 0
   /-- Inside a bibliography field's reading, where an unoverridden
   `\footnote`'s mark is left to its list. -/
   fnDefer : Bool := false
@@ -576,6 +579,9 @@ public inductive GlobalWrite where
   | covered (fraction : Option Nat)
   /-- The generated palette a body `\palette[seeds]{...}` installed. -/
   | seeded (state : Option SeedPalette.SeedState)
+  /-- Whether the next margin note stands free of the notes before it: `\reversemarginpar`'s global
+  reset of `\@mparbottom`, or a note's placing that ends it. -/
+  | marginFresh (fresh : Bool)
   deriving Repr, BEq, Inhabited
 
 /-- The section and subsection in force, as beamer's `\insertsection` family reads them: titles as
@@ -633,6 +639,10 @@ public structure GroupScope where
   globals : Array GlobalWrite := #[]
   /-- The deck's section and subsection in force, which a section sets as beamer's `\def` does. -/
   sectionInForce : SectionInForce := {}
+  /-- Margin notes take the margin opposite their page's own, as `\reversemarginpar` sets locally. -/
+  marginReversed : Bool := false
+  /-- The next margin note stands free of the notes before it (`GlobalWrite.marginFresh`). -/
+  marginFresh : Bool := false
   deriving Inhabited
 
 /-- Replays one global assignment over a restored colour state; `base` is the
@@ -651,11 +661,18 @@ palette an unset `current` stands for. -/
     { s with current := some { s.current.getD base with coveredFraction := fraction } }
   | .seeded state =>
     { s with current := some { s.current.getD base with seeded := state } }
+  | .marginFresh _ => s
 
 @[expose] public def GlobalWrite.movesRoles : GlobalWrite → Bool
   | .entry _ _ _ native => native
   | .covered _ => false
   | .seeded _ => false
+  | .marginFresh _ => false
+
+/-- The margin floor's reset a global assignment sets, where it sets one. -/
+@[expose] public def GlobalWrite.marginFresh? : GlobalWrite → Option Bool
+  | .marginFresh f => some f
+  | .entry _ _ _ _ | .covered _ | .seeded _ => none
 
 /-- The scope a group's end leaves: the fields its start held, with the
 global assignments logged since replayed over them. -/
@@ -667,7 +684,8 @@ global assignments logged since replayed over them. -/
       let (s, pal, _) := s.resolve (s.current.getD base)
       { s with current := some pal }
     else s
-  { saved with palette := s, globals := closed.globals }
+  { saved with palette := s, globals := closed.globals
+               marginFresh := logged.foldl (fun r w => w.marginFresh?.getD r) saved.marginFresh }
 
 public theorem GroupScope.restore_id (base : Palette) (saved closed : GroupScope)
     (h : closed.globals = saved.globals) : saved.restore base closed = saved := by
@@ -3057,7 +3075,7 @@ private def outerFootnotesOne (acc : Array Ir.Inline) (x : Ir.Inline) : Array Ir
   match x with
   | .footnote .. => acc.push x
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body =>
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body | .marginNote _ body =>
     outerFootnotesList acc body.toList
   | .altSteps _ firstPage otherPage =>
     outerFootnotesList (outerFootnotesList acc firstPage.toList) otherPage.toList
@@ -3204,7 +3222,8 @@ private def mapSmartText (when? : Option OverlaySpec) : Inline → Inline
   | x@(.decorated ..) | x@(.boxed ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
   | x@(.pageNumber) | x@(.pageCount) | x@(.linebreak ..) | x@(.strut ..)
   | x@(.italicCorr ..) | x@(.onSteps ..) | x@(.altSteps ..)
-  | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..) => x
+  | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..)
+  | x@(.marginNote ..) => x
 
 private def mapSmartTextList (when? : Option OverlaySpec) (acc : Array Inline) :
     List Inline → Array Inline
@@ -3577,7 +3596,7 @@ alternative its runs, a formula its source, the rest its words. -/
 -- conserves: none — a fold cannot keep a citation one run, and a note is no alternative's text.
 private def altRunsOne (out : Array Ir.AltRun) : Inline → Array Ir.AltRun
   | .cite form keys => if form.cmd == .nocite then out else out.push (.cite form keys none)
-  | .footnote _ _ => out
+  | .footnote _ _ | .marginNote _ _ => out
   | .image _ _ alt => match alt with
     | .citing runs => runs.foldl (fun o r => match r with
         | .text t => pushAltText o t
@@ -3902,7 +3921,8 @@ private def labelLeafInks : Inline → Bool
   | .math .. | .formula .. | .icon .. | .image .. | .rule .. => true
   | .boxed b _ => b.frame.isSome || b.ground.isSome
   | .styled .. | .colored .. | .located .. | .role .. | .link .. | .decorated .. | .onSteps ..
-  | .altSteps .. | .cited .. | .footnote .. | .ref .. | .cite .. | .label _ | .fill | .hspace ..
+  | .altSteps .. | .cited .. | .footnote .. | .marginNote .. | .ref .. | .cite .. | .label _
+  | .fill | .hspace ..
   | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _ => false
 
 /-- Whether a label sets ink anywhere. -/
@@ -3986,6 +4006,7 @@ private def flowCounter? (ctr : String) :
   | "secnumdepth" => some (fun c => c.secDepth, fun c v => { c with secDepth := v })
   | "tocdepth" => some (fun c => c.tocDepth, fun c v => { c with tocDepth := v })
   | "footnote" => some (fun c => c.fnNum, fun c v => { c with fnNum := v.toNat })
+  | "sidenote" => some (fun c => c.sideNum, fun c v => { c with sideNum := v.toNat })
   | "equation" => some (fun c => c.eqNum, fun c v => { c with eqNum := v.toNat })
   | "chapter" => some (fun c => c.chapNum, fun c v => { c with chapNum := v.toNat })
   | _ => none
@@ -4106,6 +4127,91 @@ private def footnoteWarnPar (ctx : Ctx) (pos : Pos) : EM Unit :=
     (Diag.say .W0371 .paragraphBreak (obj := some (none, "\\footnote"))) pos
     (help := "a footnote is one paragraph; split a long note into \
 two \\footnote calls")
+
+/-- Past a margin control's leading `[...]` arguments, where its text's group stands: `\marginpar`'s
+left-margin text, `\sidenote`'s mark and offset; a left text is named, as it sets in neither margin. -/
+private def marginLead (ctx : Ctx) (name : String) (raws : Array Raw) (start : Nat) (pos : Pos) :
+    EM ({ j : Nat // start ≤ j } × Bool × Array Raw) := do
+  let (⟨j1, h1⟩, took, junk) ← skipOptArg ctx name raws start pos
+  if (name == "marginpar" || name == "marginnote") && j1 != start then
+    warnOnce ctx ("margin:left:" ++ name) .W0104
+      (Diag.say .W0104 .argument (some (Diag.Name.of "[left]")) (some (some .command, Diag.Name.of s!"\\{name}")))
+      pos (help := "a margin note sets its main text in whichever margin it takes")
+  if name != "sidenote" then return (⟨j1, h1⟩, took, junk)
+  let (⟨j2, h2⟩, took2, junk2) ← skipOptArg ctx name raws j1 pos
+  return (⟨j2, Nat.le_trans h1 h2⟩, took || took2, junk ++ junk2)
+
+/-- Past marginnote's trailing `[offset]`, which moves nothing here, and past the spaces after a
+margin note where a space or the paragraph's start stands before it, as `\@esphack` drops them. -/
+private def marginTail (raws : Array Raw) (k : Nat) (name : String) (spaced : Bool) (pos : Pos) :
+    { m : Nat // k ≤ m } :=
+  if name == "footnote" then ⟨k, Nat.le_refl _⟩ else
+  let ⟨m, hm⟩ : { m : Nat // k ≤ m } :=
+    if name != "marginnote" then ⟨k, Nat.le_refl _⟩ else
+    match scanBracketArg raws k pos with
+    | .took m => if hm : k ≤ m then ⟨m, hm⟩ else ⟨k, Nat.le_refl _⟩
+    | .unclosed _ | .content => ⟨k, Nat.le_refl _⟩
+  if spaced then ⟨skipSpaces raws m, Nat.le_trans hm (skipSpaces_ge raws m)⟩ else ⟨m, hm⟩
+
+/-- Whether a space or the run's start stands before an inline control, as `\@bsphack` reads
+`\lastskip`. -/
+private def spacedBefore (acc : Array Inline) (sb : String) : Bool :=
+  if !sb.isEmpty then sb.endsWith " " else
+  match acc.back? with
+  | none => true
+  | some (.text t) => t.endsWith " "
+  | some _ => false
+
+/-- A margin note's paragraph break as a line break, as `\@parboxrestore` sets a margin paragraph
+flush left, unindented and unspaced; a footnote's raws as they stand. -/
+private def marginParBreak (name : String) : Raw → Raw
+  | .par p => if name == "footnote" then .par p else .ctrl "\\" p
+  | r@(.word ..) | r@.space | r@(.ctrl ..) | r@(.sym ..) | r@(.group ..) | r@(.math ..) | r@(.env ..)
+  | r@(.verb ..) => r
+
+private theorem rawWeightList_marginParBreak (name : String) (l : List Raw) :
+    rawWeightList (l.map (marginParBreak name)) = rawWeightList l := by
+  induction l with
+  | nil => rfl
+  | cons r rest ih =>
+    simp only [List.map_cons, rawWeightList, ih]
+    cases r with
+    | par p => simp only [marginParBreak]; split <;> rfl
+    | _ => rfl
+
+/-- A margin control's note: numbered for `\sidenote`, ragged for marginnote's and sidenotes', in
+the margin `\reversemarginpar` chose; on a frame or a card, which sets no margin, its text where it
+stands, named. -/
+private def marginNoteOf (ctx : Ctx) (name : String) (override : Option Nat) (inner : Array Inline)
+    (pos : Pos) : EM (Array Inline) := do
+  let inner := (inner.toList.dropWhile (· matches .linebreak _)).reverse.dropWhile
+    (· matches .linebreak _) |>.reverse.toArray
+  -- premise: Tests.MarginNote.checks — a frame sets its margin note's text where it stands, named
+  if ctx.face || ctx.slides then
+    warnOnce ctx "margin:stage" .W0457
+      (Diag.say .W0457 .margin none (some (some .class, Diag.Name.of (if ctx.slides then "beamer" else "card"))))
+      pos (help := "move the '\\marginpar' into a flowing document's text; a frame or card sets its \
+text where it stands")
+    return inner
+  let fresh := (← get).scope.marginFresh
+  if fresh then
+    logGlobal (.marginFresh false)
+    modify fun st => { st with scope := { st.scope with marginFresh := false } }
+  let num ← if name == "sidenote" then do
+      if let some n := override then return #[.marginNote
+        { num := some n, ragged := true, reversed := (← get).scope.marginReversed, between := false
+          fresh } inner]
+      let n := (← get).ctr.sideNum + 1
+      modify fun st => { st with ctr := { st.ctr with sideNum := n } }
+      pure (some n)
+    else pure none
+  let reversed := (← get).scope.marginReversed
+  return #[.marginNote { num, ragged := name != "marginpar", reversed, between := false, fresh } inner]
+
+/-- `\reversemarginpar` or `\normalmarginpar`, set in the group as LaTeX's `\if@reversemargin` is. -/
+private def setMarginSide (reversed : Bool) : EM Unit := do
+  logGlobal (.marginFresh true)
+  modify fun st => { st with scope := { st.scope with marginReversed := reversed, marginFresh := true } }
 
 private def footnoteWarnFace (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "footnote:face" .W0374
@@ -4536,7 +4642,7 @@ private def hboxContent (xs : Array Inline) : Array Inline :=
     | .text _ | .math .. | .formula .. | .styled .. | .colored .. | .located .. | .role ..
     | .link .. | .label _ | .ref .. | .decorated .. | .boxed .. | .fill | .hspace .. | .rule ..
     | .pageNumber | .pageCount | .strut _ | .italicCorr _ | .onSteps .. | .altSteps ..
-    | .image .. | .icon .. | .cite .. | .cited .. | .footnote .. => out.push y) #[])
+    | .image .. | .icon .. | .cite .. | .cited .. | .footnote .. | .marginNote .. => out.push y) #[])
 
 /-- Names a declared box extent its content's image, rule, frame or ground still claims beside it on
 the web page, whose line measures those by their own height and depth. -/
@@ -4836,6 +4942,7 @@ seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recove
 seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 seal warnPaletteMiss warnOverlaySpec warnAltSpec targetInlines
 seal argText skipBracketRun bracketRunSrc
+seal marginLead marginTail marginNoteOf spacedBefore marginParBreak setMarginSide
 seal imageArm
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
@@ -6580,32 +6687,45 @@ when it is empty — '{}'")
       (detail := some "inside an argument")
       (help := s!"move '\\{name}' to the start of the group or environment body")
     elabInlinesFrom ctx raws (i + 1) acc sb
-  else if name == "footnote" then
-    let override : Option Nat := footnoteOverride ctx raws (i + 1) pos
-    let (⟨j1, hj1⟩, _, _) ← skipOptArg ctx name raws (i + 1) pos
+  else if name == "footnote" || name == "marginpar" || name == "marginnote" || name == "sidenote" then
+    let override : Option Nat :=
+      if name == "footnote" || name == "sidenote" then footnoteOverride ctx raws (i + 1) pos
+      else none
+    let (⟨j1, hj1⟩, _, _) ← marginLead ctx name raws (i + 1) pos
     let j := skipSpaces raws j1
     have hjge := skipSpaces_ge raws j1
     match hj : raws[j]? with
     | some (.group body _) =>
-      have hjlt := getElem?_lt hj
-      have hw : rawWeightList body.toList < sliceWeight raws i :=
-        body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
-      if hasParRaw body then
+      have _hjlt := getElem?_lt hj
+      have _hw : rawWeightList (body.map (marginParBreak name)).toList < sliceWeight raws i := by
+        rw [Array.toList_map, rawWeightList_marginParBreak]
+        exact body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+      if name == "footnote" && hasParRaw body then
         footnoteWarnPar ctx pos
+      let spaced := spacedBefore acc sb
       let acc := flushText acc sb
       -- A note sets on the page's ground; a card face keeps it in the flow.
-      let inner ← elabInlinesCore { ctx with ground := if ctx.face then ctx.ground else none } body
-      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+      let inner ← elabInlinesCore { ctx with ground := if ctx.face then ctx.ground else none }
+        (body.map (marginParBreak name))
+      let k := (marginTail raws (j + 1) name spaced pos).1
+      have hk : j + 1 ≤ k := (marginTail raws (j + 1) name spaced pos).2
+      have _hadv : sliceWeight raws k < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
-      if ctx.face then
+      if name != "footnote" then
+        elabInlinesFrom ctx raws k (acc ++ (← marginNoteOf ctx name override inner pos)) ""
+      else if ctx.face then
         footnoteWarnFace ctx pos
-        elabInlinesFrom ctx raws (j + 1) (acc ++ inner) ""
+        elabInlinesFrom ctx raws k (acc ++ inner) ""
       else
         let num ← footnoteStepNum override
-        elabInlinesFrom ctx raws (j + 1) (acc.push (.footnote num inner)) ""
+        elabInlinesFrom ctx raws k (acc.push (.footnote num inner)) ""
     | _ =>
-      noteNeedsGroup ctx "footnote" pos
+      noteNeedsGroup ctx name pos
       elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "reversemarginpar" || name == "normalmarginpar" then
+    setMarginSide (name == "reversemarginpar")
+    have _ : sliceWeight raws (i + 1) < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "thanks" then
     thanksWarn ctx pos
     let j := skipSpaces raws (i + 1)
@@ -6725,6 +6845,7 @@ unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage reco
 unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec targetInlines
 unseal argText skipBracketRun bracketRunSrc
+unseal marginLead marginTail marginNoteOf spacedBefore marginParBreak setMarginSide
 unseal imageArm
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
@@ -6744,7 +6865,8 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     "paragraph", "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
     "nolinkurl", "path", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
     "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
-    "centering", "footnote", "thanks", Parse.markdownImageControl].contains name &&
+    "centering", "footnote", "marginpar", "marginnote", "sidenote", "reversemarginpar",
+    "normalmarginpar", "thanks", Parse.markdownImageControl].contains name &&
     !Ir.boxCommands.contains name &&
   (Compat.boxParamOf? name).isNone &&
   (accentMarkOf name).isNone && (escapeOf name).isNone &&
@@ -8188,7 +8310,8 @@ private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | x@(.fill) | x@(.hspace ..) | x@(.rule ..) | x@(.pageNumber)
   | x@(.pageCount) | x@(.strut ..) | x@(.italicCorr ..)
   | x@(.onSteps ..) | x@(.altSteps ..) | x@(.image ..)
-  | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..) => (#[x], false)
+  | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..) | x@(.marginNote ..) =>
+    (#[x], false)
 
 private def trimParaList (leading : Bool) (acc : Array Inline) :
     List Inline → Array Inline × Bool
@@ -18504,6 +18627,9 @@ convert = none refuses both")
     if Compat.nativeReadCtrls.contains name ||
         (s.ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
       return s
+    if name == "reversemarginpar" || name == "normalmarginpar" then
+      setMarginSide (name == "reversemarginpar")
+      return s
     noteMentions args
     warnOnce s.ctx ("ctrl:" ++ name) .W0301 (Diag.say .W0301 .command s!"\\{name}") pos
       (help := unknownCmdHelp name false)
@@ -19431,6 +19557,16 @@ the {docClass.name} class's page keeps its own" none
     output := { output with md := record.mdName }
   let face := Ir.PreambleFace.ofClass record page.fontSize
   let tokens := face.fixLoadLengths tokens
+  -- The size file's margin-note column at the class's own text block, within the declared page's
+  -- margin, a declared `\marginparwidth` and its kin replacing it.
+  if record.model == .flow then
+    let own := Ir.MarginPar.ofPage (classAreaPage record classOpts surface false false page) false
+    let mp := { own with width := min own.width (Ir.MarginPar.room page own.sep) }
+    let declared (n : String) (d : Length) : Length :=
+      ((tokens.find? n).map fun g => face.resolve g.width).getD d
+    page := { page with marginPar := { width := declared "marginparwidth" mp.width
+                                       sep := declared "marginparsep" mp.sep
+                                       push := declared "marginparpush" mp.push } }
   ctx := { ctx with slides := record.model == .frame
                     groundDepth := record.groundDepth
                     frameAlign := classFrameAlign classOpts
@@ -19679,10 +19815,29 @@ public def prepareDocBody (file : String) (preamble : DocPreamble) : EM DocBodyP
   let s ← applyRefusedTitleStyle preamble.state
   prepareStyledBody file preamble.decls preamble.body preamble.trailing s
 
+/-- W0457 for each margin note standing in a block where LaTeX sets none. -/
+public def marginDiags (inlined : Array Diag.Noun) : Array Diag :=
+  inlined.map fun noun =>
+    Diag.of .W0457 (Diag.say .W0457 .margin none (some (none, Diag.Name.of noun.label)))
+      (help := "move the '\\marginpar' outside it, beside a line of the page's own text")
+      (subject := some ("margin:" ++ noun.label))
+
+/-- A document with its margin notes where LaTeX sets them, each one set in its text named, every
+one where the page leaves no margin column. -/
+@[expose] public def settleDocMargins (r : Doc × Ir.RefTable × PictureReportContext) :
+    EM (Doc × Ir.RefTable × PictureReportContext) := do
+  let (body, inlined) := MarginNote.settle (0 < r.1.page.marginPar.width) r.1.body
+  modify fun st => { st with diags := st.diags ++ marginDiags inlined }
+  return ({ r.1 with body }, r.2)
+
+public theorem settleDocMargins_body (r : Doc × Ir.RefTable × PictureReportContext) (st : ESt) :
+    ((settleDocMargins r).run st).1.1.body =
+      (MarginNote.settle (0 < r.1.page.marginPar.width) r.1.body).1 := rfl
+
 /-- Elaborates the body that follows a completed declaration fold. -/
 public def finishPreamble (file : String) (preamble : DocPreamble) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
-  runDocBody (← prepareDocBody file preamble)
+  settleDocMargins (← runDocBody (← prepareDocBody file preamble))
 
 public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
     (left right : ESt)
@@ -19691,11 +19846,11 @@ public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
     (finishPreamble file preamble).run left = (finishPreamble file preamble).run right := by
   change
     (let (s, st) := (applyRefusedTitleStyle preamble.state).run left
-     ((do runDocBody (← prepareStyledBody file preamble.decls preamble.body
-       preamble.trailing s)) : EM _).run st) =
+     ((do settleDocMargins (← runDocBody (← prepareStyledBody file preamble.decls preamble.body
+       preamble.trailing s))) : EM _).run st) =
     (let (s, st) := (applyRefusedTitleStyle preamble.state).run right
-     ((do runDocBody (← prepareStyledBody file preamble.decls preamble.body
-       preamble.trailing s)) : EM _).run st)
+     ((do settleDocMargins (← runDocBody (← prepareStyledBody file preamble.decls preamble.body
+       preamble.trailing s))) : EM _).run st)
   rw [h]
 
 private def elabDocCore (file : String) (raws : Array Raw) (picPre : String)
@@ -20367,12 +20522,13 @@ public def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #
   let (preamble, st) := preparedPreamble file p picMetric picWithdrawn
   runPreamble file p earlier preamble st
 
-attribute [local irreducible] preparedPreamble prepareDocBody runDocBody completePrepared in
+attribute [local irreducible] preparedPreamble prepareDocBody runDocBody completePrepared
+  settleDocMargins in
 public theorem runPrepared_body_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Pic.LabelMetric) (withdrawn : Array String) :
     runPrepared file p earlier metric withdrawn =
       let (plan, initial) := preparedBody file p metric withdrawn
-      let ((doc, table, report), st) := (runDocBody plan).run initial
+      let ((doc, table, report), st) := (do settleDocMargins (← runDocBody plan)).run initial
       completePrepared file p earlier doc table report st := by rfl
 
 attribute [local irreducible] preparedPreamble finishPreamble completePrepared in

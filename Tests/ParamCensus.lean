@@ -236,7 +236,8 @@ def invented : String := "censusprobeoption"
 def articleBody : String :=
   "\\begin{titlepage}Title page words.\\end{titlepage}\n" ++
   "\\section{Opening words}\\label{s:a}\n" ++
-  "Plain words with a footnote\\footnote{Note words.} and a link \\href{https://example.org}{to a " ++
+  "Plain words with a footnote\\footnote{Note words.}\\marginpar{Margin words.}" ++
+  "\\marginpar{More margin words.} and a link \\href{https://example.org}{to a " ++
   "place} and \\url{https://example.org/a-path-with-hyphens}. See Section~\\ref{s:a}, " ++
   "Equation~\\eqref{e:a}, \\cite{key1} and \\citep{key1}.\n" ++
   "\\begin{itemize}\\item Alpha item\\item Beta item\\begin{enumerate}\\item Inner one\\item Inner " ++

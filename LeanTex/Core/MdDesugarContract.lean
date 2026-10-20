@@ -50,7 +50,7 @@ public structure Vocab where
 /-- The vocabulary the elaborator reads markdown in. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
-    "toprule", "midrule", "bottomrule", "footnote"] ++ citeCtrls
+    "toprule", "midrule", "bottomrule", "footnote", "marginpar"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
     [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl,
       Parse.markdownWebControl]
@@ -750,6 +750,17 @@ private theorem division_adm (q : LeanDivision) (p : Pos) :
   exact ⟨Or.inr (by simp [vocabularyFor, Dialect.divisions]),
     admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
 
+private theorem asideLines_adm (file : String) (p : Pos) : (l : List (Array Inl)) →
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (asideLines file d out ds p l).1
+  | [], _, _, h => by simpa [asideLines] using h
+  | body :: rest, out, ds, h => by
+    simp only [asideLines]
+    apply asideLines_adm file p rest
+    have hb := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
+    split
+    · exact hb
+    · exact adm_append (adm_push h (ctrl_mem _ _ (by simp [vocabulary]))) hb
+
 mutual
 
 private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
@@ -787,6 +798,21 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d re
       simp only [Vocab.admits, Bool.and_eq_true]
       exact ⟨by simp [vocabularyFor, vocabulary],
         admitsList_of_adm _ fun r hr => h r (Array.mem_toList_iff.mp hr)⟩)
+  | .aside body p => by
+    simp only [blkRaws]
+    split
+    · rename_i paras _
+      have h := asideLines_adm file p paras #[] #[] (adm_empty (d := d))
+      exact adm_lit (by
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl | rfl | rfl
+        · rfl
+        · exact ctrl_mem _ _ (by simp [vocabulary])
+        · exact adm_group _ _ h
+        · rfl)
+    · exact adm_append (adm_lit (by simp [Vocab.admits]))
+        (blkListRaws_adm file refs hrefs body.toList #[] #[] (adm_empty (d := d)))
   | .disclosure summary expanded body p => by
     simp only [blkRaws, disclosureRaws]
     have hs := inlListRaws_adm file summary.toList #[] #[] (adm_empty (d := d))
@@ -1009,6 +1035,11 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
   | quote body p =>
     simp only [blkRaws]
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
+  | aside body p =>
+    simp only [blkRaws]
+    split
+    · exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
+    · exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
   | disclosure summary expanded body p =>
     simp only [blkRaws, disclosureRaws]
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
@@ -1109,7 +1140,7 @@ public theorem vocabulary_contract :
     simp only [vocabulary, citeCtrls, List.cons_append, List.nil_append, List.mem_cons,
       List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn

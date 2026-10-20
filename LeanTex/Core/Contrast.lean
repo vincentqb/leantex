@@ -281,6 +281,8 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
   | .footnote _ body =>
     usesInlines cx { acc with focusPals := pushUnique acc.focusPals acc.pal } body.toList
+  -- A margin note stands on the page's ground beside its line.
+  | .marginNote _ body => usesInlines cx acc body.toList
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .linebreak _ => acc
   | .image _ _ _ => acc
   | .icon _ _ =>

@@ -14,6 +14,23 @@ seventy-two; a TeX page sets its text block's width unless it declares a layout
 and no text width, which then sets that layout's measure, the article's
 seventy-two digits.
 
+A margin note (`\marginpar`, marginnote's `\marginnote`, sidenotes' numbered
+`\sidenote`, or MyST's `:::{aside}` and `:::{margin}` in Markdown) sets on the
+PDF page as LaTeX's size files set it: beside the line it stands on, in the
+right margin of a one-sided page and the outer one of a two-sided page
+(`\reversemarginpar` takes the other), below the note before it, at the
+class's `\marginparwidth`, `\marginparsep` and `\marginparpush` or those the
+preamble sets, the column never wider than the page's margin holds. A note
+standing between paragraphs sets beside the last line of the paragraph before
+it, or beside the first line of a list that follows a heading. On the web page
+each note is an aside after its paragraph, a note to assistive technology; the
+article layout sets it in its margin column beside its anchor, below the note
+before it and the outline sharing that column, where the screen holds the
+column and the browser anchors positions. A note inside a float, a box, a
+table, a note, a display or a heading, one on a frame or card, and one on a
+page whose margin leaves no room for the column sets in the text where it
+stands, named.
+
 Diagnostics identify the source location and unsupported construct. A warning
 repeated in the same words within one phase of a build prints once, at its
 first site, with its count; `-v` lists every site, `--porcelain` gives JSON

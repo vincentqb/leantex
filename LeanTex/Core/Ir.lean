@@ -234,6 +234,13 @@ public def WebLayout.names : List (String × WebLayout) := [("book", .book), ("a
 
 public def WebLayout.ofName? (n : String) : Option WebLayout := WebLayout.names.lookup n
 
+/-- LaTeX's margin-note geometry: `\marginparwidth`, `\marginparsep` and `\marginparpush`. -/
+public structure MarginPar where
+  width : Length := 0
+  sep : Length := 0
+  push : Length := 0
+  deriving Repr, BEq, Inhabited
+
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
   width : Length := bp 612
@@ -348,9 +355,26 @@ public structure PageSpec where
   /-- Whether a plain page (a chapter's opening, `\maketitle`'s) sets the plain style over the
   declared running fields, as LaTeX's page styles do. -/
   plainPages : Bool := false
+  /-- The margin notes' column beside the text block (`MarginPar.ofPage`). -/
+  marginPar : MarginPar := {}
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin
+
+/-- A length truncated to whole points, as LaTeX's `\@settopoint` leaves it. -/
+private def marginPoints (x : Length) : Length := ⟨x.units.tdiv (pt 1).units * (pt 1).units⟩
+
+/-- The margin-note column size1x.clo or a two-sided chapter class's bk1x.clo sets: its separation,
+push, and width of half the paper beside the text less the separation and 0.8in (three fifths less
+0.4in two-sided), 2in at most, to whole points. -/
+public def MarginPar.ofPage (page : PageSpec) (book : Bool) : MarginPar :=
+  let ten := page.fontSize < pt 21 / 2
+  let twelve := pt 23 / 2 ≤ page.fontSize
+  let sep := if book then pt 7 else if ten then pt 11 else pt 10
+  let free := 2 * page.hmargin
+  let w := if page.twoside then free * 3 / 5 - sep - Dim.inch 2 / 5
+    else free / 2 - sep - Dim.inch 4 / 5
+  { width := marginPoints (min (Dim.inch 2) w), sep, push := if twelve then pt 7 else pt 5 }
 
 /-- The left margin's share against the right's: as declared, else 2:3 on two-sided pages, as the
 standard classes' `\oddsidemargin` and geometry's `twoside` split it. -/
@@ -364,6 +388,14 @@ public def PageSpec.rectoLeft (spec : PageSpec) : Length :=
     let free : Length := 2 * spec.hmargin
     if a + b == 0 then spec.hmargin else free * (a : Int) / ((a + b : Nat) : Int)
   | none => spec.hmargin
+
+/-- The widest margin column a page's margin holds where its notes stand, its outer margin on
+two-sided pages and its right one else, short of the paper's edge by the size file's reserve. -/
+public def MarginPar.room (page : PageSpec) (sep : Length) : Length :=
+  let left := page.rectoLeft
+  let right := 2 * page.hmargin - left
+  marginPoints (if page.twoside then max left right - sep - Dim.inch 2 / 5
+    else right - sep - Dim.inch 4 / 5)
 
 /-- The text block's left edge on the page numbered `folio`: a verso's is the recto's right margin. -/
 public def PageSpec.leftMargin (spec : PageSpec) (folio : Nat) : Length :=
@@ -3624,6 +3656,17 @@ public structure InlineBox where
   rule : SymGlue
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- How a margin note stands: its number where `\sidenote` numbers it, ragged or justified lines,
+in the margin opposite its page's own under `\reversemarginpar`, whether it stood between blocks,
+and whether it stands free of the notes before it, as after a margin switch. -/
+public structure MarginMode where
+  num : Option Nat
+  ragged : Bool
+  reversed : Bool
+  between : Bool
+  fresh : Bool
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 public inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
@@ -3687,6 +3730,9 @@ public inductive Inline where
   /-- `\footnote{...}`: a note set at the foot of the page its mark lands on;
   `num` is the resolved mark number. -/
   | footnote (num : Option Nat) (body : Array Inline)
+  /-- A note set in the margin beside the line it stands on (`\marginpar`, marginnote's
+  `\marginnote`, sidenotes' `\sidenote`, MyST's `{margin}` and `{aside}`). -/
+  | marginNote (mode : MarginMode) (body : Array Inline)
   deriving Repr, Inhabited
 
 deriving_structural_beq Inline
@@ -5861,7 +5907,7 @@ public def inParagraph (b : Block) : Block :=
     body.attach.all fun ⟨x, _⟩ => anchorInline x
   | .text _ | .math _ _ | .formula _ _ _ | .link _ _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
-  | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited .. | .footnote _ _ =>
+  | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited .. | .footnote _ _ | .marginNote _ _ =>
     false
 
 /-- A paragraph of label anchors alone, which sets no line. -/
@@ -7031,7 +7077,7 @@ public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Le
 public def engineTokenNames : List String :=
   let kinds : List FloatKind := [.figure, .table, .sub, .algorithm]
   [trivlistSkipName, "partopsep", "itemsep", "trivlist-topsep", "trivlist-partopsep", "trivlist-itemsep",
-   "floatsep", "footins", bibHangName, bibSepName,
+   "floatsep", "footins", "marginparwidth", "marginparsep", "marginparpush", bibHangName, bibSepName,
    displaySkipAbove, displaySkipBelow, displaySkipAboveShort, displaySkipBelowShort,
    "smallskipamount", "medskipamount", "bigskipamount", "fboxsep", "fboxrule", "headsep", "footskip",
    "topskip",
@@ -8330,6 +8376,7 @@ private def fillOne (content : Array Inline) : Inline → Inline
   | .cite t ks => .cite t ks
   | .cited t ks ink => .cited t ks ink
   | .footnote n body => .footnote n body
+  | .marginNote n body => .marginNote n body
 
 private def fillList (content : Array Inline) : List Inline → List Inline
   | [] => []
@@ -9927,6 +9974,7 @@ public def lastSet (x : Inline) : Option Char :=
   | .cited _ _ ink => (lastSetBefore ink ink.size).orElse fun _ => some objectLead
   | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .ref _ _ _ _ | .cite _ _
   | .rule _ _ _ | .pageNumber | .pageCount | .footnote _ _ => some objectLead
+  | .marginNote m _ => if m.num.isSome then some objectLead else none
   | .fill | .hspace _ _ | .linebreak _ => some ' '
   | .label _ | .strut _ | .italicCorr _ => none
 termination_by (sizeOf x, 0)
@@ -10001,6 +10049,7 @@ mutual
   | .cited _ _ ink => plainTextList ink.toList
   -- The note body is document text; its mark digit is generated ink.
   | .footnote _ body => plainTextList body.toList
+  | .marginNote _ body => plainTextList body.toList
   | .linebreak _ => " "
 
 end
@@ -10034,6 +10083,7 @@ public def plainTextOntoOne (acc : String) (x : Inline) : String :=
   | .cite _ keys => acc.append (citeMarks keys)
   | .cited _ _ ink => plainTextOntoList acc ink.toList
   | .footnote _ body => plainTextOntoList acc body.toList
+  | .marginNote _ body => plainTextOntoList acc body.toList
   | .linebreak _ => acc ++ " "
 
 end
@@ -10090,7 +10140,7 @@ public def firstPageTextOne (acc : String) (x : Inline) : String :=
       firstPageTextList acc otherPage.toList
     else firstPageTextList acc firstPage.toList
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
-  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .marginNote _ body | .cited _ _ body =>
     firstPageTextList acc body.toList
   -- A page reference's folio is the layout's, so a reading made before it and one after agree.
   | .ref _ .page _ _ => acc
@@ -10156,6 +10206,7 @@ node in document order, a node before its content. -/
   | .altSteps _ firstPage otherPage =>
     foldInlineList fi (foldInlineList fi (fi acc x) firstPage.toList) otherPage.toList
   | .footnote _ body => foldInlineList fi (fi acc x) body.toList
+  | .marginNote _ body => foldInlineList fi (fi acc x) body.toList
   | .cited _ _ ink => foldInlineList fi (fi acc x) ink.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
@@ -10186,7 +10237,7 @@ public def inlineSource (content : Array Inline) : Option Span :=
       | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _
       | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
       | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _
-      | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => source)
+      | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ => source)
     none content
 
 /-- `foldInline` over algorithm lines: each line's content, then its comment, in reading order. -/
@@ -10459,6 +10510,9 @@ public def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) 
   | .footnote _ body =>
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .marginNote _ body =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
   | .cited _ _ ink =>
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 ink.toList) x
@@ -10693,6 +10747,10 @@ public theorem foldCtxInline_covers (fb : α → Block → α) (fi : α → Inli
     simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
       CtxFold.ofFold_closeInline]
     exact foldCtxInlineList_covers fb fi _ body.toList
+  | .marginNote _ body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
   | .cited _ _ ink =>
     simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
       CtxFold.ofFold_closeInline]
@@ -10921,9 +10979,14 @@ public theorem foldCtxBlocks_covers (fb : α → Block → α) (fi : α → Inli
 @[expose] public def anyInline (p : Inline → Bool) (xs : Array Inline) : Bool :=
   foldInlines (fun b x => b || p x) false xs
 
+/-- The margin notes inline content holds, in reading order, a note inside one's body among them. -/
+-- conserves: none — projects the margin notes alone.
+public def marginNotesIn (xs : Array Inline) : Array (MarginMode × Array Inline) :=
+  foldInlines (fun acc x => if let .marginNote m b := x then acc.push (m, b) else acc) #[] xs
+
 /-- An inline that emits an HTML anchor now or after reference and citation resolution. -/
 public def Inline.anchorBearing : Inline → Bool
-  | .link _ _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => true
+  | .link _ _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ => true
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
   | .located _ _ | .role _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _
@@ -10942,7 +11005,7 @@ public def Inline.bearsLinkText : Inline → Bool
   | .image _ _ _ | .label _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _ | .linebreak _
   | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _ | .boxed _ _
-  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .cited _ _ _ => false
+  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .marginNote _ _ | .cited _ _ _ => false
 
 /-- One link-body leaf given its kind's affordance: a text-bearing leaf is
 underlined and set in the kind's declared ink. -/
@@ -10978,7 +11041,7 @@ public theorem Styles.linkLeafAfford_text (s : Styles) (kind : String) (x : Inli
 private def blockLinkInlineReading (acc : String) (x : Inline) : String :=
   match x with
   | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _ | .boxed _ _
-  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .cited _ _ _ => acc
+  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .marginNote _ _ | .cited _ _ _ => acc
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _
@@ -11199,7 +11262,7 @@ private def navLinkInline (out : Array (String × String)) : Inline → Array (S
     navLinkInlineList (navLinkInlineList out firstPage.toList) otherPage.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _
-  | .footnote _ _
+  | .footnote _ _ | .marginNote _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
 
 end
@@ -11450,6 +11513,13 @@ private def dumpInline (ind : String) (x : Inline) : String :=
       | some n => s!" {n}"
       | none => ""
     s!"{ind}footnote{tag}\n" ++ dumpInlines (ind ++ "  ") body
+  | .marginNote m body =>
+    let tag := match m.num with
+      | some n => s!" {n}"
+      | none => ""
+    let flags := (if m.ragged then " ragged" else "") ++ (if m.reversed then " reversed" else "") ++
+      (if m.between then " between" else "")
+    s!"{ind}marginnote{tag}{flags}\n" ++ dumpInlines (ind ++ "  ") body
   | .linebreak extra =>
     if extra == ({} : SymGlue) then s!"{ind}linebreak\n"
     else s!"{ind}linebreak {dumpGlue extra}\n"
@@ -13396,6 +13466,7 @@ private def maxStepInline : Inline → Nat
   | .link _ body => maxStepInlineList body.toList
   | .decorated _ body | .boxed _ body => maxStepInlineList body.toList
   | .footnote _ body => maxStepInlineList body.toList
+  | .marginNote _ body => maxStepInlineList body.toList
   | .cited _ _ ink => maxStepInlineList ink.toList
   | .onSteps spec body => max (spec.maxStep) (maxStepInlineList body.toList)
   | .altSteps spec firstPage otherPage =>
@@ -13448,7 +13519,7 @@ public def altUnreachable (doc : Doc) : Nat :=
           | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _
           | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
           | .onSteps _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _
-          | .footnote _ _ => k)
+          | .footnote _ _ | .marginNote _ _ => k)
         0 body
     | .para _ | .section _ _ _ _ | .list _ _ _ | .center _ | .ragged _ _
     | .spaced _ _ | .role _ _ | .link _ _ | .quote _ _ | .lines _ | .abstract _
@@ -13533,6 +13604,7 @@ private def dimInline (k : Nat) (pend : Option DimHere) (here : DimHere) (own : 
   | .cite t keys => .cite t keys
   | .cited t keys ink => .cited t keys (dimInlineList k pend here own #[] ink.toList)
   | .footnote n body => .footnote n (dimInlineList k pend here own #[] body.toList)
+  | .marginNote n body => .marginNote n (dimInlineList k pend here own #[] body.toList)
 
 end
 
@@ -14304,6 +14376,7 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
     Inline → Array (Option Nat × Array Inline)
   | .footnote num body =>
     footnoteInlineList (out.push (num, body)) body.toList
+  | .marginNote _ body => footnoteInlineList out body.toList
   | .styled _ body => footnoteInlineList out body.toList
   | .colored _ _ body => footnoteInlineList out body.toList
   | .located _ body => footnoteInlineList out body.toList
@@ -14363,6 +14436,9 @@ public def numberNotesInline (k : Nat) (x : Inline) : Nat × Inline :=
   | .footnote (some n) body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .footnote (some n) r.2)
+  | .marginNote m body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .marginNote m r.2)
   | .styled s body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .styled s r.2)
@@ -14661,6 +14737,9 @@ private theorem dimInline_text (k : Nat) (pend : Option DimHere) (here : DimHere
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .footnote n body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
+  | .marginNote n body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .colored c nm body =>
@@ -16127,7 +16206,7 @@ private def imageRequestPush (out : Array Image.Request) : Inline → Array Imag
   | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .icon _ _
-  | .cite _ _ | .cited _ _ _ | .footnote _ _ => out
+  | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ => out
 
 public def imageRequests (doc : Doc) : Array Image.Request :=
   foldDoc imageRequestPush #[] doc
@@ -16770,6 +16849,7 @@ nodes, `finish` combines each completed sibling array. -/
     .altSteps spec (mapInlineList f #[] firstPage.toList finish)
       (mapInlineList f #[] otherPage.toList finish)
   | .footnote n body => .footnote n (mapInlineList f #[] body.toList finish)
+  | .marginNote n body => .marginNote n (mapInlineList f #[] body.toList finish)
   | .cited tx keys ink => .cited tx keys (mapInlineList f #[] ink.toList finish)
   | .text s => f (.text s)
   | .math d src => f (.math d src)
@@ -16949,6 +17029,7 @@ end
   | .onSteps spec body => .onSteps spec body
   | .altSteps spec active otherwise => .altSteps spec active otherwise
   | .footnote n body => .footnote n body
+  | .marginNote n body => .marginNote n body
   | .text s => .text s
   | .math display src => .math display src
   | .image src size alt => .image src size alt
@@ -16998,7 +17079,7 @@ private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathReques
       (if ctx.2 then out.push ⟨body, ctx.1⟩ else out, ctx)
     | .text _ | .math _ _ | .styled _ _ | .colored _ _ _ | .role _ _
     | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _
-    | .footnote _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
+    | .footnote _ _ | .marginNote _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
     | .cite _ _ | .cited _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
     | .pageNumber | .pageCount | .linebreak _ => (out, ctx)
   closeInline := fun _ out _ => out
@@ -17142,6 +17223,7 @@ private theorem mapMathInline_fixed_point (coverage : Math.MathAlphabetCoverage)
   | .boxed _ body
   | .onSteps spec body
   | .footnote n body
+  | .marginNote n body
   | .cited f ks body =>
     simp only [mapInline]; congr 1; apply Array.toList_inj.mp
     simp [mapInlineList_toList, mapMathInlineElems_fixed_point coverage body.toList]
@@ -17516,7 +17598,7 @@ private theorem requestsInline_resolve_covers (coverage : Math.MathAlphabetCover
     RequestsFree (foldCtxInline w ctx out (mapInline (resolveMathAlphaInline coverage) x)) := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .marginNote _ body | .cited _ _ body =>
     simp only [mapInline, foldCtxInline, ho, hc, mathRequestInlines, mapInlineList_toList,
       List.nil_append]
     exact requestsInlineList_resolve_covers coverage w ho hc _ out body.toList h
@@ -17891,6 +17973,10 @@ public theorem mapInlineFinish_text (f : Inline → Inline)
     show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
     rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
+  | .marginNote n body =>
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
+    simp [plainTextList, plainTextOne]
   | .cited t ks ink =>
     show plainTextList (mapInlineList (finish := finish) f #[] ink.toList).toList = _
     rw [mapInlineListFinish_text f hf finish hfinish ink.toList #[]]
@@ -18007,6 +18093,9 @@ public theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
   | .footnote n body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
+  | .marginNote n body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
   | .cited t ks ink =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
@@ -18083,6 +18172,11 @@ public theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
       mapInlineList_id f p hf otherPage.toList #[] h3]
     simp
   | .footnote n body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .marginNote n body =>
     rw [foldInline, foldInlineList_or] at h
     rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
@@ -18412,7 +18506,7 @@ private def pushLocationText (out : List Inline) (x : Inline) : List Inline :=
   | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
-  | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => x :: out
+  | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ => x :: out
 
 private def joinLocationBody (out : List Inline) : List Inline → List Inline
   | [] => out
@@ -18425,7 +18519,7 @@ private def spliceLocationOne (out : List Inline) (x : Inline) : List Inline :=
   | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
-  | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => pushLocationText out x
+  | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ => pushLocationText out x
 
 private def spliceLocations (out : List Inline) : List Inline → List Inline
   | [] => out
@@ -18626,7 +18720,7 @@ public def captionRunsOne (acc : Array AltRun) (x : Inline) : Array AltRun :=
       captionRunsList acc otherPage.toList
     else captionRunsList acc firstPage.toList
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
-  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .marginNote _ body | .cited _ _ body =>
     captionRunsList acc body.toList
   -- A page reference's folio is the layout's, as the first page's reading leaves it.
   | .ref _ .page _ _ => acc
@@ -18683,7 +18777,8 @@ private theorem captionRunsOne_said (acc : Array AltRun) (x : Inline) :
     · exact captionRunsList_said acc otherPage.toList
     · exact captionRunsList_said acc firstPage.toList
   | styled _ body | colored _ _ body | located _ body | role _ body | link _ body
-  | decorated _ body | boxed _ body | onSteps _ body | footnote _ body | cited _ _ body =>
+  | decorated _ body | boxed _ body | onSteps _ body | footnote _ body | marginNote _ body
+  | cited _ _ body =>
     simp only [captionRunsOne, firstPageTextOne]
     exact captionRunsList_said acc body.toList
   | ref key form text target =>
@@ -18794,6 +18889,7 @@ public def paraStepOne (x : Inline) : Option String :=
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
   | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _
   | .footnote _ _ => none
+  | .marginNote _ _ => none
 
 end
 
@@ -18861,6 +18957,7 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
   | .cite f keys => #[.cite f keys]
   | .cited f keys ink => #[.cited f keys ink]
   | .footnote n body => #[.footnote n body]
+  | .marginNote n body => #[.marginNote n body]
 
 end
 
@@ -18897,7 +18994,7 @@ private theorem liftParaStepOne_text (x : Inline) :
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
   | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
-  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ =>
     rw [liftParaStepOne]; simp [plainText, plainTextList]
 
 end
@@ -19094,6 +19191,7 @@ public def textUnder (p : Style → Bool) (x : Inline) : String :=
   | .altSteps _ firstPage otherPage =>
     textUnderList p (textUnderList p "" firstPage.toList) otherPage.toList
   | .footnote _ body => textUnderList p "" body.toList
+  | .marginNote _ body => textUnderList p "" body.toList
   | .cited _ _ ink => textUnderList p "" ink.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
@@ -19761,7 +19859,7 @@ name and mark the heading alone. -/
 -- conserves: none — drops the labels and notes a title holds.
 public def nameOf (title : Array Inline) : Array Inline :=
   let keep := fun (x : Inline) => match x with
-    | .label _ | .footnote _ _ => false
+    | .label _ | .footnote _ _ | .marginNote _ _ => false
     | _ => true
   mapInlines id title (finish := fun xs => xs.filter keep)
 

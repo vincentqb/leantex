@@ -319,11 +319,12 @@ def styleRow : Row :=
 
 /-- An article setting every element an engine token spaces: a running head, lists at every depth,
 a trivlist's items, floats with captions above and below, a booktabs table, displays, footnotes, a framed box, skips, an
-algorithm and a natbib reference list. -/
+algorithm, margin notes and a natbib reference list. -/
 def tokenedArticle (pre : String) : String :=
   s!"\\documentclass\{article}\n\\usepackage\{natbib}\\usepackage\{booktabs}\\usepackage\{algpseudocode}" ++
     s!"\\usepackage\{subcaption}\\runninghead\{Head words}\n{pre}\n\\begin\{document}\n" ++
-    "Words before.\\footnote{Note words.} A \\fbox{boxed} word.\n" ++ setlistLists ++
+    "Words before.\\footnote{Note words.}\\marginpar{Margin words.}\\marginpar{More margin words.} A " ++
+    "\\fbox{boxed} word.\n" ++ setlistLists ++
     "\\begin{itemize}\\item One\\begin{itemize}\\item Two\\begin{itemize}\\item Three\\begin{itemize}" ++
     "\\item Four\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\n" ++
     "\\begin{trivlist}\\item Trivlist one.\\item Trivlist two.\\end{trivlist}\n" ++

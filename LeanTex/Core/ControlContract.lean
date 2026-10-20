@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Elab
 
 import all LeanTex.Core.Elab
+import LeanTex.Core.MarginNoteContract
 import all LeanTex.Core.Compat
 import all LeanTex.Core.Ir
 import all LeanTex.Core.Contrast
@@ -291,8 +292,21 @@ public theorem runPrepared_recovered_word_exact (file : String) (p : Prepared)
       (preparedBody file p metric withdrawn).2 with
   | mk result st =>
     obtain ⟨doc, table, report⟩ := result
-    simp only [hx] at hb ⊢
-    rw [completePrepared_body_text]
+    simp only [hx] at hb
+    have he : StateT.run (do
+          let r ← runDocBody (preparedBody file p metric withdrawn).1
+          settleDocMargins r) (preparedBody file p metric withdrawn).2 =
+        (settleDocMargins (doc, table, report)).run st := by
+      rw [StateT.run_bind, hx]; rfl
+    rw [he]
+    generalize hy : (settleDocMargins (doc, table, report)).run st = y
+    obtain ⟨⟨doc', table', report'⟩, st'⟩ := y
+    have hd : doc'.body = (MarginNote.settle (0 < doc.page.marginPar.width) doc.body).1 := by
+      have := settleDocMargins_body (doc, table, report) st
+      rw [hy] at this
+      exact this
+    simp only
+    rw [completePrepared_body_text, hd, MarginNote.settle_text]
     exact hb
 
 public theorem runPreparedFinal_recovered_word_exact (file : String) (p : Prepared)
@@ -342,7 +356,8 @@ public def completeBracedRecovery (file : String) (p : Prepared) (earlier : Arra
     (metric : Ir.Pic.LabelMetric) (withdrawn : Array String) (group : RecoveryGroup) :
     Ir.Doc × Array Diag × ReqSpans :=
   let (plan, initial) := preparedBody file p metric withdrawn
-  let ((doc, table, report), st) := (runBracedRecovery plan group).run initial
+  let ((doc, table, report), st) :=
+    (do settleDocMargins (← runBracedRecovery plan group)).run initial
   completePrepared file p earlier doc table report st
 
 public theorem runPrepared_recovery_group_exact (file : String) (p : Prepared)

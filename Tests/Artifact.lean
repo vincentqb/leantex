@@ -578,7 +578,7 @@ def artSpellSlack : Dim.Length := Dim.pt 1 / 100
 inductive ArtProp where
   /-- Every mark lies inside the page's own `/MediaBox`. -/
   | pageBox
-  /-- Every content-marked mark lies inside the declared body area, a
+  /-- Every content-marked mark but a margin note's aside lies inside the declared body area, a
   painted band, or is accounted for by a named loss. -/
   | bodyArea
   /-- No body content stands outside the text area inside a painted furniture band. -/
@@ -649,7 +649,8 @@ def artOffences (r : ArtReading) : ArtProp → Array String
       let p := r.pages[i]
       let bands := p.bands
       for run in p.runs do
-        unless run.isArtifact do
+        -- A margin note's aside stands in the margin column by design.
+        unless run.isArtifact || artInnerTag run.marks == some "Aside" do
           let rect : ArtRect := { x0 := run.x, y0 := run.bottom, x1 := run.x1, y1 := run.inkTop }
           unless r.area.holds run.widest artSpellSlack run.x run.bottom run.x1 run.inkTop
               || bands.any (·.overlaps rect) do

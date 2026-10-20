@@ -98,7 +98,7 @@ private theorem mapSmartText_canon (named : List Span) (o : Origin) (x : Inline)
   | .math .. | .formula .. | .styled .. | .colored .. | .link .. | .label .. | .ref ..
   | .decorated .. | .boxed .. | .fill | .hspace .. | .rule .. | .pageNumber | .pageCount
   | .linebreak .. | .strut .. | .italicCorr .. | .onSteps .. | .altSteps .. | .image ..
-  | .icon .. | .cite .. | .cited .. | .footnote .. => rfl
+  | .icon .. | .cite .. | .cited .. | .footnote .. | .marginNote .. => rfl
 
 private theorem mapSmartTextList_canon (named : List Span) (o : Origin) :
     ∀ l : List Inline, canon (keep named (locatedList o (l.map (mapSmartText none)))) =

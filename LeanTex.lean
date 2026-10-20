@@ -158,6 +158,8 @@ public import LeanTex.Core.SvgPoster
 public import LeanTex.Core.FigureSvg
 public import LeanTex.Core.FigureOutline
 public import LeanTex.Core.FigureAlt
+public import LeanTex.Core.MarginNote
+public import LeanTex.Core.MarginNoteContract
 public import LeanTex.Core.SvgContract
 public import LeanTex.Core.LayoutFigure
 public import LeanTex.Core.FigureStore

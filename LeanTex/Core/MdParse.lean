@@ -122,6 +122,8 @@ public inductive Blk where
   | refs (pos : Pos)
   /-- A footnote's definition, Pandoc's `[^label]:`: its label and its blocks. -/
   | note (label : String) (body : Array Blk) (pos : Pos)
+  /-- MyST's `{aside}` or `{margin}` directive: a note set in the margin, its blocks. -/
+  | aside (body : Array Blk) (pos : Pos)
   deriving Repr
 
 deriving_structural_beq Blk
@@ -321,6 +323,15 @@ def leanDivAt (cs : Array Char) (i : Nat) : Option (Array (String × String)) :=
 def closesDiv (cs : Array Char) (i : Nat) : Bool :=
   match colonsAt cs i with
   | some j => isBlankFrom cs j
+  | none => false
+
+/-- MyST's margin note's opening fence: three colons or more, then `{aside}` or `{margin}` and
+nothing after it. -/
+def asideDivAt (cs : Array Char) (i : Nat) : Bool :=
+  match colonsAt cs i with
+  | some j =>
+    let rest := (sliceStr cs j cs.size).trimAscii.toString
+    rest == "{aside}" || rest == "{margin}"
   | none => false
 
 /-- Pandoc's reference-list division's opening fence: three colons or more, then an attribute list
@@ -3458,6 +3469,9 @@ private def liftNoteBlk (kept lifted : Array Blk) (b : Blk) : Array Blk × Array
   | .quote body p =>
     let (body, lifted) := liftNoteList #[] lifted body.toList
     (kept.push (.quote body p), lifted)
+  | .aside body p =>
+    let (body, lifted) := liftNoteList #[] lifted body.toList
+    (kept.push (.aside body p), lifted)
   | .disclosure sm e body p =>
     let (body, lifted) := liftNoteList #[] lifted body.toList
     (kept.push (.disclosure sm e body p), lifted)
@@ -3532,6 +3546,8 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
   let mut tableVisited : Option Pos := none
   -- The divisions whose closing fence is still to come, each a reference list's or not.
   let mut divs : Array Bool := #[]
+  -- Each open division's aside, where it is one: where its blocks start and the frames it opened in.
+  let mut asides : Array (Option (Nat × Nat × Pos)) := #[]
   let mut refsSeen := false
   for li in [0:lines.size] do
     if li < firstLine || li ≥ lastLine then continue
@@ -3946,6 +3962,15 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       diags := diags ++ ds
       leaf := .none
       divs := divs.push false
+      asides := asides.push none
+    else if doc && ind ≤ 3 && asideDivAt cs j then
+      let (a, ds, dd) := closePara leaf acc lpos
+      defs := addDefs defs dd
+      acc := a
+      diags := diags ++ ds
+      leaf := .none
+      divs := divs.push false
+      asides := asides.push (some (acc.size, frames.size, { lpos with col := j + 1 }))
     else if let some extra := (if doc && ind ≤ 3 then refsDivAt cs j else none) then
       let (a, ds, dd) := closePara leaf acc lpos
       defs := addDefs defs dd
@@ -3960,14 +3985,24 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
         diags := diags.push (Diag.of .W0392 (Diag.say .W0392 .division "{#refs}")
           (some ⟨file, p⟩) (subject := some "md:refs-attrs") (detail := some "its other attributes"))
       divs := divs.push !refsSeen
+      asides := asides.push none
       refsSeen := true
     else if doc && !divs.isEmpty && ind ≤ 3 && closesDiv cs j then
       let (a, ds, dd) := closePara leaf acc lpos
       defs := addDefs defs dd
       acc := if divs.back? == some true then a.push (.refs { lpos with col := j + 1 }) else a
+      -- An aside closed where it opened holds the blocks read since.
+      if let some (some (start, fs, p)) := asides.back? then
+        if fs == frames.size && start ≤ acc.size then
+          acc := (acc.extract 0 start).push (.aside (acc.extract start acc.size) p)
+        else
+          diags := diags.push (Diag.of .W0392 "an aside closed inside another block sets its \
+blocks in the text" (some ⟨file, p⟩) (some "open and close the aside at one depth")
+            (subject := some "md:aside-depth"))
       diags := diags ++ ds
       leaf := .none
       divs := divs.pop
+      asides := asides.pop
     else if let some (fch, flen, finfo) := fenceAt cs j then
       let (a, ds, dd) := closePara leaf acc lpos
       defs := addDefs defs dd
@@ -4025,6 +4060,11 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
   | .html _ => pure ()
   | .comment _ => pure ()
   | .none => pure ()
+  for a in asides do
+    if let some (_, _, p) := a then
+      diags := diags.push (Diag.of .W0392 "an aside no ':::' closes sets its blocks in the text"
+        (some ⟨file, p⟩) (some "close the aside with ':::' on a line of its own")
+        (subject := some "md:aside-unclosed"))
   for _ in [0:frames.size] do
     let (fs, a, d) := closeUnclosed file frames acc
     frames := fs
@@ -4113,6 +4153,7 @@ private def fillNoteBlk (m : Std.HashMap String (Array Inl)) (st : NoteSt) : Blk
   | .para b p => let (b, st) := fillNotes m #[] st b.toList; (.para b p, st)
   | .heading l b p => let (b, st) := fillNotes m #[] st b.toList; (.heading l b p, st)
   | .quote b p => let (b, st) := fillNoteBlks m #[] st b.toList; (.quote b p, st)
+  | .aside b p => let (b, st) := fillNoteBlks m #[] st b.toList; (.aside b p, st)
   | .disclosure sm e b p =>
     let (sm, st) := fillNotes m #[] st sm.toList
     let (b, st) := fillNoteBlks m #[] st b.toList
@@ -4168,6 +4209,7 @@ private def noteLines (out : Array (Array Inl)) : Blk → Array (Array Inl)
   | .code _ text p =>
     (text.splitOn "\n").foldl (fun o l => if l.isEmpty then o else o.push #[.code l p]) out
   | .quote b _ => noteLinesList out b.toList
+  | .aside b _ => noteLinesList out b.toList
   | .note _ b _ => noteLinesList out b.toList
   | .disclosure sm _ b _ => noteLinesList (out.push sm) b.toList
   | .list _ _ _ items _ => noteLinesItems out items.toList
@@ -4198,13 +4240,14 @@ private def blkKind : Blk → String × Pos
   | .metadata _ p => ("metadata block", p)
   | .refs p => ("reference list division", p)
   | .note _ _ p => ("footnote", p)
+  | .aside _ p => ("margin note", p)
 
 /-- What a footnote's block other than a paragraph becomes in the note: its lines of text, or
 nothing for a block that holds none. -/
 private def blockLoss : Blk → String
   | .rule _ | .lean .. | .metadata .. | .refs _ => "sets nothing"
-  | .para .. | .heading .. | .code .. | .quote .. | .disclosure .. | .list .. | .table .. | .note .. =>
-    "sets as its lines of text"
+  | .para .. | .heading .. | .code .. | .quote .. | .disclosure .. | .list .. | .table .. | .note ..
+  | .aside .. => "sets as its lines of text"
 
 /-- The footnotes a text defines set at their references, a hard break between two lines, a
 label's last definition standing and a reference inside a definition its text, as Pandoc's reader

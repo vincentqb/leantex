@@ -1,0 +1,32 @@
+class article
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+meta title "An Invented Survey of Margins"
+role page plain
+center
+  section* 0
+    text "An Invented Survey of Margins"
+para
+  text "An invented survey of margins opens here with plain running text about nothing in particular, set only so that a note has a line to stand by."
+  marginnote
+    text "Kite note, long enough to wrap in its column."
+  text " The paragraph runs on with more made up words, and a second note follows close behind."
+  marginnote
+    text "Plover note."
+  text " Its last line ends the paragraph."
+  marginnote between
+    text "Heron note."
+para
+  text "Another paragraph of synthetic remarks follows, carrying a ragged note"
+  marginnote ragged
+    text "Wren note."
+  text " and a numbered one"
+  marginnote 1 ragged
+    text "Lark note."
+  text " before it ends."
+para
+  text "The reversed note stands in the other margin."
+  marginnote reversed
+    text "Swift note."
+-- diagnostics
+info[N0100] 2:1 translated package marginnote | detail: nothing: the engine does this itself
+info[N0100] 3:1 translated package sidenotes | detail: nothing: the engine does this itself

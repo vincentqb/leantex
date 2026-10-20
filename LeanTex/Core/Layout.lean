@@ -67,6 +67,10 @@ public structure Geom where
   penalties : Ir.PagePenalties := {}
   /-- Bleed past the trim edge, for the PDF writer; layout works in trim coordinates. -/
   bleed : Length := 0
+  /-- The margin notes' column beside the text block. -/
+  marginPar : Ir.MarginPar := {}
+  /-- Whether a margin note takes the outer margin, the left on a verso (LaTeX's `\@mparswitch`). -/
+  marginSwitch : Bool := false
   /-- Whether the pages ship printer's cut marks (`cutMarks`). -/
   marks : Bool := false
   markGap : Length := Ir.cutMarkGap
@@ -629,6 +633,8 @@ public structure LineOut where
   furniture : Bool := false
   /-- Whether the line is a footnote line or the footnote rule. -/
   note : Bool := false
+  /-- Whether the line is a margin note's, set beside the text block. -/
+  margin : Bool := false
   /-- Whether the line is a counted galley line, which `\page{ linenumbers = on }` numbers. -/
   counted : Bool := false
   /-- Zero-ink destinations the line carries. -/
@@ -781,6 +787,8 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     flushBottom := spec.flushBottom.getD base.flushBottom
     penalties := spec.penalties
     bleed := spec.bleed
+    marginPar := spec.marginPar
+    marginSwitch := spec.twoside
     marks := spec.marks
     markGap := spec.markGap
     markThick := spec.markThickness
@@ -1448,6 +1456,9 @@ private inductive Tk where
   /-- A footnote mark with its note body: the mark sets raised at scriptsize,
   the body as its own note block; `bodyLeaf` is the note's first leaf. -/
   | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
+  /-- A margin note with its body: its mark where it is numbered, else nothing in the line, the
+  body set beside the line in the margin; `bodyLeaf` is the note's first leaf. -/
+  | margin (mode : Ir.MarginMode) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
   /-- TeX's italic correction (`Ir.Inline.italicCorr`) under the style in force. -/
   | corr (maybe : Bool) (style : TextStyle)
   /-- An unbreakable box opens in the style around it; `boxClose` sets what it holds. -/
@@ -1461,6 +1472,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
+  | .margin m _ _ _ => m.num.map Attribution.noteMark
   | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ _ | .corr _ _
   | .boxOpen _ _ | .boxClose => none
 
@@ -1746,6 +1758,11 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
       { st with toks := st.toks.push (.note (num.getD 0) sty body st.ctr.next?)
                 ctr := st.ctr.skip (Struct.leafCountInlines body) }
     else flatten mathOk noteOk st sty body
+  | .marginNote m body =>
+    if noteOk then
+      { st with toks := st.toks.push (.margin m sty body st.ctr.next?)
+                ctr := st.ctr.skip (Struct.leafCountInlines body) }
+    else flatten mathOk noteOk st sty body
   | .icon c _ =>
     let (attr, ctr) := st.ctr.take
     { st with toks := st.toks.push (.icon sty c attr), ctr := ctr }
@@ -2008,6 +2025,16 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
       rcases hm with hm | hm
       · exact Or.inl hm
       · subst hm; exact Or.inr rfl
+    · exact flatten_attr_covers mathOk noteOk st sty body h
+  | .marginNote m body =>
+    simp only [flattenOne]
+    split
+    · refine ⟨by rw [LeafCtr.skip_attributes]; exact h, fun tk hm => ?_⟩
+      simp only [Array.mem_push] at hm
+      rcases hm with hm | hm
+      · exact Or.inl hm
+      · subst hm
+        cases hn : m.num <;> simp [Tk.attributed, Tk.attr?, hn, Attribution.named]
     · exact flatten_attr_covers mathOk noteOk st sty body h
   | .icon c _ =>
     obtain ⟨hn, ha⟩ := LeafCtr.take_attributes st.ctr h
@@ -3179,6 +3206,7 @@ private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool))
   | .role _ body => weightKeysInlineList corners acc sty body.toList
   | .link _ body => weightKeysInlineList corners acc sty body.toList
   | .cited _ _ ink => weightKeysInlineList corners acc sty ink.toList
+  | .marginNote _ body => weightKeysInlineList corners acc sty body.toList
   | .decorated _ body | .boxed _ body => weightKeysInlineList corners acc sty body.toList
   | .onSteps _ body => weightKeysInlineList corners acc sty body.toList
   | .altSteps _ active otherwise =>
@@ -4235,8 +4263,9 @@ private structure ItemsAcc where
   anchors : Array (String × Nat) := #[]
   /-- First source scalar carried by each located item. -/
   itemSources : Array (Nat × Span) := #[]
-  /-- Each footnote met: its mark item's index, its number, its body and the body's first leaf. -/
-  notes : Array (Nat × Nat × Array Inline × Option Nat) := #[]
+  /-- Each note met: its mark item's index, its number, its body, the body's first leaf, and how it
+  stands where it is a margin note. -/
+  notes : Array (Nat × Nat × Array Inline × Option Nat × Option Ir.MarginMode) := #[]
   dropped : Array (Nat × Char) := #[]
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
@@ -4695,7 +4724,23 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
       else { acc with dropped := acc.dropped.push m
                       origins := rememberGlyph acc.origins .E0405 m.1 m.2 source }) acc
     let at_ := acc.items.size
-    { acc with notes := acc.notes.push (at_, num, body, bodyLeaf)
+    { acc with notes := acc.notes.push (at_, num, body, bodyLeaf, none)
+               items := acc.items.push markItem }
+  | .margin m sty body bodyLeaf =>
+    let (around, leading) := sty.metrics size xHeight textW textH
+    let decorations := sty.resolvedDecorations size xHeight textW textH fs
+    -- A numbered note's mark sets in the line; an unnumbered one holds its place with an empty box.
+    let (markItem, miss) := match m.num with
+      | some k => markBox fs sty around decorations k
+      | none =>
+        (.box 0 (fs.lookup sty.slot sty.weight.css sty.italic) sty.paint none #[] around {leading}
+          decorations 0 sty.ground .unattributed, #[])
+    let acc := miss.foldl (fun acc mk =>
+      if acc.dropped.contains mk then acc
+      else { acc with dropped := acc.dropped.push mk
+                      origins := rememberGlyph acc.origins .E0405 mk.1 mk.2 source }) acc
+    let at_ := acc.items.size
+    { acc with notes := acc.notes.push (at_, m.num.getD 0, body, bodyLeaf, some m)
                items := acc.items.push markItem }
   | .formula display sty body attr =>
     -- `flatten` pushes a formula only when a math face with constants is present.
@@ -4885,7 +4930,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Lengt
     (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
     (roleMetrics : List (String × (Length × Option Length)) := []) (steps : Nat := 0) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
-      Std.HashMap Nat Length × Array (Nat × Nat × Array Inline × Option Nat) ×
+      Std.HashMap Nat Length × Array (Nat × Nat × Array Inline × Option Nat × Option Ir.MarginMode) ×
       Std.HashMap Nat Length × Array (String × Nat) × Array (Nat × Span) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step, steps := steps }
@@ -5003,7 +5048,7 @@ private def Tk.sourceChars : Tk → List Char
   | .space _ => [' ']
   | .origin _ | .anchor _ | .fill | .hskip _ _ _ | .rule _ _ _ _
     | .strut _ | .brk _ | .img _ _ _ | .formula _ _ _ _
-    | .icon _ _ _ | .note _ _ _ _ | .corr _ _ | .boxOpen _ _ | .boxClose => []
+    | .icon _ _ _ | .note _ _ _ _ | .margin _ _ _ _ | .corr _ _ | .boxOpen _ _ | .boxClose => []
 
 private theorem pushWord_sourceChars (st : FlattenSt) (sty : TextStyle)
     (cur : Array Char) (attr : Attribution) :
@@ -7154,12 +7199,22 @@ private theorem setLine_noGlyph (items : Array Item) (a j : Nat) (target : Lengt
       s.NoGlyph := by
   exact setLineSegments_noGlyph _ _ _ _ _ _ _ _ _ h
 
-/-- One set footnote: its lines with `y` from the note block's top, and the block's total height. -/
+/-- Where a margin note stands beside its line: its first line's ink above its baseline, and whether
+it takes the margin opposite its page's own. -/
+private structure MarginPlace where
+  above : Length
+  reversed : Bool
+  fresh : Bool
+  deriving Repr, Inhabited
+
+/-- One set footnote: its lines with `y` from the note block's top, and the block's total height;
+or a margin note's lines with `y` from its first baseline, and the reach below that baseline. -/
 private structure NoteBlock where
   lines : Array LineOut
   height : Length
   /-- The last line's ink below its baseline, which a frame's note box hangs below the floor. -/
   depth : Length := 0
+  margin : Option MarginPlace := none
   deriving Repr, Inhabited
 
 /-- A rule's reach about its box's lines, resolved in the title's
@@ -7320,10 +7375,16 @@ private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option Region
 private def inkRegionBox (box : Option RegionBox) (k : InkOut) : Option RegionBox :=
   k.claims.foldl (fun box b => addRegionBox box b.1.1 b.1.2 b.2.1 b.2.2) box
 
+/-- A region's own lines: a margin note beside its text stands outside it, unless the region is the
+note's own. -/
+private def RegionSpan.ownLines (s : RegionSpan) (lines : Array LineOut) : Array LineOut :=
+  let ls := lines.extract s.lineStart s.lineEnd
+  if ls.any (!·.margin) then ls.filter (!·.margin) else ls
+
 private def RegionSpan.box (s : RegionSpan) (lines : Array LineOut)
     (fills : Array Fill) (inks : Array InkOut) : Option RegionBox := Id.run do
   let mut box : Option RegionBox := none
-  for l in lines.extract s.lineStart s.lineEnd do
+  for l in s.ownLines lines do
     box := match s.kind, l.regionExtent with
       | .surface .., some (above, below) | .edge .., some (above, below)
       | .box _, some (above, below) =>
@@ -7400,7 +7461,7 @@ private def RegionSpan.lastBaseline (s : RegionSpan) (lines : Array LineOut)
     (inks : Array InkOut) : Option Length :=
   match s.base with
   | some a => a.y lines inks
-  | none => (lines.extract s.lineStart s.lineEnd).foldl
+  | none => (s.ownLines lines).foldl
       (fun m (l : LineOut) => some (max (m.getD l.y) l.y)) none
 
 /-- A box command's outer extent after placement: its content and its children's paint, `inset`
@@ -7467,7 +7528,7 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     if r.continued then
       let start : Option (Length × Length) :=
         if s.first && 0 < s.lineStart then (lines[s.lineStart - 1]?).map fun l => (l.y, r.height)
-        else (lines.extract s.lineStart s.lineEnd)[0]?.map fun l =>
+        else (s.ownLines lines)[0]?.map fun l =>
           (l.y - (l.regionExtent.getD (0, 0)).1, 0)
       match start, s.lastBaseline lines inks with
       | some (y, height), some last =>
@@ -7475,7 +7536,7 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
           { x := x, y := top, w := w, h := bottom - top, color := color }
       | _, _ => none
     else
-    let lines := lines.extract s.lineStart s.lineEnd
+    let lines := s.ownLines lines
     match lines[0]?, lines.back? with
     | some first, some last =>
       (edgeLinesSpan first.y (first.regionExtent.getD (0, 0)).1 last.y
@@ -7796,6 +7857,9 @@ public structure Spacing.Page where
   private noteInk : Ir.Color := Ir.Color.black
   /-- The last pending note's ink below its last baseline (`NoteBlock.depth`). -/
   private notesDepth : Length := 0
+  /-- Where the last margin note on a page ends with its push below it, by the page's index; a
+  later note's top stands no higher, as LaTeX's `\@mparbottom` keeps it. -/
+  private marginFloor : Option (Nat × Length) := none
   /-- Footnote lines committed to the open page, y relative to the
   note block's top; a note enters only through `attachNotes`. -/
   private pendingNotes : Array LineOut := #[]
@@ -7881,19 +7945,134 @@ private theorem modify_push_last {α : Type} (a : Array α) (x : α) (g : α →
     · have hi : i < a.size := by simp at h2; omega
       simp [hi, Ne.symm h]
 
-/-- Attach a committed line's notes to the open page, each note whole. -/
-private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
+/-- Lines riding on the open page's last line, set before it so it stays last, each moving with it as
+the page's glue is distributed. -/
+private def Spacing.Page.insertRiders (b : B) (ls : Array LineOut) : B :=
+  match b.cur.lines.back?, b.shrinkAbove.back?, b.stretchAbove.back?, b.filsAbove.back? with
+  | some anchor, some sh, some st, some fl =>
+    let ls := ls.map fun l => { l with hidden := l.hidden || anchor.hidden }
+    { b with cur := { b.cur with lines := (b.cur.lines.pop ++ ls).push anchor }
+             shrinkAbove := (b.shrinkAbove.pop ++ .replicate ls.size sh).push sh
+             stretchAbove := (b.stretchAbove.pop ++ .replicate ls.size st).push st
+             filsAbove := (b.filsAbove.pop ++ .replicate ls.size fl).push fl }
+  | _, _, _, _ => b
+
+/-- A margin note beside the open page's last line, as LaTeX's `\@addmarginpar` sets it: its first
+baseline on the line's, pushed below the page's last note and its push, in the outer margin of a
+two-sided page and the right of a one-sided one, the other where the note is reversed. -/
+private def Spacing.Page.placeMargin (b : B) (nb : NoteBlock) (mp : MarginPlace) : B :=
+  match b.cur.lines.back? with
+  | none => b
+  | some line =>
+    let floor := match b.marginFloor with
+      | some (k, f) => if k == b.pages.size && !mp.fresh then f else 0
+      | none => 0
+    let base := line.y + max 0 (floor - (line.y - mp.above))
+    let g := b.geom
+    let right := (!g.marginSwitch || b.pageState.folio % 2 == 1) != mp.reversed
+    let x := if right then g.hmargin + g.textWidth + g.marginPar.sep
+      else g.hmargin - g.marginPar.sep - g.marginPar.width
+    { b.insertRiders (nb.lines.map fun l => { l with x := x + l.x, y := base + l.y }) with
+      marginFloor := some (b.pages.size, base + nb.height + g.marginPar.push) }
+
+/-- Attach a committed line's footnotes to the open page, each note whole. -/
+private def Spacing.Page.attachFeet (b : B) (notes : Array NoteBlock) : B :=
   let acc := notes.foldl (fun (acc : Array LineOut × Length × Length) nb =>
+      if nb.margin.isSome then acc else
       (acc.1 ++ nb.lines.map (fun l => { l with y := l.y + acc.2.1 }), acc.2.1 + nb.height,
         nb.depth))
     (b.pendingNotes, b.notesH, b.notesDepth)
   { b with pendingNotes := acc.1, notesH := acc.2.1, notesDepth := acc.2.2 }
 
+/-- Set a committed line's margin notes beside it. -/
+private def Spacing.Page.placeMargins (b : B) (notes : Array NoteBlock) : B :=
+  notes.foldl (fun b nb => match nb.margin with
+    | some mp => b.placeMargin nb mp
+    | none => b) b
+
+/-- Attach a committed line's notes to the open page, each footnote whole, each margin note beside
+the line. -/
+private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
+  (b.attachFeet notes).placeMargins notes
+
 private theorem attachNotes_empty_id (b : B) : b.attachNotes #[] = b := rfl
 
+/-- What attaching notes leaves as it stands: all but the open page's lines, their ledgers, the
+pending footnotes and the margin's floor. -/
+private structure MarginKeeps (a b : B) : Prop where
+  pages : b.pages = a.pages
+  noBreak : b.noBreak = a.noBreak
+  diags : b.diags = a.diags
+  paragraphBreaks : b.paragraphBreaks = a.paragraphBreaks
+  geom : b.geom = a.geom
+  docBg : b.docBg = a.docBg
+  curFrameOrigin : b.curFrameOrigin = a.curFrameOrigin
+  curFrame : b.curFrame = a.curFrame
+  curFoot : b.curFoot = a.curFoot
+
+private theorem MarginKeeps.trans {a b c : B} (h1 : MarginKeeps a b) (h2 : MarginKeeps b c) :
+    MarginKeeps a c :=
+  ⟨h2.pages.trans h1.pages, h2.noBreak.trans h1.noBreak, h2.diags.trans h1.diags,
+    h2.paragraphBreaks.trans h1.paragraphBreaks, h2.geom.trans h1.geom, h2.docBg.trans h1.docBg,
+    h2.curFrameOrigin.trans h1.curFrameOrigin, h2.curFrame.trans h1.curFrame,
+    h2.curFoot.trans h1.curFoot⟩
+
+private theorem MarginKeeps.refl (b : B) : MarginKeeps b b :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+private theorem insertRiders_keeps (b : B) (ls : Array LineOut) :
+    MarginKeeps b (b.insertRiders ls) ∧ (b.insertRiders ls).pendingNotes = b.pendingNotes := by
+  unfold Spacing.Page.insertRiders
+  split
+  · exact ⟨⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩, rfl⟩
+  · exact ⟨MarginKeeps.refl _, rfl⟩
+
+private theorem placeMargin_keeps (b : B) (nb : NoteBlock) (mp : MarginPlace) :
+    MarginKeeps b (b.placeMargin nb mp) ∧ (b.placeMargin nb mp).pendingNotes = b.pendingNotes := by
+  unfold Spacing.Page.placeMargin
+  split
+  · exact ⟨MarginKeeps.refl _, rfl⟩
+  · exact ⟨⟨(insertRiders_keeps ..).1.pages, (insertRiders_keeps ..).1.noBreak,
+      (insertRiders_keeps ..).1.diags, (insertRiders_keeps ..).1.paragraphBreaks,
+      (insertRiders_keeps ..).1.geom, (insertRiders_keeps ..).1.docBg,
+      (insertRiders_keeps ..).1.curFrameOrigin, (insertRiders_keeps ..).1.curFrame,
+      (insertRiders_keeps ..).1.curFoot⟩, (insertRiders_keeps ..).2⟩
+
+private theorem placeMargins_keeps (b : B) (ns : Array NoteBlock) :
+    MarginKeeps b (b.placeMargins ns) ∧ (b.placeMargins ns).pendingNotes = b.pendingNotes := by
+  unfold Spacing.Page.placeMargins
+  rw [← Array.foldl_toList]
+  generalize ns.toList = l
+  induction l generalizing b with
+  | nil => exact ⟨MarginKeeps.refl _, rfl⟩
+  | cons nb rest ih =>
+    rw [List.foldl_cons]
+    have h1 : MarginKeeps b (match nb.margin with
+          | some mp => b.placeMargin nb mp
+          | none => b) ∧
+        (match nb.margin with
+          | some mp => b.placeMargin nb mp
+          | none => b).pendingNotes = b.pendingNotes := by
+      split
+      · exact placeMargin_keeps ..
+      · exact ⟨MarginKeeps.refl _, rfl⟩
+    have h2 := ih (match nb.margin with
+        | some mp => b.placeMargin nb mp
+        | none => b)
+    exact ⟨h1.1.trans h2.1, h2.2.trans h1.2⟩
+
+private theorem attachNotes_keeps (b : B) (ns : Array NoteBlock) :
+    MarginKeeps b (b.attachNotes ns) := by
+  unfold Spacing.Page.attachNotes
+  exact MarginKeeps.trans (show MarginKeeps b (b.attachFeet ns) from
+    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩) (placeMargins_keeps (b.attachFeet ns) ns).1
+
 private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
-    (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
+    (nb : NoteBlock) (hnb : nb ∈ ns) (hm : nb.margin = none) (l : LineOut) (hl : l ∈ nb.lines) :
     ∃ l' ∈ (b.attachNotes ns).pendingNotes, l'.segs = l.segs := by
+  have hp : (b.attachNotes ns).pendingNotes = (b.attachFeet ns).pendingNotes :=
+    (placeMargins_keeps (b.attachFeet ns) ns).2
+  rw [hp]
   obtain ⟨j, hj, hje⟩ := Array.mem_iff_getElem.mp hnb
   exact Array.foldl_induction
     (motive := fun n (acc : Array LineOut × Length × Length) => j < n →
@@ -7902,12 +8081,18 @@ private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
     (fun i acc ih hji => by
       rcases Nat.lt_or_ge j i.val with hlt | hge
       · obtain ⟨l', hl', hseg⟩ := ih hlt
-        exact ⟨l', Array.mem_append.mpr (Or.inl hl'), hseg⟩
+        split
+        · exact ⟨l', hl', hseg⟩
+        · exact ⟨l', Array.mem_append.mpr (Or.inl hl'), hseg⟩
       · have hji' : j = i.val := Nat.le_antisymm (Nat.lt_succ_iff.mp hji) hge
-        refine ⟨{ l with y := l.y + acc.2.1 },
-          Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, ?_, rfl⟩)), rfl⟩
         subst hji'
-        exact hje ▸ hl) hj
+        rw [← hje] at hm hl
+        split
+        · rename_i hc
+          simp only [Fin.getElem_fin] at hc
+          simp [hm] at hc
+        · exact ⟨{ l with y := l.y + acc.2.1 },
+            Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, hl, rfl⟩)), rfl⟩) hj
 
 /-- The note block as it ships: the footnote rule, then every pending note line, bottom-anchored
 at `bodyBottom`; the rule is `\footnoterule` (ltmiscen.dtx) scaled with the body size. -/
@@ -10427,6 +10612,60 @@ private def labelRow (outer : List (Array Seg × Length × Length)) (inner : Arr
       (acc ++ #[Seg.gap (i - sep - w - edge) false] ++ s, i - sep)) (s0, i0 - sep)
     (segs ++ #[Seg.gap (indent - sep - inner.2 - edge) false] ++ inner.1, indent - i0 + w0)
 
+/-- A margin note's text set in the margin column at the body size, its lines from its first
+baseline: justified as `\marginpar` sets it, or ragged, numbered where its mark leads it. -/
+private def marginBlock (r : Rd) (a : Acc) (m : Ir.MarginMode) (body : Array Inline)
+    (noteLeaf : Option Nat) (cache : Std.HashMap String (Array Nat)) :
+    NoteBlock × Array Diag × Std.HashMap String (Array Nat) := Id.run do
+  let width := r.geom.marginPar.width
+  let style : TextStyle := { color := a.fg, ground := a.ground }
+  let (items0, ds, cache, _, _, _, anchors, sources) :=
+    itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs style body cache
+      (LeafCtr.of noteLeaf (Struct.leafCountInlines body) body) r.imgs width r.geom.textHeight
+      (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
+  let mut ds := ds
+  let (items, sources, anchors) := match m.num with
+    | some k =>
+      -- sidenotes' `\textsuperscript{n}~`: the mark, then an unbreakable space.
+      let (markItem, _) := markBox r.fs style r.geom.fontSize {} k
+      let tie := Item.glue (rigidGlue (interword r.geom.fontSize (r.fs.get (r.fs.lookup 0 400 false))))
+      (#[markItem, unbreakable, tie] ++ items0, sources.map (fun (i, sp) => (i + 3, sp)),
+        anchors.map (fun (n, i) => (n, i + 3)))
+    | none => (items0, sources, anchors)
+  let items := if r.geom.justify && !m.ragged then items else raggedItems items
+  let breaks := kpTwoPass items width
+  let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
+  let scaleB (v : Int) : Length := v * r.geom.fontSize / bodyFont.unitsPerEm
+  let mut lines : Array LineOut := #[]
+  let mut yPrev : Length := 0
+  let mut belowPrev : Length := 0
+  let mut above : Length := 0
+  let mut hgt : Length := 0
+  let mut depth : Length := 0
+  let mut prev := 0
+  let mut first := true
+  for brk in breaks do
+    let st := if first then lineStart items 0 else lineStart items (prev + 1)
+    let (segs, lw, overfull, _, _) :=
+      setLine items st brk width (setsToMeasure (r.geom.justify && !m.ragged) items st brk) false false
+    if overfull then
+      ds := ds.push (noteOverfull r a (lineSource sources st brk) (lw - width))
+    let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
+      (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent)) r.geom.leading r.geom.fontSize segs
+      r.geom.lead
+    let y := if first then 0 else yPrev + belowPrev + box.above
+    if first then above := box.inkAbove
+    lines := lines.push { x := 0, y := y, size := r.geom.fontSize, segs := segs, setWidth := lw
+                          leaf := noteLeaf, margin := true
+                          anchors := lineAnchors anchors prev brk first (brk == breaks.back?.getD 0) }
+    hgt := y + box.inkBelow
+    depth := box.inkBelow
+    yPrev := y
+    belowPrev := box.below
+    prev := brk
+    first := false
+  return ({ lines, height := hgt, depth, margin := some { above, reversed := m.reversed, fresh := m.fresh } }, ds, cache)
+
 private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Length) (center : Bool) (size : Length)
     (baseStyle : TextStyle := {})
@@ -10493,7 +10732,13 @@ private def collectPara (r : Rd) (a : Acc)
     let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
     let scaleB (v : Int) : Length := v * r.geom.fontSize / bodyFont.unitsPerEm
     let target := r.geom.textWidth
-    for (markIdx, num, body, noteLeaf) in rawNotes do
+    for (markIdx, num, body, noteLeaf, margin?) in rawNotes do
+      if let some m := margin? then
+        let (block, mds, cache2) := marginBlock r a m body noteLeaf cache
+        ds := ds ++ mds
+        cache := cache2
+        out := out.push (markIdx, block)
+        continue
       let (nitems0, nds, cache2, _, _, _, nanchors, nsources) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs noteStyle body
           cache (LeafCtr.of noteLeaf (Struct.leafCountInlines body) body) r.imgs r.geom.textWidth
@@ -15016,7 +15261,7 @@ public def leaderRiders (l : LineOut) : Array LineOut :=
   #[leaderSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
-                note := l.note, furniture := l.furniture, hidden := l.hidden }
+                note := l.note, margin := l.margin, furniture := l.furniture, hidden := l.hidden }
 
 @[simp] public theorem leaderRiders_uncounted (l : LineOut) :
     ∀ r ∈ leaderRiders l, r.counted = false := by
@@ -15051,7 +15296,7 @@ public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
   #[underlineSegs fs l.size l.segs, lineThroughSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
-                note := l.note, furniture := l.furniture, hidden := l.hidden }
+                note := l.note, margin := l.margin, furniture := l.furniture, hidden := l.hidden }
 
 /-- A placed line's mark rider, painted under it, banded as the decoration riders are; a picture's
 label sets none, as the web page's SVG label sets none. -/
@@ -15059,7 +15304,7 @@ public def markRiders (l : LineOut) : Array LineOut :=
   #[if l.pictureLabel.isSome then #[] else markSegs l.segs].filterMap fun paint =>
     if paint.isEmpty then none
     else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
-                note := l.note, furniture := l.furniture, hidden := l.hidden }
+                note := l.note, margin := l.margin, furniture := l.furniture, hidden := l.hidden }
 
 @[simp] public theorem markRiders_uncounted (l : LineOut) :
     ∀ r ∈ markRiders l, r.counted = false := by
@@ -17781,8 +18026,8 @@ private theorem fitCommit_extends (b : B) (mk : Length → LineOut)
     (inkBelow bottom : Length) (ns : Array NoteBlock) :
     PagesExtend b
       (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true _ (fun _ _ _ _ => rfl)
-    fun _ _ _ => rfl
+  fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true _
+    (fun _ _ _ _ => (attachNotes_keeps ..).pages) fun _ _ _ => rfl
 
 private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
     (paints : Bool) : PagesExtend b (b.placeAnchor fs h shift paints) := by
@@ -17811,19 +18056,21 @@ private theorem fitCommit_noBreak (b : B) (mk : Length → LineOut)
     (inkBelow bottom : Length) (ns : Array NoteBlock) (h : b.noBreak = true) :
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).pages = b.pages ∧
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).noBreak = true :=
-  fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true _ (fun _ _ _ _ => ⟨rfl, rfl⟩)
+  fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true _
+    (fun _ _ _ _ => ⟨(attachNotes_keeps ..).pages, (attachNotes_keeps ..).noBreak⟩)
     (fun _ _ _ => ⟨rfl, rfl⟩) h
 
+attribute [local irreducible] Spacing.Page.attachNotes in
 private theorem fitCommit_note_with_mark (b : B) (mk : Length → LineOut)
     (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
     (inkBelow bottom : Length) (ns : Array NoteBlock)
-    (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
+    (nb : NoteBlock) (hnb : nb ∈ ns) (hm : nb.margin = none) (l : LineOut) (hl : l ∈ nb.lines) :
     ∃ l' ∈ (b.fitCommit mk firstY stepY retryY depth below rl inkBelow
         bottom ns).pendingNotes,
       l'.segs = l.segs := by
   simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith]
   repeat' split
-  all_goals exact attachNotes_mem _ ns nb hnb l hl
+  all_goals exact attachNotes_mem _ ns nb hnb hm l hl
 
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Length) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
@@ -17875,13 +18122,13 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Length)
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Length)
     (segs : Array Seg) (w hang : Length) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Length) (dj : Option DisplayJob) (op : Bool)
-    (nb : NoteBlock) (hnb : nb ∈ ns)
+    (nb : NoteBlock) (hnb : nb ∈ ns) (hm : nb.margin = none)
     (l : LineOut) (hl : l ∈ nb.lines) (step : Option Length := none) :
     ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op
         (stepLead := step)).pendingNotes,
       l'.segs = l.segs := by
   simp only [Spacing.Page.placeLine, Spacing.Page.displayState, Spacing.Page.keepInk]
-  exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
+  exact fitCommit_note_with_mark (hnb := hnb) (hm := hm) (hl := hl) ..
 
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Length) (segs : Array Seg) (w hang : Length)
@@ -18229,7 +18476,9 @@ private theorem bgStep_fitCommit (b : B) (mk : Length → LineOut)
     (firstY stepY retryY : B → Length) (depth below : Length) (rl : Bool)
     (inkBelow bottom : Length) (ns : Array NoteBlock) :
     BgStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true _ (fun _ _ _ _ => ⟨rfl, rfl, rfl⟩)
+  bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true _
+    (fun _ _ _ _ => ⟨(attachNotes_keeps ..).geom, (attachNotes_keeps ..).docBg,
+      (attachNotes_keeps ..).pages⟩)
     fun _ _ _ => ⟨rfl, rfl, rfl⟩
 
 private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Length)
@@ -18950,7 +19199,10 @@ private theorem frameStep_spillPage (b : B) (over : Length) :
 
 private theorem frameStep_attachNotes (b : B) (ns : Array NoteBlock) :
     FrameStep b (b.attachNotes ns) :=
-  FrameStep.of_eq rfl rfl
+  FrameStep.of_eq (by
+    have h := attachNotes_keeps b ns
+    simp only [Spacing.Page.frameStamp, h.curFrameOrigin, h.curFrame, h.curFoot])
+    (attachNotes_keeps b ns).pages
 
 private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Length)
     (ruleLine consume : Bool) (overflow : Length) :
@@ -19365,7 +19617,7 @@ private theorem Spacing.Page.ReflowsNamed.step {a b : B} (ha : a.ReflowsNamed)
 
 private theorem reflowStep_attachNotes (b : B) (ns : Array NoteBlock) :
     ReflowStep b (b.attachNotes ns) :=
-  ReflowStep.of_eq rfl rfl
+  ReflowStep.of_eq (attachNotes_keeps b ns).paragraphBreaks (attachNotes_keeps b ns).diags
 
 private theorem reflowStep_finishPage (b : B) (owed : Length) (flush : Bool) :
     ReflowStep b (b.finishPage owed flush) := by
@@ -23208,6 +23460,7 @@ private structure LineRise (a b : LineOut) : Prop where
   segs : a.segs = b.segs
   size : a.size = b.size
   note : a.note = b.note
+  margin : a.margin = b.margin
   furniture : a.furniture = b.furniture
   pictureLabel : a.pictureLabel = b.pictureLabel
   baseline : a.y ≤ b.y
@@ -23219,7 +23472,7 @@ private inductive LinesRise : List LineOut → List LineOut → Prop
 private theorem LinesRise.refl (ls : List LineOut) : LinesRise ls ls := by
   induction ls with
   | nil => exact .nil
-  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih
+  | cons l ls ih => exact .cons ⟨rfl, rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih
 
 private theorem LinesRise.append {as bs cs ds : List LineOut}
     (h : LinesRise as bs) (h' : LinesRise cs ds) :
@@ -23319,7 +23572,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Length)
       Spacing.Page.commit, Array.back?_push, Option.any_some]
   · simpa only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Length.add_zero] using hy
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Array.toList_push]
-    exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, rfl, hy⟩ .nil)
+    exact h.lines.append (.cons ⟨rfl, rfl, rfl, rfl, rfl, rfl, hy⟩ .nil)
   · exact h.pages
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit,
       h.regions]
@@ -23546,7 +23799,7 @@ private theorem marks_rise {a b : LineOut} (h : LineRise a b) :
   · by_cases hm : (markSegs b.segs).isEmpty = true
     all_goals simp only [hp, hm, ite_true, Bool.false_eq_true, ite_false]
     · exact .nil
-    · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
+    · exact .cons ⟨rfl, rfl, h.note, h.margin, h.furniture, rfl, h.baseline⟩ .nil
 
 private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
     LinesRise (decorationRiders fs a).toList (decorationRiders fs b).toList := by
@@ -23556,10 +23809,10 @@ private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
     by_cases ht : (lineThroughSegs b.segs).isEmpty = true
   all_goals simp only [hu, ht, ite_true]
   · exact .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩
-      (.cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil)
+  · exact .cons ⟨rfl, rfl, h.note, h.margin, h.furniture, rfl, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.margin, h.furniture, rfl, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.margin, h.furniture, rfl, h.baseline⟩
+      (.cons ⟨rfl, rfl, h.note, h.margin, h.furniture, rfl, h.baseline⟩ .nil)
 
 private theorem leaders_rise {a b : LineOut} (h : LineRise a b) :
     LinesRise (leaderRiders a).toList (leaderRiders b).toList := by
@@ -23568,7 +23821,7 @@ private theorem leaders_rise {a b : LineOut} (h : LineRise a b) :
   by_cases hm : (leaderSegs b.segs).isEmpty = true
   all_goals simp only [hm, ite_true, Bool.false_eq_true, ite_false]
   · exact .nil
-  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.margin, h.furniture, rfl, h.baseline⟩ .nil
 
 private theorem paint_rise (fs : FontSet) {as bs : List LineOut}
     (h : LinesRise as bs) :
@@ -23591,14 +23844,14 @@ public def textInk : Seg → List Char
     | .image _ _ _ _ _ _ | .poly _ _ => []
 
 public def inkLine (l : LineOut) : Bool :=
-  !l.furniture && !l.note && l.segs.toList.flatMap textInk != []
+  !l.furniture && !l.note && !l.margin && l.segs.toList.flatMap textInk != []
 
 public def inkBaselines (o : Out) : List Length :=
   (o.pages.toList.flatMap fun p => p.lines.toList.filter inkLine).map (·.y)
 
 private theorem inkLine_rise {a b : LineOut} (h : LineRise a b) :
     inkLine a = inkLine b := by
-  simp only [inkLine, h.segs, h.note, h.furniture]
+  simp only [inkLine, h.segs, h.note, h.margin, h.furniture]
 
 private theorem LinesRise.filter {as bs : List LineOut} (h : LinesRise as bs) :
     LinesRise (as.filter inkLine) (bs.filter inkLine) := by
@@ -23854,8 +24107,8 @@ private theorem shifted_rise (d : Length) (ls : List LineOut) :
   induction ls with
   | nil => exact ⟨.nil, .nil⟩
   | cons l ls ih =>
-    exact ⟨.cons ⟨rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih.1,
-      .cons ⟨rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih.2⟩
+    exact ⟨.cons ⟨rfl, rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih.1,
+      .cons ⟨rfl, rfl, rfl, rfl, rfl, rfl, Length.le_refl _⟩ ih.2⟩
 
 /-- A move across leaves every painted line's baseline where it was. -/
 private theorem paintedInk_shiftX_ys (fs : FontSet) (e d : Length) (q : PageOut) :
@@ -23936,9 +24189,11 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 -- Exact equality keeps colour spellings and provenance, which the BEq instances omit.
 deriving instance DecidableEq for Ir.PdfColor, Ir.Color
 deriving instance DecidableEq for Diag
+deriving instance DecidableEq for Ir.MarginPar
 deriving instance DecidableEq for Geom, Attribution, DecorationRule, LeaderPaint, Decorations,
   MathLineMetrics, RunMetrics
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
+deriving instance DecidableEq for MarginPlace
 deriving instance DecidableEq for NoteBlock, DisplayJob, DisplayReserve
 
 private def bucketEq :

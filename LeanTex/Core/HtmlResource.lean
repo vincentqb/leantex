@@ -290,7 +290,7 @@ private def cssFunction (word : String) : Bool :=
    "opacity", "saturate", "sepia", "counter", "counters", "repeat", "minmax",
    "fit-content", "format", "tech", "is", "where", "not", "has", "nth-child",
    "nth-last-child", "nth-of-type", "nth-last-of-type", "lang", "dir", "selector",
-   "supports", "scroll", "view", "attr"].contains word
+   "supports", "scroll", "view", "attr", "anchor", "anchor-size"].contains word
 
 private def flushWord (s : CssScan) : CssScan :=
   let word := s.word.toLower

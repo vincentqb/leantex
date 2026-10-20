@@ -56,6 +56,7 @@ private def structTypeOf : Struct.Kind → String
   | .code => "Code"
   | .quote => "BlockQuote"
   | .note => "FENote"
+  | .margin => "Aside"
   | .aside => "Aside"
   | .nav => "Sect"
   | .bibEntry => "LBody"
@@ -75,18 +76,18 @@ private def inPdf2Namespace : Struct.Kind → Bool
   | .quote => false
   | .reference _ => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label | .body
-  | .table | .row | .cell | .caption | .figure | .formula | .note | .aside | .nav | .bibEntry
+  | .table | .row | .cell | .caption | .figure | .formula | .note | .margin | .aside | .nav | .bibEntry
   | .toc | .tocItem | .link _ | .span _ | .line _ _ | .artifact => true
 
 private def headingLevelOf : Struct.Kind → Option Ir.HeadingLevel
   | .heading level => some level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body | .table
-  | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .aside | .nav
+  | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .margin | .aside | .nav
   | .bibEntry | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _ | .artifact => none
 
 private def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
   match kind with
-  | .paragraph | .title | .heading _ | .caption | .cell | .code | .label | .body | .note
+  | .paragraph | .title | .heading _ | .caption | .cell | .code | .label | .body | .note | .margin
   | .bibEntry | .figure | .line _ _ | .artifact => true
   | .formula => !inline
   | .document | .section | .list _ | .item | .table | .row | .quote | .aside | .nav
@@ -166,7 +167,7 @@ private def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Boo
       let (es, i) := pushElem es parent { elemOf kind with actualText := lineMarks opens closes kids }
       (skelList es i i true none kids.toList, none)
     | .document | .section | .title | .heading _ | .paragraph | .list _ | .item
-    | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
+    | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .margin
     | .nav | .toc | .tocItem | .link _ | .span _ | .reference _ | .artifact =>
       let (es, i) := pushElem es parent (elemOf kind)
       let (h, inl) := if isHolder kind inline then (i, true) else (holder, inline)

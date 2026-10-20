@@ -45,12 +45,12 @@ inside one belongs to the block around it. -/
   | .link _ | .span _ | .line _ _ | .reference _ => true
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
-  | .note | .aside | .nav | .bibEntry | .toc | .tocItem | .artifact => false
+  | .note | .margin | .aside | .nav | .bibEntry | .toc | .tocItem | .artifact => false
 
 /-- Kinds whose children are inline content: a formula directly inside one
 is set inline, and belongs to it. -/
 @[expose] public def holdsInlines : Struct.Kind → Bool
-  | .title | .heading _ | .paragraph | .label | .cell | .caption | .note | .bibEntry
+  | .title | .heading _ | .paragraph | .label | .cell | .caption | .note | .margin | .bibEntry
   | .artifact => true
   | .document | .section | .list _ | .item | .body | .table | .row | .figure | .formula
   | .code | .quote | .aside | .nav | .toc | .tocItem | .link _ | .span _ | .line _ _
@@ -60,14 +60,14 @@ is set inline, and belongs to it. -/
 @[expose] public def unbreakable : Struct.Kind → Bool
   | .title | .heading _ | .caption | .figure => true
   | .document | .section | .paragraph | .list _ | .item | .label | .body | .table | .row
-  | .cell | .formula | .code | .quote | .note | .aside | .nav | .bibEntry | .toc | .tocItem
+  | .cell | .formula | .code | .quote | .note | .margin | .aside | .nav | .bibEntry | .toc | .tocItem
   | .link _ | .span _ | .line _ _ | .reference _ | .artifact => false
 
 /-- Kinds set apart from running prose: what a lead-in introduces. -/
 @[expose] public def displays : Struct.Kind → Bool
   | .list _ | .table | .code | .figure | .quote | .toc => true
   | .document | .section | .title | .heading _ | .paragraph | .item | .label | .body | .row
-  | .cell | .caption | .formula | .note | .aside | .nav | .bibEntry | .tocItem | .link _
+  | .cell | .caption | .formula | .note | .margin | .aside | .nav | .bibEntry | .tocItem | .link _
   | .span _ | .line _ _ | .reference _ | .artifact => false
 
 /-- The block kind of a leaf from its enclosing kinds, innermost first. -/
@@ -277,7 +277,7 @@ def roleOf (roles : Array LeafRole) (l : LineOut) : Option LeafRole :=
 /-- A line of running prose: a galley line of a paragraph outside a table,
 a note or a float. -/
 def prose (roles : Array LeafRole) (l : LineOut) : Bool :=
-  l.counted && !l.note && ((roleOf roles l).map (·.kind == .paragraph)).getD false
+  l.counted && !l.note && !l.margin && ((roleOf roles l).map (·.kind == .paragraph)).getD false
 
 /-- Two consecutive pages the flow runs across: flow pages, or the pages
 one frame step spilled onto. An overlay's next step repeats its content on
@@ -418,7 +418,7 @@ public def splitBlocks (roles : Array LeafRole) (pages : Array PageOut) : Nat :=
 
 /-- A page's body lines: neither furniture nor the note apparatus. -/
 def bodyLines (p : PageOut) : Array LineOut :=
-  p.lines.filter fun l => !l.furniture && !l.note
+  p.lines.filter fun l => !l.furniture && !l.note && !l.margin
 
 /-- The first and the last structure leaf a page's body sets, in the
 preorder `LineOut.leaf` counts, which is reading order. -/

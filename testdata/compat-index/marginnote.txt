@@ -1,0 +1,5 @@
+# source: marginnote manual (marginnote.pdf, for marginnote.sty v1.4b), §1
+# usage: \marginnote{text}[offset] sets a note in the margin without a float;
+# here it is the kernel's margin note, ragged, the offset moving nothing.
+body impl Text.\marginnote{A note.}
+body impl Text.\marginnote{A note.}[2pt]

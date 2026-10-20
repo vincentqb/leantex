@@ -273,6 +273,7 @@ public inductive DiagCode where
   | W0453
   | W0454
   | W0455
+  | W0457
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -518,6 +519,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0453 => ("0453", .degraded, "a documentation comment's tag, command or HTML element its dialect's reader does not read; its text, if any, sets in its place")
   | .W0454 => ("0454", .degraded, "a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked")
   | .W0455 => ("0455", .degraded, "a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block")
+  | .W0457 => ("0457", .degraded, "a margin note where its page sets no margin beside the text (a frame or card, a float, box, table, note or display, which LaTeX refuses outside its paragraphs); its text sets where it stands")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -535,7 +537,7 @@ public def DiagCode.qual : DiagCode → Diag.Qual
     .W0103 | .W0106 | .W0109 | .W0302 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
     .W0363 | .E0375 | .W0370 | .W0371 | .W0373 | .W0374 | .W0380 | .W0383 | .W0701 | .W0605 |
     .W0609 | .W0385 | .W0389 | .E0390 | .W0419 | .W0435 | .E0607 | .W0422 | .W0423 | .W0427 |
-    .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 =>
+    .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 | .W0457 =>
     .unsupported
   | .W0101 | .N0102 | .N0104 | .W0001 | .W0007 | .W0104 | .W0108 | .W0110 | .W0303 | .E0336 |
     .W0317 | .W0318 | .E0334 | .W0329 | .W0340 | .W0346 | .E0347 | .W0348 | .W0354 | .W0355 |

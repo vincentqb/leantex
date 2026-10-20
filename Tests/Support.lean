@@ -566,7 +566,7 @@ def goldenNames : List String :=
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
    "md-include", "md-include-deck", "md-cite-include", "lean-cite-include", "palette-seeds",
-   "alert-mark", "deck-sections", "deck-hooks", "contents", "boxes"] ++
+   "alert-mark", "deck-sections", "deck-hooks", "contents", "boxes", "margin-notes"] ++
   mdGoldenNames ++ codeGoldenNames.map (·.1)
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/

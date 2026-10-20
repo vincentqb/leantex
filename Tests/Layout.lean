@@ -5269,7 +5269,7 @@ def findFrom (hay needle : Array Char) (start : Nat) : Option Nat := Id.run do
 block a line attributes to. -/
 def ownerKind : Struct.Kind → Bool
   | .paragraph | .heading _ | .title | .cell | .caption | .code | .bibEntry
-  | .artifact | .note | .formula | .label => true
+  | .artifact | .note | .margin | .formula | .label => true
   | .document | .section | .list _ | .item | .body | .table | .row | .figure
   | .quote | .aside | .nav | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _ => false
 
@@ -5332,9 +5332,11 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         | none => false))
     let named := (body.filterMap (·.leaf)).qsort (· < ·) |>.foldl
       (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
-    let underNote (k : Nat) : Bool := (rows[k]?.map fun r => r.path.contains .note).getD false
+    -- A footnote's or a margin note's leaves set apart from the block holding its mark.
+    let apart (r : LeafRow) : Bool := r.path.any (· matches .note | .margin)
+    let underNote (k : Nat) : Bool := (rows[k]?.map apart).getD false
     let ownerGroup (r : LeafRow) : Option Nat :=
-      (named.filter fun k => k ≤ r.id && underNote k == r.path.contains .note).back?
+      (named.filter fun k => k ≤ r.id && underNote k == apart r).back?
     let mut mismatch : Option String := none
     let mut exactFail : Option String := none
     let mut uncovered : Array String := #[]
@@ -5539,7 +5541,10 @@ the text sets ({badGap.getD ""})"
       | some (.noteMark num) => some num
       | _ => none).qsort (· < ·) |>.foldl
         (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
-    let notes := ((Ir.footnotesOf doc.body).map fun (num, _) => num.getD 0).qsort (· < ·)
+    let sideNums : Array Nat := Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
+      | .marginNote m _ => (m.num.map acc.push).getD acc
+      | _ => acc) #[] doc.body
+    let notes := (((Ir.footnotesOf doc.body).map fun p => p.1.getD 0) ++ sideNums).qsort (· < ·)
       |>.foldl (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
     t s!"attr {n}: note marks are the footnotes {notes} (got {marks})" (marks == notes)
     let mut labelOff : Option String := none

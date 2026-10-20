@@ -47,7 +47,8 @@ public def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend"]
+   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend",
+   "marginnote", "sidenotes"]
 
 /-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
 public def optionSpelling (item : String) : String :=
@@ -408,7 +409,8 @@ private def mathEnvs : List String :=
   ["equation", "equation*", "displaymath", "align", "align*", "gather", "gather*"]
 
 /-- The tokens the page reads once, from the preamble's value. -/
-private def pageTokens : List String := ["footins", "topskip", "partopsep"]
+private def pageTokens : List String :=
+  ["footins", "topskip", "partopsep", "marginparwidth", "marginparsep", "marginparpush"]
 
 /-- The kernel and booktabs length parameters, each with its site; any other
 name is a length of the document's own. -/
@@ -422,6 +424,8 @@ public def paramSites : List (String × ParamSite) :=
    ("topsep", .token "topsep"),
    ("floatsep", .token "floatsep"),
    ("footins", .token "footins"),
+   ("marginparwidth", .token "marginparwidth"), ("marginparsep", .token "marginparsep"),
+   ("marginparpush", .token "marginparpush"),
    ("tabcolsep", .token "tabcolsep"),
    ("heavyrulewidth", .token "heavyrulewidth"),
    ("lightrulewidth", .token "lightrulewidth"),

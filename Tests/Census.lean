@@ -1583,7 +1583,21 @@ def censusRows8 :
        rects.size == 4 && (rects.filter (·.2.2.2 == Dim.pt 2 / 5)).size == 2 &&
          (rects.filter (·.2.2.1 == Dim.pt 2 / 5)).size == 2),
      ("the framed and the raised blocks' words ship on their own lines",
-       (lineWith "framed block").isSome && (lineWith "on its own depth").isSome)])]
+       (lineWith "framed block").isSome && (lineWith "on its own depth").isSome)]),
+  ("margin-notes", fun geom c =>
+    let right := geom.hmargin + geom.textWidth + geom.marginPar.sep
+    let below (a b : String) : Bool :=
+      ((lineYOf c 0 a).bind fun y => (lineYOf c 0 b).map fun z => decide (y < z)) == some true
+    [("one page", c.size == 1),
+     ("the first note ships beside the line it stands on, a separation right of the text",
+       lineXOf c 0 "Kite" == some right && lineYOf c 0 "Kite" == lineYOf c 0 "by."),
+     ("the next note ships below it, the note between paragraphs below that",
+       below "Kite" "Plover" && below "Plover" "Heron"),
+     ("the ragged and the numbered notes ship in the margin, the number in the text too",
+       lineXOf c 0 "Wren" == some right && lineXOf c 0 "Lark" == some right && pageHas c 0 "one1"),
+     ("the reversed note ships in the left margin beside its line, the switch freeing it of the notes before",
+       ((lineXOf c 0 "Swift").bind fun r => (lineXOf c 0 "The reversed").map fun x => decide (r < x))
+         == some true && lineYOf c 0 "Swift" == lineYOf c 0 "The reversed")])]
 
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/

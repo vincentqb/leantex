@@ -43,7 +43,7 @@ example (node : Md.Blk) : Pos :=
   match node with
   | .para _ p | .heading _ _ p | .code _ _ p | .rule p
   | .quote _ p | .disclosure _ _ _ p | .list _ _ _ _ p | .table _ _ _ p | .lean _ p
-  | .metadata _ p | .refs p | .note _ _ p => p
+  | .metadata _ p | .refs p | .note _ _ p | .aside _ p => p
 
 example : True := by
   fail_if_success have := Md.Line

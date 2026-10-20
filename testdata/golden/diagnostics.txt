@@ -793,6 +793,9 @@ warning: undefined target Other [W0454]
 ── W0455 (degraded) a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block
 warning: unexpected environment itemize for command \fbox [W0455]
   note: LaTeX refuses it in LR mode, and here the box holds it as a block; set it in a minipage inside the box's content: \begin{minipage}{...}...\end{minipage}
+── W0457 (degraded) a margin note where its page sets no margin beside the text (a frame or card, a float, box, table, note or display, which LaTeX refuses outside its paragraphs); its text sets where it stands
+warning: unsupported margin for float [W0457]
+  note: move the '\marginpar' outside it, beside a line of the page's own text
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography

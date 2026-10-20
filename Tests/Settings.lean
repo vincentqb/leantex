@@ -16,6 +16,8 @@ def pagesOf (fonts : Font.FontSet) (src : String) : String :=
 /-- A body each parameter's site reads. -/
 def settingsBodies : List (String × String) :=
   [("paras", "Alpha words here.\n\nBravo words here.\n\nCharlie words here."),
+   ("margin", "Alpha words.\\marginpar{Bravo note with words enough to wrap twice in its column.}" ++
+      "\\marginpar{Charlie note.}\n\nDelta words."),
    ("figure", "Alpha words.\n\n\\begin{figure}[h]\\centering\nBravo box.\n" ++
       "\\caption{Charlie caption.}\\end{figure}\n\nDelta words."),
    ("center", "Alpha words.\n\n\\begin{center}\nBravo words.\n\\end{center}\n\nCharlie words."),
@@ -68,6 +70,12 @@ def paramProbes : List (String × String × String × String) :=
    ("topsep", "\\setlength{\\topsep}{17pt}", "\\tokens{ topsep = 17pt }", "center"),
    ("partopsep", "\\setlength{\\partopsep}{9pt}", "\\tokens{ partopsep = 9pt }", "parlist"),
    ("footins", "\\setlength{\\skip\\footins}{61pt}", "\\tokens{ footins = 61pt }", "note"),
+   ("marginparwidth", "\\setlength{\\marginparwidth}{40pt}", "\\tokens{ marginparwidth = 40pt }",
+     "margin"),
+   ("marginparsep", "\\setlength{\\marginparsep}{20pt}", "\\tokens{ marginparsep = 20pt }",
+     "margin"),
+   ("marginparpush", "\\setlength{\\marginparpush}{15pt}", "\\tokens{ marginparpush = 15pt }",
+     "margin"),
     ("tabcolsep", "\\setlength{\\tabcolsep}{13pt}", "\\tokens{ tabcolsep = 13pt }", "table"),
     ("columnsep", "\\setlength{\\columnsep}{19pt}", "\\tokens{ columnsep = 19pt }", "columns"),
    ("heavyrulewidth", "\\setlength{\\heavyrulewidth}{3pt}",
@@ -765,7 +773,7 @@ def kernelLengthNames : List String :=
 /-- The kernel lengths no row decides yet, held in both directions. -/
 def openKernelLengths : List String :=
   ["paperwidth", "paperheight", "oddsidemargin", "evensidemargin", "topmargin",
-   "headheight", "marginparwidth", "marginparsep", "marginparpush", "columnseprule",
+   "headheight", "columnseprule",
    "columnwidth", "linewidth", "topskip", "textfloatsep", "intextsep", "dblfloatsep",
    "dbltextfloatsep", "lineskip", "lineskiplimit", "parfillskip", "mathindent"]
 

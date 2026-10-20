@@ -100,6 +100,7 @@ import Tests.Icc
 import Tests.PrintColour
 import Tests.ItemLabels
 import Tests.WebMeasure
+import Tests.MarginNote
 import Tests.LabelLines
 import Tests.ListGaps
 import Tests.ListLabels
@@ -568,6 +569,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.ItemLabels.openerChecks ref oneFace
   Tests.WebMeasure.checks ref
   Tests.WebMeasure.paperLossChecks ref oneFace
+  Tests.MarginNote.checks ref oneFace
   Tests.LabelLines.checks ref oneFace
   Tests.ListGaps.checks ref oneFace
   Tests.ListLabels.checks ref oneFace

@@ -183,6 +183,8 @@ public structure Config where
   inLink : Bool := false
   /-- The document's notes by place, which name each mark's and endnote's anchors. -/
   notes : Ir.NotePlaces := default
+  /-- Inside a paragraph or heading whose margin notes stand as asides after it. -/
+  marginAsides : Bool := false
 
 /-- The current text area: the local context, else the page's. -/
 public def Config.measureValues (cfg : Config) : MeasureValues :=
@@ -562,6 +564,7 @@ private def markerTextOne (acc : String) : Inline → Option String
   | .cite _ _ => none
   | .cited _ _ _ => none
   | .footnote _ _ => none
+  | .marginNote _ _ => none
 
 private def markerTextInto (acc : String) : List Inline → Option String
   | [] => some acc
@@ -608,6 +611,7 @@ private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .cite _ _ => none
   | .cited _ _ _ => none
   | .footnote _ _ => none
+  | .marginNote _ _ => none
 
 private def markerCorr : Inline → Bool
   | .italicCorr _ => true
@@ -641,7 +645,7 @@ private theorem markerTextOne_text (x : Inline) (acc t : String)
   | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .pageNumber | .pageCount | .linebreak _
   | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ =>
     simp [markerTextOne] at h
 
 private theorem markerTextInto_text (xs : List Inline) (acc t : String)
@@ -709,7 +713,7 @@ private theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array 
   | .link _ _ | .decorated _ _ | .boxed _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
-  | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
+  | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ =>
     simp [markerCssOne] at h
   | .altSteps _ _ _ => simp [markerCssOne] at h
 
@@ -995,6 +999,12 @@ private theorem blockGap_kinds_covers :
     0 < screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.fixed := by
   rw [Ir.displaySkipDefault_base_exact]
   decide
+
+/-- The class of a margin note's aside after its block. -/
+public def marginNoteClass : String := "margin-note"
+
+/-- The class of a margin note set in its run, where its block sets no aside. -/
+public def marginInlineClass : String := "margin-note-inline"
 
 /-- One rule of the block-boundary sheet, rendered inside `:where()`. -/
 public inductive GapRule where
@@ -1573,6 +1583,7 @@ private def gapResets : List GapRule :=
    .reset s!"h1:not(.body-heading):has(+ .{skipClass} + hr.separator)" "0",
    .reset "section.slide > header h2" "0",
    .reset "figure.float" "0 auto",
+   .reset s!"aside.{marginNoteClass}" "0",
    -- a negative skip is the skip box's bottom margin
    .reset s!".{skipClass}" "0 0 min(0rem, var(--skip, 0rem))"]
 
@@ -1728,6 +1739,7 @@ private def blockRules (size ex : Length) (tokens : Ir.Tokens) (shaped : Bool) :
      .boundary "section.block-shaped + section.block" (milliRem above),
      .boundary "section.block-shaped + section.block-shaped" "0rem",
      .parskip "section.block-shaped > *" "inherit"]
+  .boundary s!"* + aside.{marginNoteClass}" (quantaRem 1) ::
   .boundary "* + section.block" (milliRem above) ::
     ownsBelow ["section.block"] s!"calc({milliRem below} + {peerGap})" (milliRem below) ++
   [.boundary "section.block + section.block" (milliRem (below + above)),
@@ -6018,6 +6030,14 @@ public def roomKeepers : String :=
   "main > section, ul, ol, li, dl, dt, dd, figure, p, blockquote, div:not(.columns), " ++
     naturalBlocks
 
+/-- Whether a document holds a margin note. -/
+public def hasMarginNotes (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b _ => b) (fun b x => b || x matches .marginNote _ _) false doc.body
+
+/-- The article layout's outline inset in its margin column, in milli-rem: 2.5rem of its 3.25rem gap
+(`Ir.WebGrid.gapMilli`). -/
+public def outlineInsetMilli : Int := 2500
+
 /-- A flow's screen geometry: prose at the measure, what does not reflow widening into the room past
 it, and where the viewport holds its layout's grid the outline sticky in that layout's column. -/
 public def flowPageCss (doc : Doc) (ch : Nat) : String :=
@@ -6048,22 +6068,49 @@ public def flowPageCss (doc : Doc) (ch : Nat) : String :=
   s!"  :where(main) :is({naturalBlocks}) \{ inline-size: max-content; }\n" ++
   "  :where(main) :is(pre, .display, div.math-display) { min-inline-size: 100%; }\n" ++
   "}\n" ++
-  (if (outlineOf doc).isEmpty then "" else
+  let outline := !(outlineOf doc).isEmpty
+  let margins := hasMarginNotes doc
+  let marginColumn := margins && webLayoutOf doc == .article
+  (if !outline then "" else
     s!"nav.{outlineClass} \{ display: none; row-gap: {quantaRem 1}; align-content: start;\n" ++
     s!"  font-family: var(--font-sans); font-size: {scaleSize doc.page.scale "small" "rem"};\n" ++
     s!"  line-height: {milliFactor Ir.leadingMilli}; color: {roleRef .muted}; }\n" ++
     s!"nav.{outlineClass} > div:hover \{ color: {roleRef .ink}; }\n" ++
     s!"nav.{outlineClass} .level-1 \{ padding-inline-start: {decMilli indent.indent}em; }\n" ++
     s!"nav.{outlineClass} a \{ text-decoration: none; }\n" ++
-    s!"nav.{outlineClass} a:hover \{ text-decoration: underline; }\n" ++
+    s!"nav.{outlineClass} a:hover \{ text-decoration: underline; }\n") ++
+  -- MyST's aside: 14 px on 20 px in the muted ink, after its paragraph wherever no margin column sets it
+  (if !margins then "" else
+    s!"aside.{marginNoteClass} \{ font-size: 0.875rem; line-height: 1.25rem; color: {roleRef .muted}; }\n") ++
+  (if !outline && !marginColumn then "" else
     s!"@media screen and (min-width: {decMilli (outlineBreakMilli doc ch)}em) \{\n" ++
     s!"  body \{ display: grid; grid-template-columns: {columns}; align-items: start;\n" ++
     "    padding-block-end: 0; }\n" ++
     s!"  main \{ grid-column: main; grid-row: 1; margin: 0 0 {quantaRem 6}; --wide-room: {wide}; }\n" ++
-    s!"  nav.{outlineClass} \{ display: grid; grid-column: {navColumn}; grid-row: 1;\n" ++
-    s!"    position: sticky; inset-block-start: 0; max-block-size: 100vh;\n" ++
-    s!"    margin-block-start: -{quantaRem 3}; padding-block: {quantaRem 3};\n" ++
-    "    overflow-y: auto; overscroll-behavior: contain; }\n" ++
+    (if !outline then "" else
+      s!"  nav.{outlineClass} \{ display: grid; grid-column: {navColumn}; grid-row: 1;\n" ++
+      -- the margin's notes stand below an outline sharing their column, which stays where it opens
+      (if marginColumn then "    position: relative;\n" else
+        "    position: sticky; inset-block-start: 0; max-block-size: 100vh;\n") ++
+      s!"    margin-block-start: -{quantaRem 3}; padding-block: {quantaRem 3};\n" ++
+      "    overflow-y: auto; overscroll-behavior: contain; }\n") ++
+    -- each aside beside its anchor in the margin column, below the one before it
+    (if !marginColumn then "" else
+      "  @supports (anchor-name: --a) {\n" ++
+      "    body { position: relative; }\n    main { anchor-name: --mn-main; }\n" ++
+      (if !outline then "" else s!"    nav.{outlineClass} \{ anchor-name: --mn0; }\n") ++
+      s!"    aside.{marginNoteClass} \{ position: absolute; margin-block: 0;\n" ++
+      s!"      inset-inline-start: calc(anchor(--mn-main right) + " ++
+      s!"{remMilli (g.gapMilli - outlineInsetMilli)});\n" ++
+      s!"      inline-size: calc(clamp({remMilli g.marginMinMilli}, 100vw - 2 * {pad} - " ++
+      s!"{remMilli (g.leadMilli + g.gapMilli)} - anchor-size(--mn-main width), {room}) + " ++
+      s!"{remMilli outlineInsetMilli} - {remMilli (g.gapMilli - outlineInsetMilli)});\n" ++
+      "      inset-block-start: max(anchor(var(--mn-at) top), " ++
+      s!"calc(anchor(var(--mn-prev) bottom, -100vh) + {quantaRem 1})); }\n" ++
+      -- a labelled item or a titled block positions what it holds, so its notes stay in its flow
+      s!"    :is(li.labelled, section[class]) aside.{marginNoteClass} \{ position: static;\n" ++
+      s!"      inline-size: auto; margin-block-start: {quantaRem 1}; }\n" ++
+      "  }\n") ++
     "}\n")
 
 /-- The base stylesheet's rules, after its custom properties. -/
@@ -6841,6 +6888,13 @@ private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
     stageShare "vh" length cfg.page.height
   else Ir.Track.contextCss e
 
+/-- Where a margin note is anchored in its run: its number where it is numbered, else an empty mark;
+`marginMarks` names it. -/
+private def marginAnchor (m : Ir.MarginMode) : Node :=
+  match m.num with
+  | some n => Html.elem "sup" #[Html.text (toString n)] #[("data-margin-at", "")]
+  | none => Html.elem "span" #[] #[("data-margin-at", "")]
+
 mutual
 
 /-- Inline content, pushed onto `acc`. -/
@@ -7102,6 +7156,12 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         #[Html.elem "a" #[Html.text (toString n)]
           #[("data-note", toString g), ("href", s!"#fn{g}"), ("id", s!"fnref{g}"),
             ("role", "doc-noteref"), ("style", "color: inherit")]])
+  -- A margin note's anchor stands where it is written, its text an aside after the paragraph.
+  | .marginNote m body =>
+    if !cfg.marginAsides then
+      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+        #[("class", marginInlineClass), ("role", "note")])
+    else acc.push (marginAnchor m)
   -- page furniture has no meaning in a continuous document
   | .pageNumber => acc
   | .pageCount => acc
@@ -7159,7 +7219,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .located _ _ | .role _ _
   | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill
   | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
-  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _
   | .linebreak _ => found
 
 private def usesContextUnit (xs : Array Inline) : Bool :=
@@ -8293,7 +8353,7 @@ public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
   | .italicCorr _ => acc
   | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => acc.push (f.run (labelPiece x) native)
+  | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ => acc.push (f.run (labelPiece x) native)
 
 public def labelNodesList (f : LabelFace) (acc : Array Node) (xs : List Inline)
     (mathCfg : Option Config := none) : Array Node :=
@@ -8360,7 +8420,7 @@ public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node
   | .italicCorr _ => simpa only [labelNodesOne] using ha
   | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
-  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ =>
     simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
 
 /-- Artifact-specific. -/
@@ -8411,7 +8471,7 @@ public theorem labelNodesOne_linesHeld_contract (f : LabelFace) (acc : Array Nod
   | .italicCorr _ => simpa only [labelNodesOne] using ha
   | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
-  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ | .marginNote _ _ =>
     simp only [labelNodesOne, Option.isSome_some, MathMl.linesHeldList_push, ha,
       labelRun_linesHeld, Bool.and_self]
 
@@ -8966,6 +9026,24 @@ private def withLead (cfg : Config) (content : Array Inline) (node : Node)
   | some "normalsize" | none => node
   | some n => withClass ("lead-" ++ n) node
 
+/-- A margin note's aside: its number where it is numbered, then its text. -/
+private def marginAside (cfg : Config) (m : Ir.MarginMode) (body : Array Inline) : Node :=
+  let mark := match m.num with
+    | some n => #[Html.elem "sup" #[Html.text (toString n)], Html.text " "]
+    | none => #[]
+  Html.elem "aside" #[Html.elem "p" (mark ++ inlines cfg body)]
+    #[("class", marginNoteClass), ("role", "note"), ("data-margin", "")]
+
+/-- The asides after a paragraph, one per margin note, in its anchors' order. -/
+private def marginAsidesOf (cfg : Config) (b : Block) : Array Node :=
+  match b with
+  | .para content => (Ir.marginNotesIn content).map fun (m, body) => marginAside cfg m body
+  | .section .. | .list .. | .center _ | .ragged .. | .spaced .. | .role .. | .link ..
+  | .quote .. | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
+  | .algorithm .. | .columns _ | .onSteps .. | .altSteps .. | .note _ | .only .. | .nav ..
+  | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule ..
+  | .picture _ | .table .. | .float .. | .bibliography .. | .contents .. | .lines _ => #[]
+
 private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
   -- label anchors alone must not open a blank paragraph
   if Ir.anchorsOnly content then
@@ -9235,7 +9313,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     | .onList => cfg
     | .box | .aside => { cfg with fillsInert := true }
   match b with
-  | .para content => paragraphNode cfg content
+  | .para content => paragraphNode { cfg with marginAsides := true } content
   | .lines ls => Html.elem "p" (laidNodes cfg ls) #[("class", "lines")]
   | .section level _ num title =>
     let element := level.element
@@ -9673,7 +9751,8 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
       { cfg.afterBlock b with continues := if b.isSkip then cfg.continues else b.continuesPar
                               runsOn := false }
       (acc.push (cfg.applyEpoch
-        (if cfg.runsOn then withClass "u-runs-on" (blockNode cfg b) else blockNode cfg b))) rest
+        (if cfg.runsOn then withClass "u-runs-on" (blockNode cfg b) else blockNode cfg b)) ++
+        marginAsidesOf cfg b) rest
 
 private def columnNodesInto (cfg : Config) (total share : Length) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
@@ -9774,7 +9853,7 @@ private def listItem (cfg : Config) (tag : String) : List Block → Node
       let child := cfg.into
       cfg.applyEpoch (Html.elem tag
         (blockNodesInto (child.afterBlock b)
-          #[child.applyEpoch (blockNode child b)] rest))
+          (#[child.applyEpoch (blockNode child b)] ++ marginAsidesOf child b) rest))
 
 end
 
@@ -10056,7 +10135,9 @@ retitle the sections apart, or link to the numbered anchor")
       let node := match anchors[i]?.join with
         | some sa => withId sa.id (blockNode cfg b)
         | none => blockNode cfg b
-      unless Ir.pageMarkerBlock b do cur := cur.push (cfg.applyEpoch node)
+      unless Ir.pageMarkerBlock b do
+        let asides := marginAsidesOf cfg b
+        cur := cur.push (cfg.applyEpoch node) ++ asides
       cfg := cfg.afterBlock b
   return (close out cur openId, diags)
 
@@ -10236,6 +10317,21 @@ private def noteMarks (places : Ir.NotePlaces) (nodes : Array Node) : Array Node
           | none => "#"
       (attrs.filter (·.1 != "data-back")).map fun (a, v) => if a == "href" then (a, target) else (a, v) }
   back.list #[] nodes.toList
+
+/-- Each margin note's anchor and aside named in reading order, the aside positioned against its
+anchor below the one before it where the article layout sets it in the margin column. -/
+private def marginMarks (nodes : Array Node) : Array Node :=
+  let thread : Html.Thread (Nat × Nat) := ⟨fun st _ attrs =>
+    if attrs.any (·.1 == "data-margin-at") then
+      let k := st.1 + 1
+      ((k, st.2), ((attrs.filter (·.1 != "data-margin-at")).push ("id", s!"mn{k}-at")).push
+        ("style", s!"anchor-name: --mn{k}-at"))
+    else if attrs.any (·.1 == "data-margin") then
+      let k := st.2 + 1
+      ((st.1, k), ((attrs.filter (·.1 != "data-margin")).push ("id", s!"mn{k}")).push
+        ("style", s!"--mn-at: --mn{k}-at; --mn-prev: --mn{k - 1}; anchor-name: --mn{k}"))
+    else (st, attrs)⟩
+  (thread.list (0, 0) #[] nodes.toList).2
 
 /-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
 private def emitTreeCore (cfg : Config) (doc : Doc)
@@ -10617,7 +10713,7 @@ retitle them apart, or link to the numbered anchor")
                   ("aria-label", "back to the text"), ("style", "color: inherit")]))
             #[("id", s!"fn{i + 1}"), ("value", toString (num.getD 0))]) #[]]
       #[("role", "doc-endnotes")])
-  let inner := noteMarks cfg.notes inner
+  let inner := marginMarks (noteMarks cfg.notes inner)
   let mainAttrs := (if bodyClass.isEmpty then #[] else #[("class", bodyClass)]) ++
     #[("style", "container-type: inline-size")]
   let main := Html.elem "main" inner mainAttrs
@@ -10896,6 +10992,10 @@ public structure A11yFacts where
   links : Nat := 0
   /-- Links with no text, image alternative or name of their own. -/
   linksUnnamed : Nat := 0
+  /-- Margin notes' asides, each a note after its paragraph in reading order. -/
+  marginNotes : Nat := 0
+  /-- Margin notes' asides with no text a reader reaches. -/
+  marginNotesEmpty : Nat := 0
   deriving Repr, BEq, Inhabited
 
 /-- The navigation landmarks assistive technology cannot tell apart: the unnamed ones where more
@@ -11006,6 +11106,10 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
                  linksUnnamed := acc.linksUnnamed +
                    (if nameHeld.list () false kids.toList || carriesName (.elem tag attrs kids)
                     then 0 else 1) }
+    else acc
+  let acc := if tag == "aside" && (classTokens attrs).contains marginNoteClass then
+      { acc with marginNotes := acc.marginNotes + 1
+                 marginNotesEmpty := acc.marginNotesEmpty + (if holdsTextList kids.toList then 0 else 1) }
     else acc
   if declaresScroll own deck tag attrs then
     { acc with scrolls := acc.scrolls + 1

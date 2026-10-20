@@ -248,6 +248,7 @@ mutual
   | .cite _ keys => acc ++ (Text.chars .engine (citeMarks keys)).toArray
   | .cited _ _ ink => locatedListOnto o acc ink.toList
   | .footnote _ body => locatedListOnto o acc body.toList
+  | .marginNote _ body => locatedListOnto o acc body.toList
   | .linebreak _ => acc.push (' ', .engine)
 
 end
@@ -279,7 +280,8 @@ private theorem locatedOnto_acc (o : Origin) (acc : Array (Char × Origin)) (x :
     simp [locatedOnto]
   | .linebreak _ => simp [locatedOnto]
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body | .footnote _ body =>
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body | .footnote _ body
+  | .marginNote _ body =>
     simp only [locatedOnto]
     exact locatedListOnto_acc _ acc body.toList
   | .altSteps _ a b =>
@@ -329,7 +331,8 @@ private theorem locatedOnto_erased (o : Origin) (acc : Array (Char × Origin)) (
     simp [locatedOnto, plainTextOne, Text.chars, Function.comp_def]
   | .linebreak _ => simp [locatedOnto, plainTextOne]
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body | .footnote _ body =>
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body | .footnote _ body
+  | .marginNote _ body =>
     simp only [locatedOnto, plainTextOne]
     exact locatedListOnto_erased _ acc body.toList
   | .altSteps _ a b =>

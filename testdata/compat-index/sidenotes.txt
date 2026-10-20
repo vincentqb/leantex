@@ -1,0 +1,10 @@
+# source: sidenotes manual (sidenotes.pdf, for sidenotes.sty v1.00), §2
+# usage: \sidenote numbered in the margin, its mark in the text; the split
+# marks, the margin captions and figures and the wide floats are named.
+body impl Text.\sidenote{A note.}
+body impl Text.\sidenote[][2pt]{A note.}
+body refuse:W0301 Text.\sidenotemark
+body refuse:W0301 \sidenotetext{A note.}
+body refuse:W0301 \sidecaption{A caption.}
+body refuse:W0302 \begin{marginfigure}x\end{marginfigure}
+body refuse:W0302 \begin{margintable}x\end{margintable}

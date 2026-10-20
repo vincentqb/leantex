@@ -702,6 +702,21 @@ private def listLosses (file : String) (ordered : Bool) (start : Nat) (tight : B
   (if tight then #[] else #[routeDegraded file "loose-list"
       (Diag.say .W0392 .spacing) p (detail := some "between a loose list's items")])
 
+/-- An aside's paragraphs, where it holds nothing else. -/
+private def asideParas : List Blk → Option (List (Array Inl))
+  | [] => some []
+  | .para body _ :: rest => (asideParas rest).map (body :: ·)
+  | _ :: _ => none
+
+/-- An aside's paragraphs as one run, a line break between two. -/
+private def asideLines (file : String) (dialect : Dialect) (out : Array Raw) (ds : Array Diag)
+    (p : Pos) : List (Array Inl) → Array Raw × Array Diag
+  | [] => (out, ds)
+  | body :: rest =>
+    let (rs, ds') := inlListRaws file dialect #[] #[] body.toList
+    let out := if out.isEmpty then rs else (out.push (.ctrl "\\" p)) ++ rs
+    asideLines file dialect out (ds ++ ds') p rest
+
 mutual
 
 private def blkRaws (file : String) (refs : Array Raw) (dialect : Dialect) :
@@ -732,6 +747,16 @@ private def blkRaws (file : String) (refs : Array Raw) (dialect : Dialect) :
   | .quote body p =>
     let (rs, ds) := blkListRaws file refs dialect #[] #[] body.toList
     (#[.env "quote" rs p], ds)
+  -- A margin note of paragraphs is `\marginpar` standing alone, each paragraph a line of it.
+  | .aside body p =>
+    match asideParas body.toList with
+    | some paras =>
+      let (rs, ds) := asideLines file dialect #[] #[] p paras
+      (#[.par p, .ctrl "marginpar" p, .group rs p, .par p], ds)
+    | none =>
+      let (rs, ds) := blkListRaws file refs dialect #[] #[] body.toList
+      (#[.par p] ++ rs, ds.push (routeDegraded file "aside-blocks"
+        "a margin note holding a list, code, a table or a heading sets in the text" p))
   | .disclosure summary expanded body p =>
     let (ss, sds) := inlListRaws file dialect #[] #[] summary.toList
     let (rs, ds) := blkListRaws file refs dialect #[] #[] body.toList
@@ -967,6 +992,7 @@ private def texBlk (file : String) (refs : Array Raw) (dialect : Dialect) (st : 
   | b@(.metadata _ p) => st.keep file (blkRaws file refs dialect b) p
   | b@(.refs p) => st.keep file (blkRaws file refs dialect b) p
   | b@(.note _ _ p) => st.keep file (blkRaws file refs dialect b) p
+  | b@(.aside _ p) => st.keep file (blkRaws file refs dialect b) p
 
 private def texBlks (file : String) (refs : Array Raw) (dialect : Dialect) (st : TexStream) :
     List Blk → TexStream
@@ -997,6 +1023,7 @@ mutual
 private def refsAtOne : Blk → Option Pos
   | .refs p => some p
   | .quote body _ => refsAt body.toList
+  | .aside body _ => refsAt body.toList
   | .disclosure _ _ body _ => refsAt body.toList
   | .list _ _ _ items _ => refsAtItems items.toList
   | .para .. | .heading .. | .code .. | .rule _ | .table .. | .lean .. | .metadata .. | .note .. =>
@@ -1023,6 +1050,7 @@ private def citesBlk (inl : List Inl → Bool) : Blk → Bool
   | .para body _ => inl body.toList
   | .heading _ body _ => inl body.toList
   | .quote body _ => citesBlks inl body.toList
+  | .aside body _ => citesBlks inl body.toList
   | .disclosure summary _ body _ => inl summary.toList || citesBlks inl body.toList
   | .list _ _ _ items _ => citesItems inl items.toList
   | .table _ header rows _ =>
@@ -1295,6 +1323,7 @@ private def abbrevBlk : Blk → Blk
   | .para body p => .para (abbrevInls body.toList).toArray p
   | .heading l body p => .heading l (abbrevInls body.toList).toArray p
   | .quote body p => .quote (abbrevBlks body.toList).toArray p
+  | .aside body p => .aside (abbrevBlks body.toList).toArray p
   | .disclosure summary e body p =>
     .disclosure (abbrevInls summary.toList).toArray e (abbrevBlks body.toList).toArray p
   | .list o st t items p => .list o st t (abbrevItemBlks items.toList).toArray p
