@@ -10,12 +10,12 @@ pre refuse:E0313 \cfoot*{x}
 pre impl \ofoot{x}
 pre refuse:W0301 \lohead{x}
 pre refuse:W0301 \rehead{x}
-pre inert:default \clearpairofpagestyles
+pre impl \clearpairofpagestyles
 pre inert:noop \pagestyle{scrheadings}
 pre impl \setkomafont{section}{\bfseries}
 pre impl \setkomafont{disposition}{\bfseries}
 pre refuse:W0301 \addtokomafont{section}{\itshape}
-# Two rows move no ink and say why: \clearpairofpagestyles clears to the
-# state a document starts in (no running fields), and \pagestyle{scrheadings}
-# is answered by nothing — declared fields apply by themselves. The field
+# One row moves no ink and says why: \pagestyle{scrheadings} on one-sided
+# pages is answered by nothing — declared fields apply by themselves; on
+# two-sided pages it sets KOMA-Script's headings, as its own fields do. The field
 # rows above carry the drawn evidence.

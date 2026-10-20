@@ -4,6 +4,7 @@ font dir "fonts"
 font body "Source Serif Pro"
 meta title "Squares and Triangles"
 meta author "Pat Placeholder"
+role page plain
 center
   section* 0
     text "Squares and Triangles"

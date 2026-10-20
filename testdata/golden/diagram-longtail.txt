@@ -5,6 +5,7 @@ font body "Source Serif Pro"
 palette wash #2A6F4E
 meta title "Shades and Shapes"
 meta author "Pat Placeholder"
+role page plain
 center
   section* 0
     text "Shades and Shapes"

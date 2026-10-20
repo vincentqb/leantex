@@ -4,6 +4,7 @@ font dir "fonts"
 font body "Source Serif Pro"
 meta title "Affine Geometry Probe"
 assert pages == 1
+role page plain
 center
   section* 0
     text "Affine Geometry Probe"

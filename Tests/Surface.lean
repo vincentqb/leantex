@@ -2236,7 +2236,8 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let (doc, ds) := elabStr "\\title[junk words {Kept Title}\n\\maketitle"
      !ds.any (·.severity == .error) &&
        (match doc.body with
-        | #[.para junk, .center _] => (Ir.plainText junk).endsWith "junk words"
+        | #[.para junk, .role n #[], .center _] =>
+          n == Ir.plainPageRole && (Ir.plainText junk).endsWith "junk words"
         | _ => false))
   t "a section with no group after its unclosed bracket warns, never fatally"
     (let ds := (elabStr "\\section[never closes\nBody.").2

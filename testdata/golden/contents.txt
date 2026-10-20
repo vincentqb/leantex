@@ -2,6 +2,7 @@ class article
 page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
 meta title "Kettles and Teapots"
 meta author "Pat Placeholder"
+role page plain
 center
   section* 0
     text "Kettles and Teapots"

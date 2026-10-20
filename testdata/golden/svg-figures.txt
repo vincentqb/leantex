@@ -4,6 +4,7 @@ font dir "fonts"
 font body "Source Serif Pro"
 font sans "Fira Sans"
 meta title "Figures Drawn from SVG"
+role page plain
 center
   section* 0
     text "Figures Drawn from SVG"

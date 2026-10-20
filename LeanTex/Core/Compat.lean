@@ -835,6 +835,12 @@ private structure St where
   footEven : Array (Nat × Array Raw) := #[]
   /-- Whether the pages are in the `headings` style, `none` where nothing set a style. -/
   headingsStyle : Option Bool := none
+  /-- Whether `\pagestyle{fancy}` set fancyhdr's style, its fields over the package's defaults. -/
+  fancyStyle : Bool := false
+  /-- The fancyhdr places a field command named: head or foot, verso or recto, and slot. -/
+  fancyTouched : Array (Bool × Bool × Nat) := #[]
+  /-- Whether scrlayer-scrpage's `\clearpairofpagestyles` cleared every field. -/
+  fieldsCleared : Bool := false
   /-- Whether the class sets two-sided pages. -/
   twoSided : Bool := false
   runPos : Pos := { line := 1, col := 1 }
@@ -7007,6 +7013,8 @@ private def geometry (opts : Array Raw) (pos : Pos)
   let mut hr : Option (String × String) := none
   -- The width as a fraction of the paper's (`hscale`).
   let mut hs : Option (String × String) := none
+  -- Whether the pages are two-sided, geometry's own `twoside` included.
+  let mut sided := (← get).twoSided
   for entry in Entries.read .keyval opts do
     let e := entry.src
     match entry.key, entry.value with
@@ -7030,6 +7038,14 @@ option") pos
       else if f == "vcentering" || f == "centering" then
         vb := { vb with ratio := some (f, "1:1") }
         spelledNow := spelledNow.push f
+        if f == "centering" && sided then keys := keys.push (.hmarginratio, "1:1", #[f])
+      else if f == "hcentering" then
+        if sided then keys := keys.push (.hmarginratio, "1:1", #[f])
+        else inertParam "geometry" f spelling (.asWithout "one-sided margins are equal") pos
+      -- geometry's `twoside` mirrors a verso's margins, the free width split 2:3 unless declared.
+      else if f == "twoside" then
+        sided := true
+        keys := keys.push (.twoside, "on", #[f])
       else dropped := dropped.push f
     | k0, some v0 =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
@@ -7067,8 +7083,9 @@ option") pos
         else if k == "vmargin" then
           vb := { vb with top := some (k, a), bottom := some (k, b) }
           spelledNow := spelledNow.push k
-        else if k == "left" || k == "lmargin" then hl := some (k, a)
-        else if k == "right" || k == "rmargin" then hr := some (k, a)
+        else if k == "left" || k == "lmargin" || k == "inner" then hl := some (k, a)
+        else if k == "right" || k == "rmargin" || k == "outer" then hr := some (k, a)
+        else if k == "hmarginratio" then keys := keys.push (.hmarginratio, v, #[e])
         else if k == "top" || k == "tmargin" then
           vb := { vb with top := some (k, a) }
           spelledNow := spelledNow.push k
@@ -7093,11 +7110,18 @@ option") pos
           inertParam "geometry" k spelling
             (.engineSets "the running head takes its content's height, and the text block stays where the margins put it") pos
         else dropped := dropped.push k
-  -- Equal left and right margins are the symmetric margin; an unequal or lone side stays named.
+  -- Equal left and right margins are the symmetric margin; unequal ones their mean, split in their
+  -- ratio, a recto's left the inner; a lone side stays named.
   match hl, hr with
   | some (lk, l), some (rk, r) =>
     if l == r then keys := keys.push (.hmargin, l, #[lk, rk].toList.eraseDups.toArray)
-    else for k in [lk, rk].eraseDups do dropped := dropped.push k
+    else match Decl.parseLength l, Decl.parseLength r with
+      | some ls, some rs =>
+        if ls.em == 0 && ls.ex == 0 && rs.em == 0 && rs.ex == 0 && 0 ≤ ls.sp.units && 0 ≤ rs.sp.units then
+          keys := (keys.push (.hmargin, ((ls.sp + rs.sp) / (2 : Int)).toPtString ++ "pt", #[lk])).push
+            (.hmarginratio, s!"{ls.sp.units}:{rs.sp.units}", #[rk])
+        else for k in [lk, rk].eraseDups do dropped := dropped.push k
+      | _, _ => for k in [lk, rk].eraseDups do dropped := dropped.push k
   | some (k, _), none | none, some (k, _) => dropped := dropped.push k
   | none, none => pure ()
   -- A first load or a `\newgeometry` placing no horizontal key sizes the text block at geometry's
@@ -10945,6 +10969,9 @@ the option" else "the page is one-sided, as without the option")) pos
 the option" else "the page is one-sided, as without the option")) pos
       let sides : Array (Native.PageKey × String) :=
         if koma && twoside then #[(.twoside, "on")] else #[]
+      -- scrbook opens its chapters on a recto and sets its pages in the `headings` style.
+      let sides := if koma && (← get).chaptersRight then sides.push (.openright, "on") else sides
+      if cls == "scrbook" then write fun st => { st with headingsStyle := some true }
       -- KOMA-Script's report and book classes head chapters.
       let chapterOpt := if chapterClasses.contains cls && !keptItems.contains "chapters" then
         ["chapters"] else []
@@ -11562,7 +11589,10 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
         if onE && !even.contains k then even := even.push k
     let toHead := c.name != "fancyfoot"
     let toFoot := c.name != "fancyhead"
+    let touched := ([(true, toHead), (false, toFoot)].filter (·.2)).toArray.flatMap fun (isHead, _) =>
+      odd.map (isHead, false, ·) ++ even.map (isHead, true, ·)
     write fun st =>
+      let st := { st with fancyTouched := st.fancyTouched ++ touched }
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
       let put (slots : Array Nat) (parts : Array (Nat × Array Raw)) : Array (Nat × Array Raw) :=
         slots.foldl (init := parts) fun parts slot =>
@@ -11576,14 +11606,20 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     return #[]
   | .clearPageStyles => do
     -- scrlayer-scrpage's field reset clears every gathered head and foot field.
-    write fun st => { st with head := #[], foot := #[], headEven := #[], footEven := #[] }
+    write fun st => { st with head := #[], foot := #[], headEven := #[], footEven := #[],
+                              headingsStyle := some false, fieldsCleared := true }
     became "\\clearpairofpagestyles" "no running fields; fields declared after apply" c.pos
     return #[]
   | .pageStyle => do
     let v := (c.src 0).trimAscii.toString
     match v with
     | "fancy" | "scrheadings" =>
-      write fun st => { st with headingsStyle := some false }
+      -- scrlayer-scrpage's own fields on two-sided pages are KOMA-Script's headings, the mark and
+      -- the folio outside.
+      write fun st =>
+        let st := if v == "fancy" && st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
+        { st with headingsStyle := some (v == "scrheadings" && st.twoSided && !st.fieldsCleared)
+                  fancyStyle := st.fancyStyle || v == "fancy" }
       discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
         s!"pagestyle:{v}" c.pos
       return #[]
@@ -11614,6 +11650,8 @@ declare the furniture directly")
     if c.src 0 == "empty" then
       write fun st => { st with runFrom := 2 }
       became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" c.pos
+    -- In the body, the plain style on the page standing: no running head, the folio in the foot.
+    if c.src 0 == "plain" && (← get).inDoc then return #[.ctrl Ir.plainPageRole c.pos]
     return #[]
   | .addBibResource => do
     -- biblatex's `\addbibresource`: a `.bib` file `\printbibliography` later prints.
@@ -12009,8 +12047,9 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .komaOptions => some { args := [some "fontsize=12pt"], inDoc := false }
   | .komaOption => some { args := [some "fontsize", some "12pt"], inDoc := false }
   | .changeFontSizes => some { args := [none, some "12pt"], inDoc := false }
+  | .thisPageStyle => some { args := [some "plain"], inDoc := true }
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
-  | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
+  | .clearPageStyles | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
   | .beamerOption | .inputEncoding | .graphColor => none
 
@@ -12818,7 +12857,8 @@ private def QuietTail (st : St) : Prop :=
   st.head = #[] ∧ st.foot = #[] ∧ st.runFrom ≤ 1 ∧
     st.listResets = #[] ∧ st.listDefs = #[] ∧
     st.deferred = #[] ∧ st.beamerFootline = none ∧ st.beamerTemplates = #[] ∧
-    st.headEven = #[] ∧ st.footEven = #[] ∧ st.headingsStyle = none
+    st.headEven = #[] ∧ st.footEven = #[] ∧ st.headingsStyle = none ∧ st.fancyStyle = false ∧
+    st.fieldsCleared = false
 
 private def TailDiag (d : Diag) (st : St) : Prop :=
   QuietTail st ∧ d ∈ st.diags
@@ -14519,7 +14559,7 @@ local macro "emits_nothing" : tactic => `(tactic| (
 /-- The lowerings proved to return no raws on every path, their whole effect the report and state. -/
 @[expose] public def Lowering.emitsNothing : Lowering → Bool
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
-  | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
+  | .clearPageStyles | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
   | .beamerOption | .inputEncoding | .graphColor => true
   | _ => false
@@ -15101,10 +15141,35 @@ private theorem rewriteCursor_last_document_exact (cursor : RewriteCursor)
     rewriteList, closeLastDocument]
   rfl
 
+/-- fancyhdr's fields where the document names none, as the package initialises them: the marks in
+the head, the outer place the right mark's, and the folio in the foot's centre. -/
+private def fancyDefaults (twoside : Bool) (pos : Pos) : Array (Bool × Bool × Nat × Array Raw) :=
+  let mark (n : String) : Array Raw := #[.ctrl "slshape" pos, .ctrl n pos]
+  let heads := if twoside then
+      #[(false, 0, "leftmark"), (false, 2, "rightmark"), (true, 0, "rightmark"), (true, 2, "leftmark")]
+    else #[(false, 0, "rightmark"), (false, 2, "leftmark"), (true, 0, "rightmark"), (true, 2, "leftmark")]
+  heads.map (fun (even, slot, n) => (true, even, slot, mark n)) ++
+    #[(false, false, 1, #[.ctrl "thepage" pos]), (false, true, 1, #[.ctrl "thepage" pos])]
+
+/-- The fields under `\pagestyle{fancy}`: each place no field command named takes fancyhdr's
+default. -/
+private def withFancyDefaults (st : St) : St :=
+  if !st.fancyStyle then st else
+  (fancyDefaults st.twoSided st.runPos).foldl (init := st) fun st (isHead, even, slot, src) =>
+    if st.fancyTouched.contains (isHead, even, slot) then st
+    else match isHead, even with
+      | true, false => { st with head := st.head.push (slot, src) }
+      | true, true => { st with headEven := st.headEven.push (slot, src) }
+      | false, false => { st with foot := st.foot.push (slot, src) }
+      | false, true => { st with footEven := st.footEven.push (slot, src) }
+
 /-- The gathered running content, one declaration each. -/
 private def flushRunning : M (Array Raw) := do
-  let st ← get
+  let st := withFancyDefaults (← get)
   let pos := st.runPos
+  -- A field fancyhdr cleared still replaces the plain style's folio.
+  let cleared (isHead : Bool) : Bool :=
+    (st.fieldsCleared && !isHead) || (st.fancyStyle && st.fancyTouched.any (·.1 == isHead))
   let at' (parts : Array (Nat × Array Raw)) (k : Nat) : Array Raw :=
     (parts.filter (·.1 == k)).foldl (init := #[]) fun acc (_, r) =>
       if acc.isEmpty then r else (acc.push .space) ++ r
@@ -15121,10 +15186,10 @@ private def flushRunning : M (Array Raw) := do
   let optRaws : Array Raw := if st.runFrom > 1 then
     #[.sym '[' pos, .word s!"from = {st.runFrom}" pos, .sym ']' pos] else #[]
   let mut out : Array Raw := #[]
-  unless st.head.isEmpty do
+  unless st.head.isEmpty && !cleared true do
     became "\\ihead / \\chead / \\ohead" s!"\\runninghead{opt}\{{lineSrc st.head}}" pos
     out := out ++ #[.ctrl "runninghead" pos] ++ optRaws ++ #[.group (line st.head) pos]
-  unless st.foot.isEmpty do
+  unless st.foot.isEmpty && !cleared false do
     became "\\ifoot / \\cfoot / \\ofoot" s!"\\runningfoot{opt}\{{lineSrc st.foot}}" pos
     out := out ++ #[.ctrl "runningfoot" pos] ++ optRaws ++ #[.group (line st.foot) pos]
   -- A verso's own fields, where they differ from a recto's on two-sided pages.
@@ -15137,6 +15202,13 @@ private def flushRunning : M (Array Raw) := do
     became "\\fancyfoot[E] / \\ifoot / \\ofoot"
       s!"\\runningfoot[pages = even]\{{lineSrc st.footEven}}" pos
     out := out ++ #[.ctrl "runningfoot" pos] ++ evenRaws ++ #[.group (line st.footEven) pos]
+  -- fancyhdr's rule under the head, `\headrulewidth` thick, 0.4pt unless redefined.
+  if st.fancyStyle then
+    let width := match st.binds["headrulewidth"]? with
+      | some (some v) => if v.arity == 0 then (rawSrc v.raws).trimAscii.toString else "0.4pt"
+      | _ => "0.4pt"
+    if (Decl.parseLength width).isSome then
+      out := out ++ (Native.Setting.page #[(.headrule, width)]).raws pos
   -- The `headings` style in force where the preamble ends.
   if st.headingsStyle == some true then
     out := out ++ (Native.Setting.page #[(.headings, "on")]).raws pos
@@ -15149,8 +15221,10 @@ private def flushRunning : M (Array Raw) := do
 
 private theorem flushRunning_quiet (st : St) (h : QuietTail st) :
     flushRunning st = (#[], st) := by
-  simp only [flushRunning, bind, StateT.bind, get, getThe, MonadStateOf.get,
-    StateT.get, pure, h.1, h.2.1, h.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.2, Array.isEmpty_empty,
+  have hd : withFancyDefaults st = st := by simp [withFancyDefaults, h.2.2.2.2.2.2.2.2.2.2.2.1]
+  simp only [flushRunning, bind, StateT.bind, get, getThe, MonadStateOf.get, hd,
+    StateT.get, pure, h.1, h.2.1, h.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.2.1,
+    h.2.2.2.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.2.2.2, Array.isEmpty_empty,
     Bool.false_eq_true, ↓reduceIte, Nat.not_lt.mpr h.2.2.1, decide_false,
     Bool.false_and, Bool.or_true]
   rfl
@@ -16165,7 +16239,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
     have hquiet : QuietTail after := by
-      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      exact ⟨rfl, rfl, Nat.le_refl 1, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
     have hmem : atSource st pos (packageRefusal st.file pos part.trimAscii.toString) ∈
         after.diags := by
       apply Array.mem_append.mpr

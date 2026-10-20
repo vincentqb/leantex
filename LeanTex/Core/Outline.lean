@@ -18,6 +18,9 @@ public structure OutlineHeading where
 /-- The anchor a bookmarked heading sets at its line, its control character in no author's name. -/
 @[expose] public def outlineMark (i : Nat) : String := s!"\u001Foutline-{i}"
 
+/-- The anchor a hand-written mark sets where it stands, the running heads reading it per page. -/
+@[expose] public def markAnchor (k : Nat) : String := s!"\u001Fmark-{k}"
+
 /-- Whether a heading is bookmarked: in a deck a section or subsection, starred or not, as beamer
 writes them; in a TeX flow an unstarred heading down to a subsubsection, as hyperref lists the
 contents; in a markdown or code document a heading down to its third rank, as pandoc does. -/

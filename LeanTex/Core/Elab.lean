@@ -700,6 +700,8 @@ public structure ESt where
   /-- An `\addcontentsline` entry waiting for the starred heading or reference list it stands
   before: that opener's site, the entry's unit and its words. -/
   contentsLine : Option (Pos × String × Array Inline × Option String) := none
+  /-- The groups each `\markboth` or `\markright` wrote, elaborated where the document ends. -/
+  markRaws : Array (Option (Array Raw) × Array Raw) := #[]
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -1049,6 +1051,34 @@ private def contentsLineInline (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : Str
   if (rawSrc (gs.getD 0 #[])).trimAscii.toString == "toc" then
     contentsLineLost ctx n "stands inside a paragraph" pos
   return j
+
+/-- Whether a control writes a mark the running heads read. -/
+private def markCtrl (n : String) : Bool := n == "markboth" || n == "markright"
+
+/-- A control that inks nothing where it stands: a contents line or a mark. -/
+private def lineCtrl (n : String) : Bool :=
+  n == "addcontentsline" || n == "addtocontents" || markCtrl n
+
+/-- A mark's groups kept for the running heads and the role naming it where it stands. -/
+private def recordMark (raws : Array Raw) (i : Nat) (n : String) :
+    EM (String × { j : Nat // i < j }) := do
+  let both := n == "markboth"
+  let (gs, j) := Compat.takeGroups raws (i + 1) (if both then 2 else 1)
+  let k := (← get).markRaws.size
+  let entry := if both then (some (gs.getD 0 #[]), gs.getD 1 #[]) else (none, gs.getD 0 #[])
+  modify fun st => { st with markRaws := st.markRaws.push entry }
+  return (Ir.markRole k, ⟨max (i + 1) j, by omega⟩)
+
+/-- A line control or a mark reading inside a paragraph: a mark's role where it stands,
+`\leftmark` and `\rightmark` the roles a running field fills. -/
+private def lineCtrlInline (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : String) (pos : Pos) :
+    EM (Array Inline × { j : Nat // i < j }) := do
+  if n == "leftmark" then return (#[.role Ir.leftMarkRole #[]], ⟨i + 1, by omega⟩)
+  if n == "rightmark" then return (#[.role Ir.rightMarkRole #[]], ⟨i + 1, by omega⟩)
+  if markCtrl n then
+    let (role, j) ← recordMark raws i n
+    return (#[.role role #[]], j)
+  return (#[], ← contentsLineInline ctx raws i n pos)
 
 /-- The surface that spelled what the context reads: an included file's own, else the document's. -/
 private def spelledSurface (ctx : Ctx) : Ir.Surface :=
@@ -5808,10 +5838,10 @@ sets as a block")
             elabInlinesFrom ctx raws j acc ""
         | none =>
         let name := Compat.overlayName name
-        if name == "addcontentsline" || name == "addtocontents" then
-          let ⟨j, hj⟩ ← contentsLineInline ctx raws i name pos
+        if lineCtrl name || name == "leftmark" || name == "rightmark" then
+          let (ink, ⟨j, hj⟩) ← lineCtrlInline ctx raws i name pos
           have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
-          elabInlinesFrom ctx raws j (flushText acc sb) ""
+          elabInlinesFrom ctx raws j (flushText acc sb ++ ink) ""
         else if name == "hfill" then
           let acc := flushText acc sb
           elabInlinesFrom ctx raws (i + 1) (acc.push .fill) ""
@@ -6724,7 +6754,7 @@ unseal inlineGroup
 public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   Compat.overlayName name == name &&
   (ctx.args.find? (·.1 == name)).isNone && (lookupUser ctx name).isNone &&
-  !["addcontentsline", "addtocontents", "hfill", "qedhere", "ensuremath", "\\", "par", "label",
+  !["addcontentsline", "addtocontents", "markboth", "markright", "leftmark", "rightmark", "hfill", "qedhere", "ensuremath", "\\", "par", "label",
     "paragraph", "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
     "nolinkurl", "path", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
     "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
@@ -6836,7 +6866,7 @@ private theorem elabInlinesFrom_unknown_exact (ctx : Ctx) (raws : Array Raw) (i 
     cases raws[i + 1]? <;> simp only [Option.bind, ha]
   have hu : lookupUser {ctx with macroRoles := roles} name = none := by
     simp only [hn']
-  simp only [hn', haccent, Bool.false_eq_true, ↓reduceIte, Bool.false_or,
+  simp only [hn', haccent, lineCtrl, markCtrl, Bool.false_eq_true, ↓reduceIte, Bool.false_or,
     Option.isSome_none, htail]
   rw [hu]
   simp only [dite_false]
@@ -8156,6 +8186,8 @@ private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
       else String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)
     (if t.isEmpty then #[] else #[.text t], t.isEmpty)
   | .role name inner =>
+    -- A mark stands at the edge as a label does.
+    if inner.isEmpty && (Ir.markRole? name).isSome then (#[.role name inner], leading) else
     let (inner, more) := trimParaList leading #[] inner.toList
     (if inner.isEmpty then #[] else #[.role name inner], more)
   | .located source inner =>
@@ -10720,6 +10752,9 @@ starred heading lists that heading, before it once it stands; material the conte
 an entry with no heading beside it, are named. -/
 private def contentsLineArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : String) (pos : Pos)
     (blocks : Array Block) : EM (Array Block × { j : Nat // i < j }) := do
+  if markCtrl n then
+    let (role, j) ← recordMark raws i n
+    return (blocks.push (.role role #[]), j)
   let (gs, j) := contentsLineEnd raws i n
   if (rawSrc (gs.getD 0 #[])).trimAscii.toString != "toc" then return (blocks, j)
   if n != "addcontentsline" then
@@ -11126,7 +11161,8 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
     let content := if tps.align == some .left then inner else #[.center inner]
-    blocks := blocks ++ content
+    -- `\maketitle` sets its page in the plain style.
+    blocks := (blocks.push (.role Ir.plainPageRole #[])) ++ content
   return blocks
 
 /-- A frame, flattened into the lone frame it holds when neither carries a
@@ -13337,12 +13373,12 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
     || n == Ir.trivItemRole || n == Ir.captionAtRole
-    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole
+    || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || n == Ir.plainPageRole
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
     || n == Parse.citeSetupMark || n == "tableofcontents"
-    || ((n == "addcontentsline" || n == "addtocontents") && labelsOnlyRaws cur)
+    || (lineCtrl n && labelsOnlyRaws cur)
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
@@ -13710,7 +13746,8 @@ private def pageMark? (n : String) : Option Block :=
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
   else if n == Ir.captionCloseRole || n == Ir.trivItemRole || n == Ir.captionAtRole then
     some (.role n #[])
-  else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole then some (.role n #[])
+  else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || n == Ir.plainPageRole then
+    some (.role n #[])
   else none
 
 /-- The length keys Compat's closing mark restores at a scope's end. -/
@@ -14613,7 +14650,7 @@ when it is empty — '{}'")
     | _ =>
       diag ctx .E0304 "'\\logo' needs one group of inline content" pos
       return (blocks, ⟨i + 1, by omega⟩)
-  else if n == "addcontentsline" || n == "addtocontents" then
+  else if lineCtrl n then
     contentsLineArm ctx raws i n pos blocks
   else if n == "tableofcontents" then
     -- beamer's takes options; a flow's contents stand under their heading, as article's
@@ -15812,6 +15849,7 @@ private def pageDim : Native.PageKey → Option (Length → PageSpec → PageSpe
   | .furnituregap => some fun d s => { s with furnitureGap := some d }
   | .headsep => some fun d s => { s with headsep := some d }
   | .footskip => some fun d s => { s with footskip := some d }
+  | .headrule => some fun d s => { s with headRule := some d }
   | _ => none
 
 /-- The page switch an on-or-off key sets; lineno's `\linenumbers` is `linenumbers`. -/
@@ -19430,6 +19468,8 @@ the .bib file"
       salvage := (← get).salvage
       frameRestart := (← get).frameRestart
       shortTitles := (← get).headingShorts
+      marks := ← (← get).markRaws.mapM fun (l, r) => do
+        return { left := ← l.mapM (elabInlines ctx), right := ← elabInlines ctx r }
       listNotes := (← get).ctr.notesAt.map (·, 0)
     }
     return { doc, table, pictureReport, locale := ctx.locale, resolve := !stRefs.refSites.isEmpty }

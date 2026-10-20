@@ -2,6 +2,7 @@ class article
 page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
 meta title "Bars Probe Title"
 meta author "An Invented Author"
+role page plain
 center
   block before 600/1000em
   rule #000000 3pt

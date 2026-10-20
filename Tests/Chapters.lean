@@ -149,8 +149,8 @@ and its folio ({heads ps 3})"
     (bib.size ≥ 4 && hasStr (head bib 1) "CHAPTER1.ALPHA" && hasStr (head bib 3) "BIBLIOGRAPHY")
   let off := pages (doc "[twoside]{article}" "\\pagestyle{headings}\n\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n\\fancyhf{}"
     s!"\\section\{Alpha}\n{filler}")
-  t s!"twoside: a later fancy style clears the headings marks ({heads off 2})"
-    (head off 1 == "2")
+  t s!"twoside: a later fancy style clears the headings marks and the folio ({heads off 2})"
+    (off.size ≥ 2 && head off 1 == "")
   t "twoside: a verso's field on one-sided pages is named"
     ((elabStr (doc "{article}" "\\runninghead[pages = even]{E}" "x")).2.any fun d =>
       d.code == "W0104" && hasStr d.message "one-sided")
@@ -162,12 +162,100 @@ and its folio ({heads ps 3})"
   let geo := pages (doc "{book}" "\\usepackage[margin=1in]{geometry}" filler)
   t s!"twoside: equal declared margins stand on both sides ({(List.range 2).map (left geo)})"
     (geo.size ≥ 2 && left geo 0 == left geo 1)
+  let near (a b : Option Dim.Length) : Bool := match a, b with
+    | some x, some y => x - y ≤ Dim.pt 1 / (50 : Int) && y - x ≤ Dim.pt 1 / (50 : Int)
+    | _, _ => false
+  let gs := pages (doc "{article}" "\\usepackage[twoside]{geometry}" filler)
+  t s!"twoside: geometry's twoside splits the free width 2:3 and mirrors it ({(List.range 2).map (left gs)})"
+    (gs.size ≥ 2 && (match left gs 0, left gs 1 with
+      | some r, some v => near (some (r * (3 : Int))) (some (v * (2 : Int)))
+      | _, _ => false))
+  let io := pages (doc "{article}" "\\usepackage[twoside,inner=2cm,outer=4cm]{geometry}" filler)
+  t s!"twoside: geometry's inner and outer margins stand inside and outside ({(List.range 2).map (left io)})"
+    (io.size ≥ 2 && near ((left io 0).map (· * (2 : Int))) (left io 1))
+  let lr := pages (doc "{article}" "\\usepackage[left=2cm,right=4cm]{geometry}" filler)
+  t s!"twoside: unequal one-sided margins stand on every page ({(List.range 2).map (left lr)})"
+    (lr.size ≥ 2 && left lr 0 == left lr 1 && near ((left lr 0).map (· * (2 : Int))) (left io 1))
+  let hr := pages (doc "{article}" "\\usepackage[hmarginratio=1:3]{geometry}" filler)
+  t s!"twoside: a one-sided hmarginratio places the block off the centre ({(List.range 2).map (left hr)})"
+    (hr.size ≥ 2 && left hr 0 == left hr 1 && (match left hr 0, left gs 0 with
+      | some a, some b => a < b
+      | _, _ => false))
   let koma := doc "{scrbook}" "" filler
   let ks := pages koma
   let kfree : Dim.Length := 2 * hm koma
   let kinner : Dim.Length := kfree * (1 : Int) / (3 : Int)
   t s!"twoside: KOMA-Script's two sides split the margins 1:2 ({(List.range 2).map (left ks)})"
     (ks.size ≥ 2 && left ks 0 == some kinner && left ks 1 == some (kfree - kinner))
+
+/-- The running heads' marks and plain pages as lualatex sets them: hand-written `\markboth` and
+`\markright`, fancyhdr's `\leftmark`, `\rightmark`, defaults, cleared fields and head rule, a plain
+page at a chapter and at `\maketitle`, and KOMA-Script's `headings` style. -/
+def markChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let filler := String.join ((List.range 90).map fun i =>
+    s!"Words of an invented paragraph number {i} run on across the measure and down the page. ")
+  let doc (cls pre body : String) : String :=
+    s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+  let pages (src : String) : Array CensusPage := censusOfSrc fonts src
+  let furniture (ps : Array CensusPage) (i : Nat) : Array CensusLine :=
+    (ps[i]?.map fun p => p.lines.filter (·.furniture)).getD #[]
+  let texts (ps : Array CensusPage) (i : Nat) : List String :=
+    (((furniture ps i).qsort (·.y < ·.y)).toList.map (·.text.replace " " "")).filter (!·.isEmpty)
+  let head (ps : Array CensusPage) (i : Nat) : String :=
+    (((furniture ps i).foldl (fun m l => match m with
+      | some (a : CensusLine) => if l.y < a.y then some l else m
+      | none => some l) none).map (·.text.replace " " "")).getD ""
+  let heads (ps : Array CensusPage) (n : Nat) : List String := (List.range n).map (head ps)
+  let pre := pages (doc "{book}" "" s!"\\chapter*\{Preface}\n\\markboth\{Preface}\{Preface}\n{filler}")
+  t s!"marks: a hand-written markboth heads the pages after it ({heads pre 3})"
+    (pre.size ≥ 3 && head pre 1 == "2Preface" && head pre 2 == "Preface3")
+  let right := pages (doc "{book}" "" s!"\\chapter\{Alpha}\n{filler}\\markright\{Other}\n{filler}")
+  t s!"marks: markright keeps the left mark and sets the right ({heads right 5})"
+    ((List.range right.size).any (fun i => head right i == "Other" ++ toString (i + 1)) &&
+      (List.range right.size).any (fun i => head right i == s!"{i + 1}CHAPTER1.ALPHA"))
+  let edge := pages (doc "{book}" "" s!"\\chapter\{Alpha}\nWords.\\markright\{Edge}\n\n{filler}")
+  t s!"marks: a mark ending a paragraph stands ({heads edge 3})"
+    ((List.range edge.size).any fun i => head edge i == "Edge" ++ toString (i + 1))
+  let fancyPre := "\\usepackage{fancyhdr}\n\\pagestyle{fancy}\n"
+  let reads := pages (doc "{book}" (fancyPre ++ "\\fancyhead[L]{\\leftmark}\n\\fancyhead[R]{\\rightmark}")
+    s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}")
+  t s!"marks: fancyhdr's fields read the marks, the folio its default foot ({texts reads 1})"
+    (reads.size ≥ 2 && texts reads 1 == ["CHAPTER1.ALPHA1.1.BRAVO", "2"])
+  let defaults := pages (doc "{article}" fancyPre s!"\\section\{Alpha}\n{filler}")
+  t s!"marks: fancyhdr's defaults head the page with the section's mark ({texts defaults 1})"
+    (defaults.size ≥ 2 && texts defaults 1 == ["1ALPHA", "2"])
+  let cleared := pages (doc "{article}" (fancyPre ++ "\\fancyhf{}\n\\fancyhead[R]{Probe}") filler)
+  t s!"marks: a cleared foot sets no folio ({texts cleared 0})"
+    (texts cleared 0 == ["Probe"])
+  let headY := ((furniture cleared 0).find? (·.text.replace " " "" == "Probe")).map (·.y)
+  let bodyY := (cleared[0]?.bind fun p => (p.lines.filter (!·.furniture))[0]?).map (·.y)
+  t s!"marks: fancyhdr rules the head below its baseline, above the body \
+({cleared[0]?.map (·.ruleSegs)}, {headY}, {bodyY})"
+    (cleared[0]?.any fun p => p.ruleSegs.any fun (y, th) =>
+      0 < th && headY.any (· < y) && bodyY.any (y < ·))
+  let ruleOff := pages (doc "{article}" (fancyPre ++ "\\renewcommand{\\headrulewidth}{0pt}") filler)
+  t "marks: a zero headrulewidth draws no rule"
+    (ruleOff[0]?.any fun p => p.ruleSegs.isEmpty)
+  let titled := pages (doc "{article}" (fancyPre ++ "\\title{Probe Title}\\author{Probe}\\date{}")
+    s!"\\maketitle\n\\section\{Alpha}\n{filler}")
+  t s!"marks: maketitle sets its page plain, the next headed ({texts titled 0}, {texts titled 1})"
+    (texts titled 0 == ["1"] && texts titled 1 == ["1ALPHA", "2"])
+  let plainHere := pages (doc "{article}" (fancyPre ++ "\\fancyhf{}\n\\fancyhead[R]{Probe}")
+    s!"{filler}\\thispagestyle\{plain}\n{filler}")
+  t s!"marks: thispagestyle plain sets one page plain ({(List.range 3).map (texts plainHere)})"
+    ((List.range plainHere.size).any fun i => texts plainHere i == [toString (i + 1)])
+  let kb := pages (doc "{scrbook}" "" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}\\section\{Charlie}\n{filler}")
+  t s!"marks: scrbook heads a verso with its chapter, a recto with its section, the folio in the \
+foot ({(List.range 3).map (texts kb)})"
+    (kb.size ≥ 3 && texts kb 0 == ["1"] && texts kb 1 == ["1Alpha", "2"] &&
+      ((texts kb 2).head?.any (·.startsWith "1.")))
+  let kr := pages (doc "{scrreprt}" "\\pagestyle{headings}" s!"\\chapter\{Alpha}\n\\section\{Bravo}\n{filler}")
+  t s!"marks: one-sided KOMA-Script heads mark the chapter alone ({texts kr 1})"
+    (kr.size ≥ 2 && texts kr 0 == ["1"] && texts kr 1 == ["1Alpha", "2"])
+  let ko := pages (doc "{scrbook}" "" "\\chapter{Alpha}\nWords.\n\\chapter{Bravo}\nWords.")
+  t s!"marks: scrbook opens a chapter on a recto, the blank verso empty ({ko.size})"
+    (ko.size == 3 && (furniture ko 1).isEmpty)
 
 /-- A report's chapter as references and assistive technology read it: cleveref names it a chapter,
 a label in its title lands on its head, and its word and number stand in its heading's structure. -/

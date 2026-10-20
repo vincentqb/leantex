@@ -5,6 +5,7 @@ font body "Source Serif Pro"
 font sans "Open Sans"
 font mono "Source Code Pro"
 meta title "Math Alphabet Styles"
+role page plain
 center
   section* 0
     text "Math Alphabet Styles"

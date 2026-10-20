@@ -5,6 +5,7 @@ font body "Source Serif Pro"
 palette leaf #2A6F4E
 meta title "Trees and Dots"
 meta author "Pat Placeholder"
+role page plain
 center
   section* 0
     text "Trees and Dots"

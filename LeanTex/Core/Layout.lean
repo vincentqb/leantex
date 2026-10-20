@@ -1779,7 +1779,11 @@ OpenType math face; `leantex fonts` lists families") (output := some .pdf) with 
             fontSize := some (.lit { width := Dim.SymLength.ofLength size })
             leading := leading.map fun l => .lit { width := Dim.SymLength.ofLength l } }
           body
-      | none => flatten mathOk noteOk st sty body
+      | none =>
+        -- A mark written inside a paragraph stands where its line does.
+        match Ir.markRole? n with
+        | some k => { st with toks := st.toks.push (.anchor (Ir.markAnchor k)) }
+        | none => flatten mathOk noteOk st sty body
   | .link url body => flatten mathOk noteOk st (sty.linked url) body
   | .decorated kind body =>
     match kind with
@@ -1829,10 +1833,10 @@ private theorem ref_link_projects (mathOk noteOk : Bool) (st : FlattenSt) (sty :
 
 private theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
-    (hs : st.roleMetrics.lookup n = none) :
+    (hs : st.roleMetrics.lookup n = none) (hm : Ir.markRole? n = none) :
     flattenOne mathOk noteOk st sty (.role n body)
       = flatten mathOk noteOk st sty body := by
-  simp [flattenOne, h, hs]
+  simp [flattenOne, h, hs, hm]
 
 private theorem linkLeafAfford_projects (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (s : Styles) (kind : String) (x : Inline)
@@ -2081,7 +2085,13 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
       exact ⟨by rw [LeafCtr.leave_attributes]; exact h1, m1⟩
     · split
       · exact flatten_attr_covers mathOk noteOk st _ body h
-      · exact flatten_attr_covers mathOk noteOk st sty body h
+      · split
+        · refine ⟨h, fun tk hm => ?_⟩
+          simp only [Array.mem_push] at hm
+          rcases hm with hm | hm
+          · exact Or.inl hm
+          · subst hm; exact Or.inr rfl
+        · exact flatten_attr_covers mathOk noteOk st sty body h
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .decorated kind body =>
     cases kind <;> exact flatten_attr_covers mathOk noteOk st _ body h
@@ -11983,6 +11993,7 @@ its baseline `2.3\baselineskip` past the page's first, and `1.725\baselineskip` 
 private def collectKomaChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
     (indent : Length) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
   let a := a.pageBreak
+  let a := (if r.openRight then a.pushOp .recto else a).pushOp .plainPage
   let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
     (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
   let skip := Ir.leadingFor r.geom.fontSize r.geom.leading
@@ -14126,6 +14137,10 @@ private def collectBlock (r : Rd) (a : Acc)
     if n == Ir.rectoRole then
       if r.twoSided then a.pageBreak.pushOp .recto else a
     else
+    if n == Ir.plainPageRole then a.pushOp .plainPage
+    else
+    if let some k := Ir.markRole? n then a.pushOp (.anchor (Ir.markAnchor k))
+    else
     if let some c := Ir.DisplayCtx.ofRole? n then collectBlocks { r with display := c } a body indent
     else
     if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
@@ -14530,13 +14545,15 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩, hpp⟩, hmk⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
+  have hmk' : Ir.markRole? n = none :=
+    Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hmk)
   have hst' : (r.underParskip a.tokens).styles.find? n = none := by
     rw [Spacing.Context.underParskip_styles]; exact hst
   simp only [collectBlock, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
-    hdc, hop, hpic, hre, hti, Bool.false_eq_true, ite_false]
+    hdc, hop, hpic, hre, hti, hpp, hmk', Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
     (opening : Ir.PageOpening) (indent : Length)
@@ -19938,27 +19955,33 @@ private def upperChar (c : Char) : Char :=
 private def upperText (t : String) : String :=
   t.foldl (fun acc c => if c == 'ß' then acc ++ "SS" else acc.push (upperChar c)) ""
 
-/-- A heading's mark under LaTeX's `headings` page style, as book.cls's and article.cls's
-`\chaptermark`, `\sectionmark` and `\subsectionmark` set it: whether it marks both sides (a
-`\markboth`) and its text; `none` where the style marks nothing for the heading. -/
-private def headingMark (chapters twoside : Bool) (title : Array Inline) :
-    Ir.Block → Option (Bool × Array Inline)
+/-- A heading's mark as book.cls's, article.cls's or KOMA-Script's `\chaptermark` and `\sectionmark`
+set it, both sides on two-sided pages and the right alone on one-sided; `none` where it marks nothing. -/
+private def headingMark (chapters twoside koma : Bool) (title : Array Inline) :
+    Ir.Block → Option Ir.PageMark
   | .section level starred num _ =>
     if starred then none else
     let shown := Ir.mapInlines (fun x => match x with | .label _ => .text "" | y => y) title
     let upper (xs : Array Inline) : Array Inline :=
       Ir.mapInlines (fun x => match x with | .text t => .text (upperText t) | y => y) xs
-    -- book.cls's `\thechapter. \ `, a sentence space and a control space; article.cls's `\quad`.
-    let numbered (sep : Int) : Array Inline := match num with
-      | some n => #[.text (if chapters then n ++ "." else n),
+    let numbered (sep : Int) (dot : Bool) : Array Inline := match num with
+      | some n => #[.text (if dot then n ++ "." else n),
           .hspace (.lit { width := { em := sep } }) true] ++ shown
       | none => shown
-    if chapters then
-      if level == .h1 then some (twoside, upper (numbered 777))
-      else if level == .h2 && twoside then some (false, upper (numbered 777))
+    let mark (both : Bool) (xs : Array Inline) : Ir.PageMark :=
+      if both then { left := some xs, right := #[] } else { left := none, right := xs }
+    let (top, next) : Ir.HeadingLevel × Ir.HeadingLevel := if chapters then (.h1, .h2) else (.h2, .h3)
+    if koma then
+      if level == top then some (mark twoside (numbered 500 false))
+      else if level == next && twoside then some (mark false (numbered 500 false))
       else none
-    else if level == .h2 then some (twoside, upper (numbered 1000))
-    else if level == .h3 && twoside then some (false, numbered 1000)
+    -- book.cls's `\thechapter. \ `, a sentence space and a control space; article.cls's `\quad`.
+    else if chapters then
+      if level == .h1 then some (mark twoside (upper (numbered 777 true)))
+      else if level == .h2 && twoside then some (mark false (upper (numbered 777 true)))
+      else none
+    else if level == .h2 then some (mark twoside (upper (numbered 1000 false)))
+    else if level == .h3 && twoside then some (mark false (numbered 1000 false))
     else none
   | _ => none
 
@@ -19968,42 +19991,63 @@ private def listHeadings (doc : Ir.Doc) : Array Nat :=
     (doc.body[i]? matches some (.section _ true _ _)) &&
       (doc.body[i + 1]? matches some (.contents ..) | some (.bibliography ..))
 
-/-- The headings whose lines carry their outline mark: the outline's, and the lists' under the
-`headings` style. -/
-private def markedHeadings (doc : Ir.Doc) : Std.HashSet Nat :=
-  if doc.info.outline == some false && !doc.page.markHeads then {} else
-  ((Ir.outlineHeadings doc).foldl (·.insert ·.index) ({} : Std.HashSet Nat)).insertMany
-    (if doc.page.markHeads then listHeadings doc else #[])
+/-- Whether a running field reads a mark (`\leftmark`, `\rightmark`). -/
+private def readsMarks (xs : Array Inline) : Bool :=
+  Ir.anyInline (fun x => match x with
+    | .role n _ => n == Ir.leftMarkRole || n == Ir.rightMarkRole
+    | _ => false) xs
 
-/-- Each page's marks under the `headings` style: its left mark, the last `\markboth` on or before
-it (TeX's `\botmark`), and its right mark, its first mark's right part or else the last before it
-(`\firstmark`). -/
+/-- Whether the pages carry marks: the `headings` style's, or fields reading them. -/
+private def marksRead (doc : Ir.Doc) : Bool :=
+  (doc.page.markHeads && doc.head.isNone) ||
+    [doc.head, doc.headEven, doc.foot, doc.footEven].any (·.any readsMarks)
+
+/-- The headings whose lines carry their outline mark: the outline's, and the lists' where the
+pages carry marks. -/
+private def markedHeadings (doc : Ir.Doc) : Std.HashSet Nat :=
+  if doc.info.outline == some false && !marksRead doc then {} else
+  ((Ir.outlineHeadings doc).foldl (·.insert ·.index) ({} : Std.HashSet Nat)).insertMany
+    (if marksRead doc then listHeadings doc else #[])
+
+/-- Each page's marks: its left mark, the last `\markboth` on or before it (TeX's `\botmark`), and its
+right mark, its first mark's right part or else the last before it (`\firstmark`); the headings mark
+as the `headings` style does, else as fancyhdr's two-sided style. -/
 private def pageMarks (doc : Ir.Doc) (pages : Array PageOut) :
     Array (Array Inline × Array Inline) := Id.run do
-  let mut marks : Std.HashMap String (Bool × Array Inline) := {}
+  let koma := doc.docClass == Ir.DocClass.koma
+  let twoside := doc.page.twoside || !doc.page.markHeads
+  let upper (xs : Array Inline) : Array Inline :=
+    if koma then xs else Ir.mapInlines (fun x => match x with | .text t => .text (upperText t) | y => y) xs
+  let mut marks : Std.HashMap String Ir.PageMark := {}
   let shorts := Ir.shortTitlesAt doc.shortTitles doc.body
   for h in Ir.outlineHeadings doc do
     if let some blk@(.section _ _ _ title) := doc.body[h.index]? then
-      if let some m := headingMark doc.chapters doc.page.twoside (Ir.listedTitleAt shorts h.index title) blk then
+      if let some m := headingMark doc.chapters twoside koma (Ir.listedTitleAt shorts h.index title) blk then
         marks := marks.insert (Ir.outlineMark h.index) m
-  -- A contents or a reference list marks both sides with its heading in capitals.
+  -- A contents or a reference list marks both sides with its heading, in capitals but KOMA-Script's.
   for i in listHeadings doc do
     if let some (.section _ _ _ title) := doc.body[i]? then
-      marks := marks.insert (Ir.outlineMark i)
-        (true, Ir.mapInlines (fun x => match x with | .text t => .text (upperText t) | y => y) title)
+      marks := marks.insert (Ir.outlineMark i) { left := some (upper title), right := upper title }
+  for h : k in [0:doc.marks.size] do
+    marks := marks.insert (Ir.markAnchor k) doc.marks[k]
   let mut left : Array Inline := #[]
   let mut right : Array Inline := #[]
   let mut out := #[]
   for p in pages do
     let here := (p.anchors ++ p.lines.flatMap (·.anchors)).filterMap marks.get?
-    let first := match here[0]? with
-      | some (both, text) => if both then #[] else text
-      | none => right
-    for (both, text) in here do
-      if both then left := text; right := #[]
-      else right := text
+    let first := (here[0]?.map (·.right)).getD right
+    for m in here do
+      if let some l := m.left then left := l
+      right := m.right
     out := out.push (left, first)
   return out
+
+/-- A field's `\leftmark` and `\rightmark` filled with the page's marks. -/
+private def fillMarks (left right : Array Inline) (xs : Array Inline) : Array Inline :=
+  Ir.mapInlines id xs (finish := fun ys => ys.map fun x => match x with
+    | .role n b => if n == Ir.leftMarkRole then .role n left
+        else if n == Ir.rightMarkRole then .role n right else .role n b
+    | y => y)
 
 /-- The postlude: running furniture per page (`furnishFrom`),
 one report per problem, and the resolved outline. -/
@@ -20023,7 +20067,10 @@ public def runPost (sh : Shipped) : Out := Id.run do
   let pages := sh.pages
   -- a flow's running furniture is its paper's alone
   let furniture : Option Diag.Output := if doc.docClass.record.model == .flow then some .pdf else none
-  let marked := if doc.page.markHeads && doc.head.isNone then pageMarks doc pages else #[]
+  let headings := doc.page.markHeads && doc.head.isNone
+  let marked := if marksRead doc then pageMarks doc pages else #[]
+  let koma := doc.docClass == Ir.DocClass.koma
+  let declared := doc.head.isSome || doc.headEven.isSome || doc.foot.isSome || doc.footEven.isSome
   let sides := { doc.page with hmargin := geom.hmargin }
   -- Running content is laid out per page once the count is known, into the margin.
   let total := pages.size
@@ -20127,34 +20174,59 @@ public def runPost (sh : Shipped) : Out := Id.run do
               lines := lines.push { x := numRight - w, y := l.y, size := numSize
                                     segs := segs, setWidth := w, furniture := true }
     -- Pages before a declaration's `from` carry none of it; the chrome footer follows its frame.
-    let headOn := page.pageState.furniture && doc.headFrom ≤ i + 1
-    let footOn := page.pageState.furniture && doc.footFrom ≤ i + 1
+    -- KOMA-Script's `\cleardoublepage` leaves its blank verso empty.
+    let furnished := page.pageState.furniture && !(koma && page.blank)
+    let headOn := furnished && doc.headFrom ≤ i + 1
+    let footOn := furnished && doc.footFrom ≤ i + 1
     let verso := doc.page.twoside && page.pageState.folio % 2 == 0
-    -- The `headings` style: the folio outside, the mark inside; a chapter's opening page is plain.
-    let (headContent, opens) : Option (Array Inline) × Bool := match marked[i]? with
-      | some (left, right) =>
-        let opens := page.pageState.plain
-        (if opens then none
-         else if verso then some #[.pageNumber, .fill, .styled .italic left]
-         else some #[.styled .italic right, .fill, .pageNumber], opens)
-      | none => ((if verso then doc.headEven.orElse fun _ => doc.head else doc.head), true)
-    let footContent := if verso then doc.footEven.orElse fun _ => doc.foot else doc.foot
+    let (left, right) := marked[i]?.getD (#[], #[])
+    -- A plain page (a chapter's opening, `\maketitle`'s) carries no running field but the folio.
+    let plainHere := page.pageState.plain && (headings || declared)
+    -- KOMA-Script's folio stands in the foot, outside on two-sided pages.
+    let komaFolio : Array Inline := if !doc.page.twoside then #[.fill, .pageNumber, .fill]
+      else if verso then #[.pageNumber, .fill] else #[.fill, .pageNumber]
+    -- The `headings` style: the mark inside and the folio outside, KOMA-Script's mark outside or
+    -- centred one-sided and its folio in the foot.
+    let headContent : Option (Array Inline) :=
+      if plainHere then none
+      else if headings then
+        some (if koma then
+            (if !doc.page.twoside then #[.fill, .styled .italic right, .fill]
+             else if verso then #[.styled .italic left, .fill] else #[.fill, .styled .italic right])
+          else if verso then #[.pageNumber, .fill, .styled .italic left]
+          else #[.styled .italic right, .fill, .pageNumber])
+      else (if verso then doc.headEven.orElse fun _ => doc.head else doc.head).map (fillMarks left right)
+    let footContent : Option (Array Inline) :=
+      if plainHere then none
+      else if headings && koma then some komaFolio
+      else (if verso then doc.footEven.orElse fun _ => doc.foot else doc.foot).map
+        (fillMarks left right)
+    let opens := !headings || page.pageState.plain
     if headOn then
       if let some content := headContent then
         let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then head := #[l]
+        -- fancyhdr's rule spans the head's width a strut's depth below its baseline.
+        if let some w := doc.page.headRule.filter (0 < ·) then
+          let lit (v : Length) : Affine Dim.Measure := .lit { width := Dim.SymLength.ofLength v }
+          let strutDepth := 3 * Ir.leadingFor geom.fontSize geom.leading / 10
+          let (r?, _, c) := runLine #[.rule (lit geom.textWidth) (lit w) (lit 0)] ""
+            (headY + strutDepth + w) geom.fontSize {} cache
+          cache := c
+          if let some r := r? then head := head.push r
     if footOn then
       if let some content := footContent then
         let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) footY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
-      else if plainFoot && opens then
-        -- plain's foot: the page number between two fills, as `\ps@plain` sets it.
-        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (ListMark.folioText page.pageState) footY
-          geom.fontSize {} cache
+      else if (plainFoot || plainHere) && doc.pageNumbersOn && opens then
+        -- plain's foot: the page number between two fills, as `\ps@plain` sets it, KOMA-Script's
+        -- outside on two-sided pages.
+        let (l?, ds, c) := runLine (if koma then komaFolio else #[.fill, .pageNumber, .fill])
+          (ListMark.folioText page.pageState) footY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }

@@ -2,6 +2,7 @@ class article
 page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
 meta title "An Invented Field Guide"
 meta author "Alex Doe"
+role page plain
 center
   section* 0
     text "An Invented Field Guide"

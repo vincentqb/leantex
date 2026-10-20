@@ -334,6 +334,9 @@ public structure PageSpec where
   web : Option WebLayout := none
   /-- Whether the web page's measure is its layout's, the surface leaving the text block undeclared. -/
   webMeasure : Bool := false
+  /-- The rule under a running head, fancyhdr's `\headrulewidth` thick, a strut's depth below its
+  baseline. -/
+  headRule : Option Length := none
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin
@@ -1089,12 +1092,28 @@ public def trivItemRole : String := "trivlist item"
 blank verso before it where needed. -/
 public def rectoRole : String := "page recto"
 
+/-- The reserved role `\thispagestyle{plain}` declares, as a chapter's opening and `\maketitle` do:
+the page carries no running head and its folio in the foot. -/
+public def plainPageRole : String := "page plain"
+
+/-- The reserved role a hand-written `\markboth` or `\markright` stands in, by its index among the
+document's marks. -/
+public def markRole (k : Nat) : String := s!"page mark {k}"
+
+public def markRole? (n : String) : Option Nat :=
+  if n.startsWith "page mark " then (n.drop "page mark ".length).toString.toNat? else none
+
+/-- The inline roles `\leftmark` and `\rightmark` stand in, which a running field reads per page. -/
+public def leftMarkRole : String := "page leftmark"
+public def rightMarkRole : String := "page rightmark"
+
 /-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
     n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
-    n == captionCloseRole || n == rectoRole || n == trivItemRole || n == captionAtRole
+    n == captionCloseRole || n == rectoRole || n == trivItemRole || n == captionAtRole ||
+    n == plainPageRole || (markRole? n).isSome
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -8738,6 +8757,12 @@ public def sectionPageGlue (keys : FrameKeys) (next : Option Block) : FrameGlue 
   | some v => frameGlue keys false v
   | none => VAlign.glue .moloch .center
 
+/-- A hand-written mark: `\markboth`'s left and right texts, or `\markright`'s right text alone. -/
+public structure PageMark where
+  left : Option (Array Inline)
+  right : Array Inline
+  deriving Repr, BEq, Inhabited
+
 /-- A heading's short title, `\section[short]{long}`'s: the heading by its number, its words and how
 many unstarred headings before it set both, and its short title. -/
 public structure ShortTitle where
@@ -8834,6 +8859,8 @@ public structure Doc where
   frameRestart : Option Nat := none
   /-- The short titles headings declared, which a flow's contents and bookmarks list. -/
   shortTitles : Array ShortTitle := #[]
+  /-- The marks `\markboth` and `\markright` set, by the index their roles name. -/
+  marks : Array PageMark := #[]
   /-- The roles the document's own colour declarations set, a theme's aside. -/
   ownRoles : Array Role := #[]
   /-- Where each `\bibliography` list's footnotes number from, in document
