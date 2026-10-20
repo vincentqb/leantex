@@ -39,8 +39,8 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
     String.join (head.toList.filterMap fun
       | .style rules => some rules
       | _ => none)
-  t "the markdown page's HTML measure is the same text block, in rem"
-    (hasStr (measureOf mdDoc) "--measure: 38.4rem;" && hasStr (measureOf texDoc) "--measure: 31.2rem;")
+  t "the markdown page's HTML measure is its web layout's, the tex page's its text block, in rem"
+    (hasStr (measureOf mdDoc) "--measure: calc(60ch + 7.25rem);" && hasStr (measureOf texDoc) "--measure: 31.2rem;")
   let mut faces := 0
   for file in ["OpenSans-Regular.ttf", "FiraSans-Regular.otf", "SourceSerifPro-Regular.otf"] do
     let some font ← loadTestFont file | t s!"markdown page: {file} loads" false; continue
@@ -59,6 +59,10 @@ and wider than the article's {avg texLines}"
       (70 ≤ avg mdLines && avg mdLines ≤ 90 && avg texLines < avg mdLines)
     t s!"markdown page in {font.family}: the readable-band judge stays quiet"
       (!mdOut.diags.any (·.kind == .W0201))
+    let digit := font.advance '0' * 1000 / font.unitsPerEm
+    t s!"markdown page in {font.family}: the web measure is sixty of its digits and the insets"
+      (HtmlDoc.chMilli (some fonts) == digit &&
+        HtmlDoc.measureMilli mdDoc (HtmlDoc.chMilli (some fonts)) == 60 * digit + 7250)
   t "markdown page: every shipped text face was measured" (faces == 3)
 
 end Tests.MarkdownPage

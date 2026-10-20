@@ -49,7 +49,8 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let tables := elems "table" body
   t "web measure: a markdown table's natural columns mark it natural"
     (tables.size == 1 && tables.all fun a => (classOf a).contains "bt-natural")
-  t "web measure: the measure is the page's" (hasStr css "--measure: 38.4rem;")
+  t "web measure: a markdown page's measure is book-theme's sixty digits and their insets"
+    (hasStr css "--measure: calc(60ch + 7.25rem);" && HtmlDoc.measureMilli doc 500 == 60 * 500 + 7250)
   let blocks := cssBlocksIn css
   let screen (ctx : List String) : Bool := ctx.any (·.startsWith "@media screen")
   let wide := blocks.filter fun (_, _, d) =>
@@ -63,16 +64,32 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
         d == "--wide-room: 0px;") &&
       rooms.all (fun (c, sel, d) => d == "--wide-room: 0px;" || (screen c && sel == "main")) &&
       !hasStr css "@property")
-  t "web measure: the room reads the viewport and the reader's size alone"
-    (rooms.any fun (_, _, d) => d == "--wide-room: clamp(0px, (100vw - 2 * 1.25rem - var(--measure)) / 2, 17.5rem);")
-  let bp := HtmlDoc.outlineBreakMilli doc.page
-  t s!"web measure: the outline stands only where the margin holds it ({bp})"
-    (bp == 2 * 1250 + 15000 + 2 * 2500 + 38400 &&
+  t "web measure: the room reads the viewport and the reader's size alone, up to the free column"
+    (rooms.any fun (_, _, d) => d == "--wide-room: clamp(0px, (100vw - 2 * 1.25rem - var(--measure)) / 2, 19rem);")
+  let bp := HtmlDoc.outlineBreakMilli doc 500
+  let grid := ["@media screen and (min-width: 56.25em)"]
+  t s!"web measure: the book layout's grid stands only where the viewport holds its sidebar ({bp})"
+    (bp == 2 * 1250 + 15000 + 1500 + 37250 &&
       blocks.any (fun (c, sel, d) => c.isEmpty && sel == "nav.outline" && d.startsWith "display: none;") &&
-      blocks.any (fun (c, sel, d) => c == ["@media screen and (min-width: 60.9em)"] && sel == "nav.outline" &&
-        hasStr d "position: fixed") &&
-      blocks.any fun (c, sel, d) => c == ["@media screen and (min-width: 60.9em)"] && sel == "main" &&
-        hasStr d "margin-inline-start: max(17.5rem, (100% - var(--measure)) / 2);")
+      blocks.any (fun (c, sel, d) => c == grid && sel == "body" && hasStr d "display: grid;" &&
+        hasStr d "[lead-start] 15rem [lead-end] 1.5rem [main-start] var(--measure) [main-end]") &&
+      blocks.any (fun (c, sel, d) => c == grid && sel == "nav.outline" &&
+        hasStr d "grid-column: lead;" && hasStr d "position: sticky;" && hasStr d "overflow-y: auto;") &&
+      blocks.any fun (c, sel, d) => c == grid && sel == "main" && hasStr d "grid-column: main;")
+  let (art, artDs) := elabStr ("\\documentclass{article}\\page{ web = article }\\begin{document}" ++
+    "\\section{A}x\\section{B}y\\end{document}")
+  let artCss := HtmlDoc.baseCss {} art
+  let artGrid := ["@media screen and (min-width: 62em)"]
+  t "web measure: a declared article layout takes article-theme's measure and margin column"
+    (artDs.isEmpty && hasStr artCss "--measure: calc(72ch + 7.25rem);" &&
+      HtmlDoc.outlineBreakMilli art 500 == 2 * 1250 + 3000 + 3250 + 43250 + 10000 &&
+      (cssBlocksIn artCss).any (fun (c, sel, d) => c == artGrid && sel == "nav.outline" &&
+        hasStr d "grid-column: margin;") &&
+      (cssBlocksIn artCss).any fun (c, sel, d) => c == artGrid && sel == "main" &&
+        hasStr d "--wide-room: 0px;")
+  let (_, badDs) := elabStr ("\\documentclass{article}\\page{ web = magazine }\\begin{document}" ++
+    "x\\end{document}")
+  t "web measure: a layout no theme names is named" (badDs.any (·.kind == .E0323))
   let topTags := body.filterMap fun n => match n with
     | .elem tag attrs _ => some (tag, (classOf attrs).contains HtmlDoc.outlineClass)
     | _ => none

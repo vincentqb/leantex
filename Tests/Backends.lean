@@ -353,7 +353,7 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
 def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   t "html measure derives from the default page"
-    (HtmlDoc.measureRem {} == "46.975rem")
+    (HtmlDoc.measureMilli {} 500 == 46975)
   let (narrowDoc, narrowDs) := elabStr ("\\documentclass{article}" ++
     "\\page{ hmargin = 0.75in }\\begin{document}x\\end{document}")
   t "html measure follows a declared page" (narrowDs.isEmpty &&

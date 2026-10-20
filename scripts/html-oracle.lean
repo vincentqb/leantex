@@ -11,6 +11,7 @@ open LeanTex.Core
 
 def matrixPath : String := "testdata/oracles/html-reader-matrix.txt"
 def shapesPath : String := "testdata/oracles/stage-shapes.txt"
+def mystPath : String := "testdata/oracles/myst-themes.tsv"
 def leantexBin : String := ".lake/build/bin/leantex"
 
 /-- The readers the matrix declares as targets, declared by the file, not by what a host
@@ -27,7 +28,7 @@ def features : List String :=
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
    "print-sheets", "no-script", "code-height", "stage-fit", "stage-focus", "deck-links",
    "disclosure",
-   "print-disclosure", "code-wrap", "print-code"]
+   "print-disclosure", "code-wrap", "print-code", "web-layout"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -840,6 +841,88 @@ const codeWrap = async (page) => {
   const off = runs.filter(([, r]) => !r.ok);
   return { ok: off.length === 0, n,
     why: (off.length ? off : runs).map(([k, r]) => k + ': ' + r.why).join('; ') };
+};
+
+// A flow page's outline and text stand as its MyST layout sets them (testdata/oracles/myst-themes.tsv):
+// at 1440 px the outline is shown, sticky, in the sidebar before the text (book) or the margin column
+// after it (article), its width and its gap to the text within the reference's tolerance, and a page
+// whose measure is its layout's sets the text that many digits wide; on a phone the outline is not
+// shown. The layout is the column the outline's grid item names.
+const webRows = (process.env.LT_MYST || '').split('\n')
+  .filter(l => l && !l.startsWith('#') && !l.startsWith('layout\t')).map(l => l.split('\t'));
+const webRef = (layout, key) => {
+  const r = webRows.find(r => r[0] === layout && r[1] === key);
+  return r && r[4] !== '-' ? { v: +r[2], tol: +r[4] } : null;
+};
+const webMeasured = new Set((process.env.LT_WEB_MEASURED || '').split(' ').filter(Boolean));
+const webRead = () => {
+  const main = document.querySelector('body > main');
+  const nav = document.querySelector('body > nav.outline');
+  if (!main || !nav || /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType))
+    return { flow: false };
+  const ns = getComputedStyle(nav);
+  const col = ns.gridColumnStart;
+  const probe = document.createElement('span');
+  probe.textContent = '0'.repeat(100);
+  probe.style.whiteSpace = 'nowrap';
+  probe.style.position = 'absolute';
+  main.appendChild(probe);
+  const ch = probe.getBoundingClientRect().width / 100;
+  probe.remove();
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const m = main.getBoundingClientRect(), n = nav.getBoundingClientRect();
+  const ms = getComputedStyle(main);
+  const text = m.width - parseFloat(ms.paddingLeft) - parseFloat(ms.paddingRight);
+  const room = document.documentElement.scrollHeight - innerHeight;
+  let stays = true;
+  if (room > 200) {
+    window.scrollTo(0, room);
+    const t = nav.getBoundingClientRect();
+    stays = t.top > -1 && t.top < 1 && t.bottom > 0;
+    window.scrollTo(0, 0);
+  }
+  return { flow: true, shown: ns.display !== 'none' && n.width > 0,
+    layout: col === 'lead' ? 'book' : col === 'margin' ? 'article' : null,
+    ch, rem, text, mainX: m.left, mainR: m.right, navX: n.left, navR: n.right, navW: n.width,
+    sticky: ns.position === 'sticky' && stays };
+};
+const webLayout = async (page, fx) => {
+  const settle = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await settle();
+    const wide = await page.evaluate(webRead);
+    if (!wide.flow || !wide.shown) return { ok: true, n: 0, why: '' };
+    const why = [];
+    const near = (key, got) => {
+      const r = webRef(wide.layout, key);
+      if (r && Math.abs(got - r.v) > r.tol) why.push(`${key} ${got.toFixed(1)} against ${r.v}±${r.tol}`);
+    };
+    if (!wide.layout) why.push('the outline stands in no layout column at 1440 px');
+    else {
+      if (wide.layout === 'book') {
+        if (wide.navR > wide.mainX) why.push('the book outline does not stand before the text');
+        near('nav-gap@1440', wide.mainX - wide.navR);
+      } else {
+        if (wide.navX < wide.mainR) why.push('the article outline does not stand after the text');
+        near('nav-gap@1440', wide.navX - wide.mainR);
+      }
+      near('nav-width@1440', wide.navW);
+      if (!wide.sticky) why.push('the outline does not stay at the viewport top as the page scrolls');
+      if (webMeasured.has(fx) || wide.layout === 'article') {
+        const r = webRef(wide.layout, 'prose-ch');
+        const inset = +((webRows.find(r => r[0] === wide.layout && r[1] === 'prose-inset') || [])[2] || 0);
+        if (r) near('prose-ch', (wide.text - inset * wide.rem) / wide.ch);
+      }
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await settle();
+    const phone = await page.evaluate(webRead);
+    if (phone.shown) why.push('the outline is shown on a phone');
+    return { ok: why.length === 0, n: 1, why: (wide.layout || 'none') + ': ' + (why.join('; ') || 'as the reference') };
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
 };
 
 // A page's code reaches paper whole and at the page's own scale. The page
@@ -1909,6 +1992,7 @@ async function runReader(name) {
       out(fx, name, 'deck-links', cell(links));
       if (links.after) throw links.after;
       out(fx, name, 'code-wrap', cell(await codeWrap(page)));
+      out(fx, name, 'web-layout', cell(await webLayout(page, fx)));
       const light = await page.evaluate(readColors);
       await page.evaluate((follows) => { document.documentElement.dataset.ltxFollows = follows; },
         light.bg === lightSurface && light.fg === lightInk ? 'tokens' : 'declared');
@@ -2375,6 +2459,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
   try
     copyTree "testdata/corpus" (work / "corpus")
     let mut fixtures : Array String := #[]
+    let mut measured : Array String := #[]
     let mut unbuilt : Array String := #[]
     let mut faceFailures : Array Scoreboard.BrowserFace := #[]
     for (name, path) in ← Scoreboard.Hermetic.corpusDocs (work / "corpus") do
@@ -2385,6 +2470,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
       let log := r.stdout ++ r.stderr
       faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
       if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
+      if path.extension != some "tex" then measured := measured.push name
       -- A deck's stage premise, read off TeX source: what its PDF build does not vouch for.
       if path.extension == some "tex" then
         if let some breakable ← breakableFrames path then
@@ -2448,7 +2534,9 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
                    ("LT_CODE_PRINT", some (control / "code-print.html").toString),
                    ("LT_CODE_NARROW", some (control / "code-narrow.html").toString),
                    ("LT_DECK_KEYS", some (control / "deck-keys.html").toString),
-                   ("LT_DECK_THIN", some (control / "deck-thin.html").toString)] }
+                   ("LT_DECK_THIN", some (control / "deck-thin.html").toString),
+                   ("LT_MYST", some (← IO.FS.readFile mystPath)),
+                   ("LT_WEB_MEASURED", some (String.intercalate " " measured.toList))] }
       if out.exitCode != 0 then
         IO.eprintln s!"html-oracle: the probe exited {out.exitCode}:\n{out.stderr}"
       probe := parseProbe out.stdout

@@ -190,6 +190,47 @@ public structure PagePenalties where
   predisplay : Int := 10000
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- A flow's web page layout, after the MyST site themes (jupyter-book/myst-theme 1.11 at their
+widest breakpoint; testdata/oracles/myst-themes.tsv). -/
+public inductive WebLayout where
+  /-- book-theme's: the outline in a sidebar before the text, a free column after it. -/
+  | book
+  /-- article-theme's: the text first, the outline in a margin column after it. -/
+  | article
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A web layout's grid in milli-rem, its measure's columns in digit widths (`ch`). -/
+public structure WebGrid where
+  /-- The measure's six body columns: `minmax(8ch,10ch)` (article-grid) or `minmax(8ch,12ch)`
+  (article-left-grid) at their widest. -/
+  proseCh : Nat
+  /-- The rest of the measure: the body's two 1rem insets and its seven 0.75rem column gaps. -/
+  insetMilli : Nat
+  /-- Before the text: book-theme's sidebar (its table of contents 13.6 to 15.75rem wide), or
+  article-left-grid's 3rem body outset. -/
+  leadMilli : Nat
+  /-- Between the lead and the text, or the text and the margin column: the sidebar's 1.5rem, or
+  the margin column's 0.75rem gap and its outline's 2.5rem inset. -/
+  gapMilli : Nat
+  /-- After the text: article-grid's 3rem, 13rem and 3rem page outset, or article-left-grid's
+  margin column at its 10rem least and, its outline 388 px wide at a 1440 px viewport, 24rem. -/
+  marginMinMilli : Nat
+  marginMilli : Nat
+  deriving Repr, BEq, Inhabited
+
+public def WebLayout.grid : WebLayout → WebGrid
+  | .book =>
+    { proseCh := 60, insetMilli := 7250, leadMilli := 15000, gapMilli := 1500
+      marginMinMilli := 0, marginMilli := 19000 }
+  | .article =>
+    { proseCh := 72, insetMilli := 7250, leadMilli := 3000, gapMilli := 3250
+      marginMinMilli := 10000, marginMilli := 24000 }
+
+public def WebLayout.ofName? : String → Option WebLayout
+  | "book" => some .book
+  | "article" => some .article
+  | _ => none
+
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
   width : Length := bp 612
@@ -283,6 +324,10 @@ public structure PageSpec where
   markHeads : Bool := false
   /-- Whether a chapter opens on a recto of two-sided pages (book.cls's `openright`). -/
   openRight : Bool := false
+  /-- The web layout as declared (`\page{ web = … }`); `none` takes the class's. -/
+  web : Option WebLayout := none
+  /-- Whether the web page's measure is its layout's, the surface leaving the text block undeclared. -/
+  webMeasure : Bool := false
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin
@@ -8355,6 +8400,9 @@ public structure ClassRecord where
   mdName : Option String := none
   /-- How the class sets its abstract, before its title-page options. -/
   abstractForm : AbstractForm := .quotation
+  /-- The web layout a flow's page takes where the document declares none: book-theme's, MyST's
+  default site template. -/
+  webLayout : WebLayout := .book
   deriving Repr, BEq
 
 /-- The document's class, closed: a class `ofString?` does not answer never enters the IR. -/

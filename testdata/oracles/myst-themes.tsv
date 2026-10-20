@@ -1,0 +1,43 @@
+# MyST site themes measured as rendered: the reference for the web layouts (Ir.WebLayout).
+# source: mystmd 1.11.0 (npm), site templates @myst-theme/book 1.4.1 (book-theme) and
+#   @myst-theme/article 1.4.1 (article-theme), licence MIT (template.yml); nothing is vendored,
+#   only these measurements.
+# content: an invented three-page project (placeholder text, example.org), built with
+#   `myst build --html`, served on 127.0.0.1 only and read in headless Chromium 151.0.7922.34
+#   (Playwright 1.62.0), light scheme, 900 px tall, network beyond the loopback refused.
+# face: the themes' system-ui stack fell back to DejaVu Sans, whose digit is 10.18 px at 16 px,
+#   so a width in ch is (px - 116) / 10.18 where 116 px is the 7.25rem of insets and gaps.
+# columns: layout, key, value, unit, tolerance (- where the oracle does not judge it), source.
+# The oracle (scripts/html-oracle.lean, feature web-layout) judges each row with a tolerance at
+# the viewport its key names; geometry only, the engine keeping its own faces and rhythm.
+layout	key	value	unit	tol	source
+book	prose-ch	60	ch	0.5	727 px at 1280 and 1440 (article-grid: six minmax(8ch,10ch) columns)
+book	prose-inset	7.25	rem	-	two 1rem body insets and seven 0.75rem column gaps
+book	nav-width@1440	252	px	32	primary sidebar's table of contents, 217 px at 1280
+book	nav-gap@1440	24	px	12	from the contents' right edge to the text's left
+book	nav-sticky@1440	1	bool	0	the sidebar is fixed below the top bar as the page scrolls
+book	nav-shown@1024	0	bool	-	under 1280 px the sidebar is a drawer its script opens
+book	nav-shown@390	0	bool	0	hidden on a phone
+book	prose-x@1440	325	px	-	the text's left edge, the page group near the centre
+book	room-after@1440	19	rem	-	the outline column after the text (304 px at 1440)
+article	prose-ch	72	ch	0.5	849 px at 1280 and 1440 (article-left-grid: six minmax(8ch,12ch) columns)
+article	prose-inset	7.25	rem	-	as book
+article	nav-side@1440	after	-	-	the outline stands in the margin column after the text
+article	nav-gap@1440	52	px	16	a 0.75rem column gap and the outline's 2.5rem inset
+article	nav-width@1440	388	px	32	the outline's width in the margin column
+article	nav-sticky@1440	1	bool	0	sticky at the viewport's top as the page scrolls
+article	nav-shown@390	0	bool	0	the margin column folds into the text below 1024 px
+article	prose-x@1440	80	px	-	the group of lead, text and margin centred
+article	prose-ch@1024	59.1	ch	-	687 px: the columns at their least nearer 8ch
+both	body-size	16	px	-	system-ui sans; the engine keeps its document faces
+both	body-leading	28	px	-	1.75
+both	h1	36/40/800	px	-	size/line/weight
+both	h2	24/32/700	px	-	margin below 24 px; 20 px after a paragraph
+both	h3	20/32/600	px	-	margin below 12 px; 44 px after a paragraph
+both	paragraph-gap	20	px	-	1.25em
+both	code	13/17	px	-	menlo stack in a 14 px block, padding 12 px, ground rgba(231,229,228,0.1)
+both	caption	14/20	px	-	colour #6b7280
+both	admonition	4	px	-	left border #3b82f6, title 18 px weight 500 on #eff6ff
+both	footnotes	12/16	px	-	colour #6b7280, at the page's end
+both	aside	14/20	px	-	article-theme's margin note, beside its paragraph in the margin column
+both	abstract	16/28	px	-	article-theme's frontmatter: a box on #f9fafb padded 24 px

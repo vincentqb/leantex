@@ -64,6 +64,9 @@ error: 'scale' needs a number, got "big" [E0321]
 ── E0322 (dropped) unknown key in a declaration block
 error: '\page' has no key 'zoom' [E0322]
   note: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings
+✖ [E0322] - \page
+  '\page' has no key 'zoom'
+  suggestion: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings, web
 ── E0323 (dropped) declaration key value has the wrong type
 error: 'vmargin' in '\page' expects a dimension, got a string [E0323]
 ── E0324 (dropped) unknown page size name

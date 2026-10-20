@@ -459,12 +459,6 @@ public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
   simp only [toString, String.append_assoc]
   rfl
 
-/-- The content measure: text width over the base font size, in `rem`, the reader's size the body
-sets at. -/
-public def measureRem (page : PageSpec) : String :=
-  let textWidth := page.width - 2 * page.hmargin
-  s!"{decMilli (textWidth * 1000 / page.fontSize)}rem"
-
 /-- Removes the selector's transition under `prefers-reduced-motion: reduce`. -/
 public def reducedMotionGuard (sel : String) : String :=
   s!"@media (prefers-reduced-motion: reduce) \{ {sel} \{ transition: none; } }\n"
@@ -5990,14 +5984,36 @@ public def outlineWidthMilli : Nat := 15000
 /-- The outline's gap to the text in milli-rem: the page's inline padding on both sides of it. -/
 public def outlineGapMilli : Nat := 2 * pageInlinePadMilli
 
-/-- The content measure in milli-rem. -/
-public def measureMilli (page : PageSpec) : Int :=
-  (page.width - 2 * page.hmargin) * 1000 / page.fontSize
+/-- The web layout a flow's page takes: as declared, else its class's. -/
+public def webLayoutOf (doc : Doc) : Ir.WebLayout := doc.page.web.getD doc.docClass.record.webLayout
 
-/-- The narrowest viewport, in milli-rem, whose margin holds the outline beside the text with a gap's
-room past it. -/
-public def outlineBreakMilli (page : PageSpec) : Int :=
-  2 * pageInlinePadMilli + outlineWidthMilli + 2 * outlineGapMilli + measureMilli page
+/-- The body face's digit width in milli-em, the `ch` a layout's measure counts; half an em where no
+face is known. -/
+public def chMilli (fonts : Option Font.FontSet) : Nat :=
+  match fonts with
+  | some fs => fs.body.advance '0' * 1000 / max 1 fs.body.unitsPerEm
+  | none => 500
+
+/-- The content measure in milli-rem: the layout's prose width in the body face's digits where the
+surface leaves the text block undeclared, else the text block's width over the body size. -/
+public def measureMilli (doc : Doc) (ch : Nat) : Int :=
+  if doc.page.webMeasure then
+    let g := (webLayoutOf doc).grid
+    g.proseCh * ch + g.insetMilli
+  else (doc.page.width - 2 * doc.page.hmargin) * 1000 / doc.page.fontSize
+
+/-- The content measure as the stylesheet states it: the layout's prose width in the reader's own
+digits of the body face, or the text block's in `rem`; it is read only where the body face is set. -/
+public def measureCss (doc : Doc) (ch : Nat) : String :=
+  if doc.page.webMeasure then
+    let g := (webLayoutOf doc).grid
+    s!"calc({g.proseCh}ch + {decMilli g.insetMilli}rem)"
+  else s!"{decMilli (measureMilli doc ch)}rem"
+
+/-- The narrowest viewport, in milli-rem, whose grid holds the outline's column beside the text. -/
+public def outlineBreakMilli (doc : Doc) (ch : Nat) : Int :=
+  let g := (webLayoutOf doc).grid
+  2 * pageInlinePadMilli + g.leadMilli + g.gapMilli + measureMilli doc ch + g.marginMinMilli
 
 private def remMilli (k : Int) : String := s!"{decMilli k}rem"
 
@@ -6010,19 +6026,28 @@ public def roomKeepers : String :=
   "main > section, ul, ol, li, dl, dt, dd, figure, p, blockquote, div:not(.columns), " ++
     naturalBlocks
 
-/-- A flow's screen geometry: prose at the measure, what does not reflow at its natural width up to
-the outline's column past it, and the outline after the text, fixed beside it where the margin holds
-it; paper and every box but the flow's own containers keep the measure. -/
-public def flowPageCss (doc : Doc) : String :=
+/-- A flow's screen geometry: prose at the measure, what does not reflow widening into the room past
+it, and where the viewport holds its layout's grid the outline sticky in that layout's column. -/
+public def flowPageCss (doc : Doc) (ch : Nat) : String :=
+  let g := (webLayoutOf doc).grid
   let pad := remMilli pageInlinePadMilli
-  let n := remMilli outlineWidthMilli
-  let ng := remMilli (outlineWidthMilli + outlineGapMilli)
+  let room := remMilli g.marginMilli
   let free := s!"(100vw - 2 * {pad} - var(--measure))"
   let indent := Ir.contentsFlowLevel 1
+  let fr := "minmax(0, 1fr)"
+  let (columns, navColumn, wide) := match webLayoutOf doc with
+    | .book =>
+      (s!"{fr} [lead-start] {remMilli g.leadMilli} [lead-end] {remMilli g.gapMilli} " ++
+        s!"[main-start] var(--measure) [main-end] minmax(0, {room}) {fr}", "lead",
+       s!"clamp(0px, {free} - {remMilli (g.leadMilli + g.gapMilli)}, {room})")
+    | .article =>
+      (s!"{fr} {remMilli g.leadMilli} [main-start] var(--measure) [main-end] " ++
+        s!"{remMilli g.gapMilli} [margin-start] minmax({remMilli g.marginMinMilli}, {room}) " ++
+        s!"[margin-end] {fr}", "margin", "0px")
   "main { --wide-room: 0px; }\n" ++
   s!":where(main) :not({roomKeepers}) \{ --wide-room: 0px; }\n" ++
   "@media screen {\n" ++
-  s!"  main \{ --wide-room: clamp(0px, {free} / 2, {ng}); }\n" ++
+  s!"  main \{ --wide-room: clamp(0px, {free} / 2, {room}); }\n" ++
   s!"  :where(main) :is({naturalBlocks}) \{ max-inline-size: calc(100% + var(--wide-room)); }\n" ++
   s!"  :where(main) :is({naturalBlocks}) \{ inline-size: max-content; }\n" ++
   "  :where(main) :is(pre, .display, div.math-display) { min-inline-size: 100%; }\n" ++
@@ -6035,16 +6060,18 @@ public def flowPageCss (doc : Doc) : String :=
     s!"nav.{outlineClass} .level-1 \{ padding-inline-start: {decMilli indent.indent}em; }\n" ++
     s!"nav.{outlineClass} a \{ text-decoration: none; }\n" ++
     s!"nav.{outlineClass} a:hover \{ text-decoration: underline; }\n" ++
-    s!"@media screen and (min-width: {decMilli (outlineBreakMilli doc.page)}em) \{\n" ++
-    s!"  main \{ margin-inline-start: max({ng}, (100% - var(--measure)) / 2);\n" ++
-    s!"    --wide-room: clamp(0px, 100vw - 2 * {pad} - max({ng}, {free} / 2) - var(--measure), {ng}); }\n" ++
-    s!"  nav.{outlineClass} \{ display: grid; position: fixed; inset-block: 0;\n" ++
-    s!"    inset-inline-start: max({pad}, {pad} + {free} / 2 - {ng}); inline-size: {n};\n" ++
-    s!"    padding-block: {quantaRem 3}; overflow-y: auto; overscroll-behavior: contain; }\n" ++
+    s!"@media screen and (min-width: {decMilli (outlineBreakMilli doc ch)}em) \{\n" ++
+    s!"  body \{ display: grid; grid-template-columns: {columns}; align-items: start; }\n" ++
+    s!"  main \{ grid-column: main; grid-row: 1; margin: 0; --wide-room: {wide}; }\n" ++
+    s!"  nav.{outlineClass} \{ display: grid; grid-column: {navColumn}; grid-row: 1;\n" ++
+    s!"    position: sticky; inset-block-start: 0; max-block-size: 100vh;\n" ++
+    s!"    margin-block-start: -{quantaRem 3}; padding-block: {quantaRem 3};\n" ++
+    "    overflow-y: auto; overscroll-behavior: contain; }\n" ++
     "}\n")
 
 /-- The base stylesheet's rules, after its custom properties. -/
-public def baseRules (doc : Doc) (ex : Length) (pairs : List (Nat × Nat) := []) : String :=
+public def baseRules (doc : Doc) (ex : Length) (ch : Nat) (pairs : List (Nat × Nat) := []) :
+    String :=
   let tl := tableLengthFallback doc
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
@@ -6061,7 +6088,7 @@ public def baseRules (doc : Doc) (ex : Length) (pairs : List (Nat × Nat) := [])
   "  -webkit-font-smoothing: antialiased;\n" ++
   "}\n" ++
   "main { max-width: var(--measure); margin: 0 auto; }\n" ++
-  (if doc.docClass.record.model == .flow then flowPageCss doc else "") ++
+  (if doc.docClass.record.model == .flow then flowPageCss doc ch else "") ++
   -- headings from the IR's own scale; margins belong to `blockGapRules` alone
   "h1, h2, h3, h4, h5, h6 {\n" ++
   "  font-family: var(--font-sans);\n" ++
@@ -6295,7 +6322,8 @@ public def cssRolesIn (tables : List (Ir.Scheme × Ir.Palette)) (seed : List Ir.
 /-- The roles a page's own stylesheet declares. -/
 public def pageRoles (cfg : Config) (doc : Doc) : List Ir.Role :=
   let ex := exAt cfg.fonts doc.page.fontSize
-  cssRolesIn cfg.tables (rolesRead (baseRules doc ex ++ themeCss doc ex) ++ readerRoles)
+  cssRolesIn cfg.tables (rolesRead (baseRules doc ex (chMilli cfg.fonts) ++ themeCss doc ex) ++
+    readerRoles)
 
 
 /-- The base stylesheet; its unsourced paddings, margins, radii and breakpoints are the engine's
@@ -6310,7 +6338,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
   let floorPal := cfg.floorPal
   ":root {\n" ++
   s!"    color-scheme: {if cfg.floor.onDark then "dark" else "light"};\n" ++
-  s!"    --measure: {measureRem doc.page};\n" ++
+  s!"    --measure: {measureCss doc (chMilli cfg.fonts)};\n" ++
   parskip ++
   lineageSkipVars doc ex ++
   String.join ((roleDefaultVars floorPal cfg.floor roles cfg.codeRoot).map (· ++ "\n")) ++
@@ -6323,7 +6351,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   schemeBlocks cfg.tables cfg.floor roles cfg.codeRoot ++ epochVars ++
   lineageLevelRules doc ex ++
-  rules.getD (baseRules doc ex pairs)
+  rules.getD (baseRules doc ex (chMilli cfg.fonts) pairs)
 
 private def styleClass : Style → String
   | .bold => "b"
@@ -10645,7 +10673,7 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
     let ex := exAt cssCfg.fonts doc.page.fontSize
     let theme := themeCss doc ex cssCfg.blockTitleRule cssCfg.literal
     let tokens := tokenRules doc
-    let base := baseRules doc ex pairs ++
+    let base := baseRules doc ex (chMilli cssCfg.fonts) pairs ++
       schemeRules cssCfg ++ tokens
     let rules := base ++ "\n" ++ theme ++ styled
     let (bodyReads, bodyDecls) := nodeRefs.list () (#[], #[]) body.toList

@@ -3,7 +3,13 @@
 ## Output and diagnostics
 
 A successful HTML build is one portable file containing its fonts, images
-and styles. Ordinary hyperlinks remain links.
+and styles. Ordinary hyperlinks remain links. A document's web page takes the
+layout of MyST's book theme: where the screen is wide enough, its outline
+stands in a sidebar before the text and stays in view as the page scrolls.
+`\page{ web = article }` takes the article theme's instead, the outline in a
+margin column after a wider text. A Markdown or code page sets its text at the
+layout's measure, sixty digits of its face wide (the article's seventy-two); a
+TeX page sets its text block's width unless it declares the layout.
 
 Diagnostics identify the source location and unsupported construct. A warning
 repeated in the same words within one phase of a build prints once, at its

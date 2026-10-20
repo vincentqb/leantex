@@ -15981,6 +15981,10 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         | "standard" => spec := { spec with listsParskip := false }
         | _ =>
           evs := say evs .E0323 s!"'lists' in '\\page' expects parskip or standard, got '{v}'"
+      | .web, .ident v =>
+        match Ir.WebLayout.ofName? v with
+        | some l => spec := { spec with web := some l }
+        | none => evs := say evs .E0323 s!"'web' in '\\page' expects book or article, got '{v}'"
       | .bottom, .ident v =>
         match v with
         | "flush" => spec := { spec with flushBottom := some true }
@@ -19086,7 +19090,8 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
       classSay .W0104 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
-    page := { page with hmargin := (page.width - surface.textBlock) / 2 }
+    page := { page with hmargin := (page.width - surface.textBlock) / 2
+                        webMeasure := surface != .tex || page.web.isSome }
   if record.runningFurniture && !page.twoside && (headEven.isSome || footEven.isSome) then
     diag ctx .W0104 "a verso's own running head or foot ('pages = even') applies to two-sided pages, \
 and the pages here are one-sided; ignored" none
