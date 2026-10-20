@@ -653,7 +653,7 @@ fault. -/
 def declaredTiers : List String :=
   ["codedoc", "commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
    "htmla11y", "htmlreader", "mdtwin", "palette-oracle", "parity", "pdf-native", "purity",
-   "rhythm", "schemes", "svg-native", "tikz-native", "typeset"]
+   "rhythm", "schemes", "svg-native", "textlayer", "tikz-native", "typeset"]
 
 /-- The declared tiers not landed yet, whose absence reports `missing`; the selftest fails
 a name here that has both halves. -/

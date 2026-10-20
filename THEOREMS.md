@@ -40,7 +40,8 @@ D               := every diagnostic the run reports: each phase's batch through
 inductive Origin | source (span : Span) | engine | unplaced
 srcText A ex : List (Char × Origin) := Parse.rawTextFor A.target f ex.raws  -- A's target's slots
 irText A     : List (Char × Origin)  -- Ir.locatedText over the inlines of A's doc, docH for HTML
-text A       : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks
+text A       : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks:
+  -- PdfTextRead.structureText, HtmlRead.pageText, the markdown reader's text; origins owed
 lost D A     : Array Diag :=
   (Diag.forOutputs #[A.output] D).filter fun d => d.kind.loss matches .dropped | .pending
 named D A    : List Span := (lost D A).toList.flatMap Diag.piece
@@ -87,8 +88,8 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 | Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `Code.segmentsOf_source_exact`; by unfolding: `read_tex_exact`; supporting, no text step: `Md.desugar_vocabulary_mem` (the vocabulary a desugaring lowers into), `rewriteCtrl_accounts` (an empty rewrite paid by a diagnostic or a state write) | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
 | Elaboration and IR passes | the model: `Parse.rawText`, `Ir.locatedText` (`Ir.locatedText_erased`), `Diag.piece`, `Text.view` (`Text.view_congr`); the inline knot's plain-text arms (words, spaces, paragraph breaks, symbols with E0311's refusals, groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector): `Elab.elabInlines_plain_text`; with them the control words setting their own text (an escape or text symbol no accent shares, `\par`, `\hfill`, under their own names) where no parameter or document command takes their name: `Elab.elabInlines_ctrl_text`; an include standing as its own block sequence: `elabBlocks_input_exact`, `markdownInput_blocks_text`; supporting, no text step of the driver's: `Ir.mapInlines_text` and `Ir.mapBlocks_text` (for a leaf keeping `Ir.plainTextOne`), `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` (declaration scope) | owed (U111): the inline knot's other arms, `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`; owed (U111): the block knot, `Elab.elabBlocks_text_accounts` over `Ir.locatedBlocks`; owed (U111): `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
 | Accounting: every loss reaches D once | `Elab.runPrepared_reports_contract`, `Elab.accountFront_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | owed (U112): `Driver.build_reports_contract` |
-| PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`, `PageOut.shipped_lines_exact` | owed (U110): `Layout.runFitted_text_accounts`; owed (U21): `PdfContent.extract_text` |
-| HTML page text | `escapeText_spec`, `mathml_glyphs_agree` | owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts` |
+| PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`; tested: `pdfTextChecks`, each page's bytes read back as its lines' glyphs and breaks in paint order; the reader's text is pdftotext's: `testdata/scoreboard/textlayer.tsv` | owed (U21): `PdfContent.extract_text`; owed (U114): `Pdf.toUnicode_glyphs_exact`; owed (U110): `Layout.runFitted_text_accounts` |
+| HTML page text | `Html.parse_render_exact`, `Html.pageText_render_exact`, `Html.pageText_render_ink`, `HtmlDoc.emit_parse_exact`, `HtmlDoc.emit_pageText_ink`, `mathml_glyphs_agree`; tested: `htmlReadChecks`, every corpus page meets `Html.DocOk`; the reader's tree is Chromium's: `testdata/scoreboard/textlayer.tsv` | owed (U110): `HtmlDoc.emit_text_accounts` |
 | Markdown twin | `rowLine_cells_exact` | owed (U49): `MarkdownDoc.escape_read_id`; owed (U110): `MarkdownDoc.emit_text_accounts` |
 | Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; tested: `htmlContainedCorpusChecks` | owed (U113): `HtmlDoc.emit_scripts_mem` |
 | Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free`; the driver's reads, by a line scan: `undeclaredConfigRead` | owed (U112): `Driver.build_flag_free` |
@@ -137,17 +138,30 @@ Three gaps keep the composition open:
   `LeanTex/Core/ElabTextContract.lean`, `LeanTex/Core/TextAccount.lean`, `LeanTex/Core/Elab.lean`,
   `LeanTex/Core/Compat.lean`, `LeanTex/Core/Diag.lean`, `LeanTex/Cli/Input.lean`,
   `LeanTex/Cli/Driver.lean`.
-- Artifact text: a model of what a viewer extracts, against which each backend's census is proved.
-  For the PDF, PDF 2.0's text extraction: content-stream strings through each font's ToUnicode map
-  in marked-content order, Artifact content generated, origins from the structure tree's marked
-  content, and set lines carrying the IR text; owed (U21): `PdfContent.extract_text`; owed (U110):
-  `Layout.runFitted_text_accounts`. For HTML, a model of the WHATWG parse over the emitted subset
-  that reads the rendered bytes back as their tree, its text the text nodes in tree order outside
-  style and script; owed (U110): `Html.parse_render_exact`, `HtmlDoc.emit_text_accounts`. For the
-  twin, the markdown reader's text of the emitted file, whose losses need a diagnostic channel
-  `MarkdownDoc.emit` lacks today; owed (U110): `MarkdownDoc.emit_text_accounts`.
-  Modules: `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Layout.lean`, `LeanTex/Core/Html.lean`,
-  `LeanTex/Core/HtmlDoc.lean`, `LeanTex/Core/MarkdownDoc.lean`, `LeanTex/Core/MdParse.lean`.
+- Artifact text: a model of what a viewer extracts, against which each backend's text is proved.
+  `LeanTex/Core/HtmlRead.lean` reads a page as the WHATWG parser builds it over the emitted
+  subset, none outside it, and its tree is Chromium's on the corpus, names compared without case;
+  the page `Html.document` writes reads back as its rendered tree, whose text holds what the body's
+  text nodes hold outside style and script, shown or hidden (`Html.pageText_render_ink`), so HTML
+  owes only the IR side, the emitted body's text (`Html.Node.inkList`) against irText: owed (U110):
+  `HtmlDoc.emit_text_accounts`.
+  `LeanTex/Core/PdfTextRead.lean` reads a file's text from its bytes: each string through its
+  font's ToUnicode map in content order under its marked content, an ActualText standing in,
+  forms in place, a word or line break where the pen jumps or the baseline moves, and a tagged
+  file's structure order; its text is pdftotext's, white space collapsed, on the corpus but where a
+  punctuation mark follows a superscript, and each golden page's bytes read back as its lines'
+  glyphs in paint order with the breaks its layout leaves (tested). Owed: the content stream read
+  back from the writer's operators, owed (U21): `PdfContent.extract_text`;
+  one character per code, the ToUnicode map now keeping the first character a glyph sets where a
+  font maps two to one glyph (Source Serif Pro sets U+2019 and U+02BC alike), owed (U114):
+  `Pdf.toUnicode_glyphs_exact`; a line-end hyphen marked generated, owed (U115):
+  `Pdf.lineHyphen_generated`; and set lines carrying the IR text, owed (U110):
+  `Layout.runFitted_text_accounts`. For the twin, the markdown reader's text of the emitted file,
+  whose losses need a diagnostic channel `MarkdownDoc.emit` lacks today; owed (U110):
+  `MarkdownDoc.emit_text_accounts`. Modules:
+  `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Pdf.lean`, `LeanTex/Core/Layout.lean`,
+  `LeanTex/Core/HtmlDoc.lean`, `LeanTex/Core/MarkdownDoc.lean`, `LeanTex/Core/MdParse.lean`; the
+  readers `LeanTex/Core/HtmlRead.lean` and `LeanTex/Core/PdfTextRead.lean`.
 
 ## Surfaces
 
@@ -244,6 +258,7 @@ Three gaps keep the composition open:
 | Covering | A deck epoch's step share is the covered fraction the PDF covers by, and it hides a pending step on the web page exactly where the PDF's cover of the same palette hides it. | `HtmlDoc.Config.epochShare_projects`, `HtmlDoc.Config.epochShare_hides_agree` |
 | Anchors and stage names | A claimed anchor or stage name is what probing every numbered form of its base among the names claimed before finds: the first free form, and the first holder met whose title differs; each claim adds exactly its form, which no earlier claim holds, and the memo that skips held forms is a lower bound from the empty ledger through every claim. | `NameClaim.Claims.claim_exact`, `NameClaim.Claims.claim_taken`, `NameClaim.Claims.claim_fresh`, `NameClaim.Ledger.empty_pinned`, `NameClaim.Ledger.claim_pinned` |
 | Picture SVG | Element ids are injective and read back; the spelled tree wraps a picture's labels in plain SVG and nests no second math root; every shipped label baseline projects the IR's measured band. | `ids_inj`, `parseId_svgId_exact`, `spell_plain_contract`, `pictureKids_unnested_contract`, `pictureLabelBaseline_projects` |
+| Reading back | The HTML Standard's parser, as `LeanTex/Core/HtmlRead.lean` models it, reads a rendered page as its rendered tree, the renderer's white space as text and names lower-cased, whenever the head and body read as a stack (`Html.DocOk`); the page's text then holds exactly what the body's text nodes hold outside style sheets and scripts, shown or hidden, white space aside, a preformatted block keeping a leading line end. That every corpus page reads as a stack, and that the reader's tree is Chromium's with names compared without case, is tested. | `Html.parse_render_exact`, `Html.pageText_render_exact`, `Html.pageText_render_ink`, `HtmlDoc.emit_parse_exact`, `HtmlDoc.emit_pageText_ink`; tested: `htmlReadChecks`, `testdata/scoreboard/textlayer.tsv` |
 | Layout contracts | One gap owner per boundary, kept when the rules read through overlay carriers; print lifts cover stage bounds; the deck CSS partitions by feature. | `blockGap_owner_contract`, `blockGapThrough_owner_contract`, `print_lifts_stage_bounds_covers`, `deck_css_partition` |
 
 ## PDF
@@ -258,6 +273,7 @@ Three gaps keep the composition open:
 | Structure | Marked-content ids partition the content and the parent tree covers them; headings are tagged. | `mcids_partition_covers`, `parentTree_covers`, `pdf_headings_covers`; owed (U46): `annots_tagged_covers`; owed (U45): `outline_headings_agree` |
 | Figure resources | No resource name a page or form spells dangles, one name names one resource, and a copied page's content survives the writer's compression. | `nameOps_names_covers`, `nameOps_occ_agree`, `copiedForm_inflate_id` |
 | Figure import | The importer reads back what the PDF writer paints, and a covered stream as PDF means it; the content tokenizer reads back what its writer spells; a q…Q pair restores the graphics state, a shown string says its codes' text, and a Type 3 stamp paints its procedure's ink; a figure's two faces stand in its page's box; the nesting a reading reaches is bounded; a stitched function is the line between its stops; every loss of a PDF figure is named; a PNG the engine writes reads back exactly. | `PdfGfx.readback_id`, `PdfGfx.readback_exact`, `scan_render_exact`, `gsave_restore_id`, `words_exact`, `type3_marks_exact`, `Gfx.pdfHtml_box_agree`, `PdfGfx.import_box_exact`, `forms_between`, `stitch_exact`, `pdfDiags_named`, `probe_encode_exact` |
+| Text layer | Owed: the content stream reads back as the text of the writer's operators, one character per ToUnicode code. That each golden page's bytes read back, by `LeanTex/Core/PdfTextRead.lean`, as its lines' glyphs in the order its content stream paints them, with the word and line breaks the layout leaves, the structure tree reaching each identified sequence once, and that the reader's text is pdftotext's, white space collapsed, but after a superscript, is tested. | owed (U21): `PdfContent.extract_text`; owed (U114): `Pdf.toUnicode_glyphs_exact`; tested: `pdfTextChecks`, `testdata/scoreboard/textlayer.tsv` |
 | Text placement | Marks land on their ink; runs are placed between their bounds. | `mark_ink_exact`, `place_between` |
 | Destinations | A link to an in-page fragment carries an explicit destination onto a page the writer writes, resolved from the shipped anchors, or no annotation, never an action or a name the file would have to define. That every navigation of every corpus file reaches a destination the file defines, judged from its bytes alone, and that the PDF links each in-page target as often as the HTML does, is tested. | `linkEntry_page_lt`, `linkEntry_fragment_dest`, `Layout.anchorIndex_page_lt`; tested: `pdfDestinationChecks` |
 | Outline | The heading tree a PDF outline bookmarks lists its first heading at the top and each next one at most one level deeper than the one before, so every nested heading has its parent before it, and no outline object is typed as a font. That the shipped outline nests as written, closed in a flow and open in a deck, keeps only the headings that land, gives way to a declared menu, and lands every item on its heading, is tested. | `Ir.outlineHeadings_depth_step`, `outlineObjects_untyped`; tested: `pdfOutlineChecks` |
