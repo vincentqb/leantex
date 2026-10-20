@@ -240,6 +240,7 @@ public def styleMerge (top base : ElementStyle) : ElementStyle :=
     (top.motion <|> base.motion) (top.color <|> base.color)
     (if top.slots.isEmpty then base.slots else top.slots)
     (top.shape <|> base.shape) (base.list.over top.list) (top.tilde <|> base.tilde)
+    (top.label <|> base.label)
 
 private def installPalette (p : Palette) : List (ColorRef × Color) → Palette
   | [] => p

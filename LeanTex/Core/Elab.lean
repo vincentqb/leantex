@@ -539,6 +539,8 @@ public structure Counters where
   chap : ChapterRules := {}
   /-- Chapters number here: book.cls's main matter, or a class without its divisions. -/
   mainMatter : Bool := true
+  /-- Each enumerate level's last item number, which a list resuming its numbering continues. -/
+  listResume : Array (String × Nat × Nat) := #[]
   /-- The equation counter, restarting under the `\numberwithin` level
   `eqWithin` when one is declared. -/
   eqNum : Nat := 0
@@ -12210,21 +12212,194 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
       | _ => #[Block.para (head #[])] ++ item)
   return out
 
-/-- An itemize's or enumerate's items, each `\item[label]`'s label first in its first paragraph, which
-sets in the place of the level's marker as latex.ltx's `\@item` sets `\makelabel{label}`. -/
-private def labelledItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block)) :
-    EM (Array (Array Block)) := do
-  let labels := descLabelRaws body
+/-- The numeral style a control names, and whether its name holds enumitem's star. -/
+private def numeralOf (n : String) : Option (Ir.NumStyle × Bool) :=
+  let starred := n.endsWith "*"
+  (Ir.NumStyle.ofName? (if starred then (n.dropEnd 1).toString else n)).map (·, starred)
+
+/-- The pieces so far with the raws run before a numeral and the numeral after them. -/
+private def closeRun (run : Array Raw) (out : Array (Array Raw ⊕ Ir.NumStyle)) (st : Ir.NumStyle) :
+    Array (Array Raw ⊕ Ir.NumStyle) :=
+  (if run.isEmpty then out else out.push (.inl run)).push (.inr st)
+
+/-- A label template's pieces: each starred numeral command (`\alph*`), or a numeral command over a
+counter's name (`\alph{enumi}`), as the item's number, and the raws between. -/
+private def labelPieces : List Raw → Array Raw → Array (Array Raw ⊕ Ir.NumStyle) →
+    Array (Array Raw ⊕ Ir.NumStyle)
+  | [], run, out => if run.isEmpty then out else out.push (.inl run)
+  | .ctrl n p :: tl@(.sym '*' _ :: rest), run, out =>
+    match numeralOf n with
+    | some (st, false) => labelPieces rest #[] (closeRun run out st)
+    | some (st, true) => labelPieces tl #[] (closeRun run out st)
+    | none => labelPieces tl (run.push (.ctrl n p)) out
+  | .ctrl n p :: tl@(.word w q :: rest), run, out =>
+    match numeralOf n with
+    | some (st, false) =>
+      if w.startsWith "*" then
+        labelPieces rest (if w.length > 1 then #[.word (w.drop 1).toString q] else #[])
+          (closeRun run out st)
+      else labelPieces tl (run.push (.ctrl n p)) out
+    | some (st, true) => labelPieces tl #[] (closeRun run out st)
+    | none => labelPieces tl (run.push (.ctrl n p)) out
+  | .ctrl n p :: tl@(.group _ _ :: rest), run, out =>
+    match numeralOf n with
+    | some (st, false) => labelPieces rest #[] (closeRun run out st)
+    | some (st, true) => labelPieces tl #[] (closeRun run out st)
+    | none => labelPieces tl (run.push (.ctrl n p)) out
+  | .ctrl n p :: rest, run, out =>
+    match numeralOf n with
+    | some (st, true) => labelPieces rest #[] (closeRun run out st)
+    | _ => labelPieces rest (run.push (.ctrl n p)) out
+  | r :: rest, run, out => labelPieces rest (run.push r) out
+
+/-- How a numeral command's next raw reads in a label template: its star or counter group, dropped;
+a word its star opens, the rest of the word kept; else as it stands. -/
+private def numeralArg? (n : String) (next : Option Raw) : Option (Ir.NumStyle × Bool) :=
+  match numeralOf n, next with
+  | some (st, true), _ => some (st, false)
+  | some (st, false), some (.sym '*' _) | some (st, false), some (.group _ _) => some (st, true)
+  | some (st, false), some (.word w _) => if w.startsWith "*" then some (st, true) else none
+  | _, _ => none
+
+/-- A label template's raws with each numeral it counts by (`labelPieces`) the word `num` spells
+for its style, inside groups too; `eat` drops the star or counter the numeral before took. -/
+private def substNumerals (num : Ir.NumStyle → String) : List Raw → Bool → Array Raw → Array Raw
+  | [], _, out => out
+  | .ctrl n p :: rest, eat, out =>
+    if eat then substNumerals num rest false out else
+    match numeralArg? n rest.head? with
+    | some (st, takes) => substNumerals num rest takes (out.push (.word (num st) p))
+    | none => substNumerals num rest false (out.push (.ctrl n p))
+  | .word w p :: rest, eat, out =>
+    if eat then
+      substNumerals num rest false (if w.length > 1 then out.push (.word (w.drop 1).toString p) else out)
+    else substNumerals num rest false (out.push (.word w p))
+  | .group b p :: rest, eat, out =>
+    if eat then substNumerals num rest false out
+    else substNumerals num rest false (out.push (.group (substNumerals num b.toList false #[]) p))
+  | r :: rest, eat, out => substNumerals num rest false (if eat then out else out.push r)
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- An item label's template read from its raws (`labelPieces`), its text set by `lit`. -/
+private def labelTemplate (raws : Array Raw) (lit : Array Raw → EM (Array Inline)) :
+    EM (Array Ir.LabelPart) := do
+  let raws := if let [.group b _] := raws.toList then b else raws
+  let mut parts : Array Ir.LabelPart := #[]
+  for piece in labelPieces raws.toList #[] #[] do
+    match piece with
+    | .inl rs => parts := parts.push (.lit (← lit rs))
+    | .inr st => parts := parts.push (.count st)
+  return parts
+
+/-- A list's label template: its TeX, each numeral substituted before it elaborates, or a style's
+template (`Ir.LabelPart`). -/
+private inductive LabelSrc where
+  | raws (r : Array Raw)
+  | parts (p : Array Ir.LabelPart)
+
+/-- The label a template sets where each numeral reads `num` for its style. -/
+private def LabelSrc.at (ctx : Ctx) (num : Ir.NumStyle → String) : LabelSrc → EM (Array Inline)
+  | .raws r => elabInlines ctx (substNumerals num r.toList false #[])
+  | .parts p => pure (p.foldl (fun acc q => match q with
+      | .lit body => acc ++ body
+      | .count st => acc.push (.text (num st))) #[])
+
+/-- The text enumitem measures a counting label's width at (`leftmargin=*`): each numeral at the
+list's `widest` value, else its style's widest, `0`, `m`, `M`, `viii` or `VIII`, the enumerate
+level's own label where none is declared. -/
+private def widestLabel (ctx : Ctx) (kd : Nat) (template : Option LabelSrc) (widest : Option String) :
+    EM String := do
+  let num (st : Ir.NumStyle) : String := widest.getD (match st with
+    | .arabic => "0"
+    | .alph => "m"
+    | .uAlph => "M"
+    | .roman => "viii"
+    | .uRoman => "VIII"
+    | .gobble => "")
+  let src := template.getD (.parts (match kd with
+    | 2 => #[.lit #[.text "("], .count .alph, .lit #[.text ")"]]
+    | 3 => #[.count .roman, .lit #[.text "."]]
+    | 4 => #[.count .uAlph, .lit #[.text "."]]
+    | _ => #[.count .arabic, .lit #[.text "."]]))
+  return Ir.plainText (← src.at ctx num)
+
+/-- A list's label template, first number and resume flag: its own options', else its level style's
+or the class's redefined `\labelenum` template. -/
+private def itemLabelSpec (ctx : Ctx) (n : String) (kd : Nat) (body : Array Raw) (pos : Pos) :
+    EM (Option LabelSrc × Option Nat × Bool) := do
+  let mut template : Option LabelSrc := none
+  let mut start : Option Nat := none
+  let mut resume := false
+  let j := skipSpaces body 0
+  if body[j]? matches some (.sym '[' _) then
+    if let .took k' := scanOpeningArg body pos fun _ => true then
+      for e in Entries.read .keyval (body.extract (j + 1) (k' - 1)) do
+        match e.key, e.value with
+        | "label", some v => template := some (.raws v)
+        | "start", some v => start := (rawSrc v).trimAscii.toString.toNat?
+        | "resume", none => resume := true
+        | _, _ => pure ()
+  if template.isSome then return (template, start, resume)
+  let level := if 1 < kd then (ctx.styles.find? s!"{n}{kd}").orElse fun _ => ctx.styles.find? n
+    else ctx.styles.find? n
+  if let some declared := level.bind (·.label) then return (some (.parts declared), start, resume)
+  if n != "enumerate" then return (none, start, resume)
+  let defined (name : String) := ctx.user.findRev? fun c => c.name == name && c.params.isEmpty
+  let roman := ListMark.romanN kd
+  let the := "theenum" ++ roman
+  -- The class's label is its level's punctuation around `\theenum`, whose numeral is the level's.
+  let (pre, post) := if kd == 2 then ("(", ")") else ("", ".")
+  let label := match defined ("labelenum" ++ roman), defined the with
+    | some c, _ => some c.body
+    | none, some _ => some #[.word pre pos, .ctrl the pos, .word post pos]
+    | none, none => none
+  match label with
+  | some raws =>
+    let numeral := match kd with
+      | 2 => "alph"
+      | 3 => "roman"
+      | 4 => "Alph"
+      | _ => "arabic"
+    let theRaws := ((defined the).map (·.body)).getD #[.ctrl (numeral ++ "*") pos]
+    let raws := raws.flatMap fun r => match r with
+      | .ctrl c _ => if c == the then theRaws else #[r]
+      | _ => #[r]
+    return (some (.raws raws), start, resume)
+  | none => return (none, start, resume)
+
+/-- A list's items, each led by its `\item[label]` or its template's label at its number
+(`itemLabelSpec`), as latex.ltx's `\@item` sets `\makelabel`. -/
+private def labelledItems (ctx : Ctx) (n : String) (body : Array Raw) (bodyFrom : Nat)
+    (pos : Pos) (items : Array (Array Block)) : EM (Array (Array Block)) := do
+  let labels := descLabelRaws (body.extract bodyFrom body.size)
+  let kd := ctx.listNest.kindDepth n
+  let (template, start, resume) ← itemLabelSpec ctx n kd body pos
+  let held := ((← get).ctr.listResume.find? fun (k, l, _) => k == n && l == kd).map (·.2.2)
+  let first := if resume then (held.getD 0) + 1 else start.getD 1
+  -- An enumerate starting past 1 labels its items as its level does at their numbers.
+  let byLevel := template.isNone && n == "enumerate" && first != 1
   let mut out := #[]
+  let mut num := first
   for (item, i) in items.zipIdx do
-    match labels[i]?.join with
-    | some raws =>
-      let label ← elabInlines ctx raws
+    let head ← match labels[i]?.join with
+      | some raws => pure (some (← elabInlines ctx raws))
+      | none =>
+        let k := num
+        num := num + 1
+        match template with
+        | some src => pure (some (← src.at ctx (ListMark.numText · k)))
+        | none => pure (if byLevel then some #[.text (ListMark.enumLabel kd k)] else none)
+    match head with
+    | some label =>
       let head (c : Array Inline) : Array Inline := #[.role Ir.itemLabelRole (atParaStep c label)]
       out := out.push (match item[0]? with
         | some (Block.para c) => item.modify 0 fun _ => .para (head c ++ c)
         | _ => #[Block.para (head #[])] ++ item)
     | none => out := out.push item
+  if n == "enumerate" then
+    modify fun st => { st with ctr := { st.ctr with listResume :=
+      (st.ctr.listResume.filter fun (k, l, _) => !(k == n && l == kd)).push (n, kd, num - 1) } }
   return out
 
 /-- Applies each item's overlay selector to the whole item, label included, as beamer's
@@ -13291,24 +13466,30 @@ private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) 
     EM (Nat × Ir.ListSet × Dim.SymGlue) := do
   let mut own : Ir.ListSet := {}
   let mut bodyFrom := 0
+  let mut widest : Option String := none
   match scanOpeningArg body pos fun _ => true with
   | .took k' =>
     noteMentions (bracketSrc body 0 k')
     for o in KeyVal.items (bracketSrc body 0 k') do
       let (key, value) := KeyVal.entry o
-      if key.startsWith "<" then
+      if key == "widest" && n != "description" && value.isSome then widest := value
+      else if key.startsWith "<" then
         warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
           s!"'\{{n}}' default overlay specification '{key}' is not read; its items show as \
 their own specifications say" pos
           (help := "give each item a numbered specification, as \\item<1-> and \\item<2->")
-      else if Ir.listSetKeys.contains key then
-        match listOptionLength ctx (value.getD "") with
-        | some g => own := own.put key (some g)
-        | none =>
+      else if Ir.listSetKeys.contains key || key == "leftmargin" then
+        match value.map (·.trimAscii.toString), listOptionLength ctx (value.getD "") with
+        | some "*", _ => own := { own with margin := some (.widest none) }
+        | _, some g =>
+          own := if key == "leftmargin" then { own with margin := some (.len g) } else own.put key (some g)
+        | _, none =>
           warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
             s!"'\{{n}}' option '{key}' has a length this engine cannot read; skipped" pos
             (help := "give a length such as 2pt, 0.5em or a token name")
-      else unless key.isEmpty do
+      else unless key.isEmpty || (key == "label" && n != "description") ||
+          ((key == "start" || key == "resume") && n == "enumerate" &&
+            !(key == "resume" && value.isSome)) do
         warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
           s!"'\{{n}}' option '{key}' is not honoured per list; the declared list style stands" pos
     bodyFrom := k'
@@ -13325,6 +13506,17 @@ their own specifications say" pos
   let set := ((((Ir.ListSet.within ctx.lists size depth nest.set).over
     (Ir.stepListI ctx.lists size step depth)).over extra).over (scopes.over own)).over
     (preItemSet ctx body bodyFrom)
+  -- `leftmargin=*` measures the widest label a numbering sets, a description's label none.
+  let set ← match set.margin, n with
+    | some (.widest none), "description" => pure { set with margin := some (.widest (some "")) }
+    | some (.widest none), _ => do
+      let kd := nest.kindDepth n + 1
+      let (template, _, _) ← itemLabelSpec ctx n kd body pos
+      let sample ← if n == "enumerate" || template.isSome then
+          pure (some (← widestLabel ctx kd template widest))
+        else pure none
+      pure { set with margin := some (.widest sample) }
+    | _, _ => pure set
   let parsep := ((Ir.listSpacing ctx.lists size depth ctx.tokens set).map (·.1.parsep)).getD {}
   return (bodyFrom, set, parsep)
 
@@ -13982,8 +14174,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       let elabItems ← elabItemsGo itemCtx items 0 #[]
         (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
         (by omega) (by omega)
-      let labelled ← (if n == "description" then descItems else labelledItems) itemCtx lbody
-        (elabItems.map (·.2))
+      let labelled ← (if n == "description" then descItems itemCtx lbody
+        else labelledItems itemCtx n body bodyFrom pos) (elabItems.map (·.2))
       pure ((elabItems.zip labelled).map fun ((past, _), item) => (past, item))
     blocks := blocks ++ wrapDeclAlign scope.align
       #[.list (n == "enumerate") spacing (coverItems ctx steps elabItems)]
@@ -16083,14 +16275,30 @@ level, and its other keys on the kind's own element"
       | "topsep" | "partopsep" | "itemsep" | "parsep" =>
         if valueSrc.trimAscii.toString == "none" then st := { st with list := st.list.put key none }
         else if let some g ← asLength then st := { st with list := st.list.put key (some g) }
+      | "leftmargin" =>
+        let v := valueSrc.trimAscii.toString
+        if v == "none" then st := { st with list := { st.list with margin := none } }
+        else if v == "*" then st := { st with list := { st.list with margin := some (.widest none) } }
+        else if let some g ← asLength then
+          st := { st with list := { st.list with margin := some (.len g) } }
       | "font" => st := { st with font := ← asInline }
+      -- `none` undeclares a list's marker, label, indent or gap, as a later `\setlist` replaces them.
       | "marker" =>
-        st := { st with marker := (← asInline).map fun body =>
+        if valueSrc.trimAscii.toString == "none" then st := { st with marker := none }
+        else st := { st with marker := (← asInline).map fun body =>
           #[.located (ctx.sourceSpan pos) body] }
+      | "label" =>
+        if valueSrc.trimAscii.toString == "none" then st := { st with label := none }
+        else st := { st with label := some (← labelTemplate value fun rs => do
+          return (← inlineOf rs).getD #[]) }
       | "before" => st := { st with before := ← asLength }
       | "after" => st := { st with after := ← asLength }
-      | "indent" => st := { st with indent := ← asLength }
-      | "gap" => st := { st with gap := ← asLength }
+      | "indent" =>
+        if valueSrc.trimAscii.toString == "none" then st := { st with indent := none }
+        else st := { st with indent := ← asLength }
+      | "gap" =>
+        if valueSrc.trimAscii.toString == "none" then st := { st with gap := none }
+        else st := { st with gap := ← asLength }
       | "rule-above" => st := { st with ruleAbove := ← asLength }
       | "rule-above-skip" => st := { st with ruleAboveSkip := ← asLength }
       | "rule-above-gap" => st := { st with ruleAboveGap := ← asLength }

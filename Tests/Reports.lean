@@ -6,6 +6,7 @@ import Tests.TexFontTrees
 import Tests.ItemLabels
 import Tests.LabelLines
 import Tests.ListGaps
+import Tests.ListLabels
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2383,6 +2384,12 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: an itemize, an enumerate, a description, a trivlist, a center, a flushleft, a quote, a quotation and a verse in the content of fbox and of mbox each stop the run with LaTeX's not allowed in LR mode; this tree names each once (W0455) and sets it, a list in a minipage inside the box unnamed",
       "main's binary at 1e648c76 on the same probes: W0452 for the framed box beside text and nothing for the list, nothing at all for mbox; the guard fails there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact and diagnostic byte-identical"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R268", date := "2026-10-20"
+    what := "enumitem's label key on a list or in a setlist that counts its items, its start, resume, widest and leftmargin=* keys, and a class's redefined labelenumi were read as nothing, every list numbered 1., 2. at the level's margin; and a second unstarred setlist for a scope kept the first's label and margin"
+    pins := [check% Tests.ListLabels.checks]
+    accept := ["lualatex 1.24 on invented probes: a counting Roman label sets I. and II., an alphabetic one in parentheses (a), start=4 4., resume the next number, a redefined labelenumi (a) and (b), leftmargin=* the label's widest width and labelsep, a bullet and 0. at the outer margin, (viii) for a roman label, widest=III III., a description's next lines at the outer margin, a second setlist for itemize the bullet at 25pt; this tree sets every label and text start the same to a hundredth of a point",
+      "main's binary at 1e648c76 on the same probes: 1., 2. at the level's margin and the first setlist's label and margin; the guards fail there"]
     state := .guarded "1e648c76" .before .author }
 ]
 

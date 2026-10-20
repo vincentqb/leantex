@@ -1385,9 +1385,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\renewcommand{\\v}{second}\\begin{document}\\v\\end{document}")).1.body ==
       #[.para #[.text "second"]])
   t "list instance options are consumed and named, never E0310"
-    (let src := "\\documentclass{article}\\begin{document}\\begin{itemize}[leftmargin=2em]" ++
+    (let src := "\\documentclass{article}\\begin{document}\\begin{itemize}[align=left]" ++
       "\\item a\\end{itemize}\\end{document}"
-     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "W0104" && hasStr d.message "leftmargin"))
+     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "W0104" && hasStr d.message "align"))
   t "item marker override is read as the item's label"
     (let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
       "\\item[--] a\\end{itemize}\\end{document}")

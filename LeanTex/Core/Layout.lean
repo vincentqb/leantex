@@ -14056,7 +14056,19 @@ private def collectBlock (r : Rd) (a : Acc)
         else if a.boxTop then a.boxGap r
         else (a.listOpen r t).flushGap r
       | none, none => a
-    let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
+    -- A declared margin, or one the widest label and `\labelsep` set (enumitem's `leftmargin=*`).
+    let (step, a) : Length × Acc := match spacing.margin with
+      | some (.len g) => ((r.resolve g).width, a)
+      | some (.widest sample) =>
+        if desc then (0, a) else
+        let covered := fun c => (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
+        let label := match sample with
+          | some s => #[Ir.Inline.text s]
+          | none => st.marker.getD (((r.itemLabels.find? (·.1 == level)).map (·.2)).getD
+              (ListMark.marker ordered level 1 covered))
+        let (w, a) := a.naturalWidth r r.geom.fontSize label r.geom.textWidth
+        (w + labelSep r.geom, a)
+      | none => ((st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens), a)
     let indent := indent + step
     let a := if ordered then { a with enumDepth := depth }
       else if desc then { a with descDepth := depth } else { a with itemDepth := depth }

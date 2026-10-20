@@ -139,9 +139,9 @@ def setlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : 
   t "setlist: a level past the four ships, its setting named"
     (!o1Ds.any (·.severity == .error) && o1Ds.any (·.code == "W0104") && o1Pdf == basePdf)
   let (_, starDs, _) := run (listDoc "\\setlist{leftmargin=*}")
-  t "setlist: a widest-label margin is named once" ((starDs.filter (·.severity != .note)).size == 1)
+  t "setlist: a widest-label margin is read, unnamed" ((starDs.filter (·.severity != .note)).isEmpty)
   let (_, romanDs, _) := run (listDoc "\\setlist[enumerate]{label=(\\roman*)}")
-  t "setlist: a counting label is named once" ((romanDs.filter (·.severity != .note)).size == 1)
+  t "setlist: a counting label is read, unnamed" ((romanDs.filter (·.severity != .note)).isEmpty)
   -- premise: a body `\setlist` leaves no ink, so its one W0340 is its accounting.
   let (_, bodyDs, bodyPdf) := run (listDoc "" "{\\setlist[itemize]{label=x}}")
   t "setlist: a body setlist is one W0340 and leaves the page as it was"
@@ -286,9 +286,9 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let unreadOwn := ds "" "\\begin{itemize}[topsep=\\ht\\strutbox]\\item Kilo.\\item Lima.\\end{itemize}"
   t "list spacing: a list's own value the engine cannot read is that one warning"
     ((unreadOwn.filter fun d => d.span.any (·.pos.line == 5)).map (·.code) == #["W0104"])
-  let mixedOwn := ds "" "\\begin{itemize}[topsep=3pt, label=x]\\item Kilo.\\item Lima.\\end{itemize}"
+  let mixedOwn := ds "" "\\begin{itemize}[topsep=3pt, align=left]\\item Kilo.\\item Lima.\\end{itemize}"
   t "list spacing: a list's own options naming a key it does not honour are that one warning"
-    (named mixedOwn "label" && (mixedOwn.filter fun d => d.span.any (·.pos.line == 5)).all
+    (named mixedOwn "align" && (mixedOwn.filter fun d => d.span.any (·.pos.line == 5)).all
       (·.code == "W0104"))
   let ownUnread := ds "" ("\\begin{itemize}[itemsep=\\zzlength]\\item Kilo.\\item Lima.\\end{itemize}")
   t "list spacing: a list's own length the engine cannot read is named"
@@ -298,7 +298,7 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         "\\setlist[itemize,5]{itemsep=0pt}"].all fun pre =>
       named (ds pre basic) "sep" && steps (doc "[10pt]{article}" pre basic) abcd == over [10, 8, 10])
   t "list spacing: a list's other options are still named per list"
-    (named (ds "" "\\begin{itemize}[label=--, nosep]\\item Kilo.\\end{itemize}") "label")
+    (named (ds "" "\\begin{itemize}[align=left, nosep]\\item Kilo.\\end{itemize}") "align")
 
 /-- A list's spacing key on an element no list reads, and another key on an element that declares
 only a list's spacing, ship the page without them and are named where they are set. -/

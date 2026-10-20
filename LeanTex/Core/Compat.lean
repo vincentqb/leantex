@@ -1508,6 +1508,9 @@ private def setlistRecord
     | some (_, entries) => entries.foldl (fun a e => Ir.redeclare a e.1 e.2) acc
     | none => acc) #[]
 
+/-- The style keys `\setlist` declares an element's marker and indent by. -/
+private def setlistStyleKeys : List String := ["marker", "label", "indent"]
+
 /-- The style element of a list kind at a level, the kind's own standing for its first level and
 every level no deeper element takes. -/
 private def setlistElement (kind : String) : Option Nat → String
@@ -6873,13 +6876,16 @@ private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array R
       for (key, v) in vs do spacing := Ir.redeclare spacing key v
     | none => rest := rest.push e
   unless read do return body
-  let native := ", ".intercalate
-    ((spacing.toList.map fun (key, v) => s!"{key} = {v}") ++ rest.toList.map (·.src))
+  let native := ", ".intercalate (spacing.toList.map fun (key, v) => s!"{key} = {v}")
   -- A value or key the list does not read is named where it stands, which accounts for the options.
   unless named || rest.any fun e => !e.key.isEmpty do
-    became what s!"\\begin\{{n}}[{native}]" pos
-  return #[.sym '[' pos] ++ (if native.isEmpty then #[] else #[.word native pos]) ++ #[.sym ']' pos] ++
-    body.extract k body.size
+    let spelled := ", ".intercalate ((native :: rest.toList.map (·.src)).filter (!·.isEmpty))
+    became what s!"\\begin\{{n}}[{spelled}]" pos
+  -- The entries the list reads beyond its spacing keep their raws, a label's TeX among them.
+  let kept := rest.foldl (init := #[]) fun acc e =>
+    (if acc.isEmpty && native.isEmpty then acc else acc.push (.word ", " pos)) ++ e.item
+  return #[.sym '[' pos] ++ (if native.isEmpty then #[] else #[.word native pos]) ++ kept ++
+    #[.sym ']' pos] ++ body.extract k body.size
 
 /-- Each run of letters a native length spells, a unit after its number included. -/
 private def letterRuns (s : String) : Array String := Id.run do
@@ -11195,17 +11201,14 @@ description scopes")) ++
     | some value =>
       let v := rawSrc value
       if let some native := setlistLengthKeys.lookup key then
-        if v.contains '*' then
-          unreadParam "\\setlist" key s!"'{what}' key '{key}={v}'" pos
-            (help := "the widest label is not measured; give the margin a length")
+        -- A margin the widest label sets is the list's to measure where it opens.
+        if v.trimAscii.toString == "*" then vertical := Ir.redeclare vertical key "*"
         else entries := Ir.redeclare entries native (.text (lengthSrc value))
       else if key == "label" then
+        -- A label counting its items is a template each item's number sets in, else a marker.
         let written := (KeyVal.rawEntry e.src).2.getD ""
-        if written.contains '*' then
-          let part := s!"'{what}' key 'label={written}', a label counting its items,"
-          unreadParam "\\setlist" "label" part pos
-            (help := "a declared marker is the same on every item; the list keeps its numbering")
-        else entries := Ir.redeclare entries "marker" (.tex (value.map (rebase (fun _ => pos) true)))
+        let raws := Native.StyleValue.tex (value.map (rebase (fun _ => pos) true))
+        entries := Ir.redeclare entries (if written.contains '*' then "label" else "marker") raws
       else unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
     | none =>
       unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
@@ -11221,11 +11224,14 @@ description scopes")) ++
   unless vScopes.isEmpty || vertical.isEmpty do
     for (name, part, help) in vUnstyled do
       unreadParam "\\setlist" name part pos (help := help)
+  -- A scope's style keys replace the ones it held, as enumitem's `\setlist` replaces every key: each
+  -- one it no longer declares is undeclared.
+  let mut clearedStyle := false
   for sc in scopes do
-    write fun st =>
-      let old := ((st.setlists.find? (·.1 == sc)).map (·.2)).getD #[]
-      let new := if star then entries.foldl (fun a e => Ir.redeclare a e.1 e.2) old else entries
-      { st with setlists := Ir.redeclare st.setlists sc new }
+    let old := (((← get).setlists.find? (·.1 == sc)).map (·.2)).getD #[]
+    let new := if star then entries.foldl (fun a e => Ir.redeclare a e.1 e.2) old else entries
+    if !star && old.any (fun e => !entries.any (·.1 == e.1)) then clearedStyle := true
+    write fun st => { st with setlists := Ir.redeclare st.setlists sc new }
   -- A scope's vertical keys replace the ones it held, as enumitem's `\\setlist` replaces every key.
   let mut spaced : Array (String × Array (String × String)) := #[]
   unless star && vertical.isEmpty do
@@ -11243,7 +11249,7 @@ description scopes")) ++
   let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
     stored.any (fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)) ||
       spacings.any (·.1 == (some kind, some l))
-  let styledTouched : List (String × Option Nat) := if styled.isEmpty then [] else
+  let styledTouched : List (String × Option Nat) := if styled.isEmpty && !clearedStyle then [] else
     scopes.flatMap fun (kd, l) =>
       (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
         match l with
@@ -11261,6 +11267,10 @@ description scopes")) ++
   let touched := styledTouched ++ spacedTouched
   for (kind, level) in touched do
     let entriesAt := setlistRecord stored kind level
+    let entriesAt := if clearedStyle then
+        entriesAt ++ (setlistStyleKeys.filter fun k => !entriesAt.any (·.1 == k)).toArray.map
+          (·, Native.StyleValue.text "none")
+      else entriesAt
     unless entriesAt.isEmpty do
       records := Ir.redeclare records (setlistElement kind level) entriesAt
   for (el, es) in spaced do

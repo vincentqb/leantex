@@ -9177,6 +9177,21 @@ private def labelFits (cfg : Config) (label : Array Inline) : Bool :=
     w ≤ Ir.leftMarginAt cfg.lists cfg.tokens cfg.preamble (max 1 cfg.listDepth) - Ir.labelSepAt size
   | none => text.length ≤ 4
 
+/-- A list's declared left margin as its element's own padding: a length, or the widest label's
+text and `\labelsep` measured in the shipped body face, else at half an em a character
+(`Ir.ListMargin`); a description's widest is none. -/
+private def listMarginCss (cfg : Config) (desc : Bool) (level : Nat) : Ir.ListMargin → String
+  | .len g => cssLength g.width
+  | .widest sample =>
+    if desc then "0pt" else
+    let text := sample.getD (String.singleton (ListMark.itemMark level true))
+    let size := cfg.page.fontSize
+    match cfg.fonts with
+    | some fs =>
+      let w : Length := text.foldl (fun w c => w + fs.body.advance c * max 0 size / fs.body.unitsPerEm) 0
+      cssLength (Dim.SymLength.ofLength (w + Ir.labelSepAt size))
+    | none => s!"{text.length / 2 + 1}.{if text.length % 2 == 1 then 5 else 0}em"
+
 mutual
 
 public def blockNode (cfg : Config) (b : Block) : Node :=
@@ -9221,6 +9236,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let attrs := match cfg.listSets[spacing]? with
       | some i => #[("class", listSetClass i)]
       | none => #[]
+    let attrs := match spacing.margin with
+      | some m => attrs.push ("style", s!"padding-left: {listMarginCss cfg desc (cfg.listDepth + 1) m}")
+      | none => attrs
     if desc then
       fillCarrier cfg n
         (Html.elem "dl" (descItemsInto (cfg.deeper false).into #[] items.toList) attrs)

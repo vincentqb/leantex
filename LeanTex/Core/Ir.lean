@@ -1215,13 +1215,22 @@ public def partopsepFor (l : ListLineage) (size : Length) (level : Nat) (tokens 
   | some g => g
   | none => (tokens.find? "partopsep").getD (partopsepDefault l size)
 
+/-- A list's declared left margin (enumitem's `leftmargin`): a length, or its widest label's width
+and `\labelsep` (`leftmargin=*`), that label's text where the list numbers its items, none where
+its marker is the label. -/
+public inductive ListMargin where
+  | len (g : SymGlue)
+  | widest (sample : Option String)
+  deriving Repr, BEq, Inhabited, Hashable
+
 /-- A list's declared spacing over its level's: enumitem's vertical keys, each `none` where the
-level's value stands. -/
+level's value stands, and its left margin, which no list inside it keeps. -/
 public structure ListSet where
   topsep : Option SymGlue := none
   partopsep : Option SymGlue := none
   itemsep : Option SymGlue := none
   parsep : Option SymGlue := none
+  margin : Option ListMargin := none
   deriving Repr, BEq, Inhabited, Hashable
 
 /-- The keys a list's spacing declares, as a style and a list's options spell them. -/
@@ -1239,12 +1248,13 @@ public def ListSet.put (s : ListSet) (key : String) (g : Option SymGlue) : ListS
 /-- `top`'s declared values over `s`'s, as a later scope's over an earlier one. -/
 public def ListSet.over (s top : ListSet) : ListSet :=
   { topsep := top.topsep <|> s.topsep, partopsep := top.partopsep <|> s.partopsep
-    itemsep := top.itemsep <|> s.itemsep, parsep := top.parsep <|> s.parsep }
+    itemsep := top.itemsep <|> s.itemsep, parsep := top.parsep <|> s.parsep
+    margin := top.margin <|> s.margin }
 
 public theorem ListSet.over_absorb (s t : ListSet) : (s.over t).over t = s.over t := by
-  rcases s with ⟨a, b, c, d⟩
-  rcases t with ⟨e, f, g, h⟩
-  cases e <;> cases f <;> cases g <;> cases h <;> rfl
+  rcases s with ⟨a, b, c, d, m⟩
+  rcases t with ⟨e, f, g, h, n⟩
+  cases e <;> cases f <;> cases g <;> cases h <;> cases n <;> rfl
 
 /-- The values a first-level list opening in a size step takes from the `\@listi` that step's
 command redefines; none elsewhere. -/
@@ -7263,6 +7273,13 @@ public inductive UrlTilde where
   | low
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- One piece of an item label's template: text, or the item's number in a numeral style
+(enumitem's `\arabic*`, `\alph*`, `\Alph*`, `\roman*` and `\Roman*`). -/
+public inductive LabelPart where
+  | lit (body : Array Inline)
+  | count (style : NumStyle)
+  deriving Repr, BEq, Inhabited
+
 /-- How an element kind looks, from `\style{element}{...}`. -/
 public structure ElementStyle where
   font : Option (Array Inline) := none
@@ -7323,6 +7340,9 @@ public structure ElementStyle where
   list : ListSet := {}
   /-- How the `url` element sets a URL's `~`. -/
   tilde : Option UrlTilde := none
+  /-- A list's label template, each item's label its number set in it, read where the list's
+  items elaborate. -/
+  label : Option (Array LabelPart) := none
   deriving Repr, BEq, Inhabited
 
 /-- The part of the `titlepage` style the title heading itself takes: every
@@ -7390,7 +7410,8 @@ public def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "tilde"] ++ listSetKeys
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "tilde", "label",
+   "leftmargin"] ++ listSetKeys
 
 /-- The keys a heading, a list and the navigation landmark read: their spacing, rule, marker,
 indent and gap, and the web page's interaction states. -/
@@ -7411,8 +7432,9 @@ public def styleKeysRead : String → List String
   | "logo" => ["align"]
   | "frametitle" | "sectionpage" | "standout" | "block" | "alertblock" | "exampleblock" => ["font"]
   | e =>
-    if drawnElements.contains e && listSetElements.contains e then flowStyleKeys ++ listSetKeys
-    else if listSetOnly.contains e then listSetKeys
+    if drawnElements.contains e && listSetElements.contains e then
+      flowStyleKeys ++ listSetKeys ++ ["label", "leftmargin"]
+    else if listSetOnly.contains e then listSetKeys ++ ["leftmargin"]
     else flowStyleKeys
 
 public structure Styles where

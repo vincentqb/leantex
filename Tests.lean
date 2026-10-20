@@ -101,6 +101,7 @@ import Tests.ItemLabels
 import Tests.WebMeasure
 import Tests.LabelLines
 import Tests.ListGaps
+import Tests.ListLabels
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -557,6 +558,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.WebMeasure.paperLossChecks ref oneFace
   Tests.LabelLines.checks ref oneFace
   Tests.ListGaps.checks ref oneFace
+  Tests.ListLabels.checks ref oneFace
   Tests.ItemLabels.cellChecks ref oneFace
   Tests.ItemLabels.itemSpaceChecks ref oneFace
   nativeCarrierChecks ref oneFace

@@ -606,7 +606,7 @@ def titleHeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let values : List (String × String) :=
     [("rule", "quiet"), ("rule-position", "baseline"), ("rule-thickness", "1pt"),
      ("marker", "{x}"), ("indent", "2em"), ("gap", "1em"), ("body-size", "small"),
-     ("color", "quiet"), ("tilde", "low")]
+     ("color", "quiet"), ("tilde", "low"), ("label", "{x}"), ("leftmargin", "2em")]
   t "every unread title key is exercised" (values.map (·.1) == Ir.styleKeys.filter fun k =>
     !(Ir.styleKeysRead "titlepage").contains k && !Ir.listSetKeys.contains k)
   for (key, v) in values do

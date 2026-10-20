@@ -157,7 +157,7 @@ def refusedCases : List (String × DiagCode × String) :=
      ("\\usepackage{caption}" ++ probeColor ++ "\\captionsetup{labelfont={color=probeink}}")
      "\\begin{figure}Words.\\caption{A caption.}\\end{figure}"),
    ("a refused list option", .W0104, article ("\\usepackage{enumitem}" ++ probeColor)
-     "\\begin{enumerate}[label=\\textcolor{probeink}{\\arabic*.}]\\item Alpha\\end{enumerate}"),
+     "\\begin{enumerate}[font=\\color{probeink}]\\item Alpha\\end{enumerate}"),
    ("text standing before the document", .E0313, article
      ("\\usepackage{tikz}" ++ probeColor ++ "\\tikzstyle{probe}=[fill=probeink]")
      "\\begin{tikzpicture}\\fill[probe] (0,0) rectangle (1,1);\\end{tikzpicture}"),
