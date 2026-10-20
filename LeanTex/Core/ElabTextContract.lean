@@ -36,14 +36,12 @@ theorem smartPunct_canon (s : String) :
   simp [Ir.smartPunct, hx, hs, hw]
 
 theorem smartPunctAfter_canon (lead : Option Char) (s : String) :
-    canon (Ir.smartPunctAfter lead s).toList = canon s.toList ∧
-      (Ir.smartPunctAfter lead s).toList.filter (·.isWhitespace) =
-        s.toList.filter (·.isWhitespace) := by
+    canon (Ir.smartPunctAfter lead s).toList = canon s.toList := by
   cases lead with
-  | none => exact smartPunct_canon s
+  | none => exact (smartPunct_canon s).1
   | some c =>
-    obtain ⟨x, hx, hs, hw⟩ := smartPunct_go_canon s.toList [c]
-    simp [Ir.smartPunctAfter, hx, hs, hw]
+    obtain ⟨x, hx, hs, _⟩ := smartPunct_go_canon s.toList [c]
+    simp [Ir.smartPunctAfter, hx, hs]
 
 /-- Smart punctuation reads alike from either origin. -/
 theorem chars_smart (named : List Span) (o : Origin) (s : String) :
@@ -380,21 +378,23 @@ private theorem pre_inner (acc inner : Array Inline) (sb : String) :
   simp [locatedText_append, locatedText_flushText]
 
 private theorem wordAfter_canon (ctx : Ctx) (acc : Array Inline) (sb w : String) :
-    canon (wordAfter ctx acc sb w).toList = canon w.toList ∧
-      (wordAfter ctx acc sb w).toList.filter (·.isWhitespace) =
-        w.toList.filter (·.isWhitespace) := by
+    canon (wordAfter ctx acc sb w).toList = canon w.toList := by
   unfold wordAfter
   split
-  · exact ⟨rfl, rfl⟩
+  · rfl
   · split
     · exact smartPunctAfter_canon _ _
-    · exact ⟨rfl, rfl⟩
+    · rfl
 
 private theorem slice_body {raws body : Array Raw} {i : Nat} (h : i < raws.size)
     (hb : rawWeightList body.toList < rawWeight raws[i]) :
     sliceWeight body 0 < sliceWeight raws i := by
   have := body_lt_slice' h hb
   simpa [sliceWeight] using this
+
+private theorem escapeOf_space : escapeOf " " = some " " := by
+  have hl : escapes.lookup " " = some " " := by decide
+  simp only [escapeOf, hl]
 
 private theorem find_args_none (K : String → Prop) (ctx : Ctx) (name : String) (hfit : Fits K ctx)
     (hk : K name) : ctx.args.find? (fun x => x.fst == name) = none := by
@@ -403,7 +403,7 @@ private theorem find_args_none (K : String → Prop) (ctx : Ctx) (name : String)
   simp only [beq_iff_eq] at he
   exact hfit.1 a ha (he ▸ hk)
 
-private theorem latestNamed_mem {α : Type} {nameOf : α → String} {xs : Array α} {want : String}
+private theorem latestNamed_named {α : Type} {nameOf : α → String} {xs : Array α} {want : String}
     {n k : Nat} {x : α} (h : latestNamed nameOf xs want n = some (k, x)) :
     x ∈ xs ∧ nameOf x = want := by
   fun_induction latestNamed nameOf xs want n with
@@ -423,7 +423,7 @@ private theorem lookupUser_fits (K : String → Prop) (ctx : Ctx) (name : String
   · cases hl : latestNamed (·.name) ctx.user name ctx.limit with
     | none => rfl
     | some x =>
-      obtain ⟨hm, hn⟩ := latestNamed_mem hl
+      obtain ⟨hm, hn⟩ := latestNamed_named hl
       exact absurd (hn ▸ hk) (hfit.2 _ hm)
 
 /-- What the spine owes at `raws`, `i`: its run accounts for the raws from `i`. -/
@@ -491,7 +491,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
         Parse.rawTextOne_word, Option.map_none, Option.getD_none, List.append_nil,
         List.append_assoc, chars_empty]
       rw [← List.append_assoc (locatedText acc'), ← List.append_assoc (locatedText acc')]
-      exact view_token named _ (wordAfter_canon _ _ _ _).1 _ _
+      exact view_token named _ (wordAfter_canon _ _ _ _) _ _
     case h_2.space =>
       refine accounts_cons ctx.file _ _ _ st st _ _ []
         (ih { ctx with macroRoles := roles } raws (i + 1) acc' _ st hnext hfit hr)
@@ -586,8 +586,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
         by_cases hsp : name = " "
         · subst hsp
           have hlit : lit = " " := by
-            have hl : escapes.lookup " " = some " " := by decide
-            simp only [escapeOf, hl, Option.some.injEq] at hesc
+            rw [escapeOf_space, Option.some.injEq] at hesc
             exact hesc.symm
           subst hlit
           simp only [beq_self_eq_true, ↓reduceIte]
@@ -609,8 +608,8 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
         obtain ⟨t, ht⟩ := Option.isSome_iff_exists.mp hsym
         have hsp' : name ≠ " " := by
           rintro rfl
-          have hl : escapes.lookup " " = some " " := by decide
-          simp [escapeOf, hl] at hesc
+          rw [escapeOf_space] at hesc
+          cases hesc
         simp only [ht, Option.getD_some]
         refine accounts_cons ctx.file _ _ _ st st _ _ []
           (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)

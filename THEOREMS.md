@@ -120,16 +120,16 @@ Three gaps keep the composition open:
   (`Elab.elabInlines_ctrl_text`), read by `Parse.ctrlText`. The model's open terms are owed with the
   arms that read them: `Parse.rawText` reads a group's text whatever control precedes it, so the
   arms of controls reading arguments owe signature-typed slots, a `\label` or `\ref` key, a length
-  or a file name being no text, and an accent's composition with what follows, and the controls
-  reading none outside those proved (`\\`, `\qedhere`, a counter's value, an escape an accent
-  shares, an overlay's native name) owe their arms; `\hfill` reads as no text, though it parts the
-  words around it; a formula's text is the floor its source reads, so the formula arm owes the
-  parsed formula's floor reading as it; an environment's body reads whole, so the environment arm
-  owes a mode conditional read by its text branch, a display or alignment as its formula's floor and
-  a picture by its labels; a command's expansion sets its text at its call's place, so the call arm
-  owes srcText reading a call through its definition; a piece is a place, so where the compatibility
-  pass sets several raws at one place a refusal there excuses them all, and token identity is owed.
-  owed (U111): `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`,
+  or a file name being no text, and an accent's composition with what follows, `\\`'s length among
+  them, and the controls reading none outside those proved (`\qedhere`, a counter's value, an escape
+  an accent shares, an overlay's native name) owe their arms; `\hfill` reads as no text, though it
+  parts the words around it; a formula's text is the floor its source reads, so the formula arm owes
+  the parsed formula's floor reading as it; an environment's body reads whole, so the environment
+  arm owes a mode conditional read by its text branch, a display or alignment as its formula's floor
+  and a picture by its labels; a command's expansion sets its text at its call's place, so the call
+  arm owes srcText reading a call through its definition; a piece is a place, so where the
+  compatibility pass sets several raws at one place a refusal there excuses them all, and token
+  identity is owed. owed (U111): `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`,
   `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`,
   `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`, `Elab.elabBlocks_text_accounts`,
   `Ir.locatedBlocks`, `Parse.rawTextFor`, `Compat.executeInputs_text_accounts`,
@@ -172,7 +172,7 @@ Three gaps keep the composition open:
 | Termination | Every definition the binary's entry reaches through its kernel value is total: none is partial, every loop recurses structurally or on a measure, both knots on lexicographic ones, and a nested type's equality is derived structurally; the loops outside are the watch mode's, rebuilding until interrupted, the toolchain's file-system walks and the iterator loops of its string, path and sort functions, which the toolchain-loops premise holds to end, and the code the runtime runs for a definition is its meaning by the lean-runtime premise. A chain of user expansions as the knot's call sites build it, a command under the commands below it and an environment under the environments below it, is no deeper than those counts allow. | `Elab.expandUser_depth_le`; checked over every constant the entry reaches: `partialReachChecks` |
 | Macro visibility | A call resolves to the latest command of its name the visible prefix holds, none where the context keeps its raws. | `Elab.lookupUser_latest_exact` |
 | Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
-| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike; so do the control words setting their own text, an escape or a text symbol no accent shares, `\par` and `\hfill`, where no parameter or document command takes their name. | `Elab.elabInlines_plain_text`, `Elab.elabInlines_ctrl_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`, `Elab.elabBlocks_text_accounts` |
+| Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike; so do the control words setting their own text under their own names, an escape or a text symbol no accent shares, `\par` and `\hfill`, where no parameter or document command takes their name. | `Elab.elabInlines_plain_text`, `Elab.elabInlines_ctrl_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`, `Elab.elabBlocks_text_accounts` |
 | Group scope | A group's end, block or inline, restores the declaration state its start held, with the global assignments logged inside replayed over it; with none logged, a group, an environment holding block content and a braced group of block content with no paragraph end inside each leave the state as they found it. | `texGroup_scope_id`, `elabBlocks_env_scope_id`, `elabBlocks_group_scope_id`; by unfolding: `texGroup_scope_exact`, `inlineGroup_scope_exact` |
 
 ## IR
