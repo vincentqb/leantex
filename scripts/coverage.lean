@@ -481,8 +481,6 @@ def witnessExplained : Array Explanation := #[
     why := "a palette role named in a theme block, not the kernel's \\accent" },
   { name := "begin", side := .probe, usage := ⟨false, "\\begin{center}x\\end{center}"⟩,
     why := "half of a delimiter pair: no fragment can spell it alone" },
-  { name := "bf", side := .corpus, usage := ⟨false, "{\\bf x}"⟩,
-    why := "inside a \\renewcommand{\\@maketitle} body elaboration never reaches" },
   { name := "documentclass", side := .probe, usage := ⟨false, "x"⟩,
     why := "a document's identity: every probe document already declares one" },
   { name := "end", side := .probe, usage := ⟨false, "\\begin{center}x\\end{center}"⟩,
