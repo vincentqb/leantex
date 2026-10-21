@@ -274,6 +274,7 @@ import Tests.ColumnGeometry
 import Tests.TitlePageLifecycle
 import Tests.LinkMacroLayout
 import Tests.PackageCode
+import Tests.LocalClass
 import Tests.PackageImports
 import Tests.ParagraphMathRhythm
 import Tests.LineRhythm
@@ -593,8 +594,10 @@ def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   Tests.PrintColour.previewChecks ref oneFace
   Tests.PrintColour.driverChecks ref
 
-/-- The page blocks: what overruns a page, and where a flow's pages turn. -/
+/-- The page blocks: the class a page is set on, what overruns a page, where a flow's pages turn. -/
 def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  localClassChecks ref oneFace
+  journalClassChecks ref oneFace
   Tests.PageOverrun.checks ref oneFace
   Tests.PageTurns.checks ref oneFace
 

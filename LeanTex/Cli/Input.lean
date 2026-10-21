@@ -299,7 +299,7 @@ private def keptDivisions (dir : System.FilePath) (file : String) (raws : Array 
     return place) file #[] raws.toList).run #[]).run context
 
 /-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
-reads nothing, and nesting stays within eight files. -/
+reads nothing, a class the engine models reads no file, and nesting stays within eight files. -/
 private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
     Compat.InputReader ReadM := fun request context => do
   let site : Span := ⟨request.file, request.pos⟩
@@ -336,6 +336,30 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
       let (answer, context) ←
         Elab.resumeInput (readAt dir root depth) context request.file sub
       return (some answer, context)
+  else if request.command == "documentclass" then
+    let name := request.name.trimAscii.toString
+    let path := dir / (name ++ ".cls")
+    if name.isEmpty || Compat.modeledClass name || !(← path.pathExists) then return (none, context)
+    match depth with
+    | 0 =>
+      let d := { DriverDiag.inputTooDeep with span := some site }
+      modify fun log => { log with diags := log.diags.push d }
+      return (none, context)
+    | depth + 1 =>
+      let text ← match ← readSource path.toString with
+        | .ok bytes =>
+          modify fun log => { log with reads := log.reads.push path.toString }
+          pure (← readTexOnce (name ++ ".cls") bytes).text
+        | .error d =>
+          modify fun log => { log with diags := log.diags.push { d with span := some site } }
+          pure ""
+      let (raws, _) := Surface.read .tex (name ++ ".cls") text
+      let source := if request.file == root then none else some request.file
+      modify fun log => { log with spliced := log.spliced.push (name ++ ".cls", source, request.pos) }
+      let sub := Compat.spliceLocalClass name (context.classOptions name request.options) raws
+        request.pos
+      let (answer, next) ← Elab.resumeInput (readAt dir root depth) context request.file sub
+      return (some answer, next)
   else
     let context := if request.packageCalls.any (·.1 == "markdown") then
       context.loadMarkdown request.options else context
