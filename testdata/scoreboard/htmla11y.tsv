@@ -122,6 +122,16 @@ code-bash.pending-focus	1000
 code-bash.scope-marks	1000
 code-bash.scroll	1000
 code-bash.svg	1000
+code-lean-math.contrast	1000
+code-lean-math.h1	1000
+code-lean-math.hidden-focus	1000
+code-lean-math.img	1000
+code-lean-math.landmarks	1000
+code-lean-math.link	1000
+code-lean-math.pending-focus	1000
+code-lean-math.scope-marks	1000
+code-lean-math.scroll	1000
+code-lean-math.svg	1000
 code-lean-prose.contrast	1000
 code-lean-prose.h1	1000
 code-lean-prose.hidden-focus	1000

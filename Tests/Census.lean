@@ -1477,6 +1477,17 @@ def censusCodeRows :
     ("no prose ships its comment delimiters, and the directive ships nowhere",
       !hasStr (censusInk c) "/-!" && !hasStr (censusInk c) "/--Theheights" &&
         !hasStr (censusInk c) "leantex:")]),
+  ("code-lean-math", fun _ c =>
+    let stmt := ((linesFrom c "Theorem (Weir.gate_flow)").toList.takeWhile
+      (!hasStr ·.text "theorem gate")).map (·.text.trimAscii.toString)
+    let net (t : String) : Int := (t.toList.filter (· == '(')).length - (t.toList.filter (· == ')')).length
+    let opens := (stmt.dropLast.foldl (fun (acc : Int × List Int) t =>
+      (acc.1 + net t, acc.2 ++ [acc.1 + net t])) (0, [])).2
+    [("one page", c.size == 1),
+     ("the statement sets on several lines, one ending inside an open parenthesis",
+       stmt.length ≥ 3 && opens.any (· > 0)),
+     ("no line of the statement opens on a closing parenthesis or ends on an opening one",
+       stmt.all fun t => !t.startsWith ")" && !t.endsWith "(")]),
   ("code-lean-prose", fun g c =>
     let step := Ir.linesStep.resolve g.fontSize 0
     let lead := Ir.leadingFor g.fontSize g.leading

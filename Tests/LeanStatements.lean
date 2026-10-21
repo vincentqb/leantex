@@ -98,19 +98,19 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\mathit {p}\\land {}", "\\mathit {q}\\leftrightarrow {}", "\\mathit {q}\\land {}",
     "\\mathit {p}"]
   spells "Tide.not_both" #["\\forall \\mathit {p}:\\mathrm {Prop},",
-    "\\lnot (\\mathit {p}\\land \\lnot \\mathit {p})"]
+    "\\lnot (\\mathit {p}\\land {}", "\\lnot \\mathit {p})"]
   spells "Tide.neg_neg'" #["\\forall \\mathit {z}:\\mathbb {Z},", "-(-\\mathit {z})={}",
     "\\mathit {z}"]
   spells "Tide.pow_succ'" #["\\forall \\mathit {a},{}", "\\mathit {n}:\\mathbb {N},",
     "\\mathit {a}^{\\mathit {n}+\\mathrm {1}}={}", "\\mathit {a}^{\\mathit {n}}\\cdot {}",
     "\\mathit {a}"]
   spells "Tide.div_mod" #["\\forall \\mathit {a},{}", "\\mathit {b}:\\mathbb {N},",
-    "\\mathit {b}\\cdot {}", "(\\mathit {a}/{}", "\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
+    "\\mathit {b}\\cdot {}", "(\\mathit {a}/\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
     "\\mathit {b}={}", "\\mathit {a}"]
   spells "Tide.total" #["\\mathrm {total}:", "\\mathrm {Add}\\  \\mathit {α}\\to {}",
     "\\mathit {α}\\to {}", "\\mathrm {List}\\  \\mathit {α}\\to {}", "\\mathit {α}"]
-  spells "Tide.strict_hyp" #["(\\forall \\mathit {n}:\\mathbb {N},\\mathit {n}=\\mathrm {0})\\to {}",
-    "\\mathrm {False}"]
+  spells "Tide.strict_hyp" #["(\\forall \\mathit {n}:\\mathbb {N},{}", "\\mathit {n}={}",
+    "\\mathrm {0})\\to {}", "\\mathrm {False}"]
   spells "Tide.imp_iff" #["\\forall \\mathit {p},{}", "\\mathit {q}:\\mathrm {Prop},",
     "\\mathit {p}\\to {}", "(\\mathit {q}\\leftrightarrow {}", "\\mathit {q})"]
   spells "Tide.depth_val" #["\\mathrm {depth}={}", "\\mathrm {7}"]
@@ -128,10 +128,11 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   spells "Tide.nz" #["\\forall \\mathit {n}:\\mathbb {N},",
     "\\mathrm {NeZero}\\  \\mathit {n}\\to {}", "\\mathit {n}\\neq {}", "\\mathrm {0}"]
   spells "Tide.dep_hyp" #["\\forall \\mathit {n}:\\mathbb {N},",
-    "(\\mathit {h}:\\mathrm {0}<\\mathit {n})\\to {}",
+    "(\\mathit {h}:\\mathrm {0}<{}", "\\mathit {n})\\to {}",
     "(\\mathrm {Fin.mk}\\  \\mathrm {0}\\  \\mathit {h}).\\mathrm {val}={}", "\\mathrm {0}"]
   spells "Tide.nested_dep" #["\\forall \\mathit {f}:(\\forall \\mathit {n}:\\mathbb {N},\\mathit {n}>\\mathrm {0}\\to \\mathbb {N}),",
-    "(\\forall \\mathit {n}:\\mathbb {N},(\\mathit {h}:\\mathit {n}>\\mathrm {0})\\to \\mathit {f}\\  \\mathit {n}\\  \\mathit {h}=\\mathit {n})\\to {}",
+    "(\\forall \\mathit {n}:\\mathbb {N},{}", "(\\mathit {h}:\\mathit {n}>{}", "\\mathrm {0})\\to {}",
+    "\\mathit {f}\\  \\mathit {n}\\  \\mathit {h}={}", "\\mathit {n})\\to {}",
     "\\mathit {f}\\  \\mathrm {1}\\  \\mathrm {Nat.one\\_pos}={}", "\\mathrm {1}"]
   spells "Tide.chars_len" #["\\text {\"a\\textasciitilde b\\textasciicircum c\\textbackslash \\textbackslash d\\textbackslash n\\textbackslash t\\textbackslash \"\\textbraceleft \\textbraceright \\textunderscore \\#\\textdollar \\%\\&\"}.\\mathrm {length}={}",
     "\\mathrm {17}"]
@@ -221,6 +222,32 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     (piecesOf (app "List.cons" [nat, var 0, app "List.cons" [nat, var 1, app "List.nil" [nat]]])
         ["a", "b"] listBinders == ["[\\mathit {a},{}", "\\mathit {b}]"] &&
       piecesOf (app "List.nil" [nat]) [] listBinders == ["[]"])
+  let p (i : Nat) := app "P" [var i]
+  t "statements: a negation, a quantifier and a named hypothesis inside an operator break inside their parentheses after a connective or a binder's head, a relation or an application whole"
+    (piecesOf (app "Not" [app "And" [var 0, app "And" [var 1, var 2]]]) ["c", "b", "a"] ==
+        ["\\lnot (\\mathit {c}\\land {}", "\\mathit {b}\\land {}", "\\mathit {a})"] &&
+      piecesOf (.pi "h" .explicit false (.pi "n" .explicit false nat (p 0)) (app "Q" [])) [] ==
+        ["(\\forall \\mathit {n}:\\mathbb {N},{}", "\\mathrm {P}\\  \\mathit {n})\\to {}",
+          "\\mathrm {Q}"] &&
+      piecesOf (.pi "h" .explicit true (app "And" [var 0, var 1]) (app "Q" [var 0])) ["b", "a"] ==
+        ["(\\mathit {h}:\\mathit {b}\\land {}", "\\mathit {a})\\to {}",
+          "\\mathrm {Q}\\  \\mathit {h}"])
+  let sum : LeanFacts.Term := (List.range 6).foldl (fun acc i => app "HAdd.hAdd" [acc, var (i % 2)]) (var 0)
+  t "statements: a long relation inside parentheses breaks after its symbol, its sums whole"
+    ((piecesOf (.pi "h" .explicit false (.pi "g" .explicit false (app "Eq" [sum, sum]) (app "P" []))
+      (app "Q" [])) ["a", "b"]).length == 4)
+  let opensAt (f : String) : Bool :=
+    let f := ((f.trimAsciiEnd.toString.dropSuffix "{}").toString.dropSuffix "\\").toString.trimAsciiEnd.toString
+    f.endsWith "(" || f.endsWith "["
+  let probes : List LeanFacts.Term :=
+    [app "Not" [app "Or" [p 0, app "Not" [app "And" [p 0, p 0]]]],
+     .pi "h" .explicit false (app "Exists" [nat, .lam "n" .explicit nat (app "And" [p 0, p 0])])
+       (app "Not" [app "Iff" [p 0, app "Not" [p 0]]]),
+     app "g" [.lam "x" .explicit nat (app "Or" [p 0, p 0]), var 0]]
+  t "statements: no formula of a statement or a term ends on an opening bracket or opens on a closing one"
+    (((facts.decls.toList.map fun d => (formulasOf facts d.name).toList) ++
+        probes.map (piecesOf · ["x"])).all fun fs =>
+      fs.all fun f => !opensAt f && !f.startsWith ")" && !f.startsWith "]" && !f.isEmpty)
   t "statements: a function's name its body never reads sets as an underscore"
     (texOf (app "g" [.lam "x" .explicit nat (app "Nat.zero" [])]) [] ==
       "\\mathrm {g}\\  (\\_\\mapsto \\mathrm {Nat.zero})")

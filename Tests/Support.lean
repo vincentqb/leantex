@@ -534,7 +534,7 @@ def mdGoldenNames : List String :=
 their extension selects. -/
 def codeGoldenNames : List (String × Ir.CodeLang) :=
   [("code-lean", .lean), ("code-python", .python), ("code-bash", .bash), ("lean-cite", .lean),
-   ("code-lean-prose", .lean)]
+   ("code-lean-prose", .lean), ("code-lean-math", .lean)]
 
 /-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
 def inkMarkupExempt : List (String × List Char) :=
