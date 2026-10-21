@@ -19536,6 +19536,9 @@ the {docClass.name} class's page keeps its own" none
     -- KOMA-Script's report and book give their title a page of its own, which `titlepage=false`
     -- takes back.
     else if o == "titlepage=false" && docClass == .koma && (← get).ctr.chapters then pure ()
+    -- A book-based flow preset is two-sided until one of these takes it back (`Compat`).
+    else if (o == "oneside" || o == "twoside=false") &&
+        (match docClass with | .flow p => p.base == "book" | _ => false) then pure ()
     else if let some why := ((classOptionsInert.lookup record.model).bind (·.lookup o)).map (·.why) then
       classSay .N0100 key (Diag.say .N0100 .option o (some (none, "\\documentclass"))) (detail := some
         s!"nothing: {why}")

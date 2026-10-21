@@ -260,7 +260,8 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
   if cls != "article" && !articleClasses.contains cls && native != some .koma && !flowClass then none
   else match sizes with
     | [some n] => some n
-    | [] => some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
+    | [] => if flowClass then some Ir.flowOptionPt
+      else some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
     | _ => none
 
 /-- The whole points a class's last size option sets, its record's or 10pt without one. -/
@@ -2113,9 +2114,9 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
     | _ => break
   return (out, j)
 
-/-- The `preset=` value class options name, as written. -/
+/-- The last `preset=` value class options name, as written, as ltkeys.sty reads them. -/
 public def presetOption? (options : List String) : Option String :=
-  options.findSome? fun o => match KeyVal.entry o with
+  options.reverse.findSome? fun o => match KeyVal.entry o with
     | ("preset", some v) => some v.trimAscii.toString
     | _ => none
 
@@ -11041,12 +11042,13 @@ the option" else "the page is one-sided, as without the option")) pos
         let chapters := if preset.base == "book" && !keptItems.contains "chapters" then ["chapters"]
           else []
         let declaration := Native.Head.documentclass (passed ++ keptItems ++ chapters).toArray cls
-        let sides : Native.Setting :=
-          .page #[(.twoside, "on"), (.openright, "on"), (.headings, "on")]
+        -- book.cls sets its pages in the `headings` style on either side count.
+        let sides : Native.Setting := .page ((if twosided then
+          #[(.twoside, "on"), (.openright, "on")] else #[]).push (.headings, "on"))
         if preset.base == "book" then
           write fun st => { st with chapters := true, chaptersRight := twosided, twoSided := twosided,
-                                    headingsStyle := some twosided }
-        let book ← if twosided then carry sides pos else pure #[]
+                                    headingsStyle := some true }
+        let book ← if preset.base == "book" then carry sides pos else pure #[]
         return some (declaration.raws pos ++ book, k)
       if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty &&
           sides.isEmpty then

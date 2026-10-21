@@ -2902,13 +2902,13 @@ private def anySqueezed (doc : Doc) : Bool :=
 
 /-- In beamer's lineage, the top level's trivlist and float spaces on the root. -/
 private def lineageSkipVars (doc : Doc) (ex : Length) : String :=
-  match doc.docClass.record.lists with
+  match doc.docClass.record.htmlLists with
   | .beamer => s!"    {lineageSkipDecls doc ex 0}\n"
   | .sizeFile | .web | .grid => ""
 
 /-- Each list level's spaces in beamer's lineage. -/
 private def lineageLevelRules (doc : Doc) (ex : Length) : String :=
-  match doc.docClass.record.lists with
+  match doc.docClass.record.htmlLists with
   | .beamer =>
     let within := ["li", "dd", "blockquote"]
     let deep := within.flatMap fun o => within.map (o ++ " " ++ ·)
@@ -3928,7 +3928,7 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
       | .color _ => some (paletteVar n c)) ++ aliases
   -- beamer's lineage states these in the page's unit (`lineageSkipVars`)
   let stated (n : String) : Bool :=
-    doc.docClass.record.lists == .beamer && (n == Ir.trivlistSkipName || n == "floatsep")
+    doc.docClass.record.htmlLists == .beamer && (n == Ir.trivlistSkipName || n == "floatsep")
   let tokens := (doc.tokens.entries.toList.filter (!stated ·.1)).filterMap fun (n, g) =>
     (tokenVar? n).map fun v =>
       s!"    {v}: {gapTokenCss (lengthBasisOf doc) (exAt cfg.fonts doc.page.fontSize) n g.width};"
@@ -4656,7 +4656,7 @@ private def looseStageCss (doc : Doc) : String :=
 /-- A frame's content as TeX opens it below its `\vbox{}` (beamerbaseframe.sty): the first
 baseline one `\baselineskip` down, the last line trimmed to its baseline. -/
 private def frameOpeningCss (doc : Doc) (ex : Length) : String :=
-  let l := doc.docClass.record.lists
+  let l := doc.docClass.record.htmlLists
   let size := doc.page.fontSize
   -- One set of rules per edge: the frame's opening element, the stage's
   -- child (`frame-body-start`), and the block an opening carrier's flow
@@ -5924,14 +5924,14 @@ private def floatKindClass : Ir.FloatKind → String
 private def captionScopeCss (doc : Doc) : String :=
   let pos := doc.captionPos
   let chain (s : Ir.CaptionSkip) (k : Ir.FloatKind) : String :=
-    let dflt := match doc.docClass.record.lists, s with
+    let dflt := match doc.docClass.record.htmlLists, s with
       | .beamer, _ =>
         lineageLength doc (Ir.CaptionSkip.defaultFor .beamer s doc.page.fontSize).width.fixed
       | _, .above => quantaRem (gapK "caption")
       | _, .below => "0px"
     (s.keys k).foldr (fun key acc => s!"var(--{key}, {acc})") dflt
   String.join ([Ir.FloatKind.figure, .table, .sub, .algorithm].map fun k =>
-    let p := Ir.captionPosFor doc.docClass.record.lists pos k
+    let p := Ir.captionPosFor doc.docClass.record.htmlLists pos k
     let (obj, far) := Ir.captionSides p false
     let (objTop, farTop) := Ir.captionSides p true
     let s := k.captionScope
@@ -6153,8 +6153,8 @@ public def baseRules (doc : Doc) (ex : Length) (ch : Nat) (pairs : List (Nat × 
   -- inline code outside tex may break rather than overflow its line, as its page breaks it
   (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
-  listIndentCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace ++
-  quoteKindCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace
+  listIndentCss doc.docClass.record.htmlLists (lengthBasisOf doc) doc.preambleFace ++
+  quoteKindCss doc.docClass.record.htmlLists (lengthBasisOf doc) doc.preambleFace
     doc.docClass.record.quotationIndent (Ir.quoteKindsOf doc.body) ++
   (if doc.abstractForm == .inset then abstractInsetCss (lengthBasisOf doc) doc.preambleFace
    else "") ++
@@ -6298,10 +6298,10 @@ white-space: nowrap; }\n" ++
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
-  blockGapCss doc.docClass.record.lists doc.page.fontSize ex doc.tokens pairs
+  blockGapCss doc.docClass.record.htmlLists doc.page.fontSize ex doc.tokens pairs
     (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome)
     (squeezed := anySqueezed doc) (sets := (Ir.listSetsOf doc.body).toList)
-    (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize ex doc.tokens
+    (closes := nestedClosesOf doc.docClass.record.htmlLists doc.page.fontSize ex doc.tokens
       (doc.abstractForm == .quotation) doc.body doc.listExtra)
     (kinds := (Ir.quoteKindsOf doc.body).toList) (extra := doc.listExtra) ++
   slideCss doc ++
@@ -6336,11 +6336,11 @@ white-space: nowrap; }\n" ++
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
   (if docHasDisclosure doc then
     disclosurePrintCss ++
-      disclosurePrintGapCss doc.docClass.record.lists doc.page.fontSize ex doc.tokens pairs
+      disclosurePrintGapCss doc.docClass.record.htmlLists doc.page.fontSize ex doc.tokens pairs
         (shaped := [Ir.TitledKind.block, .alert, .example].any fun k =>
           (Ir.blockShapeOf doc.styles k).isSome)
         (squeezed := anySqueezed doc) (sets := (Ir.listSetsOf doc.body).toList)
-        (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize ex doc.tokens
+        (closes := nestedClosesOf doc.docClass.record.htmlLists doc.page.fontSize ex doc.tokens
           (doc.abstractForm == .quotation) doc.body doc.listExtra)
         (kinds := (Ir.quoteKindsOf doc.body).toList) (extra := doc.listExtra)
   else "") ++
@@ -10471,7 +10471,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                         frameKeys := doc.frameKeys
                         page := doc.page
                         lengthBasis := lengthBasisOf doc
-                        lists := doc.docClass.record.lists
+                        lists := doc.docClass.record.htmlLists
                         listSets := (Ir.listSetsOf doc.body).zipIdx.foldl
                           (fun m (s, i) => m.insert s i) {}
                         abstractForm := doc.abstractForm
@@ -10547,7 +10547,7 @@ via \\chrome is the sequence both backends share"))
           let label := (labels[i]?.getD none).getD "slide"
           done := num.getD done
           -- a fill the stage cannot grow is named once per frame
-          let lists := doc.docClass.record.lists
+          let lists := doc.docClass.record.htmlLists
           if Ir.frameFills lists doc.styles .deck fbody <
               Ir.frameFills lists doc.styles .every fbody then
             walkDiags := walkDiags.push (Diag.of .W0399 (subject := some label)

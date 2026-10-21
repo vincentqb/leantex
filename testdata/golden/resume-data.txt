@@ -1,5 +1,5 @@
 class resume
-page 612x792 vmargin 105.926 hmargin 120.695 bmargin 211.852 fontsize 10.909 size tiny 579 size scriptsize 694 size footnotesize 833 size small 913 skip tiny 1242 skip scriptsize 1242 skip footnotesize 1242 skip small 1242 skip normalsize 1242 skip large 2484 skip Large 2484 skip LARGE 2484 skip huge 2484 skip Huge 3726 parskip 12pt
+page 612x792 vmargin 105.926 hmargin 120.695 bmargin 211.852 fontsize 10.909 size tiny 579 size scriptsize 694 size footnotesize 833 size small 913 skip tiny 1242 skip scriptsize 1242 skip footnotesize 1242 skip small 1242 skip normalsize 1242 skip large 2484 skip Large 2484 skip LARGE 2484 skip huge 2484 skip Huge 3726 parskip 13.6pt
 font dir "fonts"
 font body "Source Serif Pro"
 token parindent 0
@@ -66,7 +66,8 @@ role in-paragraph
         text "."
 -- diagnostics
 info[N0100] 2:1 translated command \setlength{\parindent} | detail: nothing: paragraphs here are set flush, as declared
-info[N0100] 3:1 translated command \setlength{\parskip} | detail: \page{ parskip = 786432sp }
+info[N0100] 3:1 translated command \setlength{\parskip} | detail: \page{ parskip = 891290sp }
 info[N0100] 4:1 translated command \newcommand{\entry} | detail: \define \entry(a1: content, a2: content, a3: content) {...}
 info[N0100] 4:28 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
+info[N0100] 4:59 translated command \relax | detail: nothing: it means do nothing
 info[N0100] 6:1 translated command \pagestyle{empty} | detail: \page{ numbers = off }, and no running fields

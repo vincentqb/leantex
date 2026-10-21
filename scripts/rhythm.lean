@@ -355,7 +355,12 @@ def ofArt (p : ArtPage) : MPage := Id.run do
   let mut lines : Array MLine := #[]
   for i in [0:ys.size] do
     let rs := runs[i]!.qsort (·.x < ·.x)
-    let text := String.intercalate " " (rs.toList.map (·.text))
+    -- A run a kern splits from the word before it joins that word: only a gap past a tenth of an
+    -- em is a word space.
+    let text := (rs.toList.zip ((none :: rs.toList.map some))).foldl (init := "") fun out (r, prev) =>
+      match prev with
+      | some q => if r.x - (q.x + q.w) > r.size / (10 : Int) then out ++ " " ++ r.text else out ++ r.text
+      | none => out ++ r.text
     if !(text.trimAscii.isEmpty) then
       lines := lines.push { y := top - ys[i]!, text }
   let marks := (ctmMarks p.content).map fun (_, y0, _, y1) => (top - fixedLen y1, top - fixedLen y0)
@@ -973,7 +978,9 @@ def referenceOf (fx : Fixture) (src : String) : IO (Except String RefFile) := do
         args := #["-halt-on-error", "-interaction=nonstopmode", "-file-line-error",
                   s!"-output-directory={work}", s!"-jobname={fx.name}", texName]
         cwd := some rhythmDir
-        env := #[("SOURCE_DATE_EPOCH", some "0"), ("FORCE_SOURCE_DATE", some "1")] }
+        -- The leantex classes (`tex/`) are found where a reference names one.
+        env := #[("SOURCE_DATE_EPOCH", some "0"), ("FORCE_SOURCE_DATE", some "1"),
+                 ("TEXINPUTS", some "../../tex//:"), ("LUAINPUTS", some "../../tex//:")] }
     let r1 ← run
     if r1.exitCode != 0 then
       return .error s!"{fx.name}: lualatex refused {texName} (exit {r1.exitCode}); \

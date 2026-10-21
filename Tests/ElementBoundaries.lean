@@ -195,14 +195,12 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .boundary sel _ => !hasStr sel top
       | _ => true)
 
-/-- A listing whose class does not space its environment's frame as TeX does stands as a paragraph
-there, so the display after it opens on its empty line with or without a blank line; one framed
-as a trivlist leaves `\@endpe`, so a display right after it opens on none. -/
-private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+/-- A listing framed as a trivlist leaves `\@endpe`, so a display right after it opens on no empty
+line. -/
+private def framedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let verbatim := "\\begin{verbatim}\nalpha code\n\\end{verbatim}"
-  let minted := "\\begin{minted}{text}\nalpha code\n\\end{minted}"
   let display := "\\[ \\text{Omega} = z \\]"
-  for cls in ["article", "resume", "poster"] do
+  for cls in ["article", "resume", "webpage", "poster"] do
     let spanOf (sep : String) : Option Dim.Length :=
       let src := s!"\\documentclass\{{cls}}\n\\begin\{document}\n" ++ verbatim ++ sep ++ display ++
         "\n\\end{document}\n"
@@ -212,17 +210,6 @@ private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
       (match spanOf "\n", spanOf "\n\n" with
        | some tight, some blank => tight < blank
        | _, _ => false)
-  let cases := [("webpage", verbatim), ("webpage", minted)]
-  for (cls, listing) in cases do
-    let spanOf (sep : String) : Option Dim.Length :=
-      let src := s!"\\documentclass\{{cls}}\n\\usepackage\{minted}\n\\begin\{document}\n" ++
-        listing ++ sep ++ display ++ "\n\\end{document}\n"
-      let (doc, _) := Elab.run s!"element-boundaries-endpe-{cls}.tex" src
-      ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind probeSpan
-    let tight := spanOf "\n"
-    let blank := spanOf "\n\n"
-    check ref s!"element boundaries ({cls}): a display right after a {if listing == minted then "minted" else "verbatim"} stands where it stands across a blank line, got {tight.map spMilli} and {blank.map spMilli}"
-      (tight.isSome && tight == blank)
 
 def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for cls in ["beamer", "article"] do
@@ -247,6 +234,6 @@ def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
           ((spMilli (d - b) - row.lua).natAbs ≤ probeTolerance.toNat)
       | _, _ => check ref s!"element boundaries ({cls}): the {x}/{y} probe ships its marks" false
   htmlPairChecks ref
-  unframedEndPeChecks ref fonts
+  framedEndPeChecks ref fonts
 
 end Tests.ElementBoundaries

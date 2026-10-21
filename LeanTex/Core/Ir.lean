@@ -8515,6 +8515,9 @@ public structure FlowDesign where
   grid : Bool
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The size option the flow class loads its base class at (`tex/ltdefaults.tex`). -/
+public def flowOptionPt : Nat := 11
+
 /-- The presets of the leantex flow class. -/
 public inductive FlowPreset where
   | article
@@ -8599,26 +8602,20 @@ public def flowCommonSource : String := Id.run do
   -- size11.clo's and bk11.clo's `\headsep` and `\footskip`, stated where a page geometry is set.
   return out ++ "\\setlength{\\headsep}{25pt}\n\\setlength{\\footskip}{30pt}\n"
 
+/-- The CV presets' own LaTeX: unnumbered headings, flush paragraphs a line apart, dated entries. -/
+private def cvSource : String :=
+  "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\\relax\n#3\\par}\n"
+
 /-- What a preset declares past the article's, as LaTeX source both engines read: a CV's
 unnumbered headings, unindented paragraphs and dated entries, a cookbook's recipes. -/
 public def flowPresetSource : FlowPreset → String
   | .article => ""
   | .cookbook =>
     "\\newenvironment{recipe}[2]{\\section{#1}\\noindent\\textit{#2}\\par}{}\n"
-  | .cv =>
-    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
-    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\n#3\\par}\n"
+  | .cv | .cvweb => cvSource
   -- A one-page CV carries no folio.
-  | .resume =>
-    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
-    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\n#3\\par}\n" ++
-    "\\pagestyle{empty}\n"
-  -- A web page's lists stand in the flow with no space of their own, as the web lineage sets them.
-  | .cvweb =>
-    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
-    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\n#3\\par}\n" ++
-    "\\def\\@listi{\\leftmargin\\leftmargini\\topsep\\z@" ++
-      "\\partopsep\\z@\\itemsep\\z@\\parsep\\z@}\n\\let\\@listI\\@listi\n\\@listi\n"
+  | .resume => cvSource ++ "\\pagestyle{empty}\n"
 
 /-- The flow class's theorem declarations as LaTeX source, part of `tex/ltflowsource.tex`. -/
 public def flowTheoremSource : String := Id.run do
@@ -8632,8 +8629,7 @@ public def flowTheoremSource : String := Id.run do
     out := out ++ s!"\\newtheorem\{{env}}{shared}\{{title}}\n"
   return out
 
-/-- A preset's design: LaTeX's ratio 1.2 and the grid on; a 66-character measure, Bringhurst's ideal,
-and the CVs' 75, the readable band's widest, for their dated lines. -/
+/-- A preset's ratio, measure in characters and grid. -/
 public def FlowPreset.design : FlowPreset → FlowDesign
   | .article | .cookbook => { ratio := 1200, measure := 66, grid := true }
   | .cv | .resume | .cvweb => { ratio := 1200, measure := 75, grid := true }
@@ -8642,7 +8638,7 @@ public def FlowPreset.design : FlowPreset → FlowDesign
 public def FlowPreset.keys (p : FlowPreset) : String :=
   let d := p.design
   let ratio := s!"{d.ratio / 1000}.{toString (d.ratio % 1000 + 1000) |>.drop 1}"
-  s!"fontsize = 11pt , measure = {d.measure} , ratio = {ratio} , grid = {d.grid} , " ++
+  s!"fontsize = {flowOptionPt}pt , measure = {d.measure} , ratio = {ratio} , grid = {d.grid} , " ++
     s!"paper = letter , twoside = {p == .cookbook} , base = {p.base}"
 
 /-- A preset's whole class source after its base class. -/
@@ -8667,6 +8663,11 @@ public def ltDefaultsTex : String := Id.run do
     "\\ProvidesFile{ltdefaults.tex}[2026/10/20 v0.1 leantex class defaults]\n"
   for p in FlowPreset.all do
     out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltflow_{p.name}_tl } \{ {p.keys} }\n"
+  let bp (l : Length) : String :=
+    let m := l.toBpMilli
+    s!"{m / 1000}.{(toString (m % 1000 + 1000)).drop 1}bp"
+  for (name, (w, h)) in pageSizes do
+    out := out ++ s!"\\tl_const:cn \{ c_lt_paper_{name}_tl } \{ \{ {bp w} } \{ {bp h} } }\n"
   return out
 
 /-- A document class as a record over one of the kernel's page models:
@@ -8685,6 +8686,8 @@ public structure ClassRecord where
   parskipOption : Bool := false
   /-- Where the class's list spacing comes from (`listSkips`). -/
   lists : ListLineage := .sizeFile
+  /-- The lineage its web page's lists take where it is not the printed page's. -/
+  webLists : Option ListLineage := none
   /-- How the class's list levels read the `\parskip` in force (`ListExtra.over`). -/
   listExtra : ListExtra := .none
   /-- A quotation's `\listparindent`, its paragraphs' first-line indent (classes.dtx's 1.5 em). -/
@@ -8871,12 +8874,13 @@ calibration reads fluently; declare \
   | .flow p =>
     let cv := p == .cv || p == .resume || p == .cvweb
     { model := .flow
-      fontSize := some (classOptionSize 11)
+      fontSize := some (classOptionSize flowOptionPt)
       sizeFileSkip := true
       parskip := some {}
       numberHeadings := !cv
       measureBand := true
-      lists := if p == .cvweb then .web else .grid
+      lists := .grid
+      webLists := if p == .cvweb then some .web else none
       pageNumbers := p != .resume
       pagesBound := if p == .resume then some (.lit .eq 1) else none
       pagesHelp := if p == .resume then "the resume preset asserts content fits one page; \
@@ -8891,6 +8895,9 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       mdName := if p == .cvweb then some "llms.txt" else none
       area := .flow
       design := some p.design }
+
+/-- The lineage a class's web page sets its lists in. -/
+@[expose] public def ClassRecord.htmlLists (r : ClassRecord) : ListLineage := r.webLists.getD r.lists
 
 /-- A document's class defaults: its class's colour row and ground depth, the
 web's row for a source that is not tex. -/

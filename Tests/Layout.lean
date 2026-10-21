@@ -3921,11 +3921,11 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let wg := geomOf web
   -- The web CV's lines stand on its grid, a leading of its own.
   let wlead := wg.classLead.getD (Ir.leadingFor wg.fontSize wg.leading)
-  let wpeer := peerOf "{webpage}"
   let close (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.pt 1 / (100 : Int)
-  t "a webpage's list opens the peer gap a paragraph would, and its items stand a leading apart"
-    (0 < wpeer && match steps web words with
-      | [a, b, c] => close a wpeer && close b wlead && close c wpeer
+  -- lualatex, `[preset=cvweb]{ltflow}`: the paragraph skip and the topsep, one grid line each.
+  t "a webpage's list stands two grid lines off the text, its items a leading apart"
+    (match steps web words with
+      | [a, b, c] => close a (3 * wlead) && close b wlead && close c (3 * wlead)
       | _ => false)
   -- beamer's own family: 3 pt items and topsep, no parsep, in a frame.
   let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nAlpha.\n" ++
@@ -4358,7 +4358,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       return m * page.height / (100 * (sc : Int))
   let deck := "\\begin{frame}[t]\n" ++ nest ++ "\n\\end{frame}"
   t "each lineage's sheet hangs every list level where its page stands it"
-    ([("{article}", nest), ("{webpage}", nest), ("{beamer}", deck)].all fun (cls, body) =>
+    ([("{article}", nest), ("{cv}", nest), ("{beamer}", deck)].all fun (cls, body) =>
       let src := doc cls "" body
       let page := (elabStr src).1.page
       let sheet := (HtmlDoc.emit {} (elabStr src).1).1

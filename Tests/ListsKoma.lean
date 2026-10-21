@@ -238,12 +238,16 @@ or a list, a list or a quote opening a quotation, a fill in a verse line, beamer
 page's quotations, at lualatex's positions. -/
 def quoteBoundaryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  t "quote kinds: the web CV's paragraphs, quotes and stanzas stand a grid line apart, verse lines a leading"
+  -- lualatex, `[preset=cvweb]{ltflow}`: a quote opens a paragraph skip and a topsep past the text,
+  -- its own paragraphs at the list's zero parsep, a quotation's indented by its listparindent.
+  t "quote kinds: the web CV's quotes stand two grid lines off the text, their paragraphs a leading apart"
     (gaps oneFace (doc "{webpage}" "" quotes) ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
       "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima"] ==
-        some [136, 136, 136, 136, 136, 136, 136, 0, 0, 136, 136] &&
-      (let out := layoutOf oneFace (elabStr (doc "{webpage}" "" quotes)).1
-       inkOf out "Echo" == inkOf out "Bravo"))
+        some [272, 0, 272, 272, 0, 272, 272, 0, 0, 0, 272] &&
+      (let d := (elabStr (doc "{webpage}" "" quotes)).1
+       let out := layoutOf oneFace d
+       let ink (w : String) : Dim.Length := (inkOf out w).getD 0
+       ink "Echo" - ink "Bravo" == d.page.fontSize * 3 / (2 : Int) && ink "Foxtrot" == ink "Echo"))
   -- lualatex: `\@endpe` leaves no indent on text going on past a display or a list, and text after
   -- a list a quotation opens with keeps its paragraph's, the label ending no paragraph.
   let out := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" goesOn)).1

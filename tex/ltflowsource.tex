@@ -33,14 +33,14 @@
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{\baselineskip}
-\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\
+\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\\relax
 #3\par}
 }
 \ltflowsource{resume}{%
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{\baselineskip}
-\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\
+\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\\relax
 #3\par}
 \pagestyle{empty}
 }
@@ -48,9 +48,6 @@
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{\baselineskip}
-\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\
+\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\\relax
 #3\par}
-\def\@listi{\leftmargin\leftmargini\topsep\z@\partopsep\z@\itemsep\z@\parsep\z@}
-\let\@listI\@listi
-\@listi
 }

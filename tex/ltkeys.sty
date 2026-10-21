@@ -33,15 +33,8 @@
 
 \cs_new_protected:Npn \lt_paper:n #1
   {
-    \str_case:enF { \tl_trim_spaces:n {#1} }
-      {
-        { letter } { \lt_paper:nn { 612bp } { 792bp } }
-        { legal } { \lt_paper:nn { 612bp } { 1008bp } }
-        { a4 } { \lt_paper:nn { 595bp } { 842bp } }
-        { a5 } { \lt_paper:nn { 420bp } { 595bp } }
-        { b5 } { \lt_paper:nn { 176mm } { 250mm } }
-        { executive } { \lt_paper:nn { 522bp } { 756bp } }
-      }
+    \tl_if_exist:cTF { c_lt_paper_ \tl_trim_spaces:n {#1} _tl }
+      { \exp_last_unbraced:Nv \lt_paper:nn { c_lt_paper_ \tl_trim_spaces:n {#1} _tl } }
       { \msg_warning:nnn { ltkeys } { paper } {#1} }
   }
 \cs_new_protected:Npn \lt_paper:nn #1#2

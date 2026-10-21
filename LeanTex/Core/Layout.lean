@@ -12370,8 +12370,12 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
   let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
   let two := r.parskip.add r.parskip
   let before := (st.before.map r.resolve).getD (if two.width > hb.width then two else hb)
-  -- The flow class's heading is a paragraph, its `\parskip` above it past the beforeskip.
-  let a := a.addvspace (if r.geom.classLead.isSome then before.add r.parskip else before)
+  -- The flow class's heading is a paragraph: its `\parskip` stands as plain glue past the
+  -- beforeskip's `\addvspace`, unless the gap already pays it on top of declared glue.
+  let a := a.addvspace before
+  let a := if r.geom.classLead.isSome && !(a.wantDefault && a.declaredSkip) then
+      { a with owed := a.owed.push r.parskip, dispAlt := a.dispAlt.map (·.push r.parskip) }
+    else a
   let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option Ir.ColorRef) =>
     { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
         (headingRuleWeight r.geom.fontSize)

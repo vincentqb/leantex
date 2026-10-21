@@ -2,10 +2,10 @@
 fixture: webpage
 src-key: 688143BBF27DF34304D31CC0C34ACE75
 ref-src: webpage.ref.tex
-ref-src-key: 016F7846BB757B06422C33AEB937089C
+ref-src-key: F40F1D6B64B50EE0C1D76454F457427A
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 format: LaTeX2e <2025-11-01>
 unit: bp (1/72 in, the PDF user unit), measured downward on the page
-par-par	Birch	span	11.955 bp	baseline of the text line above → baseline of the marker's line
-par-section	Cedar	span	36.593 bp	baseline of the text line above → baseline of the marker's line
-section-par	Dogwood	span	24.218 bp	baseline of the text line above → baseline of the marker's line
+par-par	Birch	span	27.099 bp	baseline of the text line above → baseline of the marker's line
+par-section	Cedar	span	67.746 bp	baseline of the text line above → baseline of the marker's line
+section-par	Dogwood	span	40.647 bp	baseline of the text line above → baseline of the marker's line

@@ -1,16 +1,10 @@
-% The LaTeX half of webpage.tex. The webpage class is structurally an
-% article whose headings carry no numbers and whose pages carry none; this
-% is an article declaring those two, so what differs is the classes' own
-% defaults.
-\documentclass{article}
-\usepackage{fontspec}
-\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
-\pagestyle{empty}
+% The LaTeX half of webpage.tex: the flow class's web CV preset, which the webpage class names.
+\documentclass[preset=cvweb]{ltflow}
 \begin{document}
 Alder is the page's first paragraph.
 
 Birch is its second paragraph.
 
-\section*{Cedar heading}
+\section{Cedar heading}
 Dogwood sits under the heading.
 \end{document}
