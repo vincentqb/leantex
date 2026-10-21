@@ -109,12 +109,12 @@ example (pal : Ir.Palette) (raws : Array Parse.Raw)
 example : String → Ir.Pic.Picture := placeholder
 
 example (gapped : Bool) (what : String)
-    (h : (unreachedName gapped what).1 = .W0334) : gapped = true :=
+    (h : (unreachedName gapped what).code = .W0334) : gapped = true :=
   unreachedName_accounts gapped what _ _ h
 
 example : True := by
   fail_if_success
-    have : (unreachedName false "").1 = .E0333 := by rfl
+    have : (unreachedName false "").code = .E0333 := by rfl
   trivial
 
 example : True := by

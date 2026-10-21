@@ -490,7 +490,7 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
     let entry := ListingHighlight.epochDoc light none standout valign
     t s!"listing audit {name}: unchanged entry is judged on its own ground"
       ((Contrast.judgedPairs entry).contains (gray, Ir.Color.black) &&
-       (Contrast.docDiags entry).all fun d => !hasStr d.message "'codekeyword'")
+       (Contrast.docDiags entry).all fun d => !hasStr d.message "colour codekeyword")
     for (epochName, epoch) in [("repeated", light), ("removed", light.erase (.role .page))] do
       let doc := ListingHighlight.epochDoc light (some epoch) standout valign
       let pairs := (Contrast.judgedPairs doc).filter (·.1 == gray)
@@ -498,7 +498,7 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
         (!pairs.isEmpty && pairs.all (·.2 == Ir.Color.white))
       t s!"listing audit {name}/{epochName}: real audit names the current page"
         ((Contrast.docDiags doc).any fun d =>
-          d.code == "W0315" && hasStr d.message "'codekeyword'" &&
+          d.code == "W0315" && hasStr d.message "colour codekeyword" &&
           d.detail.any (hasStr · "on #FFFFFF"))
     let source := "return value"
     let large := { entry with body := #[.frame #[] standout valign false
@@ -508,12 +508,12 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"listing audit {name}: epoch reset preserves listing size and authored ink priority"
       ((Contrast.judgedPairs large).contains (gray, Ir.Color.white) &&
        (Contrast.docDiags large).any fun d =>
-         hasStr d.message "'codekeyword'" && hasStr d.message "large-scale text")
+         hasStr d.message "colour codekeyword" && hasStr (diagWords d) "large-scale text")
     let refused := ListingHighlight.epochDoc light
       (some (light.declare (.role .codeKeyword) Ir.Color.white)) standout valign
     t s!"listing audit {name}: an unrepairable authored role still warns"
       ((Contrast.docDiags refused).any fun d =>
-        d.code == "W0315" && hasStr d.message "'codekeyword'" &&
+        d.code == "W0315" && hasStr d.message "colour codekeyword" &&
         d.detail.any (hasStr · "on #FFFFFF"))
   let code := "\\begin{minted}{python}\nreturn value\n\\end{minted}"
   let preamble := "\\theme{default}\\palette{fg=#000000,bg=#FFFFFF,\
@@ -533,7 +533,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
   let (_, html, _) := emitIn {} declared .print
   let codes := ListingHighlight.codeNodesList #[] html.toList
   t "listing audit source: the actual audit reports the role's pairing on the page"
-    (ds.any fun d => d.code == "W0315" && hasStr d.message "'codekeyword'" &&
+    (ds.any fun d => d.code == "W0315" && hasStr d.message "colour codekeyword" &&
       d.detail.any (hasStr · "on #FFFFFF"))
   t "listing audit source: typed HTML ships the declared ink on the declared page"
     ((elemAttrsList (· == "pre") #[] html.toList).any (fun (_, attrs) =>
@@ -581,7 +581,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
       (ds.all (·.severity != .error) &&
        ds.any fun d =>
          d.code == "W0315" && d.detail.any (hasStr · "on #FFFFFF") &&
-         (name != "source" || hasStr d.message "'accent'"))
+         (name != "source" || hasStr d.message "colour accent"))
     shipped name doc #[ink] #[Ir.Color.white]
   let light := ({} : Ir.Palette).declare (.role .ink) Ir.Color.black
     |>.declare (.role .page) Ir.Color.white |>.declare (.color "accent") gray
@@ -609,9 +609,9 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
       let name := s!"{frameName}/{name}"
       t s!"role epoch {name}: actual audit names the declared page only after a boundary"
         (if resets then ds.any (fun d =>
-          d.code == "W0315" && hasStr d.message "'accent'" &&
+          d.code == "W0315" && hasStr d.message "colour accent" &&
           d.detail.any (hasStr · "on #FFFFFF"))
-         else ds.all (fun d => !hasStr d.message "'accent'"))
+         else ds.all (fun d => !hasStr d.message "colour accent"))
       shipped name doc (List.replicate count gray).toArray
         #[if resets then Ir.Color.white else Ir.Color.black]
     let doc := { base with body := #[
@@ -619,7 +619,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
       .frame #[] false .center false #[sample]] }
     let ds := Contrast.docDiags doc
     t s!"role epoch {frameName}/exit: the later page's pairing is reported, the entry run kept"
-      (ds.any fun d => d.code == "W0315" && hasStr d.message "'accent'")
+      (ds.any fun d => d.code == "W0315" && hasStr d.message "colour accent")
     shipped s!"{frameName}/exit" doc #[gray, gray] #[Ir.Color.black, Ir.Color.white]
 
 /-- Listings ship syntax colour in both artifacts while conserving their code. -/

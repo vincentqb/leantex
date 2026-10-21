@@ -1758,7 +1758,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
       { st with toks := st.toks.push (.formula display sty body attr), ctr := ctr }
     else
       let st := if st.warnedMath then st
-        else { warn st .W0003 "no math font is available; math is set as plain text"
+        else { warn st .W0003 (Diag.say .W0003 .mathFont)
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
 OpenType math face; `leantex fonts` lists families") (output := some .pdf) with warnedMath := true }
       pushText st sty (Ir.formulaFloor body)
@@ -4885,7 +4885,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Lengt
   for (idx, c) in acc.dropped do
     let source := glyphOrigin acc.origins .E0405 idx c
     diags := diags.push (Diag.of .E0405
-      s!"'{(fs.get idx).family}' has no glyph for U+{Hex.scalar c.toNat}"
+      (Diag.say .E0405 .glyph (Diag.Name.of s!"U+{Hex.scalar c.toNat}") (some (some .font, (fs.get idx).family)))
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some .skipped)
@@ -4895,7 +4895,8 @@ with \\allow{E0405}"))
     let source := glyphOrigin acc.origins .W0009 idx c
     -- One loss per face and scalar, counted at every site it recurs.
     diags := diags.push (Diag.of .W0009
-      s!"'{(fs.get idx).family}' has no glyph for U+{Hex.scalar c.toNat}"
+      (Diag.say .W0009 .font (fs.get fb).family (some (some .font, (fs.get idx).family)))
+      (detail := some s!"U+{Hex.scalar c.toNat}")
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
@@ -4903,7 +4904,8 @@ with \\allow{E0405}"))
   for (idx, c, a, base) in acc.unstyled do
     let source := glyphOrigin acc.origins .W0016 idx c
     diags := diags.push (Diag.of .W0016
-      s!"'{(fs.get idx).family}' has no {a.styleLabel} glyph for U+{Hex.scalar c.toNat}"
+      (Diag.say .W0016 .glyph (Diag.Name.of base.toString) (some (none, Diag.Name.of s!"U+{Hex.scalar c.toNat}")))
+      (detail := some s!"'{(fs.get idx).family}' has no {a.styleLabel} glyph for it")
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
       (recovery := some (.replacedBy s!"the base letter '{base}'"))
@@ -7986,6 +7988,12 @@ private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
   (regionFills spans lines fills inks).foldl (fun edge (s, f) =>
     if s.continuesRule then edge else some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
 
+/-- The stage a line stands on, as a message's object: its frame by label, else the section page. -/
+private def stageObj (label : Option String) : Option (Option Diag.Noun × Diag.Name) :=
+  match label with
+  | some _ => some (none, Diag.Name.of "frame")
+  | none => some (none, Diag.Name.of "section page")
+
 /-- How a frame names itself in a diagnostic: by its label, else as a frame. -/
 private def frameWho (label : Option String) : String :=
   match label with
@@ -7996,40 +8004,38 @@ private def frameWho (label : Option String) : String :=
 on the next; `also` adds another step's overhang. -/
 public def continuedDiag (label : Option String) (span : Option Span) (o : Length)
     (also : Option Length := none) : Diag :=
-  Diag.of .W0384
-    ("a frame is taller than its page; it continues on the next page" ++
-      match also with
-      | some _ => ", and on another overlay step stands past its text area, in the gap below it"
-      | none => "")
+  Diag.of .W0384 (Diag.say .W0384 .frame (obj := also.map fun _ => (none, Diag.Name.of "steps")))
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
     (subject := label)
-    (detail := some (s!"{frameWho label}: {o.toPtString}pt taller" ++
+    (detail := some (s!"{frameWho label}: {o.toPtString}pt taller, continued on the next page" ++
       match also with
-      | some p => s!", {p.toPtString}pt past on another step"
+      | some p => s!"; {p.toPtString}pt past on another step"
       | none => ""))
 
 /-- W0400: the frame stands `o` past its text area, in the gap below it. -/
 public def overfullDiag (label : Option String) (span : Option Span) (o : Length) : Diag :=
-  Diag.of .W0400 (subject := label)
-    "a frame stands past its text area, in the gap below it"
+  Diag.of .W0400 (subject := label) (Diag.say .W0400 .frame)
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept a break")
-    (detail := some s!"{frameWho label}: {o.toPtString}pt past")
+    (detail := some s!"{frameWho label}: {o.toPtString}pt past its text area, in the gap below it")
 
 /-- A W0358 named at a frame's site, joined by the frame's overhang `o` past its text area on
 another overlay step, whose W0400 it carries. -/
 public def boxPastJoined (d : Diag) (o : Length) : Diag :=
-  { d with message := d.message ++
-             ", and on another overlay step the frame stands past its text area, in the gap below it"
-           detail := d.detail.map (· ++ s!", {o.toPtString}pt past on another step")
+  { d with message := Diag.say .W0358 .box (obj := some (none, Diag.Name.of "steps"))
+           detail := d.detail.map (· ++ s!"; {o.toPtString}pt past on another step")
            carries := d.carries ++ [.W0400] }
+
+/-- A band slot's label as a message's name, without its article. -/
+private def slotName (label : String) : Diag.Name :=
+  Diag.Name.of ((label.dropPrefix? "the ").map (·.toString) |>.getD label)
 
 /-- W0372: a note block pushes its band `over` past the page's floor. -/
 private def noteOverrunDiag (over : Length) (output : Option Diag.Output) : Diag :=
-  Diag.of .W0372 "a footnote is taller than the text block; it overruns its page"
+  Diag.of .W0372 (Diag.say .W0372 .footnote)
     (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })") (output := output)
-    (detail := some s!"{over.toPtString}pt taller")
+    (detail := some s!"{over.toPtString}pt taller than the text block")
 
 /-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
 it stood overfull, W0384 where it continued, nothing where it fit. -/
@@ -8102,8 +8108,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Length := 0) (flush : Bool :
       b.cur.inks.mapIdx fun i k =>
         k.shiftY (-((b.inkShrinkAbove.getD i 0).mulDiv b.needed b.pageShrink))
     else b.cur.inks
-  let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
-      "a page set short of its height: its skips gave part of their shrink"
+  let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200 (Diag.say .N0200 .page)
       (span := b.neededSource) (output := if b.curStage then none else some .pdf)
       (detail := some (s!"page {b.pages.size + 1}: {b.needed / pt 1}pt short, its skips gave " ++ -- in points
         s!"{100 * b.needed / b.pageShrink}% of their {b.pageShrink / pt 1}pt of shrink"))) -- in points
@@ -8421,11 +8426,11 @@ private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Length) : B :=
     else if byNotes then
       if over > 0 then some (noteOverrunDiag over (if b.curStage then none else some .pdf)) else none
     else if 0 < beyond && !recorded then some (Diag.of .W0358
-      "a box is taller than the text block; it overruns its page"
+      (Diag.say .W0358 .box (obj := if b.frameBreak.isSome then stageObj b.curFrameLabel else none))
       (span := b.lastSource <|> b.frameSource) (subject := b.curFrameLabel)
       (output := if b.curStage then none else some .pdf)
       (help := "shrink the box, or raise the text height (\\page{ vmargin = ... })")
-      (detail := some s!"{who}{own.toPtString}pt taller"))
+      (detail := some s!"{who}{own.toPtString}pt taller than the text block"))
     else none
   { b with diags := (named.map b.diags.push).getD b.diags
            overruns := if recorded then (b.noteOverrun beyond).overruns else b.overruns }
@@ -9443,10 +9448,6 @@ private def overfullDetail (lead : String) (excess : Length) : String :=
 private def stageWho (label : Option String) : String :=
   if label.isSome then frameWho label else "the section page"
 
-/-- What on a stage runs past its measure, in the stage's words. -/
-private def stagePast (label : Option String) (whatRuns : String) : String :=
-  (if label.isSome then "a frame's " else "a section page's ") ++ whatRuns ++ " past its measure"
-
 /-- W0005 for a line set `excess` past its measure: a stage sets that measure in both artifacts,
 in its own words and with its frame, while a flow page's lines are the PDF's. -/
 private def Spacing.Page.warnOverfull (b : B) (source : Option Span) (excess : Option Length) : B :=
@@ -9460,9 +9461,8 @@ private def Spacing.Page.warnOverfull (b : B) (source : Option Span) (excess : O
     | _, _ => b.overfullMost
   { b with
     diags := b.diags.push
-      (Diag.of .W0005
-        (if b.curStage then stagePast b.curFrameLabel "line runs" ++ "; no feasible break"
-          else "overfull line; no feasible break") (span := source)
+      (Diag.of .W0005 (Diag.say .W0005 .line
+          (obj := if b.curStage then stageObj b.curFrameLabel else none)) (span := source)
         (subject := some subject)
         (detail := match source, excess with
           | some _, some e => some (overfullDetail lead e)
@@ -10358,9 +10358,8 @@ private def lineAnchors (anchors : Array (String × Nat)) (prev brk : Nat)
 apart from the page and the stage: on a stage in the stage's words. -/
 private def noteOverfull (r : Rd) (a : Acc) (source : Option Span) (excess : Length) : Diag :=
   let staged := r.slides && r.inFrame
-  Diag.of .W0005
-    (if staged then stagePast a.frameLabel "footnote runs" ++ "; no feasible break"
-      else "overfull line; no feasible break")
+  Diag.of .W0005 (if staged then Diag.say .W0005 .footnote (obj := stageObj a.frameLabel)
+      else Diag.say .W0005 .line)
     (span := source) (subject := some (overfullSubject source))
     (detail := if source.isSome then
         some (overfullDetail (if staged then s!"{stageWho a.frameLabel}: " else "") excess)
@@ -10375,9 +10374,7 @@ private def columnsOverfull (r : Rd) (a : Acc) (cols : Array (BoxWidth × Array 
     | .para c => Ir.inlineSource c
     | _ => none
   let staged := r.slides && r.inFrame
-  Diag.of .W0005
-    (if staged then stagePast a.frameLabel "columns run"
-      else "boxes set side by side run past the measure")
+  Diag.of .W0005 (Diag.say .W0005 .column (obj := if staged then stageObj a.frameLabel else none))
     (span := source) (subject := some ("columns:" ++ overfullSubject source))
     (detail := some (overfullDetail (if staged then s!"{stageWho a.frameLabel}: " else "") excess))
 
@@ -10485,7 +10482,7 @@ private def collectPara (r : Rd) (a : Acc)
         markBox r.fs { color := a.fg, ground := a.ground } noteSize {} num
       for (idx, c) in miss do
         ds := ds.push (Diag.of .E0405
-          s!"'{(r.fs.get idx).family}' has no glyph for '{c}'"
+          (Diag.say .E0405 .glyph (Diag.Name.of s!"U+{Hex.scalar c.toNat}") (some (some .font, (r.fs.get idx).family)))
           (trigger := String.singleton c) (recovery := some .skipped) (output := some .pdf))
       let nitems := #[markItem] ++ nitems0
       let nsources := nsources.map (fun (i, span) => (i + 1, span))
@@ -11134,12 +11131,14 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- A tex table wider than the measure keeps its width and is named, as TeX sets it overfull.
   let offPaper := tableW > r.geom.pageW
   if tableW > total then
-    a := { a with diags := a.diags.push (Diag.of .W0338
-      (if web && m.overhang > 0 then
-          "the table's words alone are wider than the measure at its smallest size; it " ++
+    a := { a with diags := a.diags.push (Diag.of .W0338 (Diag.say .W0338 .table
+        (obj := if web && m.overhang > 0 then some (none, Diag.Name.of (if offPaper then "paper" else "margins"))
+          else none))
+      (detail := some (s!"{(tableW - total).toPtString}pt wider than the measure" ++
+        (if web && m.overhang > 0 then
+          "; its words alone are wider at its smallest size, so it " ++
             (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
-        else "the table is wider than the measure")
-      (detail := some s!"{(tableW - total).toPtString}pt wider")
+        else "")))
       -- a flow's web page sets a table of natural columns at its natural width past the measure
       (output := if !r.slides && cols.all (·.width matches .natural) then some .pdf else none)
       (span := rows.findSome? fun row => row.findSome? fun c => Ir.inlineSource (Ir.cellLine c))
@@ -11703,7 +11702,7 @@ public def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
   let ds := if 1 < result.lineCount then
       ds.push {
         kind := .W0328
-        message := "picture label spans multiple lines; only its first line is kept"
+        message := LabelAudit.wrapsWords
         span := result.source
         subject := some key }
     else ds
@@ -11713,21 +11712,21 @@ public def finishLabel (fs : FontSet) (leaf : Option Nat) (place : Ir.Pic.Place)
       diags := if labelTextBlank content || labelFailureNamed content ds then ds else
         ds.push {
           kind := .E0395
-          message := "picture label produced no line",
+          message := LabelAudit.lineless,
           span := result.source
           subject := some key } }
   | some (segs, size, ink) =>
     let ds := if labelGlyphUnknown fs size segs then
         ds.push {
           kind := .W0394
-          message := "picture label has glyphs without measured outline bounds",
+          message := LabelAudit.unboundedWords,
           span := result.source
           subject := some key }
       else ds
     let ds := if labelReserveCovers (Ir.Pic.labelGlyphBox x y align ink) reserved then ds else
         ds.push {
           kind := .W0396
-          message := "picture label extends beyond its reserved glyph box",
+          message := LabelAudit.overrunWords,
           span := result.source
           subject := some key }
     { line? := some (labelLine place x y align ink segs size leaf), diags := ds
@@ -11788,8 +11787,7 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
   let avail := (a.measure.getD r.geom.textWidth) - indent
   let source := (r.pictureSpans.find? (·.1 == a.leafNext)).map (·.2)
   let a := if w > avail || h > r.geom.textHeight then
-      { a with diags := a.diags.push (Diag.of .W0335
-        "the picture is larger than the text area; it may overrun the page"
+      { a with diags := a.diags.push (Diag.of .W0335 (Diag.say .W0335 .picture)
         (span := source) (trigger := source.bind (·.pos.command))
         (detail := some (s!"{w.toPtString}pt × {h.toPtString}pt against " ++
           s!"{avail.toPtString}pt × {r.geom.textHeight.toPtString}pt"))
@@ -11799,12 +11797,10 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
   -- Two labels colliding inside one box are named, not fixed: node extents are declared minimums.
   let a := match labelCollisions pic boxes with
     | 0 => a
-    | n =>
-      { a with diags := a.diags.push (Diag.of .W0336
-        "node labels overlap: a relative placement parts node centres, not the text they set"
+    | _ =>
+      { a with diags := a.diags.push (Diag.of .W0336 (Diag.say .W0336 .labelKey)
         (help := "declare the extent ([minimum width = ...]) or widen the \
-separation ([node distance = ...])")
-        (detail := some s!"{n} {if n == 1 then "pair" else "pairs"} of labels")) }
+separation ([node distance = ...])")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
   let x := indent + side.boxOffset (max 0 (avail - w))
   let a := a.flushGap r
@@ -14081,8 +14077,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let depth := (if ordered then a.enumDepth else if desc then a.descDepth else a.itemDepth) + 1
     let level := min depth 4
     let a := if depth > 4 then { a with diags := a.diags.push (
-        Diag.of .W0010
-          "lists nest more than four levels; a deeper level reuses the fourth's marker"
+        Diag.of .W0010 (Diag.say .W0010 .nesting)
           (help := "LaTeX errors here ('Too deeply nested'); flatten the nesting")
           (detail := some s!"level {depth}")) }
       else a
@@ -15680,13 +15675,11 @@ private def reflowRecord (subject : String) (frame : Option String) (inFrame : B
   let past := if over.isEmpty then "" else
     s!"; {over.size} {if over.size == 1 then "line runs" else "lines run"} past the measure, \
 by up to {widest.toPtString}pt" ++ (if places.isEmpty then "" else s!", at {places}")
-  Diag.of .W0386 (subject := some subject)
-    (if over.isEmpty then "a declared line did not fit the measure and re-flowed"
-      else "a declared line did not fit the measure and re-flowed, and a line of it \
-still runs past the measure") site
+  Diag.of .W0386 (subject := some subject) (Diag.say .W0386 (if over.isEmpty then .line else .measure)) site
     (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
 to widen the measure, or declare a narrower face")
-    (detail := some (loc ++ shape ++ past)) (output := if inFrame then none else some .pdf)
+    (detail := some (loc ++ "a declared line re-flowed: " ++ shape ++ past))
+    (output := if inFrame then none else some .pdf)
     (carries := if over.isEmpty then [] else [.W0005])
 
 /-- W0386: a declared line ended where the author meant it and re-flowed,
@@ -17595,12 +17588,13 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let own := b2.y + depth - b2.bottom - b2.pageShrink
     let over := b2.y + depth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
     let (what, shrink) := oversizeWords group
+    let noun : Diag.Noun := if (group[0]? : Option Op) matches some (.regionOpen (.box _)) then .box
+      else .«float»
     let named : Option Diag :=
-      if 0 < own then some (Diag.of .W0358
-        s!"{what} is taller than the text block; it overruns its page"
+      if 0 < own then some (Diag.of .W0358 (Diag.say .W0358 noun)
         (output := if b2.curStage then none else some .pdf)
         (help := s!"shrink {shrink}, or raise the text height (\\page\{ vmargin = ... })")
-        (detail := some s!"{own.toPtString}pt taller"))
+        (detail := some s!"{what}, {own.toPtString}pt taller than the text block"))
       else if 0 < b2.notesH && 0 < over then
         some (noteOverrunDiag over (if b2.curStage then none else some .pdf))
       else none
@@ -19821,8 +19815,7 @@ private def diagKey (d : Diag) : DiagKey :=
 worded as their summary with the count in its detail. -/
 private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
   if d.code == "W0005" && d.span.isNone && d.output == some .pdf && overfull > 1 then
-    { d with message := "overfull lines that no source site names; no feasible break"
-             detail := some s!"{overfull} overfull lines" }
+    { d with message := Diag.say .W0005 .text, detail := some s!"{overfull} overfull lines" }
   else d
 
 /-- Drop repeated reports of one source site, keeping
@@ -20046,8 +20039,7 @@ private def deadLinks (surface : Ir.Surface) (idx : Std.HashMap String (Nat × A
       seen := seen.insert f
       let loss := if entry then "the PDF outline leaves the entry out"
         else "the PDF carries no link for it"
-      out := out.push (Diag.of .W0326
-        s!"in-page link '#{f}' has no target anchor in the document; {loss}"
+      out := out.push (Diag.of .W0326 (Diag.say .W0326 .anchor s!"#{f}") (detail := some loss)
         (help := some (deadLinkHelp surface)) (subject := some f) (output := some .pdf))
   return out
 
@@ -20208,8 +20200,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     let target := geom.textWidth
     let breaks := kp items target
     -- A running line is one line by construction; content that wraps is named (W0328).
-    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
-        "running content wraps at the text width; only its first line is kept"
+    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328 (Diag.say .W0328 .runningHead)
         (help := "the head, foot, and chrome bands hold one line each: shorten the content")
         (output := furniture))
       else ds
@@ -20233,8 +20224,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
       Option LineOut × Array Diag × _ :=
     let (set?, wraps, ds, cache) := setBandSlot pats fs imgs geom xHeight
       { baseStyle with ground := baseStyle.ground.or furnGround } (substPage n total content) cache
-    let ds := if wraps then ds.push (Diag.of .W0328
-        "running content wraps at the text width; only its first line is kept"
+    let ds := if wraps then ds.push (Diag.of .W0328 (Diag.say .W0328 .runningHead)
         (help := "the head, foot, and chrome bands hold one line each: shorten the content")
         (output := furniture))
       else ds
@@ -20380,12 +20370,10 @@ public def runPost (sh : Shipped) : Out := Id.run do
         cache := c
         if let some l := l? then
           unless geom.onMedium l.x l.setWidth do
-            diags := diags.push (Diag.of .W0388
-              s!"{slot.label} reaches off the page: what stands past its edge cannot be \
-shown, whatever reads the file"
+            diags := diags.push (Diag.of .W0388 (Diag.say .W0388 .slot (slotName slot.label))
               (help := "a band holds one line at a fixed position: shorten \
 the content, or widen the page (\\page{ width = ... })")
-              (detail := some s!"on page {i + 1}, \
+              (detail := some s!"page {i + 1}, \
 {(geom.offMedium l.x l.setWidth).toPtString}pt past its edge") (output := furniture))
           placed := placed.push (slot, { l with furniture := true })
       let slots := placed
@@ -20395,11 +20383,12 @@ the content, or widen the page (\\page{ width = ... })")
           let (bs, lb) := slots[k]
           if la.x < lb.x + lb.setWidth && lb.x < la.x + la.setWidth then
             let (lo, hi) := if a.rank < bs.rank then (a, bs) else (bs, a)
-            diags := diags.push (Diag.of .W0333
-              s!"the footer's slots collide: {lo.label} yields, painted over by {hi.label}"
+            diags := diags.push (Diag.of .W0333 (Diag.say .W0333 .slot (slotName lo.label)
+                (some (none, slotName hi.label)))
               (help := "slot positions are fixed and the lower-priority \
 slot yields in place: shorten the content or drop a slot")
-              (detail := some s!"on page {i + 1}") (output := furniture))
+              (detail := some s!"page {i + 1}")
+              (output := furniture))
       for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
         lines := lines.push p.2
     -- beamer's `[plain]` frame sets no logo, its sidebars and footline gone.
@@ -20555,8 +20544,8 @@ private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
 public def drawnInkDiags (doc : Doc) : Array Diag :=
   (doc.page.drawn.map (·.color)).foldl (fun (acc : Array String) c =>
       if (doc.palette.resolve c).isNone && !acc.contains c then acc.push c else acc) #[]
-    |>.map fun c => Diag.of .W0304
-      s!"'{c}' is not a colour here; the rules the page draws in it paint black"
+    |>.map fun (c : String) => Diag.of .W0304 (Diag.say .W0304 .colour c)
+      (detail := some "the rules the page draws in it paint black")
       (help := "declare colours with \\palette{ name = #RRGGBB }")
       (subject := some ("palette:" ++ c)) (output := some .pdf)
 
@@ -21507,10 +21496,9 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       -- premise: classAreaChecks — a class's head and foot distances are no declaration
       if gt != gb && (doc.docClass.record.area == .engine ||
           doc.page.headsep.isSome && doc.page.footskip.isSome) then
-        acc.diags.push (Diag.of .N0021
-          (s!"header and footer gaps differ by " ++
-            s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
-            "equal gaps are the default") (output := some .pdf))
+        acc.diags.push (Diag.of .N0021 (Diag.say .N0021 .gap) (output := some .pdf)
+          (detail := some s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt between the \
+header and footer gaps"))
       else acc.diags
     else acc.diags
   -- A heading's declared space above must not be the smaller (Butterick); defaults satisfy it.
@@ -21522,11 +21510,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
         let up := (before.resolve geom.fontSize xHeight).width
         let down := (after.resolve geom.fontSize xHeight).width
         if down > up then
-          ds.push (Diag.of .W0202
-            s!"'{element}' sets more space below the heading than above it"
+          ds.push (Diag.of .W0202 (Diag.say .W0202 .spacing (obj := some (some .heading, element)))
             (help := s!"a heading binds to the text it introduces: in " ++
               s!"\\style\{{element}}\{...} keep 'after' at most 'before'")
-            (detail := some s!"{down.toPtString}pt below, {up.toPtString}pt above"))
+            (detail := some s!"{down.toPtString}pt below, more than {up.toPtString}pt above"))
         else ds
       | _, _ => ds
     | none => ds) preDiags
@@ -21565,9 +21552,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
           let cpl10 : Int := 450 + over / (l65 - l45)
           if cpl10 < 450 || cpl10 > 900 then
             let dir := if cpl10 > 900 then "narrow" else "widen"
-            b.diags.push (Diag.of .W0201
-              (s!"the measure holds {if cpl10 > 900 then "more" else "fewer"} characters " ++
-                "per line than the readable band")
+            b.diags.push (Diag.of .W0201 (Diag.say .W0201 .measure)
               (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
                 "is the ideal) or declare \\page{ measure = free }")
               (detail := some s!"about {(cpl10 + 5) / 10} characters per line, outside 45\u201390")

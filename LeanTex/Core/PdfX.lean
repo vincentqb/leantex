@@ -546,10 +546,9 @@ public def profileFault (b : ByteArray) (declared : Option Nat) : Option String 
 
 /-- W0446 for an output intent's profile the file cannot carry, the file and why in its detail. -/
 public def profileRefused (file why : String) (span : Option Span := none) : Diag :=
-  Diag.of .W0446 "the output intent's profile is missing or no ICC output profile; the file has \
-no output intent and claims no PDF standard" span (output := some .pdf)
+  Diag.of .W0446 (Diag.say .W0446 .profile file) span (output := some .pdf)
     (help := some "name an ICC output profile beside the document: \\DocumentMetadata{ colorprofiles = { X = name.icc } }")
-    (subject := some s!"intent:{file}") (detail := some s!"'{file}' {why}")
+    (subject := some s!"intent:{file}") (detail := some s!"it {why}")
 
 /-- What a breach of one rule costs, in words free of the site's particulars. -/
 private def ruleWords : String → String
@@ -585,21 +584,19 @@ public def claimDiags (x : String) (f : Facts) (links : Nat) : Array Diag :=
     (if v4 then ["the press's acceptance of an ICC version 4 output profile"] else []) ++
     (if rgb && f.devices.contains "DeviceGray" then ["DeviceGray under an RGB output intent"] else [])
   (if links == 0 then #[] else #[Diag.of .W0444
-    "the file claims its PDF/X standard, which admits no link on the printed sheet; its links are \
-not written" (help := some "the web page keeps them: \\output{ formats = pdf, html }")
+    (Diag.say .W0444 .link (obj := some (some .standard, (Diag.Name.value s!"PDF/{x}")))) (help := some "the web page keeps them: \\output{ formats = pdf, html }")
     (subject := some "pdfx:links") (output := some .pdf)
-    (detail := some s!"under PDF/{x}: {links} link {if links == 1 then "area" else "areas"}")]) ++
-  #[Diag.of .N0448 "the file claims its PDF/X standard on the engine's checks; a print service's \
-preflight judges the rest" (subject := some "pdfx:preflight") (output := some .pdf)
-    (detail := some (s!"under PDF/{x}, unjudged: " ++ ", ".intercalate unjudged))]
+    (detail := some s!"{links} link {if links == 1 then "area" else "areas"} left out")]) ++
+  #[Diag.of .N0448 (Diag.say .N0448 .standard (Diag.Name.value s!"PDF/{x}")) (subject := some "pdfx:preflight") (output := some .pdf)
+    (detail := some ("left to a print service's preflight: " ++ ", ".intercalate unjudged))]
 
 /-- W0445, one per requirement the file breaks, naming what it carries instead in its detail. -/
 public def breachDiags (x : String) (bs : Array Breach) : Array Diag :=
   let rules := bs.foldl (fun acc b => if acc.contains b.rule then acc else acc.push b.rule) #[]
   rules.map fun r =>
-    Diag.of .W0445 s!"the file is written without claiming its declared PDF standard: {ruleWords r}"
+    Diag.of .W0445 (Diag.say .W0445 .standard (Diag.Name.value s!"PDF/{x}"))
       (help := some (ruleHelp r)) (subject := some s!"pdfx:{r}") (output := some .pdf)
-      (detail := some (s!"under PDF/{x}: " ++
+      (detail := some (s!"{ruleWords r}: " ++
         String.intercalate "; " ((bs.filter (·.rule == r)).map (·.actual)).toList))
 
 end LeanTex.Core.PdfX

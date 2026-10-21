@@ -17,11 +17,39 @@ namespace LeanTex.Core.Picture
 open LeanTex.Core LeanTex.Core.Dim
 
 /-- A diagnostic the picture walk raises, positioned later by the elaborator. -/
-public abbrev PDiag := DiagCode × String
+public structure PDiag where
+  code : DiagCode
+  message : String
+  detail : Option String := none
+  deriving Repr, BEq
+
+public instance : Inhabited PDiag := ⟨{ code := .W0334, message := "" }⟩
+
+/-- `s` without one pair of surrounding quotes: the name a phrase quotes. -/
+private def bare (s : String) : String :=
+  if s.length ≥ 2 && s.startsWith "'" && s.endsWith "'" then ((s.drop 1).dropEnd 1).toString else s
+
+/-- A picture loss in the one form, its name and object as written. -/
+public def PDiag.say (c : DiagCode) (noun : Diag.Noun) (name : Option String := none)
+    (obj : Option (Option Diag.Noun × String) := none) (detail : Option String := none) : PDiag :=
+  { code := c, detail
+    message := Diag.say c noun (name.map written) (obj.map fun (n, x) => (n, written x)) }
+where
+  /-- A name as written, quoted when it holds a digit, which no word does. -/
+  written (s : String) : Diag.Name :=
+    if (bare s).any Char.isDigit then Diag.Name.value (bare s) else Diag.Name.of (bare s)
+
+/-- E0333 for what `site` holds that the reader cannot read or resolve, `why` in its words. -/
+public def PDiag.unread (site why : String) : PDiag :=
+  PDiag.say .E0333 .expression (obj := some (none, site)) (detail := some why)
+
+/-- W0334 for a value of option `key` the subset cannot read, `why` in its words. -/
+public def PDiag.optValue (key why : String) : PDiag :=
+  PDiag.say .W0334 .value (obj := some (some .option, key)) (detail := some why)
 
 /-- Whether a diagnostic names a content loss, one whose floor is not inert. -/
 public def namesLoss (ds : Array PDiag) : Bool :=
-  ds.any fun d => d.1.floor != .inert
+  ds.any fun d => d.code.floor != .inert
 
 /-- One micro-token of picture source: lexer words re-split into numbers, identifiers and symbols,
 braces as groups. -/
@@ -184,6 +212,17 @@ public def milliPt (m : Int) : Length :=
 public def spMilliPt (sp : Length) : Int :=
   let n := sp.toSp * 1000
   if n < 0 then -((-n + 32768) / 65536) else (n + 32768) / 65536
+
+/-- A token as written, unquoted, for a diagnostic's name. -/
+private def tokRaw : Tok → String
+  | .ctrl n => "\\" ++ n
+  | .ident s => s
+  | .num _ t => t
+  | .sym c => c.toString
+  | .space => " "
+  | .group _ => "{...}"
+  | .math _ _ _ => "$...$"
+  | .other what => what
 
 private def tokText : Tok → String
   | .ctrl n => s!"'\\{n}'"
@@ -698,26 +737,28 @@ private def PSt.finishMany (st : PSt) (ss : List Stmt) : PSt := Id.run do
 
 private def PSt.finish (st : PSt) (s : Stmt) : PSt := st.finishMany [s]
 
-private def PSt.diag (st : PSt) (code : DiagCode) (msg : String) : PSt :=
-  if st.bad.any (·.2 == msg) then st
-  else { st with bad := st.bad.push (code, msg) }
+private def PSt.diag (st : PSt) (d : PDiag) : PSt :=
+  if st.bad.any (· == d) then st
+  else { st with bad := st.bad.push d }
 
-private def PSt.outside (st : PSt) (what : String) : PSt :=
-  st.diag .W0334 s!"{what} is outside the rendered picture subset; not drawn"
+/-- W0334 for source the statement reader does not read, named by `noun` and `name`. -/
+private def PSt.outside (st : PSt) (noun : Diag.Noun) (name : Option String := none)
+    (obj : Option (Option Diag.Noun × String) := none) (detail : Option String := none) : PSt :=
+  st.diag (PDiag.say .W0334 noun name obj detail)
 
 private def PSt.elseHere (st : PSt) : PSt :=
   match st.conds.back? with
-  | none => (st.outside "an '\\else' with no conditional open")
+  | none => (st.outside .command "\\else" (detail := some "no conditional is open"))
   | some f =>
-    if f.inElse then st.diag .E0333 "a second '\\else' in one conditional; the \
-conditional is not drawn"
+    if f.inElse then st.diag (PDiag.say .E0333 .conditional (detail := some "a second '\\else' in one \
+conditional"))
     else
       let f2 : CondFrame := { f with thenS := f.taken, taken := #[], inElse := true }
       { st with conds := st.conds.pop.push f2 }
 
 private def PSt.fiHere (st : PSt) : PSt :=
   match st.conds.back? with
-  | none => (st.outside "a '\\fi' with no conditional open")
+  | none => (st.outside .command "\\fi" (detail := some "no conditional is open"))
   | some f =>
     let thenS := if f.inElse then f.thenS else f.taken
     let elseS := if f.inElse then f.taken else #[]
@@ -730,8 +771,7 @@ private def PSt.drain (st : PSt) : PSt := Id.run do
     if st.conds.isEmpty then break
     st := { st.fiHere with mode := .top }
   if st.conds.isEmpty then return st
-  return st.diag .E0333 "a conditional in this picture is never closed by \
-'\\fi'; its statements are not drawn"
+  return st.diag (PDiag.say .E0333 .conditional (detail := some "never closed by '\\fi'"))
 
 private def step (t : Tok) (st : PSt) : PSt :=
   match st.mode with
@@ -764,14 +804,14 @@ private def step (t : Tok) (st : PSt) : PSt :=
         else { st with mode := .icond k #[] false }
       | none =>
         if st.declNames.contains name then st.finish (.setDecl name)
-        else { (st.outside s!"'\\{name}'") with mode := .skip }
+        else { (st.outside .command s!"\\{name}") with mode := .skip }
     | .sym ';' | .space => st
-    | .other what => { (st.outside what) with mode := .skip }
-    | .math _ _ _ => { (st.outside "math") with mode := .skip }
-    | .ident s => { (st.outside s!"'{s}'") with mode := .skip }
-    | .num _ _ => { (st.outside "a bare number") with mode := .skip }
-    | .sym c => { (st.outside s!"'{c}'") with mode := .skip }
-    | .group _ => { (st.outside "'{...}'") with mode := .skip }
+    | .other what => { (st.outside .syntax (detail := some what)) with mode := .skip }
+    | .math _ _ _ => { (st.outside .math) with mode := .skip }
+    | .ident s => { (st.outside .token s) with mode := .skip }
+    | .num _ t => { (st.outside .number t) with mode := .skip }
+    | .sym c => { (st.outside .token c.toString) with mode := .skip }
+    | .group _ => { (st.outside .group "{...}") with mode := .skip }
   | .stmt kind acc =>
     match t with
     | .sym ';' => match kind with
@@ -792,15 +832,18 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .group g =>
       match g.filter (· != .space) with
       | [.ctrl name] => { st with mode := .sexpr name setMode }
-      | _ => { st.diag .E0333 "'\\pgfmathsetmacro' needs '{\\name}' first" with mode := .top }
+      | _ => { st.diag (PDiag.say .E0333 .argument (obj := some (none, "\\pgfmathsetmacro"))
+          (detail := some "it needs '{\\name}' first")) with mode := .top }
     | _ =>
-      { st.diag .E0333 "'\\pgfmathsetmacro' needs '{\\name}' first" with mode := .top }
+      { st.diag (PDiag.say .E0333 .argument (obj := some (none, "\\pgfmathsetmacro"))
+          (detail := some "it needs '{\\name}' first")) with mode := .top }
   | .sexpr name setMode =>
     match t with
     | .space => st
     | .group g => st.finish (.set name g.toArray setMode)
     | _ =>
-      { st.diag .E0333 s!"'\\pgfmathsetmacro' of '\\{name}' needs an expression group"
+      { st.diag (PDiag.say .E0333 .expression (obj := some (none, s!"\\{name}"))
+          (detail := some "'\\pgfmathsetmacro' needs an expression group"))
         with mode := .top }
   | .fvars vars =>
     match t with
@@ -808,14 +851,14 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .sym '/' | .space => st
     | .ident "in" => { st with mode := .flist vars }
     | _ =>
-      { (st.outside "this '\\foreach' variable list")
+      { (st.outside .variable (obj := some (none, "\\foreach")))
         with mode := .skip, pending := #[] }
   | .flist vars =>
     match t with
     | .space => st
     | .group l => { st with mode := .fbody vars l.toArray }
     | _ =>
-      { (st.outside "a '\\foreach' without a '{...}' list")
+      { (st.outside .list (obj := some (none, "\\foreach")) (detail := some "no '{...}' list"))
         with mode := .skip, pending := #[] }
   | .fbody vars list =>
     match t with
@@ -849,26 +892,28 @@ private def step (t : Tok) (st : PSt) : PSt :=
         else
           { st with pending := st.pending.push (vars, list), mode := .icond k #[] false }
       | none =>
-        { (st.outside "this '\\foreach' body")
+        { (st.outside .body (obj := some (none, "\\foreach")))
           with mode := .skip, pending := #[] }
     -- `.group` never reaches here: `parseTok` owns that arm.
     | _ =>
-      { (st.outside "this '\\foreach' body")
+      { (st.outside .body (obj := some (none, "\\foreach")))
         with mode := .skip, pending := #[] }
   | .tcolor =>
     match t with
     | .space => st
     | .group spec => { st with mode := .tbody spec.toArray }
-    | _ => { (st.outside "a '\\textcolor' without its colour group") with mode := .skip }
+    | _ => { (st.outside .colour (obj := some (none, "\\textcolor")) (detail := some "no colour group"))
+        with mode := .skip }
   -- `.group` never reaches here: `parseTok` owns that arm.
   | .tbody _ =>
     match t with
     | .space => st
-    | _ => { (st.outside "a '\\textcolor' without its body group") with mode := .skip }
+    | _ => { (st.outside .body (obj := some (none, "\\textcolor")) (detail := some "no body group"))
+        with mode := .skip }
   | .scopeBody =>
     match t with
     | .space => st
-    | _ => { (st.outside "a 'scope' without its body") with mode := .skip }
+    | _ => { (st.outside .body (obj := some (some .environment, "scope"))) with mode := .skip }
   -- `parseTok` reads a scope head's first token; nothing else reaches here.
   | .scopeHead false => st
   | .scopeHead true =>
@@ -879,7 +924,8 @@ private def step (t : Tok) (st : PSt) : PSt :=
     match t with
     | .space => st
     | .group spec => st.finish (.setColor spec.toArray)
-    | _ => { (st.outside "a '\\color' without its colour group") with mode := .skip }
+    | _ => { (st.outside .colour (obj := some (none, "\\color")) (detail := some "no colour group"))
+        with mode := .skip }
   | .skip =>
     match t with
     | .sym ';' => { st with mode := .top }
@@ -912,11 +958,12 @@ private def parseList : List Tok → PSt → PSt
     | .top => st
     | .skip => { st with mode := .top, pending := #[] }
     | .stmt kind _ =>
-      { st.diag .E0333
-          s!"'\\{kind.name}' misses its ';'; the shape is not drawn"
+      { st.diag (PDiag.say .E0333 .syntax (obj := some (none, s!"\\{kind.name}"))
+          (detail := some "no closing ';'"))
         with mode := .top, pending := #[] }
     | _ =>
-      { st.diag .E0333 "a picture statement ends mid-construct; it is not drawn"
+      { st.diag (PDiag.say .E0333 .syntax (detail := some "a statement ends mid-construct; \
+it is not drawn"))
         with mode := .top, pending := #[] }
   | t :: rest, st => parseList rest (parseTok t st)
 
@@ -1357,13 +1404,13 @@ public theorem merge_global_covers {global picture every own : Array (Array Tok)
     o ∈ mergeOpts global picture every own :=
   inherit_outer_covers (inherit_outer_covers (inherit_outer_covers h hp) he) ho
 
-private def optName (opt : List Tok) : String :=
+/-- An option as written, by its key or its first token. -/
+private def optRaw (opt : List Tok) : String :=
   let key := keyPath opt
-  if key.isEmpty then (opt.head?.map tokText).getD "an empty option" else s!"'{key}'"
+  if key.isEmpty then (opt.head?.map tokRaw).getD "" else key
 
 private def outsideOpt (opt : List Tok) : PDiag :=
-  (.W0334, s!"picture option {optName opt} is outside the \
-rendered picture subset; the option is dropped")
+  PDiag.say .W0334 .option (optRaw opt) (some (none, "picture"))
 
 private def evalColor (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
     Except String Ir.Color := Id.run do
@@ -1863,7 +1910,7 @@ public structure Ev where
   after : Array After := #[]
 
 private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
-  if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
+  if ev.diags.any (· == d) then ev else { ev with diags := ev.diags.push d }
 
 /-- The evaluated marks and authored bounds both backends read. -/
 public def Ev.toPicture (ev : Ev) (baseline : Option Length := none) : Ir.Pic.Picture :=
@@ -1891,13 +1938,12 @@ private def readRect (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i0
   let mut i := i0
   let c1 ← match readCoord ts i with
     | .ok v => pure v
-    | .error e => return .error (.E0333, s!"in {what}, {e}; {cost}")
+    | .error e => return .error (PDiag.unread what s!"{e}; {cost}")
   let ((x1s, y1s), i1) := c1
   i := i1
   unless ts[i]? == some (.ident "rectangle") do
-    return .error (.W0334, s!"{what} with \
-{((ts[i]?).map tokText).getD "no shape operation"} is outside the rendered picture \
-subset; {cost}")
+    return .error (PDiag.say .W0334 .operation ((ts[i]?).map tokRaw) (some (none, what))
+      (detail := some (if ts[i]?.isNone then s!"no shape operation; {cost}" else cost)))
   i := i + 1
   let mut relative := false
   if ts[i]? == some (.sym '+') && ts[i+1]? == some (.sym '+') then
@@ -1905,15 +1951,15 @@ subset; {cost}")
     i := i + 2
   let c2 ← match readCoord ts i with
     | .ok v => pure v
-    | .error e => return .error (.E0333, s!"in {what}, {e}; {cost}")
+    | .error e => return .error (PDiag.unread what s!"{e}; {cost}")
   let ((x2s, y2s), i2) := c2
   if h : i2 < ts.size then
-    return .error (.W0334, s!"{what} continues with {tokText ts[i2]}, outside the \
-rendered picture subset; {cost}")
+    return .error (PDiag.say .W0334 .operation (tokRaw ts[i2]) (some (none, what))
+      (detail := some cost))
   let vals ← match evalComp env x1s, evalComp env y1s, evalComp env x2s, evalComp env y2s with
     | .ok a, .ok b, .ok c, .ok d => pure (a, b, c, d)
     | .error e, _, _, _ | _, .error e, _, _ | _, _, .error e, _ | _, _, _, .error e =>
-      return .error (.E0333, s!"in {what}, {e}; {cost}")
+      return .error (PDiag.unread what s!"{e}; {cost}")
   let (x1c, y1c, x2c, y2c) := vals
   -- A relative corner adds in the unit it was written in, so two unitless components round once.
   let addComp (a b : Int × Bool) : Length :=
@@ -1952,10 +1998,11 @@ private def evalFill (cx : Cx) (env : List (String × Val)) (toks : Array Tok) :
   let mut color := cx.ink
   if let some (inner, close) := bracketAt ts 0 then
     let some k := close
-      | return .error (.E0333, "'\\fill' options miss their ']'; the shape is not drawn")
+      | return .error (PDiag.say .E0333 .option (obj := some (none, "\\fill"))
+          (detail := some "no closing ']'"))
     match evalColor cx env inner with
     | .ok c => color := c
-    | .error e => return .error (.E0333, s!"{e}; the shape is not drawn")
+    | .error e => return .error (PDiag.unread "\\fill" e)
     i := k
   match readRect cx env ts i "'\\fill'" "the shape is not drawn" with
   | .ok (x0, y0, x1, y1) => return .ok (.rect x0 y0 (x1 - x0) (y1 - y0) color)
@@ -2031,8 +2078,8 @@ private def addDiags (s : Sal) (ds : Array PDiag) : Sal :=
 private def mode0 (s : Sal) : Sal := { s with mode := .text }
 
 private def refuse (s : Sal) (what : String) : Sal :=
-  { s with diags := s.diags.push (.W0334, s!"{what} in a node body is outside \
-the rendered picture subset; the label sets the text it can read") }
+  { s with diags := s.diags.push (PDiag.say .W0334 .syntax (obj := some (some .node, "body"))
+      (detail := some s!"{what}; the label sets the text it can read")) }
 
 private def trimEnds (left right : Bool) (xs : Array Ir.Inline) : Array Ir.Inline :=
   let trimL (t : String) : String := String.ofList (t.toList.dropWhile (· == ' '))
@@ -3241,14 +3288,15 @@ private def readPrologue (ts : Array Tok) (i0 : Nat) : Prologue × Nat × Option
             j := j + 1
           else break
         unless ts[j]? == some (.sym ']') do
-          bad := some (.E0333, "'\\node' options miss their ']'; the node is not drawn")
+          bad := some (PDiag.say .E0333 .option (obj := some (none, "\\node"))
+          (detail := some "no closing ']'"))
           break
         pro := pro.step (.brack inner)
         i := j + 1
       else if ts[i] == .ident "at" then
         match readCoordBody ts (i + 1) with
         | .error e =>
-          bad := some (.E0333, s!"in '\\node', {e}; the node is not drawn")
+          bad := some (PDiag.unread "\\node" e)
           break
         | .ok (inner, i2) =>
           pro := pro.step (.atCoord inner)
@@ -3271,15 +3319,14 @@ named, else the document's own error (E0333). -/
 public def unreachedName (gapped : Bool) (what : String) (site : String := "'\\draw'")
     (cost : String := "the edge is not drawn") : PDiag :=
   if gapped then
-    (.W0334, s!"{what} is declared inside a construct outside the rendered \
-picture subset, so no node carries it; {cost}")
-  else (.E0333, s!"in {site}, no node is named '{what}'; {cost}")
+    PDiag.say .W0334 .node what (detail := some s!"declared inside a construct outside the \
+rendered subset, so no node carries it; {cost}")
+  else PDiag.unread site s!"no node is named '{what}'; {cost}"
 
 public theorem unreachedName_accounts (gapped : Bool) (what site cost : String)
-    (h : (unreachedName gapped what site cost).1 = .W0334) : gapped = true := by
+    (h : (unreachedName gapped what site cost).code = .W0334) : gapped = true := by
   cases gapped
-  · simp only [unreachedName, Bool.false_eq_true] at h
-    exact absurd h (by simp)
+  · simp [unreachedName, PDiag.unread, PDiag.say] at h
   · rfl
 
 private inductive Anchor where
@@ -3332,8 +3379,8 @@ private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
     (displacement : Bool := false) : Except PDiag Anchor := do
   match (splitTop inner ',').toList with
   | [xs, ys] =>
-    let x ← (evalComp env xs).mapError fun e => (.E0333, s!"in {site}, {e}; {cost}")
-    let y ← (evalComp env ys).mapError fun e => (.E0333, s!"in {site}, {e}; {cost}")
+    let x ← (evalComp env xs).mapError fun e => PDiag.unread site s!"{e}; {cost}"
+    let y ← (evalComp env ys).mapError fun e => PDiag.unread site s!"{e}; {cost}"
     -- A point goes through the transformation in force, a displacement through its linear part.
     let (px, py) := if displacement then cx.placeVec (cx.compSp x) (cx.compSp y)
       else cx.place (cx.compSp x) (cx.compSp y)
@@ -3346,11 +3393,10 @@ private def anchorBody (cx : Cx) (env : List (String × Val)) (ev : Ev)
         match env.lookup n with
         | some v => expanded := expanded.push (.ident v.text)
         | none =>
-          throw (.E0333, s!"in {site}, unknown macro '\\{n}' in a node name; {cost}")
+          throw (PDiag.unread site s!"unknown macro '\\{n}' in a node name; {cost}")
       | .ident _ | .num _ _ | .sym _ | .space => expanded := expanded.push t
       | .math _ _ _ | .group _ | .other _ =>
-        throw (.W0334, s!"coordinate {tokText t} is outside the rendered \
-picture subset; {cost}")
+        throw (PDiag.say .W0334 .coordinate (tokRaw t) (detail := some cost))
     let nm := (nameOfToks expanded.toList).getD ""
     match ev.nodes.lookup nm with
     | some g => return .node g
@@ -3365,8 +3411,7 @@ picture subset; {cost}")
             let (x, y) := g.anchorPoint a
             return .point x y
           | none =>
-            throw (.W0334, s!"node anchor '{an}' is outside the rendered \
-picture subset; {cost}")
+            throw (PDiag.say .W0334 .anchor an (some (none, "node")) (detail := some cost))
       | none => throw (unreachedName (ev.gapped || cx.parseGap) nm site cost)
 
 private def factorEnd (ts : Array Tok) (i : Nat) : Option Nat := Id.run do
@@ -3397,10 +3442,10 @@ private def calcAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
   let mut i := 0
   let mut point : Length × Length := (0, 0)
   let mut subtract := false
-  let unsupported : PDiag := (.W0334, "this calc coordinate is outside the \
-rendered picture subset; use sums, differences, factors and '!t!' steps of \
-'(...)' coordinates")
-  let calcErr (e : String) : PDiag := (.E0333, s!"in a calc coordinate, {e}; {cost}")
+  let unsupported : PDiag := PDiag.say .W0334 .coordinate "calc"
+    (detail := some "the subset reads sums, differences, factors and '!t!' steps of '(...)' \
+coordinates")
+  let calcErr (e : String) : PDiag := PDiag.say .E0333 .coordinate "calc" (detail := some s!"{e}; {cost}")
   for _ in [0:ts.size + 1] do
     let mut factor : Int := 1000
     if let some j := factorEnd ts i then
@@ -3453,7 +3498,7 @@ private def readAnchor (cx : Cx) (env : List (String × Val)) (ev : Ev)
       i := i + 1
       mode := .advance
   let (inner, next) ← (readCoordBody ts i).mapError fun e =>
-    (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
+    PDiag.unread "\\draw" e
   let a ← match inner.toList with
     | [.math false raw _] => calcAnchor cx env ev raw
     | _ => anchorBody cx env ev inner (displacement := mode != .absolute)
@@ -3511,7 +3556,7 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     match readLineWidth opt.toList with
     | some (.ok w) => width := w
     | some (.error e) =>
-      ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
+      ev := ev.diag (PDiag.optValue "line width" e)
     | none =>
     match opt.toList with
     | .ident "font" :: .sym '=' :: rest =>
@@ -3519,20 +3564,18 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       scale := (sz.map fun k => k * factor / 1000).getD factor
       fontStyles := sts
       for w in unread do
-        ev := ev.diag (.W0334, s!"node option 'font={w}' is outside the rendered \
-picture subset; the switch is dropped")
+        ev := ev.diag (PDiag.say .W0334 .option s!"font={w}" (some (none, "node")))
     | .ident "text" :: .ident "height" :: .sym '=' :: rest => textHt := some rest
     | .ident "text" :: .ident "depth" :: .sym '=' :: rest => textDp := some rest
     | .ident "align" :: .sym '=' :: rest =>
       match textAlignOf rest with
       | some a => textAlign := a
       | none =>
-        ev := ev.diag (.W0334, s!"node option 'align={String.join (rest.map tokText)}' \
-is outside the rendered picture subset; the lines stay centred")
+        ev := ev.diag (PDiag.say .W0334 .option s!"align={String.join (rest.map tokRaw)}" (some (none, "node")))
     | .ident "text" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
-      | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+      | .error e => ev := ev.diag (PDiag.unread "\\node" e)
     | [.ident "circle"] => nodeShape := .circle
     | [.ident "rectangle"] => nodeShape := .rectangle
     | [.ident "ellipse"] => nodeShape := .ellipse
@@ -3543,80 +3586,70 @@ is outside the rendered picture subset; the lines stay centred")
       | some "rectangle" => nodeShape := .rectangle
       | some "ellipse" => nodeShape := .ellipse
       | some "diamond" => nodeShape := .diamond
-      | _ => ev := ev.diag (.W0334, s!"node option {optName opt.toList} is outside the rendered \
-picture subset; the node is a rectangle")
+      | _ => ev := ev.diag (PDiag.say .W0334 .option (optRaw opt.toList) (some (none, "node")))
     | .ident "label" :: .sym '=' :: rest => extras := extras.push (false, rest)
     | .ident "pin" :: .sym '=' :: rest => extras := extras.push (true, rest)
     | .ident "label" :: .ident "distance" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => labelDist := d
-      | .error e => ev := ev.diag (.W0334, s!"in 'label distance', {e}; the option is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "label distance" e)
     | .ident "pin" :: .ident "distance" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => pinDist := some d
-      | .error e => ev := ev.diag (.W0334, s!"in 'pin distance', {e}; the option is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "pin distance" e)
     | .ident "fit" :: .sym '=' :: rest => fitTo := some rest
     | [.ident "draw"] => draw := some none
     | [.ident "draw", .sym '=', .ident "none"] => draw := none
     | .ident "draw" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => draw := some (some c)
-      | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+      | .error e => ev := ev.diag (PDiag.unread "\\node" e)
     | [.ident "fill", .sym '=', .ident "none"] => fillCol := none
     | .ident "fill" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => fillCol := some c
-      | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+      | .error e => ev := ev.diag (PDiag.unread "\\node" e)
     | [.ident "dashed"] => dash := .dashed
     | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
     | .ident "minimum" :: .ident "size" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => minW := max minW d; minH := max minH d
-      | .error e => ev := ev.diag (.W0334, s!"in 'minimum size', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "minimum size" e)
     | .ident "minimum" :: .ident "width" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => minW := max minW d
-      | .error e => ev := ev.diag (.W0334, s!"in 'minimum width', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "minimum width" e)
     | .ident "minimum" :: .ident "height" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => minH := max minH d
-      | .error e => ev := ev.diag (.W0334, s!"in 'minimum height', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "minimum height" e)
     -- `inner sep` moves the node's border, not the letters (pgf manual §17.2.2, §17.5.2).
     | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => xsep := some d; ysep := some d
-      | .error e => ev := ev.diag (.W0334, s!"in 'inner sep', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "inner sep" e)
     | .ident "inner" :: .ident "xsep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => xsep := some d
-      | .error e => ev := ev.diag (.W0334, s!"in 'inner xsep', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "inner xsep" e)
     | .ident "inner" :: .ident "ysep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => ysep := some d
-      | .error e => ev := ev.diag (.W0334, s!"in 'inner ysep', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "inner ysep" e)
     -- `outer sep` moves a painted node's anchors past its border, never the path; `auto` is half the line width.
     | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
       match rest, readDim rest with
       | [.ident "auto"], _ => oxsep := none; oysep := none
       | _, .ok d => oxsep := some d; oysep := some d
-      | _, .error e => ev := ev.diag (.W0334, s!"in 'outer sep', {e}; the option \
-is dropped")
+      | _, .error e => ev := ev.diag (PDiag.optValue "outer sep" e)
     | .ident "outer" :: .ident "xsep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => oxsep := some d
-      | .error e => ev := ev.diag (.W0334, s!"in 'outer xsep', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "outer xsep" e)
     | .ident "outer" :: .ident "ysep" :: .sym '=' :: rest =>
       match readDim rest with
       | .ok d => oysep := some d
-      | .error e => ev := ev.diag (.W0334, s!"in 'outer ysep', {e}; the option \
-is dropped")
+      | .error e => ev := ev.diag (PDiag.optValue "outer ysep" e)
     | .ident "node" :: .ident "contents" :: .sym '=' :: rest =>
       let g : List Tok := if let [.group inner] := rest then inner else rest
       let (ls, ds) := nodeLabel cx env g
@@ -3626,8 +3659,7 @@ is dropped")
       match nameOfToks rest >>= nodeAnchorOf with
       | some a => anchorAt := some (a, (0, 0))
       | none =>
-        ev := ev.diag (.W0334, s!"node option 'anchor={String.join (rest.map tokText)}' \
-names an anchor outside the rendered picture subset; the node is centred")
+        ev := ev.diag (PDiag.say .W0334 .anchor (String.join (rest.map tokRaw)) (some (none, "node")))
     | [] => pure ()
     | o :: rest =>
       match (keyName ((o :: rest).takeWhile (· != .sym '='))).bind dirOf with
@@ -3636,12 +3668,10 @@ names an anchor outside the rendered picture subset; the node is centred")
         match (if value.isEmpty then .ok 0 else readDim value) with
         | .ok len => anchorAt := some (dirAnchor d len)
         | .error e =>
-          ev := ev.diag (.W0334, s!"in node option {optName (o :: rest)}, {e}; the \
-node is placed by its anchor alone")
+          ev := ev.diag (PDiag.optValue (optRaw (o :: rest)) e)
           anchorAt := some (dirAnchor d 0)
       | none =>
-        ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
-picture subset; the option is dropped")
+        ev := ev.diag (PDiag.say .W0334 .option (optRaw (o :: rest)) (some (none, "node")))
   let mut fitBox : Option (Length × Length × Length × Length) := none
   if let some ft := fitTo then
     let fts := (ft.filter (· != .space)).toArray
@@ -3657,8 +3687,7 @@ picture subset; the option is dropped")
         | .point x y => pts := pts.push (x, y)
         j := next
       | .error _ =>
-        ev := ev.diag (.E0333, "in 'fit', a node or point it names does not resolve; the node \
-fits the rest")
+        ev := ev.diag (PDiag.unread "fit" "a node or point it names does not resolve; the node fits the rest")
         break
     if let some p0 := pts[0]? then
       let x0 := pts.foldl (fun m p => min m p.1) p0.1
@@ -3686,15 +3715,15 @@ fits the rest")
     match ts[i]? with
     | some (.group body) =>
       if h : i + 1 < ts.size then
-        .error (.W0334, s!"'\\node' continues with {tokText ts[i+1]}, \
-outside the rendered picture subset; the label is not drawn")
+        .error (PDiag.say .W0334 .token (tokRaw ts[i+1]) (some (none, "\\node")))
       else
         .ok (nodeLabel cx env body)
     | _ =>
       match contents with
       | some c => .ok (c, #[])
       | none =>
-        .error (.E0333, "'\\node' needs a '{text}' body; the label is not drawn")
+        .error (PDiag.say .E0333 .body (obj := some (none, "\\node"))
+          (detail := some "it needs a '{text}' body"))
   let bodyOf := bodyOf.map fun (ls, ds) => (fontLines (baseStyles ++ fontStyles) ls, ds)
   let shapes0 : Array Ir.Pic.Shape :=
     match bodyOf with
@@ -3733,7 +3762,7 @@ outside the rendered picture subset; the label is not drawn")
   for (key, ts) in [("text height", textHt), ("text depth", textDp)] do
     if let some ts := ts then
       if let .error e := readNodeDim em ex ts then
-        ev := ev.diag (.W0334, s!"in '{key}', {e}; the option is dropped")
+        ev := ev.diag (PDiag.optValue key e)
   let declaredExtent : Bool := match nodeShape with
     | .circle => max minW minH > 0
     | .rectangle => minW > 0 && minH > 0
@@ -3799,11 +3828,10 @@ outside the rendered picture subset; the label is not drawn")
     | .ok geom => return (geom, nodes)
     | .error target =>
       if ev.gapped || cx.parseGap then
-        .error (.W0334, s!"'{target}' is declared inside a construct outside \
-the rendered picture subset, so no node carries it; the node is not drawn")
+        .error (PDiag.say .W0334 .node target (detail := some "declared inside a construct outside the \
+rendered subset, so no node carries it"))
       else
-        .error (.E0333, s!"in '\\node', no node is named '{target}' to place \
-this one against; the node is not drawn")
+        .error (PDiag.unread "\\node" s!"no node is named '{target}' to place this one against")
   match pos with
   | .ok (geom, nodes) =>
         let sx := geom.x
@@ -4179,7 +4207,7 @@ private def roundJoints (r : Length) (segs : Array Ir.Pic.PathSeg) : Array Ir.Pi
 
 private def readArc (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
     Except PDiag (Int × Int × Length × Length × Nat) := do
-  let err (e : String) : PDiag := (.E0333, s!"in an 'arc', {e}; the path is not drawn")
+  let err (e : String) : PDiag := (PDiag.unread "arc" e)
   let num (t : Array Tok) : Except PDiag Int := (evalNum env t).mapError err
   let len (t : Array Tok) : Except PDiag Length := do
     let v ← (evalComp env t).mapError err
@@ -4203,8 +4231,7 @@ private def readArc (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i :
         ry := some r
       else if key == "x radius" then rx := some (← len rest)
       else if key == "y radius" then ry := some (← len rest)
-      else throw (.W0334, s!"'arc' option '{key}' is outside the rendered picture subset; \
-the path is not drawn")
+      else throw (PDiag.say .W0334 .option key (some (none, "arc")))
     let (s0, e0) ← match sa, ea, da with
       | some a, some b, _ => pure (a, b)
       | some a, none, some d => pure (a, a + d)
@@ -4319,7 +4346,7 @@ private def rectLoop (cx : Cx) (a c : Length × Length) : Array Ir.Pic.PathSeg :
 
 private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i : Nat) :
     Except PDiag (Length × Length × Nat) := do
-  let err (e : String) : PDiag := (.E0333, s!"in a 'circle' radius, {e}; the path is not drawn")
+  let err (e : String) : PDiag := (PDiag.say .E0333 .length (obj := some (none, "circle")) (detail := some e))
   if let some (inner, close) := bracketAt ts i then
     let some past := close | throw (err "the options miss their ']'")
     let mut rx : Option Length := none
@@ -4333,8 +4360,7 @@ private def readRadii (cx : Cx) (env : List (String × Val)) (ts : Array Tok) (i
         ry := some (cx.compSp v)
       else if key == "x radius" then rx := some (cx.compSp v)
       else if key == "y radius" then ry := some (cx.compSp v)
-      else throw (.W0334, s!"'circle' option '{key}' is outside the rendered picture \
-subset; the path is not drawn")
+      else throw (PDiag.say .W0334 .option key (some (none, "circle")))
     match rx.orElse (fun _ => ry), ry.orElse (fun _ => rx) with
     | some a, some b => return (a, b, past)
     | _, _ => throw (err "no radius is given")
@@ -4604,8 +4630,7 @@ private def readEdgeLabel (cx : Cx) (env : List (String × Val))
   if ts[i]? == some (.ident "node") then
     i := i + 1
     unless cx.everyNode.isEmpty do
-      ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
-the rendered picture subset; the keys are dropped")
+      ev := ev.diag (PDiag.say .W0334 .key "every node" (some (some .node, "edge")))
     let mut mcolor := cx.ink
     let mut mscale : Nat := cx.declScale factor
     let mut mstyles : Array Ir.Style := #[]
@@ -4619,8 +4644,8 @@ the rendered picture subset; the keys are dropped")
     let mut mopts : Array (Array Tok) := cx.everyText
     if let some (inner, close) := bracketAt ts i then
       let some past := close
-        | return .error (ev.diag (.E0333, "an edge node's options miss their ']'; the \
-edge is not drawn"))
+        | return .error (ev.diag (PDiag.say .E0333 .option (obj := some (some .node, "edge"))
+          (detail := some "no closing ']'")))
       i := past
       mopts := mopts ++ expandOpts cx.styles inner
     for opt in mopts do
@@ -4630,20 +4655,17 @@ edge is not drawn"))
         mscale := (sz.map fun k => k * factor / 1000).getD factor
         mstyles := sts
         for w in unread do
-          ev := ev.diag (.W0334, s!"edge node option 'font={w}' is outside \
-the rendered picture subset; the switch is dropped")
+          ev := ev.diag (PDiag.say .W0334 .option s!"font={w}" (some (some .node, "edge")))
       | .ident "text" :: .sym '=' :: rest =>
         match evalColor cx env rest.toArray with
         | .ok c => mcolor := c
         | .error e =>
-          ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
-dropped")
+          ev := ev.diag (PDiag.unread "edge node" e)
       | .ident "align" :: .sym '=' :: rest =>
         match textAlignOf rest with
         | some a => mtext := a
         | none =>
-          ev := ev.diag (.W0334, s!"edge node option 'align={String.join (rest.map tokText)}' \
-is outside the rendered picture subset; the lines stay centred")
+          ev := ev.diag (PDiag.say .W0334 .option s!"align={String.join (rest.map tokRaw)}" (some (some .node, "edge")))
       | .ident "inner" :: .ident "sep" :: .sym '=' :: rest =>
         mseps := mseps.push ("inner sep", rest)
       | .ident "inner" :: .ident "xsep" :: .sym '=' :: rest =>
@@ -4667,8 +4689,7 @@ is outside the rendered picture subset; the lines stay centred")
         match (keyName (o :: rest)).bind dirOf with
         | some d => malign := some d
         | none =>
-          ev := ev.diag (.W0334, s!"edge node option {optName (o :: rest)} is outside \
-the rendered picture subset; the option is dropped")
+          ev := ev.diag (PDiag.say .W0334 .option (optRaw (o :: rest)) (some (some .node, "edge")))
     match ts[i]? with
     | some (.group body) =>
       let (lines, mdiags) := nodeLabel cx env body
@@ -4681,7 +4702,7 @@ the rendered picture subset; the option is dropped")
       for (key, value) in mseps do
         match readNodeDim em ex value with
         | .error e =>
-          ev := ev.diag (.W0334, s!"in edge node '{key}', {e}; the option is dropped")
+          ev := ev.diag (PDiag.optValue key e)
         | .ok v =>
           match key with
           | "inner sep" => inner := (v, v)
@@ -4695,8 +4716,8 @@ the rendered picture subset; the option is dropped")
                     align := mtext, inner, outer, atEnd }
       i := i + 1
     | _ =>
-      return .error (ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
-edge is not drawn"))
+      return .error (ev.diag (PDiag.say .E0333 .body (obj := some (some .node, "edge"))
+          (detail := some "it needs a '{text}' body")))
   return .ok (mid, i, ev)
 
 private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
@@ -4733,7 +4754,8 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut own : Array (Array Tok) := #[]
   if let some (inner, close) := bracketAt ts 0 then
     let some past := close
-      | return ev.diag (.E0333, "'\\draw' options miss their ']'; the edge is not drawn")
+      | return ev.diag (PDiag.say .E0333 .option (obj := some (none, "\\draw"))
+          (detail := some "no closing ']'"))
     own := expandOpts cx.styles inner
     i := past
   ev := { ev with readOpts := true }
@@ -4748,13 +4770,12 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       for tip in [st, en] do
         if let some name := tip then
           unless drawsAsArrow cx.styles name do
-            ev := ev.diag (.W0334, s!"arrow tip '{name}' is outside the rendered \
-picture subset; the edge is drawn without a head")
+            ev := ev.diag (PDiag.say .W0334 .arrow name)
     | none =>
     match readLineWidth opt.toList with
     | some (.ok w) => width := w
     | some (.error e) =>
-      ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
+      ev := ev.diag (PDiag.optValue "line width" e)
     | none =>
     match opt.toList with
     | [.ident "draw"] => strokes := true
@@ -4770,17 +4791,15 @@ picture subset; the edge is drawn without a head")
       | some tip =>
         shorthand := some tip
         unless drawsAsArrow cx.styles tip do
-          ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
-picture subset; the edge is drawn without a head")
+          ev := ev.diag (PDiag.say .W0334 .arrow tip)
       | none =>
-        ev := ev.diag (.W0334, "'>=' without a tip name is outside the rendered \
-picture subset; the option is dropped")
+        ev := ev.diag (PDiag.say .W0334 .option ">=" (detail := some "it names no tip"))
     | [.ident "draw", .sym '=', .ident "none"] => strokes := false
     | .ident "draw" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
       | .error e =>
-        ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
+        ev := ev.diag (PDiag.unread "\\draw" e)
       strokes := true
     | [.ident "fill"] => fills := true
     | [.ident "fill", .sym '=', .ident "none"] => fills := false
@@ -4788,79 +4807,75 @@ picture subset; the option is dropped")
       match evalColor cx env rest.toArray with
       | .ok c => fillColor := some c
       | .error e =>
-        ev := ev.diag (.E0333, s!"in '\\draw', {e}; the fill colour is dropped")
+        ev := ev.diag (PDiag.unread "\\draw" e)
       fills := true
     | .ident "color" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c => color := c
       | .error e =>
-        ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
+        ev := ev.diag (PDiag.unread "\\draw" e)
     | .ident "shorten" :: .sym '<' :: .sym '=' :: rest =>
       match optLen cx env rest with
       | .ok d => shortenStart := d
-      | .error e => ev := ev.diag (.E0333, s!"in 'shorten <=', {e}; it is ignored")
+      | .error e => ev := ev.diag (PDiag.unread "shorten <=" e)
     | .ident "shorten" :: .sym '>' :: .sym '=' :: rest =>
       match optLen cx env rest with
       | .ok d => shortenEnd := d
-      | .error e => ev := ev.diag (.E0333, s!"in 'shorten >=', {e}; it is ignored")
+      | .error e => ev := ev.diag (PDiag.unread "shorten >=" e)
     -- pgf's default radius (tikz.code.tex: `rounded corners/.default=4pt`).
     | [.ident "rounded", .ident "corners"] => rounded := some (Dim.pt 4)
     | .ident "rounded" :: .ident "corners" :: .sym '=' :: rest =>
       match optLen cx env rest with
       | .ok d => rounded := some d
-      | .error e => ev := ev.diag (.E0333, s!"in 'rounded corners', {e}; corners stay sharp")
+      | .error e => ev := ev.diag (PDiag.unread "rounded corners" e)
     | [.ident "sharp", .ident "corners"] => rounded := none
     | .ident "opacity" :: .sym '=' :: rest =>
       match optAlpha env rest with
       | .ok a => fillAlpha := a; strokeAlpha := a
-      | .error e => ev := ev.diag (.E0333, s!"in 'opacity', {e}; it is ignored")
+      | .error e => ev := ev.diag (PDiag.unread "opacity" e)
     | .ident "fill" :: .ident "opacity" :: .sym '=' :: rest =>
       match optAlpha env rest with
       | .ok a => fillAlpha := a
-      | .error e => ev := ev.diag (.E0333, s!"in 'fill opacity', {e}; it is ignored")
+      | .error e => ev := ev.diag (PDiag.unread "fill opacity" e)
     | .ident "draw" :: .ident "opacity" :: .sym '=' :: rest =>
       match optAlpha env rest with
       | .ok a => strokeAlpha := a
-      | .error e => ev := ev.diag (.E0333, s!"in 'draw opacity', {e}; it is ignored")
+      | .error e => ev := ev.diag (PDiag.unread "draw opacity" e)
     | [.ident "shade"] => shades := true
     | [.ident "clip"] => clips := true
     | [.ident "decorate"] => decorate := true
     | .ident "decoration" :: .sym '=' :: rest =>
       match readBrace cx env rest with
       | .ok b => brace := some b
-      | .error e => ev := ev.diag (.W0334, s!"{e}; the path is drawn undecorated")
+      | .error e => ev := ev.diag (PDiag.say .W0334 .operation "decorate" (detail := some e))
     | .ident "shading" :: .sym '=' :: rest =>
       match keyName rest with
       | some "axis" => shading := { shading with kind := .axis }; shades := true
       | some "radial" => shading := { shading with kind := .radial }; shades := true
       | some "ball" => shading := { shading with kind := .ball }; shades := true
-      | _ => ev := ev.diag (.W0334, s!"the shading '{String.join (rest.map tokText)}' is \
-outside the rendered picture subset; the option is dropped")
+      | _ => ev := ev.diag (PDiag.say .W0334 .value (String.join (rest.map tokRaw)) (some (some .option, "shading")))
     | .ident "shading" :: .ident "angle" :: .sym '=' :: rest =>
       match evalNum env rest.toArray with
       | .ok m => shading := { shading with angle := m }; shades := true
-      | .error e => ev := ev.diag (.E0333, s!"in 'shading angle', {e}; it is ignored")
+      | .error e => ev := ev.diag (PDiag.unread "shading angle" e)
     | .ident side :: .ident "color" :: .sym '=' :: rest =>
       match evalColor cx env rest.toArray with
       | .ok c =>
         match shading.setColor side c with
         | some s => shading := s; shades := true
-        | none => ev := ev.diag (.W0334, s!"draw option '{side} color' is outside the \
-rendered picture subset; the option is dropped")
-      | .error e => ev := ev.diag (.E0333, s!"in '{side} color', {e}; the colour is dropped")
+        | none => ev := ev.diag (PDiag.say .W0334 .option s!"{side} color" (some (none, "\\draw")))
+      | .error e => ev := ev.diag (PDiag.unread s!"{side} color" e)
     | [] => pure ()
     | o :: rest =>
       match toSpec.read env opt with
       | some (.ok s) => toSpec := s
       | some (.error e) =>
-        return ev.diag (.E0333, s!"in '\\draw' option '{keyPath opt.toList}', {e}; \
-the edge is not drawn")
+        return ev.diag (PDiag.unread (keyPath opt.toList) e)
       | none =>
       match evalColor cx env opt with
       | .ok c => color := c
       | .error _ =>
-        ev := ev.diag (.W0334, s!"draw option {optName (o :: rest)} is outside the \
-rendered picture subset; the option is dropped")
+        ev := ev.diag (PDiag.say .W0334 .option (optRaw (o :: rest)) (some (none, "\\draw")))
   let mut pts : Array Anchor := #[]
   let mut ops : Array (DrawOp × Option EdgeLabel) := #[]
   let mut reference : Length × Length := (0, 0)
@@ -4905,61 +4920,53 @@ rendered picture subset; the option is dropped")
         i := i + 1
         if let some (inner, close) := bracketAt ts i then
           let some past := close
-            | return ev.diag (.E0333, "'to' options miss their ']'; the edge is \
-not drawn")
+            | return ev.diag (PDiag.say .E0333 .option (obj := some (none, "to"))
+          (detail := some "no closing ']'"))
           i := past
           let mut spec := toSpec
           for opt in expandOpts cx.styles inner do
             match spec.read env opt with
             | some (.ok s) => spec := s
             | some (.error e) =>
-              return ev.diag (.E0333, s!"in '{keyPath opt.toList}=', {e}; the \
-edge is not drawn")
+              return ev.diag (PDiag.unread s!"{keyPath opt.toList}=" e)
             | none =>
             match readLineWidth opt.toList with
             | some (.ok w) =>
-              if opStroke then ev := ev.diag (.W0334, "a chain whose \
-operations declare more than one stroke is outside the rendered picture \
-subset; the last one is drawn")
+              if opStroke then ev := ev.diag (PDiag.say .W0334 .operation "stroke" (detail := some "a chain whose operations declare more \
+than one stroke draws the last one"))
               opStroke := true
               width := w
             | some (.error e) =>
-              ev := ev.diag (.W0334, s!"in 'line width', {e}; the option is dropped")
+              ev := ev.diag (PDiag.optValue "line width" e)
             | none =>
             match opt.toList with
             | [.ident "dashed"] =>
-              if opStroke then ev := ev.diag (.W0334, "a chain whose \
-operations declare more than one stroke is outside the rendered picture \
-subset; the last one is drawn")
+              if opStroke then ev := ev.diag (PDiag.say .W0334 .operation "stroke" (detail := some "a chain whose operations declare more \
+than one stroke draws the last one"))
               opStroke := true
               dash := .dashed
             | [.ident "dotted"] | [.ident "densely", .ident "dotted"] =>
-              if opStroke then ev := ev.diag (.W0334, "a chain whose \
-operations declare more than one stroke is outside the rendered picture \
-subset; the last one is drawn")
+              if opStroke then ev := ev.diag (PDiag.say .W0334 .operation "stroke" (detail := some "a chain whose operations declare more \
+than one stroke draws the last one"))
               opStroke := true
               dash := .dotted
             | .ident "draw" :: .sym '=' :: rest =>
               match evalColor cx env rest.toArray with
               | .ok c =>
-                if opStroke then ev := ev.diag (.W0334, "a chain whose \
-operations declare more than one stroke is outside the rendered picture \
-subset; the last one is drawn")
+                if opStroke then ev := ev.diag (PDiag.say .W0334 .operation "stroke" (detail := some "a chain whose operations declare more \
+than one stroke draws the last one"))
                 opStroke := true
                 color := c
                 strokes := true
               | .error e =>
-                ev := ev.diag (.E0333, s!"in an edge's 'draw=', {e}; the \
-colour is dropped")
+                ev := ev.diag (PDiag.unread "draw=" e)
             | [] => pure ()
             | o :: rest =>
-              ev := ev.diag (.W0334, s!"'to' option {optName (o :: rest)} is outside the \
-rendered picture subset; the option is dropped")
+              ev := ev.diag (PDiag.say .W0334 .option (optRaw (o :: rest)) (some (none, "to")))
           op := if spec.curved then .curve spec else .straight
         else if toSpec.curved then op := .curve toSpec
       else
-        return ev.diag (.W0334, s!"'\\draw' continues with {tokText ts[i]}, \
-outside the rendered picture subset; the edge is not drawn")
+        return ev.diag (PDiag.say .W0334 .operation (tokRaw ts[i]) (some (none, "\\draw")))
       let mut mid : Option EdgeLabel := none
       match readEdgeLabel cx env ts i ev autoOn autoLeft with
       | .error failed => return failed
@@ -4994,14 +5001,14 @@ outside the rendered picture subset; the edge is not drawn")
           | .ok (label, next, after) =>
             ev := after
             if mid.isSome && label.isSome then
-              return ev.diag (.W0334, "multiple nodes on one path segment are outside \
-the rendered picture subset; the edge is not drawn")
+              return ev.diag (PDiag.say .W0334 .node (detail := some "multiple nodes on one path segment"))
             mid := mid.or label
             i := next
           ops := ops.push (op, mid)
     else break
   unless pts.size ≥ 2 do
-    return ev.diag (.E0333, "'\\draw' needs two endpoints; the edge is not drawn")
+    return ev.diag (PDiag.say .E0333 .coordinate (obj := some (none, "\\draw"))
+      (detail := some "it needs two endpoints"))
   let stroke : Ir.Pic.Stroke :=
     { color := color
       width := width
@@ -5150,10 +5157,10 @@ the rendered picture subset; the edge is not drawn")
   if decorate then
     match brace, segs.toList, rects.isEmpty && ellipses.isEmpty && extraSubs.isEmpty with
     | some b, [.line x0 y0 x1 y1], true => segs := braceSegs b x0 y0 x1 y1
-    | some _, _, _ => ev := ev.diag (.W0334, "a brace along anything but one straight side is \
-outside the rendered picture subset; the path is drawn undecorated")
-    | none, _, _ => ev := ev.diag (.W0334, "'decorate' without a decoration this subset draws \
-is outside the rendered picture subset; the path is drawn undecorated")
+    | some _, _, _ => ev := ev.diag (PDiag.say .W0334 .operation "brace" (detail := some "along anything but one straight side; \
+the path is drawn undecorated"))
+    | none, _, _ => ev := ev.diag (PDiag.say .W0334 .operation "decorate" (detail := some "no decoration this subset draws; the \
+path is drawn undecorated"))
   if let some r := rounded then segs := roundJoints r segs
   let geom := paintedGeom segs rects ellipses extraSubs
   let painted : Array Ir.Pic.Shape :=
@@ -5221,7 +5228,7 @@ private def TSt.modifyCur (st : TSt) (f : TreeItem → TreeItem) : TSt :=
   { st with items := st.items.modify st.cur f }
 
 private def TSt.diag (st : TSt) (d : PDiag) : TSt :=
-  if st.bad.any (·.2 == d.2) then st else { st with bad := st.bad.push d }
+  if st.bad.any (· == d) then st else { st with bad := st.bad.push d }
 
 private def TSt.pushChild (st : TSt) : TSt × Nat :=
   let parent := st.cur
@@ -5238,8 +5245,7 @@ private def treeTail (t : Tok) (st : TSt) : TSt :=
   | .sym '[' => { st with mode := .pathBracket }
   | .ident "child" => { st with mode := .child false, pendingOpts := #[], tree := true }
   | .ident "edge" => { st with mode := .edge 0 }
-  | t => { st.diag (.W0334, s!"a tree continues with {tokText t}, outside the rendered \
-picture subset; it is dropped") with mode := .skipping }
+  | t => { st.diag (PDiag.say .W0334 .token (tokRaw t) (some (none, "tree"))) with mode := .skipping }
 
 private def treeStep (t : Tok) (st : TSt) : TSt :=
   let push (st : TSt) : TSt := st.modifyCur fun i => { i with node := i.node.push t }
@@ -5292,8 +5298,7 @@ private def treeStep (t : Tok) (st : TSt) : TSt :=
     | .space => st
     | .sym '[' => { st with mode := .child true }
     | .ident "foreach" =>
-      { st.diag (.W0334, "'child foreach' is outside the rendered picture subset; those \
-children are not drawn") with mode := .skipping }
+      { st.diag (PDiag.say .W0334 .operation "child foreach") with mode := .skipping }
     -- A child with no body is a coordinate (pgf's `\tikz@collect@child@code{}`).
     | t => treeTail t { st.pushChild.1 with mode := .tail }
   | .edge stage =>
@@ -5304,8 +5309,7 @@ children are not drawn") with mode := .skipping }
     | 2, .sym '[' => { st with mode := .edgeBracket }
     | 2, .ident "node" =>
       { st.modifyCur (fun i => { i with edgeNodes := i.edgeNodes.push t }) with mode := .edgeNodes }
-    | _, t => { st.diag (.W0334, s!"a tree's 'edge' continues with {tokText t}, outside the \
-rendered picture subset; it is dropped") with mode := .skipping }
+    | _, t => { st.diag (PDiag.say .W0334 .token (tokRaw t) (some (none, "edge"))) with mode := .skipping }
   | .edgeBracket =>
     match t with
     | .sym ']' =>
@@ -5379,15 +5383,15 @@ private def treeKey (cx : Cx) (env : List (String × Val)) (level : Nat) (cfg : 
   if key == "grow" || key == "grow'" then
     some (match growAngle env value with
       | some a => .ok { cfg with grow := a, swap := key == "grow'", special := level }
-      | none => .error (.W0334, s!"tree option {optName e} names a direction outside the \
-rendered picture subset; the tree grows as before"))
+      | none => .error (PDiag.say .W0334 .value (optRaw e) (some (some .option, "tree"))
+        (detail := some "a direction outside the subset")))
   else if key == "level distance" || key == "sibling distance" then
     some (match treeLen cx env value with
       | .ok d =>
         let d := d * cx.scale / 1000
         .ok (if key == "level distance" then { cfg with levelDist := d }
           else { cfg with siblingDist := d })
-      | .error err => .error (.E0333, s!"in '{key}', {err}; it is ignored"))
+      | .error err => .error (PDiag.unread key err))
   else if key == "parent anchor" || key == "child anchor" then
     let set (a : Option String) : TreeCfg :=
       if key == "parent anchor" then { cfg with parentAnchor := a } else { cfg with childAnchor := a }
@@ -5395,9 +5399,8 @@ rendered picture subset; the tree grows as before"))
       | some "border" => .ok (set none)
       | some a =>
         if (nodeAnchorOf a).isSome then .ok (set (some a))
-        else .error (.W0334, s!"tree option {optName e} names an anchor outside the rendered \
-picture subset; the edge meets the border")
-      | none => .error (.E0333, s!"'{key}' needs an anchor name; it is ignored"))
+        else .error (PDiag.say .W0334 .anchor (optRaw e) (some (some .option, "tree")))
+      | none => .error (PDiag.say .E0333 .anchor (obj := some (none, key)) (detail := some "it needs an anchor name")))
   else if key == "missing" then some (.ok cfg)
   else none
 
@@ -5712,8 +5715,7 @@ private def scopeXf (cx : Cx) (env : List (String × Val)) (entries : Array (Arr
   for e in entries do
     match scopeKeyXf cx env (e.toList.filter (· != .space)) with
     | some (.ok k) => m := m.compose k
-    | some (.error err) => ds := ds.push (.E0333, s!"in a 'scope' key '{keyPath e.toList}', {err}; \
-it is ignored")
+    | some (.error err) => ds := ds.push (PDiag.unread (keyPath e.toList) err)
     | none => pure ()
   return (m, ds)
 
@@ -5806,8 +5808,8 @@ private def clipAfter (cx : Cx) (before : Ev) (g : Gfx.Geom) (inner : Ev) : Ev :
   let ev := { inner with shapes := before.shapes ++ clipRuns g #[] #[] inner.shapes.toList
                          borders := before.borders ++ g.hull.toArray }
   if labels.all inside then ev
-  else ev.diag (.W0334, "a node after a '\\clip' is set whole; the clip reaches only the \
-picture's paths")
+  else ev.diag (PDiag.say .W0334 .node (detail := some "after a '\\clip' it is set whole; the clip reaches \
+only the picture's paths"))
 
 private theorem clipFlush_mem (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
     (acc : Array Ir.Pic.Shape) :
@@ -5977,7 +5979,7 @@ private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := 
   for x in pend do
     let what := if x.pin then "pin" else "label"
     match readExtra env x.spec with
-    | .error e => ev := ev.diag (.E0333, s!"in a node's '{what}', {e}; it is not drawn")
+    | .error e => ev := ev.diag (PDiag.unread what e)
     | .ok (opts, angle, text) =>
       let g := x.main
       let dist : Length := x.dist.getD (3 * ex)
@@ -6008,8 +6010,8 @@ private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := 
       let bordersBefore := ev.borders.size
       ev := evalNode at0 env' toks ev
       unless ev.after.isEmpty do
-        ev := { ev with after := #[] }.diag (.W0334, s!"a {what}'s own label or pin is outside \
-the rendered picture subset; it is dropped")
+        ev := { ev with after := #[] }.diag (PDiag.say .W0334 .node (obj := some (none, what)) (detail := some "its own label or pin is \
+dropped"))
       if x.pin then
         if let some ((bx0, by0), (bx1, by1)) := ev.borders[bordersBefore]? then
           let pg : NodeGeom :=
@@ -6035,13 +6037,13 @@ private def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
     match evalColor cx env spec with
     | .ok c => evalList { cx with ink := c } rest env ev
     | .error e =>
-      evalList cx rest env (ev.diag (.E0333, s!"in '\\color', {e}; the colour is dropped"))
+      evalList cx rest env (ev.diag (PDiag.unread "\\color" e))
   | .setDecl n :: rest, env, ev => evalList { cx with decls := cx.decls.push n } rest env ev
   | s :: rest, env, ev =>
     let (env2, ev2) := evalOne cx s env ev
     let ev2 := if leaksOne s && !rest.isEmpty then
-        ev2.diag (.W0334, "a '\\clip' inside a group, a branch or a loop lasts to the end of \
-its scope in pgf; the statements after it are drawn unclipped")
+        ev2.diag (PDiag.say .W0334 .command "\\clip" (detail := some "in a group, a branch or a loop it lasts \
+to the end of its scope in pgf; the statements after it are drawn unclipped"))
       else ev2
     match ev2.clipGeom with
     | some g =>
@@ -6060,8 +6062,7 @@ private def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     match evalFill cx env toks with
     | .ok shape =>
       let ev := if cx.everyPath.isEmpty then ev else
-        ev.diag (.W0334, "an 'every path' key on a '\\fill' is outside the \
-rendered picture subset; the keys are dropped")
+        ev.diag (PDiag.say .W0334 .key "every path" (some (none, "\\fill")))
       (env, { ev with shapes := ev.shapes.push shape })
     | .error d => (env, ev.diag d)
   | .node toks, env, ev =>
@@ -6088,7 +6089,7 @@ rendered picture subset; the keys are dropped")
         (env, ev2)
       | .error e =>
         let (_, ev2) := evalList cx body env
-          (ev.diag (.E0333, s!"in '\\textcolor', {e}; the colour is dropped"))
+          (ev.diag (PDiag.unread "\\textcolor" e))
         (env, ev2)
   | .setColor _, env, ev => (env, ev)
   | .setDecl _, env, ev => (env, ev)
@@ -6123,20 +6124,19 @@ rendered picture subset; the keys are dropped")
     | .ok (.len sp _), .length => ((name, Val.length sp) :: env, ev)
     | .ok (.str s), .plain => ((name, Val.str s) :: env, ev)
     | .ok (.str s), .trunc =>
-      (env, ev.diag (.E0333, s!"in '\\pgfmathtruncatemacro' of '\\{name}', '{s}' \
-where a number is needed; the macro is not set"))
+      (env, ev.diag (PDiag.say .E0333 .number s (some (none, s!"\\{name}"))
+        (detail := some "'\\pgfmathtruncatemacro' needs a number")))
     | .ok (.str s), .length =>
-      (env, ev.diag (.E0333, s!"in '\\pgfmathsetlengthmacro' of '\\{name}', '{s}' \
-where a length is needed; the macro is not set"))
+      (env, ev.diag (PDiag.say .E0333 .length s (some (none, s!"\\{name}"))
+        (detail := some "'\\pgfmathsetlengthmacro' needs a length")))
     | .error e, _ =>
-      (env, ev.diag (.E0333, s!"in '\\pgfmathsetmacro' of '\\{name}', {e}; the macro \
-is not set"))
+      (env, ev.diag (PDiag.unread s!"\\{name}" e))
   | .foreach vars list body, env, ev =>
     match readItems env list with
-    | .error e => (env, ev.diag (.E0333, s!"in a '\\foreach' list, {e}"))
+    | .error e => (env, ev.diag (PDiag.unread "\\foreach" e))
     | .ok items =>
       match expandItems items with
-      | .error e => (env, ev.diag (.E0333, s!"in a '\\foreach' list, {e}"))
+      | .error e => (env, ev.diag (PDiag.unread "\\foreach" e))
       | .ok expanded =>
         -- The loop's bindings are scoped to its body: the caller's environment comes back.
         (env, evalForeach cx vars body expanded.toList env ev)
@@ -6144,8 +6144,8 @@ is not set"))
   | .cond kind test thenS elseS, env, ev =>
     match kind with
     | .always v =>
-      let ev := ev.diag (.N0114, s!"'\\{if v then "iftrue" else "iffalse"}' is \
-{if v then "true" else "false"} by definition, so {condDrawnWords v}")
+      let ev := ev.diag (PDiag.say .N0114 .conditional s!"\\{if v then "iftrue" else "iffalse"}"
+        (detail := some s!"{if v then "true" else "false"} by definition, so {condDrawnWords v}"))
       if v then
         let (_, ev2) := evalList cx thenS env ev
         (env, ev2)
@@ -6153,8 +6153,9 @@ is not set"))
         let (_, ev2) := evalList cx elseS env ev
         (env, ev2)
     | .mode n v =>
-      let ev := ev.diag (.N0114, s!"'\\{n}' {if v then "holds" else "fails"} at a picture's \
-statements, which pgf sets in a horizontal box, so {condDrawnWords v}")
+      let ev := ev.diag (PDiag.say .N0114 .conditional s!"\\{n}"
+        (detail := some s!"{if v then "holds" else "fails"} at a picture's statements, which pgf \
+sets in a horizontal box, so {condDrawnWords v}"))
       if v then
         let (_, ev2) := evalList cx thenS env ev
         (env, ev2)
@@ -6163,8 +6164,7 @@ statements, which pgf sets in a horizontal box, so {condDrawnWords v}")
         (env, ev2)
     | .opaque n =>
       let ev := { ev with gapped := true }.diag
-        (.W0334, s!"'\\{n}' is outside the rendered picture subset; the branch \
-that draws is drawn")
+        (PDiag.say .W0334 .conditional s!"\\{n}" (detail := some "the branch that draws is drawn"))
       if condFloorTakesThen thenS then
         let (_, ev2) := evalList cx thenS env ev
         (env, ev2)
@@ -6175,8 +6175,8 @@ that draws is drawn")
       match splitRel (test.filter (· != .space)) with
       | none =>
         let ev := { ev with gapped := true }.diag
-          (.W0334, s!"an '\\{n}' without a '<', '=' or '>' test is outside the \
-rendered picture subset; the branch that draws is drawn")
+          (PDiag.say .W0334 .conditional s!"\\{n}"
+            (detail := some "no '<', '=' or '>' test"))
         if condFloorTakesThen thenS then
           let (_, ev2) := evalList cx thenS env ev
           (env, ev2)
@@ -6187,8 +6187,9 @@ rendered picture subset; the branch that draws is drawn")
         match evalNum env lhs, evalNum env rhs with
         | .ok a, .ok b =>
           let holds := relHolds rel a b
-          let ev := ev.diag (.N0114, s!"'\\{n}' is computed from the picture's own values \
-and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
+          let ev := ev.diag (PDiag.say .N0114 .conditional s!"\\{n}"
+            (detail := some s!"computed from the picture's own values, it \
+{if holds then "holds" else "fails"} here, so {condDrawnWords holds}"))
           if holds then
             let (_, ev2) := evalList cx thenS env ev
             (env, ev2)
@@ -6197,7 +6198,7 @@ and {if holds then "holds" else "fails"} here, so {condDrawnWords holds}")
             (env, ev2)
         | .error e, _ | _, .error e =>
           let ev := { ev with gapped := true }.diag
-            (.W0334, s!"in an '\\{n}' test, {e}; the branch that draws is drawn")
+            (PDiag.say .W0334 .conditional s!"\\{n}" (detail := some s!"{e}; the branch that draws is drawn"))
           if condFloorTakesThen thenS then
             let (_, ev2) := evalList cx thenS env ev
             (env, ev2)
@@ -6517,9 +6518,9 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         match evalNum [] rest.toArray with
         | .ok m =>
           if m ≤ 0 then
-            diags := diags.push (.E0333, "'scale' must be positive; it is ignored")
+            diags := diags.push (PDiag.say .E0333 .value (obj := some (some .option, "scale")) (detail := some "it must be positive"))
           else scale := m
-        | .error e => diags := diags.push (.E0333, s!"in 'scale=', {e}; it is ignored")
+        | .error e => diags := diags.push (PDiag.unread "scale=" e)
       -- `transform shape`: nodes take the picture's scale (pgf manual §25.4).
       | [.ident "transform", .ident "shape"] => transformShape := true
       | [.ident "baseline"] => baselineSpec := some []
@@ -6528,8 +6529,8 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
         match readNodeDistance (.ident "node" :: .ident "distance" :: rest) with
         | some d => dist := d
         | none =>
-          diags := diags.push (.E0333, "in 'node distance', a length like \
-'1cm' (or '1cm and 2cm') is needed; it is ignored")
+          diags := diags.push (PDiag.say .E0333 .length (obj := some (some .option, "node distance"))
+            (detail := some "a length like '1cm' (or '1cm and 2cm') is needed"))
       -- A bare name that resolves is a style applied in the picture's own scope.
       | [.ident n] =>
         match styles.lookup n with
@@ -6543,14 +6544,15 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
       | .ident "color" :: .sym '=' :: rest =>
         match evalColor probe [] rest.toArray with
         | .ok c => ink0 := some c
-        | .error e => diags := diags.push (.E0333, s!"in the picture's 'color=', {e}; it is ignored")
+        | .error e => diags := diags.push (PDiag.unread "color=" e)
       | o :: rest =>
         if readsOpt styles (o :: rest).toArray then
           inherited := inherited.push (o :: rest).toArray
         else match evalColor probe [] (o :: rest).toArray with
           | .ok c => ink0 := some c
           | .error _ => diags := diags.push (outsideOpt (o :: rest))
-  | some (_, none) => diags := diags.push (.E0333, "the picture's options miss their ']'")
+  | some (_, none) => diags := diags.push (PDiag.say .E0333 .option (obj := some (none, "picture"))
+          (detail := some "no closing ']'"))
   | none => pure ()
   -- `\selectfont` selects what the declarations before it chose.
   let declNames := "selectfont" :: ladder.map (·.1) ++ declStyles.map (·.1)
@@ -6575,7 +6577,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    bodySize := bodySize
                    decls := outerDecls
                    ink := ink0.getD Ir.Color.blackInk
-                   parseGap := st.bad.any fun d => d.1 == .W0334 }
+                   parseGap := st.bad.any fun d => d.code == .W0334 }
   let ev := evalFixed cx st.out.toList
   let mut unread : Array PDiag := #[]
   let mut baseline : Option Length := none
@@ -6583,22 +6585,19 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     match readBaseline cx ev.nodes spec with
     | .ok y => baseline := some y
     | .error e =>
-      unread := unread.push (.E0333, s!"in 'baseline=', {e}; the picture's bottom \
-edge stands on the line")
+      unread := unread.push (PDiag.unread "baseline=" e)
   for opt in inherited do
     match opt.toList with
     | [] => pure ()
     | _ :: _ =>
       if !readsOpt styles opt then unread := unread.push (outsideOpt opt.toList)
       else unless ev.readOpts do
-        unread := unread.push (.W0334, s!"picture option {optName opt.toList} reached no path \
-or node; the option is dropped")
+        unread := unread.push (PDiag.say .W0334 .option (optRaw opt.toList) (some (none, "picture"))
+          (detail := some "it reached no path or node"))
   let all := diags ++ st.bad ++ ev.diags ++ unread
-  let mut seen : Array String := #[]
   let mut out : Array PDiag := #[]
   for d in all do
-    unless seen.contains d.2 do
-      seen := seen.push d.2
+    unless out.contains d do
       out := out.push d
   return ((ev.toPicture baseline).recolor pal.shown, out)
 
@@ -6906,8 +6905,9 @@ private def labelAt (x0 b : Length) (content : Array Ir.Inline) (color : Ir.Colo
   let tall := m.height + m.depth
   .label x0 (b + m.height - tall + tall / 2) content color scale .west
 
-private def outside (what : String) : PDiag :=
-  (.W0334, s!"{what} is outside the rendered diagram subset; it is dropped")
+/-- W0334 for an option of `site` outside the diagram subset, dropped. -/
+private def outside (site : String) (opt : String) : PDiag :=
+  PDiag.say .W0334 .option opt (some (none, site))
 
 private def cellOptions (raws : Array Parse.Raw) : Option (Array Parse.Raw × Array Parse.Raw) :=
   let i := skipSp raws 0
@@ -6937,7 +6937,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     Ir.Pic.Picture × Array PDiag := Id.run do
   let mut diags : Array PDiag := #[]
   let note (d : PDiag) (ds : Array PDiag) : Array PDiag :=
-    if ds.any (·.2 == d.2) then ds else ds.push d
+    if ds.any (· == d) then ds else ds.push d
   let cx : Cx := { pal := pal, math := math, metric := metric, bodySize := bodySize }
   let probe := metric #[.text "x"] size
   let em : Length := bodySize * (size : Int) / 1000
@@ -6960,8 +6960,8 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           if key != "column sep" then rowSep := r
           if key != "row sep" then colSep := c
         | .error err, _ | _, .error err =>
-          diags := note (.E0333, s!"in the diagram's '{key}', {err}; it is ignored") diags
-      else diags := note (outside s!"diagram option {optName e.toList}") diags
+          diags := note (PDiag.unread key err) diags
+      else diags := note (outside "diagram" (optRaw e.toList)) diags
   let grid := padRows (splitRows (raws.extract i raws.size) amp)
   let mut cells : Array (Array (Option (Ir.Inline × Ir.Pic.LabelInk))) := #[]
   let mut arrowsAt : Array (Nat × Nat × Arrow) := #[]
@@ -6972,7 +6972,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
       -- A cell's own node options are named, never set as the cell's mathematics.
       let mut content := content
       if let some (opts, rest) := cellOptions content then
-        diags := note (outside s!"the cell options '|[{Parse.rawSrc opts}]|'") diags
+        diags := note (outside "cell" s!"|[{Parse.rawSrc opts}]|") diags
         content := rest
       for a in arrows do arrowsAt := arrowsAt.push (r, c, a)
       if content.isEmpty then row := row.push none
@@ -7041,7 +7041,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         let value := (e.toList.dropWhile (· != .sym '=')).drop 1
         match spec.read [] e with
         | some (.ok s) => spec := s
-        | some (.error err) => diags := note (.E0333, s!"in an arrow's '{key}', {err}") diags
+        | some (.error err) => diags := note (PDiag.unread key err) diags
         | none =>
         if key == "dashed" then dash := #[7 * lw, 4 * lw]
         else if key == "swap" || key == "'" then swapAll := !swapAll
@@ -7049,12 +7049,12 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         else if key == "start anchor" || key == "end anchor" then
           match nameOfToks value >>= nodeAnchorOf with
           | some an => if key == "start anchor" then startAt := some an else endAt := some an
-          | none => diags := note (outside s!"arrow option {optName e.toList}") diags
+          | none => diags := note (outside "arrow" (optRaw e.toList)) diags
         else if let some (.ok w) := readLineWidth e.toList then lw := w
         else
           match evalColor cx [] e with
           | .ok col => color := col
-          | .error _ => diags := note (outside s!"arrow option {optName e.toList}") diags
+          | .error _ => diags := note (outside "arrow" (optRaw e.toList)) diags
       let anchorOf (x y a up down : Length) : NodeAnchor → Length × Length
         | .center => (x, y)
         | .north => (x, y + up)
@@ -7114,7 +7114,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         for e in l.keys do
           match evalColor cx [] e with
           | .ok col => lcolor := col
-          | .error _ => diags := note (outside s!"label option {optName e.toList}") diags
+          | .error _ => diags := note (outside "label" (optRaw e.toList)) diags
         let script : Nat := if probe.script > 0 then probe.script else 700
         let scale : Nat := if draws then script * size / 1000 else size
         let (inl, ds) := math false l.content
@@ -7132,8 +7132,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         shapes := shapes.push (labelAt (ctr.1 - m.w / 2) base #[inl] lcolor scale m)
         borders := borders.push ((ctr.1 - ha, ctr.2 - hb), (ctr.1 + ha, ctr.2 + hb))
     | _, _ =>
-      diags := note (.E0333, s!"an arrow from row {r + 1}, column {c + 1} reaches no cell; \
-it is not drawn") diags
+      diags := note (PDiag.say .E0333 .arrow (detail := some s!"from row {r + 1}, column {c + 1} it reaches no cell")) diags
   -- tikz-cd's `every diagram` runs the baseline through the matrix's centre, `1-row diagram` on its row's base.
   let baseline : Option Length :=
     if ys.isEmpty then none

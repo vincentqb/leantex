@@ -908,66 +908,8 @@ def dvForm? (s : String) : Option Diag.Words := do
 
 /-- Codes whose messages are still free prose: a baseline that may fall and never rise. -/
 def formDebt : List String :=
-  ["E0333",
-   "E0395",
-   "E0405",
-   "N0018",
-   "N0021",
-   "N0024",
-   "N0026",
-   "N0027",
-   "N0200",
-   "N0376",
-   "N0448",
-   "W0003",
-   "W0005",
-   "W0007",
-   "W0009",
-   "W0010",
-   "W0016",
-   "W0201",
-   "W0202",
-   "W0308",
-   "W0315",
-   "W0320",
-   "W0321",
-   "W0325",
-   "W0326",
-   "W0327",
-   "W0328",
-   "W0330",
-   "W0331",
-   "W0332",
-   "W0333",
-   "W0334",
-   "W0335",
-   "W0336",
-   "W0338",
-   "W0345",
-   "W0349",
-   "W0358",
-   "W0361",
-   "W0363",
-   "W0372",
-   "W0377",
-   "W0384",
-   "W0386",
-   "W0388",
-   "W0394",
-   "W0396",
-   "W0399",
-   "W0400",
-   "W0442",
-   "W0444",
-   "W0445",
-   "W0446",
-   "W0601",
-   "W0602",
-   "W0603",
-   "W0604",
-   "W0605",
-   "W0609",
-   "W0701"]
+  ["W0361",
+   "W0363"]
 
 /-- Does a message read as its code's form: its code's word, a noun of the vocabulary, a name. -/
 def dvFormOk (d : Diag) : Bool :=
@@ -1890,7 +1832,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let firedPic := Ir.picAltDiags picDoc (fun _ => none) (fun _ => true)
   t "a shipped picture with no alternative fires N0376 in the author's words"
     (firedPic.size == 1 && firedPic.all fun d =>
-      (d.message.splitOn "picture").length == 2 &&
+      d.message == "missing alt text" &&
       (d.message.splitOn Ir.picSrcPrefix).length == 1)
   t "a picture the tool failed on is not double-named (W0382 spoke)"
     ((Ir.picAltDiags picDoc (fun _ => none) (fun _ => false)).isEmpty)

@@ -2530,7 +2530,7 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     (·.code != "W0333"))
   t "band: the yield is named with both slots"
     (noteOut.diags.any fun d => d.code == "W0333" && d.severity == .warning &&
-      hasStr (saidText d) "framenumber" && hasStr (saidText d) "framefoot note")
+      hasStr d.message "slot framenumber" && hasStr d.message "framefoot note")
   t "band: the yielding number is painted first, under the note"
     ((noteC[1]?.map fun p =>
       match p.lines.findIdx? (·.text == "1"),
@@ -2540,7 +2540,7 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let (secCollideOut, secCollideC) := run s!"\\section\{{longTok}}\n"
   t "band: the number yields to the section title by declared priority"
     (secCollideOut.diags.any fun d => d.code == "W0333" &&
-      hasStr (saidText d) "framenumber yields" && hasStr (saidText d) "sectiontitle")
+      hasStr d.message "slot framenumber for sectiontitle")
   t "band: and holds the right margin while yielding"
     (numBox secCollideC 2 == numBox emptyC 1)
 
@@ -2688,7 +2688,7 @@ After text keeps it: flow scope, no brace revert.")
 \\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #888888 }\n\n\
 \\textcolor{q}{loud after} is judged.\n\\end{document}")
   t "a plain body redeclaration removes the decorative exemption from here on"
-    (dsRedecl.any fun d => d.code == "W0315" && hasStr (saidText d) "'q'")
+    (dsRedecl.any fun d => d.code == "W0315" && hasStr d.message "colour q")
   let deckDoc (mid tail : String) : String :=
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{A}\none\n\\end{frame}\n\n" ++ mid ++
@@ -2696,7 +2696,7 @@ After text keeps it: flow scope, no brace revert.")
   t "a bad frame-title pair declared before a frame is judged for it"
     ((codesOf (deckDoc "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n"
       "")).any
-      fun d => d.code == "W0345" && hasStr (saidText d) "the frame-title bar")
+      fun d => d.code == "W0345" && hasStr (diagWords d) "the frame-title bar")
   t "a bad frame-title pair declared after the last frame styles nothing"
     ((codesOf (deckDoc "" "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n")).all
       fun d => d.code != "W0345")
@@ -2705,7 +2705,7 @@ After text keeps it: flow scope, no brace revert.")
 \\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
   t "an accent inside the frame title is judged on the bar, and warns there"
     ((codesOf (deckAlert "An \\alert{urgent} word" "plain body")).any
-      fun d => d.code == "W0315" && hasStr (saidText d) "the frame-title bar")
+      fun d => d.code == "W0315" && hasStr (diagWords d) "the frame-title bar")
   t "the same accent in the body is judged on the page, and passes there"
     ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
       fun d => d.code != "W0315")
@@ -2713,7 +2713,7 @@ After text keeps it: flow scope, no brace revert.")
     ((codesOf ("\\documentclass{slides}\\theme{moloch}\\palette{ alert = #AF5C00 }\
 \\begin{document}\n\
 \\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
-      fun d => d.code == "W0315" && hasStr (saidText d) "the standout frame")
+      fun d => d.code == "W0315" && hasStr (diagWords d) "the standout frame")
 
 /-- Tables and floats: the too-wide diagnostic, the caption's source side, and the rule extents on
 the shipped page. -/

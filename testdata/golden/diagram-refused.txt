@@ -16,5 +16,5 @@ picture 5 shapes
 para
   text "Text resumes after the placeholder."
 -- diagnostics
-warning[W0334] 20:1 '\pattern' is outside the rendered picture subset; not drawn | help: write it with paths, nodes, trees, \foreach and pgfmath values, which the rendered subset draws, or let a boundary tool draw it
+warning[W0334] 20:1 unsupported command \pattern | help: write it with paths, nodes, trees, \foreach and pgfmath values, which the rendered subset draws, or let a boundary tool draw it
 warning[W0362] 20:1 unsupported picture | help: \allow{W0362} accepts the placeholder

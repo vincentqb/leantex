@@ -145,4 +145,4 @@ info[N0100] 8:1 translated package amsthm | detail: \theoremstyle{plain}
 info[N0100] 10:1 translated command \usetheme | detail: \theme{moloch}
 info[N0100] 35:11 translated command \alert | detail: the alert colour
 info[N0100] 42:6 translated command \alert | detail: the alert colour
-warning[W0315] 35:44 text coloured 'fg!50!bg' reads on the page below the contrast WCAG 2.2 asks of large-scale text (SC 1.4.3) | detail: #8F999B on #FAFAFA: 2.79:1, below 3.00:1
+warning[W0315] 35:44 illegible colour 'fg!50!bg' | detail: #8F999B on #FAFAFA (the page): 2.79:1, below 3.00:1 for large-scale text (SC 1.4.3)

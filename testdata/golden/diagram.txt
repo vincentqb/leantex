@@ -42,4 +42,4 @@ role trivlist-env
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics
-warning[W0334] 28:1 '\draw' continues with 'parabola', outside the rendered picture subset; the edge is not drawn | help: write it with paths, nodes, trees, \foreach and pgfmath values, which the rendered subset draws, or let a boundary tool draw it
+warning[W0334] 28:1 unsupported operation parabola for \draw | help: write it with paths, nodes, trees, \foreach and pgfmath values, which the rendered subset draws, or let a boundary tool draw it

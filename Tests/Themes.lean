@@ -1525,7 +1525,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
   t "a failing role pairing warns once, naming role and requirement"
     ((elabStr quiet).2.any fun d => d.code == "W0315" && d.severity == .warning &&
-      (d.message.splitOn "'washed'").length == 2 &&
+      (d.message.splitOn "colour washed").length == 2 &&
       ((diagWords d).splitOn "4.50:1").length == 2)
   t "a failing role ships its declared value"
     ((elabStr quiet).1.palette.find? "washed" == some { r := 0x88, g := 0x88, b := 0x88 })
@@ -1588,7 +1588,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an overridden standout pair warns at the large-scale threshold"
     ((elabStr (dvDeck "\\palette{ standoutfg = #A0A0A0, standoutbg = #FAFAFA }"
       "\\begin{frame}[standout]S\\end{frame}")).2.any
-      fun d => d.code == "W0345" && hasStr d.message "the standout frame" &&
+      fun d => d.code == "W0345" && hasStr (diagWords d) "the standout frame" &&
         ((diagWords d).splitOn "3.00:1").length == 2)
   t "an illegible standout pair without a standout frame is silent"
     (!(warnCodes (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
@@ -1629,12 +1629,12 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\documentclass{article}" ++
       "\\palette{ fg = #808080, bg = #F0F0F0 }" ++
       "\\begin{document}x\\end{document}")).2.any fun d =>
-        d.code == "W0315" && (d.message.splitOn "'fg'").length == 2 &&
+        d.code == "W0315" && (d.message.splitOn "colour fg").length == 2 &&
           ((diagWords d).splitOn "#F0F0F0").length == 2)
   t "a declared dark page with a defaulted ink is diagnosed"
     ((elabStr ("\\documentclass{article}\\palette{ bg = #18181B }" ++
       "\\begin{document}x\\end{document}")).2.any fun d =>
-        d.code == "W0330" && (d.message.splitOn "defaulted").length == 2)
+        d.code == "W0330" && ((diagWords d).splitOn "defaulted").length == 2)
   t "declaring a legible ink beside the dark page silences W0330"
     (!(warnCodes ("\\documentclass{article}" ++
       "\\palette{ fg = #FAFAF9, bg = #18181B }" ++
@@ -1701,7 +1701,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\textcolor{mid}{a}\n\n\\palette{ bg = #222222 }\n\n\\textcolor{mid}{b}" ++
       "\\end{document}")).2.filter fun d =>
         d.code == "W0315" && d.severity == .warning &&
-          (d.message.splitOn "'mid'").length == 2).size == 2)
+          (d.message.splitOn "colour mid").length == 2).size == 2)
   let twoEpochs := elabStr ("\\documentclass{article}" ++
     "\\palette{ washed = #888888 }\\begin{document}\\textcolor{washed}{a}" ++
     "\n\n\\palette{ washed = #888888 }\n\n\\textcolor{washed}{b}\\end{document}")
@@ -1963,7 +1963,7 @@ def titleGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an illegible title-page pair warns at the stage's threshold"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
       d.code == "W0345" && ((diagWords d).splitOn "3.00:1").length == 2 &&
-        (d.message.splitOn "the title page").length == 2 && d.help.isNone)
+        ((diagWords d).splitOn "the title page").length == 2 && d.help.isNone)
   t "the warning names the declared ground, not an invented one"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
       d.code == "W0345" && ((diagWords d).splitOn "#101822").length == 2)

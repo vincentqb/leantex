@@ -9,4 +9,4 @@ section 3 number "1.0.1"
 para
   text "The heading above skips the subsection level."
 -- diagnostics
-warning[W0320] - heading levels skip a step: a rank-two heading is followed by a rank-four heading | help: descend one rank at a time: 1, 2, 3, 4, 5, 6; add the missing heading or promote the deeper one (HTML §4.3.11, WCAG G141)
+warning[W0320] - missing heading | detail: a rank-two heading is followed by a rank-four heading | help: descend one rank at a time: 1, 2, 3, 4, 5, 6; add the missing heading or promote the deeper one (HTML §4.3.11, WCAG G141)

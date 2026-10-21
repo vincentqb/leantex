@@ -176,7 +176,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
       (porcelainRows porcelain "W0110") == [(1, "info"), (1, "warning")])
   -- The line is the wording, never the census key, and a wording prints once.
   let keyed := (List.range 5).toArray.map fun k =>
-    Diag.of .W0005 "overfull line; no feasible break" (span (k + 2))
+    Diag.of .W0005 "overfull line" (span (k + 2))
       (subject := some s!"overfull:deck.tex:{k + 2}:1")
   let (err, _, r) ← sink plain #[] keyed
   t s!"a wording whose census keys tell its sites apart prints once ({(warningLines err "W0005").length} lines)"
@@ -238,12 +238,13 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"reflow account: each re-flowed paragraph has one W0386 at its re-flowed line ({reflows.map siteOf})"
     (reflows.map siteOf == #[some (5, 1), some (9, 1)] &&
       reflows.all fun d => d.span.any (·.file == file) && d.trigger.isNone &&
-        d.detail.any (hasStr · "it ships as") && d.message.startsWith "a declared line did not fit")
+        d.detail.any (hasStr · "it ships as") &&
+          (d.message == "overfull line" || d.message == "overfull measure"))
   t s!"reflow account: the re-flow that runs past the measure says so, carries it and names \
 where it opens ({reflows.map (·.detail)})"
     (reflows.map runsPast == #[false, true] &&
       reflows.all (fun d => runsPast d == d.detail.any (hasStr · "past the measure") &&
-        runsPast d == hasStr d.message "still runs past the measure") &&
+        runsPast d == (d.message == "overfull measure")) &&
       (reflows[1]?.bind (·.detail)).any (hasStr · ", at 9:47"))
   t "reflow account: the porcelain record of a re-flow says what it carries"
     (reflows.all fun d =>
@@ -261,7 +262,7 @@ where it opens ({reflows.map (·.detail)})"
     ((headLines err "W0386").length == 2 && (headLines err "W0005").length == 1 &&
       (warningLines err "W0386").any (fun l => hasStr l s!"{file}:5:1") &&
       (warningLines err "W0386").any (fun l => hasStr l s!"{file}:9:1") &&
-      hasStr err "still runs past the measure" &&
+      hasStr err "overfull measure" &&
       (headLines err "W0005").all (fun l => hasStr l s!"{file}:12:1"))
   let (htmlErr, _, _) ← sink plain #[] out.diags #[.html]
   let (pdfErr, _, _) ← sink plain #[] out.diags #[.pdf]
@@ -328,7 +329,7 @@ the most ({mSteps.map (·.toPtString)}, {mReflows.map (·.detail)})"
   t s!"reflow account: a step alone running a declared line past still has the one record \
 carry it ({oReflows.map (·.message)})"
     ((excesses onlyOne).size == 1 && oReflows.size == 1 &&
-      oReflows.all (fun d => runsPast d && hasStr d.message "still runs past the measure"))
+      oReflows.all (fun d => runsPast d && d.message == "overfull measure"))
   let shifting := deckOf ["Opening.\\\\", "\\alt<2>{Short.}{" ++ prose 6 ++ ".}\\\\",
     prose 6 ++ ".\\\\", "Closing.", "\\pause", "", "One."]
   let sReflows := shifting.diags.filter (·.kind == .W0386)
@@ -373,7 +374,7 @@ def frameOverfullChecks (ref : IO.Ref (List String)) : IO Unit := do
 words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
 {(furthest deck deckRight).toPtString})"
     ((overfull deck).size == 1 && (overfull deck).all fun d =>
-      d.output.isNone && d.message.startsWith "a frame's line runs past its measure" &&
+      d.output.isNone && d.message == "overfull line for frame" &&
       d.detail == some s!"frame 1: {(furthest deck deckRight).toPtString}pt too wide")
   t "frame overfull: an HTML build of the deck prints it once"
     ((headLines deckHtml "W0005").length == 1 && hasStr deckHtml "frame 1: " &&
@@ -388,7 +389,7 @@ words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
   t s!"frame overfull: a flow page's overfull line states how far it runs and names no frame \
 ({(overfull flow).map (·.detail)}, {(furthest flow flowRight).toPtString})"
     ((overfull flow).size == 1 && (overfull flow).all fun d =>
-      d.message == "overfull line; no feasible break" &&
+      d.message == "overfull line" &&
       d.detail == some s!"{(furthest flow flowRight).toPtString}pt too wide")
   t s!"frame overfull: a poster, a face the web page re-flows, keeps its lines the PDF's \
 ({(overfull poster).map (·.output.map (·.label))})"
@@ -402,23 +403,24 @@ words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
     "\\end{columns}", "\\end{frame}", "\\section{" ++ wide ++ "}", "\\begin{frame}", "Closing.",
     "\\end{frame}", "\\end{document}"])
   let staged := layoutOf fs stagedDoc
-  let said (start : String) := (overfull staged).filter (·.message.startsWith start)
+  let said (words : String) (lead : String) := (overfull staged).filter fun d =>
+    d.message.startsWith words && (d.detail.getD "").startsWith lead
   let tooWide (lead : String) (d : Diag) := (d.detail.getD "").startsWith lead &&
     (d.detail.getD "").endsWith "pt too wide"
   t s!"frame overfull: a frame's footnote past its measure says so, with its frame and how far \
-({(said "a frame's footnote").map (·.detail)})"
-    ((said "a frame's footnote runs past its measure").size == 1 &&
-      (said "a frame's footnote").all fun d => tooWide "frame 1: " d && d.output == some .pdf)
+({(said "overfull footnote" "").map (·.detail)})"
+    ((said "overfull footnote" "frame 1: ").size == 1 &&
+      (said "overfull footnote" "").all fun d => tooWide "frame 1: " d && d.output == some .pdf)
   t s!"frame overfull: columns wider together than their frame's measure overrun it in both \
-artifacts, a record of their own ({(said "a frame's columns").map (·.detail)})"
-    ((said "a frame's columns run past its measure").size == 1 &&
-      (said "a frame's columns").all fun d => tooWide "frame 2: " d && d.output.isNone &&
+artifacts, a record of their own ({(said "overfull column" "").map (·.detail)})"
+    ((said "overfull column" "frame 2: ").size == 1 &&
+      (said "overfull column" "").all fun d => tooWide "frame 2: " d && d.output.isNone &&
         d.subject.any (·.startsWith "columns:"))
   t s!"frame overfull: a section page's line past its measure names the section page, no frame \
-({(said "a section page's").map (·.detail)})"
-    ((said "a section page's line runs past its measure").size == 1 &&
-      (said "a section page's").all fun d => tooWide "the section page: " d && d.output.isNone &&
-        !(overfull staged).any (hasStr ·.message "a frame's line"))
+({(said "overfull line" "the section page").map (·.detail)})"
+    ((said "overfull line" "the section page").size == 1 &&
+      (said "overfull line" "the section page").all fun d => tooWide "the section page: " d &&
+        d.output.isNone && (said "overfull line" "frame").isEmpty)
   -- Protrusion hangs a line's first quote into the margin; the overrun is what runs past it.
   let zeds := String.ofList (List.replicate 90 'z')
   let protruded := layoutOf fs (located (String.intercalate "\n" [

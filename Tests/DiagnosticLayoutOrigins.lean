@@ -78,7 +78,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     ((bareOut.diags.filter (·.kind == .W0005)).size == 1 &&
       (bareOut.diags.filter (·.kind == .W0005)).all fun d =>
       d.span.isNone && d.trigger.isNone &&
-        d.message == "overfull lines that no source site names; no feasible break" &&
+        d.message == "overfull text" &&
         d.detail == some "2 overfull lines")
   -- The unlocated lines' one record keeps its words, so the log accounts for every overfull line.
   let mixed : Ir.Doc := { doc with body := doc.body ++ bare.body }

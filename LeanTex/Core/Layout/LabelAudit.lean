@@ -52,6 +52,18 @@ public def accounted (r : Request) (os : Array Observation) (ds : Array Diag) : 
         (d.kind.loss == .dropped || d.kind.loss == .pending) = true) ∧
       (d.span = r.source ∨ ∃ o ∈ os, Matches r o ∧ d.span = o.stamp.source))
 
+/-- W0328's words for a picture label set on more than one line. -/
+public def wrapsWords : String := Diag.say .W0328 .line
+
+/-- W0394's words for a picture label whose glyphs carry no measured outline box. -/
+public def unboundedWords : String := Diag.say .W0394 .box
+
+/-- E0395's words for a picture label that set no line. -/
+public def lineless : String := Diag.say .E0395 .line
+
+/-- W0396's words for a picture label past its reserved glyph box. -/
+public def overrunWords : String := Diag.say .W0396 .box
+
 private def ensure (key : String) (source : Option Span) (kind : DiagCode)
     (message : String) (ds : Array Diag) : Array Diag :=
   if ds.any (fun d =>
@@ -101,13 +113,13 @@ suppress an unresolved outline in the line that remains. -/
 private def observe (ds : Array Diag) (o : Observation) : Array Diag :=
   let ds := if 1 < o.stamp.lineCount then
     ensure o.stamp.key o.stamp.source .W0328
-      "picture label spans multiple lines; only its first line is kept" ds else ds
+      wrapsWords ds else ds
   let ds := if o.known then ds else
     ensure o.stamp.key o.stamp.source .W0394
-      "picture label has glyphs without measured outline bounds" ds
+      unboundedWords ds
   if o.bounded then ds else
     ensure o.stamp.key o.stamp.source .W0396
-      "picture label extends beyond its reserved glyph box" ds
+      overrunWords ds
 
 private theorem observe_keeps (ds : Array Diag) (o : Observation) (d : Diag)
     (hd : d ∈ ds) : d ∈ observe ds o := by
@@ -169,7 +181,7 @@ private def missing (os : Array Observation) (ds : Array Diag) (r : Request) : A
   else if ds.any (fun d =>
       decide (d.subject = some r.key ∧ d.span = r.source) &&
         (d.kind.loss == .dropped || d.kind.loss == .pending)) then ds
-  else ensure r.key r.source .E0395 "picture label produced no line" ds
+  else ensure r.key r.source .E0395 lineless ds
 
 private theorem missing_keeps (os : Array Observation) (ds : Array Diag)
     (r : Request) (d : Diag) (hd : d ∈ ds) : d ∈ missing os ds r := by
@@ -277,7 +289,7 @@ private theorem missing_accounts (os : Array Observation) (ds : Array Diag)
       obtain ⟨hs, hp⟩ := of_decide_eq_true hwhere
       exact Or.inr (Or.inr ⟨d, hd, hs, Or.inr hloss, Or.inl hp⟩)
     · obtain ⟨d, hd, hk, hs, hp⟩ := ensure_named r.key r.source .E0395
-        "picture label produced no line" ds
+        lineless ds
       exact Or.inr (Or.inr ⟨d, hd, hs, Or.inl (by simp [hk]), Or.inl hp⟩)
 
 /-- Every requested occurrence is present with checked glyph bounds, blank,

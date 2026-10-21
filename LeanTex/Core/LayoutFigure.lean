@@ -365,7 +365,9 @@ public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
       let scope := FigureSvg.drawingShipsIn fig en.moving
       let fams := notes.families.map fun f => FigureLoss.svgFontDiag scope src f sans
       let substs := notes.substs.map fun (idx, c, fb) =>
-        Diag.of .W0009 s!"'{(fs.get idx).family}' has no glyph for U+{Hex.scalar c.toNat}"
+        Diag.of .W0009 (Diag.say .W0009 .font (fs.get fb).family
+            (some (none, Diag.Name.of s!"U+{Hex.scalar c.toNat}")))
+          (detail := some s!"'{(fs.get idx).family}' has no glyph for it")
           (output := scope)
           (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
           (subject := some s!"svg:glyph:{src}:{Hex.scalar c.toNat}")

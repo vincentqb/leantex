@@ -1891,33 +1891,31 @@ public structure Store where
 
 /-- W0601: the image file exists but reading it failed. -/
 public def imageUnreadable (src err : String) : Diag :=
-  Diag.of .W0601 s!"cannot read image '{src}'; a placeholder box holds its place"
+  Diag.of .W0601 (Diag.say .W0601 .image src)
     (subject := some src) (detail := some err)
 
 /-- W0601: no file answers the image source. -/
 public def imageMissing (src looked : String) : Diag :=
-  Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
-    (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg/.svg added")
+  Diag.of .W0601 (Diag.say .W0601 .image src)
+    (detail := some s!"not found at {looked}, also with .pdf/.png/.jpg/.jpeg/.svg added")
     (subject := some src)
 
 /-- W0602: image decoding or conversion failed; the cause, its detail,
 carries its recovery. -/
 public def imageUndecodable (src err : String) : Diag :=
-  Diag.of .W0602 s!"cannot use image '{src}'; a placeholder box holds its place"
+  Diag.of .W0602 (Diag.say .W0602 .image src)
     (subject := some src) (detail := some err)
 
 /-- W0603: the source carries a colour profile the plan did not. -/
 public def imageIccDropped (src : String) : Diag :=
-  Diag.of .W0603
-    s!"image '{src}' carries an embedded colour profile; the page reads its samples as device colour"
+  Diag.of .W0603 (Diag.say .W0603 .profile (obj := some (some .image, src)))
     (help := "re-export the image without the profile, or accept the device reading with \
 \\allow{W0603}")
     (subject := some src)
 
 /-- W0604: the source carries an orientation tag the plan did not apply. -/
 public def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
-  Diag.of .W0604
-    s!"image '{src}' carries an orientation tag; the page shows the stored orientation"
+  Diag.of .W0604 (Diag.say .W0604 .tag "orientation" (some (some .image, src)))
     (detail := some s!"orientation tag {orientation}")
     (help := "rotate the pixels and re-export with orientation tag 1, or accept it with \
 \\allow{W0604}")

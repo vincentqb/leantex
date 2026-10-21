@@ -94,10 +94,10 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (lossesOf inside).isEmpty
   let outside := picDoc "" "\\clip (0,0) rectangle (1,1);\\node at (3,3) {a};"
   t "clip: a node the clip would cut is named"
-    ((lossesOf outside).any fun d => d.code == "W0334" && hasStr d.message "clip")
+    ((lossesOf outside).any fun d => d.code == "W0334" && hasStr (diagWords d) "clip")
   let leak := picDoc "" "{\\clip (0,0) rectangle (1,1);}\\fill (0,0) circle (1);"
   t "clip: one inside a group, which pgf carries past it, is named"
-    ((lossesOf leak).any fun d => d.code == "W0334" && hasStr d.message "clip")
+    ((lossesOf leak).any fun d => d.code == "W0334" && hasStr (diagWords d) "clip")
   let order := picDoc "" ("\\clip (0,0) rectangle (2,2);\\fill[blue] (0,0) rectangle (1,1);" ++
     "\\node at (1,1) {a};\\fill[red] (0,0) rectangle (2,2);")
   let kind : Gfx.Node (Nat × Nat) → String := fun n => match n with

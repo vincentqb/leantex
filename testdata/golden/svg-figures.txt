@@ -38,7 +38,7 @@ role trivlist-env
       image "figures/tiles.svg" width 500/1000tw
 -- diagnostics
 info[N0100] 11:1 translated package graphicx | detail: nothing: the engine does this itself
-info[N0376] 20:1 image 'figures/chart.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
-info[N0376] 32:1 image 'figures/captions.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
-info[N0376] 33:1 image 'figures/shades.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
-info[N0376] 39:1 image 'figures/tiles.svg' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+info[N0376] 20:1 missing alt text for image figures/chart.svg | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+info[N0376] 32:1 missing alt text for image figures/captions.svg | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+info[N0376] 33:1 missing alt text for image figures/shades.svg | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative
+info[N0376] 39:1 missing alt text for image figures/tiles.svg | help: describe the image — \includegraphics[alt={...}] — mark it decorative with [artifact], or caption its figure: the caption becomes the alternative

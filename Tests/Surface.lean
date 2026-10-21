@@ -2872,10 +2872,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab picture style bundle names its outside options, not itself"
     (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={star}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
-      (fun m => hasStr m "'star'") &&
+      (fun m => hasStr m " star") &&
      !((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={star}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
-      (fun m => hasStr m "'b'"))
+      (fun m => hasStr m " b"))
   t "elab picture style bundle referencing an earlier bundle expands"
     ((elabStr ("\\begin{document}\\begin{tikzpicture}[a/.style={font=\\small}, b/.style={a}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
@@ -2931,7 +2931,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((elabStr ("\\pictures{ tool = none }\\tikzset{b/.style={star}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
-      (fun m => hasStr m "'star'"))
+      (fun m => hasStr m "option star"))
   -- A `\tikzset` entry the native reader cannot use is named at its line, whatever tool is configured (`Picture.readableKey`).
   t "elab an unread tikzset entry is named under the refusal"
     (((elabStr ("\\pictures{ tool = none }\\tikzset{every label/.style={draw}}\n" ++
@@ -2987,7 +2987,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       == ["W0334"] &&
      ((elabStr (dvDoc "\\tikzset{odd/.style={star}}\n"
       "\\begin{tikzpicture}[artifact, odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.map
-      (·.message)).any (fun m => hasStr m "'star'"))
+      (·.message)).any (fun m => hasStr m " star"))
   t "elab picture-level self-referential style is named, not chased"
     (((elabStr ("\\pictures{ tool = none }\\tikzset{loop/.style={loop}}\n" ++
       "\\begin{document}\\begin{tikzpicture}[loop]\n" ++
@@ -3075,7 +3075,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\tikzset{every node/.style={every node}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map
-      (·.message)).any (fun m => hasStr m "node option"))
+      (·.message)).any (fun m => hasStr m "for node"))
   t "elab a picture-level key survives an every-path style of other keys"
     ((elabStr ("\\tikzset{every path/.style={thick}}\n" ++
       "\\tikzset{wire/.style={draw=blue}}\n" ++
@@ -3186,7 +3186,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.code)).toList == ["W0334"] &&
      ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
-      (·.message)).any (fun m => hasStr m "'plume'") &&
+      (·.message)).any (fun m => hasStr m " plume") &&
      (elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[-plume] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
@@ -3206,7 +3206,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.code)).toList == ["W0334"]) &&
      ((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[alt={A synthetic edge}]\n" ++
       "\\draw[>=plume, ->] (0,0) -- (2,0);\\end{tikzpicture}\\end{document}")).2.map
-      (·.message)).any (fun m => hasStr m "'plume'"))
+      (·.message)).any (fun m => hasStr m " plume"))
   -- A braced tip name is the same name, as pgf writes it once the tip carries options.
   t "elab a declared tip named by '>=' in braces is accepted"
     ((elabStr ("\\tikzset{plume/.tip={Latex[round]}}\n" ++
@@ -3474,7 +3474,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
         (·.shapes.size) == some 1)
   t "an unknown colour is E0333 naming the spelling"
     ((elabStr (wrap "\\fill[nosuch!30] (0,0) rectangle (1,1);")).2.any fun d =>
-      d.code == "E0333" && hasStr (saidText d) "nosuch!30")
+      d.code == "E0333" && hasStr (diagWords d) "nosuch!30")
   t "an unknown macro is E0333"
     (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
   t "an unsupported node option loses only the option"
@@ -3559,7 +3559,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | none => false) == some true)
   t "a path operation outside the subset loses the edge by name"
     ((elabStr (wrap "\\draw (0,0) parabola (1,1);")).2.any fun d =>
-      d.code == "W0334" && hasStr (saidText d) "'parabola'")
+      d.code == "W0334" && hasStr (diagWords d) "parabola")
   -- `to[out=,in=]` sets its control points 0.3915·‖d‖ along the declared tangents (pgf To-Path library).
   t "a to[out,in] edge ships a cubic segment"
     ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (2,2);")).map (fun p =>
@@ -6006,8 +6006,8 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      (native whole).size == 1 && wholeDs.all (·.code != "N0023"))
   -- A note names a decision, not missing ink: it routes nothing.
   t "only a content loss is a loss the boundary is asked to avoid"
-    (Picture.namesLoss #[(.W0334, "x")] && Picture.namesLoss #[(.E0333, "x")] &&
-     Picture.namesLoss #[(.W0012, "x")] && !Picture.namesLoss #[(.N0114, "x")] &&
+    (Picture.namesLoss #[⟨.W0334, "x", none⟩] && Picture.namesLoss #[⟨.E0333, "x", none⟩] &&
+     Picture.namesLoss #[⟨.W0012, "x", none⟩] && !Picture.namesLoss #[⟨.N0114, "x", none⟩] &&
      !Picture.namesLoss #[])
   -- A refused request the subset can stand in for is withdrawn, with why it came back undrawn; any other refusal stands.
   let (a, b) := (Ir.picSrcPrefix ++ "aa", Ir.picSrcPrefix ++ "bb")
@@ -6222,7 +6222,7 @@ def pictureNodePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      ((bwd[0]?.map (·.images == 0)).getD false))
   let (_, unknownDs) := elabStr (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
   t "a reference to a name no node carries is refused by that name"
-    (unknownDs.any fun d => d.code == "E0333" && hasStr (saidText d) "zz")
+    (unknownDs.any fun d => d.code == "E0333" && hasStr (diagWords d) "zz")
   let cu := censusSrc (pic (node "aa" "Pear" "" ++ node "bb" "Plum" ", right =of zz"))
   t "the refused node costs itself, not the picture"
     (pageHas cu 0 "Pear" && ((cu[0]?.map (·.images == 0)).getD false))
@@ -6255,7 +6255,7 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "an unreadable macro in a node body keeps the body's word"
     ((labels c1).any fun (s, _, _) => s == "Quince")
   t "the unreadable macro is still named at the node"
-    (ds1.any fun d => d.code == "W0334" && hasStr (saidText d) "wobble")
+    (ds1.any fun d => d.code == "W0334" && hasStr (diagWords d) "wobble")
   t "the salvaged label ships no markup"
     (!(labels c1).any fun (s, _, _) =>
       hasStr s "\\" || hasStr s "{" || hasStr s "}")
@@ -6298,10 +6298,10 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      | _, _, _, _ => false)
   let (_, ds6) := run "\\node (a) {Pear \\footnotesize Fig};\n"
   t "a size switch inside a label line is named instead"
-    (ds6.any fun d => d.code == "W0334" && hasStr (saidText d) "footnotesize")
+    (ds6.any fun d => d.code == "W0334" && hasStr (diagWords d) "footnotesize")
   let (_, ds6b) := run "\\node (a) {{\\footnotesize Fig}};\n"
   t "a size switch inside a group is named, never silently lost"
-    (ds6b.any fun d => d.code == "W0334" && hasStr (saidText d) "footnotesize")
+    (ds6b.any fun d => d.code == "W0334" && hasStr (diagWords d) "footnotesize")
   -- A shipped colour is visible only on the covered census channel.
   let (c7, ds7) := run "\\node (a) {\\textcolor{rose}{Sloe}};\n"
   t "a coloured node label elaborates with nothing refused"
@@ -6310,7 +6310,7 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((labels c7).any fun (s, _, _) => s == "Sloe")
   t "a colour role the palette does not carry is named, and the word stays"
     (let (c8, ds8) := run "\\node (a) {\\textcolor{nosuch}{Sloe}};\n"
-     ds8.any (fun d => d.code == "W0334" && hasStr (saidText d) "nosuch") &&
+     ds8.any (fun d => d.code == "W0334" && hasStr (diagWords d) "nosuch") &&
        (labels c8).any fun (s, _, _) => s == "Sloe")
   -- A phantom's argument is sizing, not content: no ink and no loss.
   let (c9, ds9) := run "\\node (a) {\\vphantom{p}Damson};\n"
@@ -6851,8 +6851,8 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
          "\\else\n" ++ nodes "Fig" "Quince" ++ "\\fi\n")
   let (_, opaqueDs) := elabStr opaqueSrc
   t "a test the walk cannot compute is named, and says which branch drew"
-    (opaqueDs.any fun d => d.code == "W0334" && hasStr (saidText d) "notamacro" &&
-      hasStr (saidText d) "draws")
+    (opaqueDs.any fun d => d.code == "W0334" && hasStr (diagWords d) "notamacro" &&
+      hasStr (diagWords d) "draws")
   let guarded := censusSrc opaqueSrc
   t "an unreadable test still ships a branch, and only one"
     (pageHas guarded 0 "Pear" && !pageHas guarded 0 "Fig" &&
@@ -6904,7 +6904,7 @@ def pictureCondChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ("\\node (zz) [draw, minimum size=8mm] at (6,0) {Keep};\n" ++
      "\\draw (nowhere) -- (zz);\n"))
   t "with no gap in the picture, a name nothing declared stays an error"
-    (plainDs.any fun d => d.code == "E0333" && hasStr (saidText d) "nowhere")
+    (plainDs.any fun d => d.code == "E0333" && hasStr (diagWords d) "nowhere")
   -- An unbalanced conditional's collected statements drain at the end of the body.
   let unclosed := censusSrc (pic
     ("\\ifnum\\notamacro=1\n" ++ nodes "Pear" "Plum"))
@@ -7029,11 +7029,11 @@ def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- An anchor with no measurement is named and costs its own edge: `mid` needs the face's ex.
   let (_, midDs) := elabStr (pic (two "aa.mid" "bb.mid"))
   t "an anchor outside the subset is named by its own spelling"
-    (midDs.any fun d => d.code == "W0334" && hasStr (saidText d) "mid")
+    (midDs.any fun d => d.code == "W0334" && hasStr (diagWords d) "mid")
   let (_, gone) := elabStr (pic (two "aa.east" "zz.west"))
   t "an anchor on a name no node carries is refused by that name"
-    (gone.any fun d => d.code == "E0333" && hasStr (saidText d) "zz" &&
-      !hasStr d.message "zz.west")
+    (gone.any fun d => d.code == "E0333" && hasStr (diagWords d) "zz" &&
+      !hasStr (diagWords d) "zz.west")
 
 /-- A node's label sets in the face the body sets in (`Picture.labelFace_agree`), stated as an
 equality of the two shipped faces. -/

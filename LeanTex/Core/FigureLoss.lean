@@ -38,6 +38,18 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .budget w => s!"{w} beyond the reader's budget"
   | .css w => s!"CSS {w}"
 
+/-- The noun and name a loss's line names the feature by. -/
+@[expose] public def named : Gfx.Loss → Diag.Noun × Diag.Name
+  | .element n => (.element, Diag.Name.of s!"<{n}>")
+  | .attribute n => (.attribute, Diag.Name.of n)
+  | .property n => (.property, Diag.Name.of n)
+  | .value n => (.value, Diag.Name.value n)
+  | .operator n => (.operation, Diag.Name.of n)
+  | .resource n => (.resource, Diag.Name.of n)
+  | .font k => (.font, Diag.Name.value k)
+  | .budget w => (.size, Diag.Name.of w)
+  | .css w => (.stylesheet, Diag.Name.value (w.replace "'" ""))
+
 /-- Where a lossy SVG figure's drawing ships: the PDF always, the HTML too when the figure moves. -/
 @[expose] public def shipsIn (moving : Bool) : Option Diag.Output :=
   -- premise: svgOutputScopeChecks — two builds of a still lossy figure compared
@@ -102,7 +114,7 @@ or the page's check's, where one was asked. -/
 @[expose] public def lostDiag (imp : Importer) (src : String) (why : Unconverted)
     (l : Gfx.Loss) : Diag :=
   Diag.of .W0609
-    s!"figure '{src}' is drawn without its {words l}, which the engine does not draw"
+    (Diag.say .W0609 (named l).1 (named l).2 (some (some .figure, src)))
     (detail := why.said)
     (help := some (match why.remedy with
       | .lift => s!"the document's \\figures\{ convert = none } keeps the figure to the \
@@ -117,8 +129,8 @@ start, rebuild if it was interrupted, or accept the loss with \\allow\{W0609}"
 
 /-- N0024: a figure's drawing is the external converter's, because the engine does not draw the feature. -/
 @[expose] public def convertedDiag (imp : Importer) (src : String) (l : Gfx.Loss) : Diag :=
-  Diag.of .N0024
-    s!"figure '{src}' is drawn by {imp.tool}, because the engine does not draw its {words l}"
+  Diag.of .N0024 (Diag.say .N0024 .figure src)
+    (detail := some s!"drawn by {imp.tool}, for its {words l}")
     (subject := some (subject imp.kind l)) (output := imp.output)
 
 /-- W0609 for a PDF figure's web face. -/
@@ -141,21 +153,22 @@ start, rebuild if it was interrupted, or accept the loss with \\allow\{W0609}"
 /-- W0609 for a character of an SVG figure no face of the document covers. -/
 @[expose] public def svgGlyphDiag (output : Option Diag.Output) (src code : String) : Diag :=
   Diag.of .W0609
-    s!"figure '{src}' is drawn without its character U+{code}, which no face of the document covers"
+    (Diag.say .W0609 .character (Diag.Name.of s!"U+{code}") (some (some .figure, src)))
+    (detail := some "no face of the document covers it")
     (help := some "declare a face that covers it in \\fonts, or accept the loss with \\allow{W0609}")
     (subject := some (subject "svg" (.font s!"U+{code}"))) (output := output)
 
 /-- N0026: an SVG names a family the document's roles do not answer and none after it in its list
 do; its text sets in the document's face `face`. -/
 @[expose] public def svgFontDiag (output : Option Diag.Output) (src family face : String) : Diag :=
-  Diag.of .N0026
-    s!"'{family}' in figure '{src}' is no family of the document; its text is set in '{face}'"
+  Diag.of .N0026 (Diag.say .N0026 .font face (some (none, family)))
+    (detail := some s!"in figure {src}")
     (help := some "name a generic family (serif, sans-serif or monospace) last in the SVG's font list, or declare the family in \\fonts")
     (subject := some ("svg:font:" ++ family)) (output := output)
 
 /-- N0027: an SVG figure holds a link its drawing does not carry, named once per figure. -/
 @[expose] public def svgNoteDiag (src note : String) : Diag :=
-  Diag.of .N0027 s!"figure '{src}' holds {note}, which its drawing does not carry; its content is drawn"
+  Diag.of .N0027 (Diag.say .N0027 .link (obj := some (some .figure, src)))
     (subject := some ("figure:svg:note:" ++ note))
 
 /-- A figure's losses, each named once, as `diag` says it. -/

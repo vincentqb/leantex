@@ -480,7 +480,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fallback reports once per family+glyph, naming both faces"
     ((out.diags.filter (·.code == "W0009")).map
       (fun d => (d.message, d.triggerText, d.recovery)) ==
-      #[("'Open Sans' has no glyph for U+2200", none,
+      #[("substituted font 'Source Code Pro' for font 'Open Sans'", none,
         some (.replacedBy "a glyph from 'Source Code Pro'"))])
   t "a covered scalar raises no E0405" (!out.diags.any (·.code == "E0405"))
   let (dropDoc, _) := Elab.run "t" "lost ⟨ here\n\nand ⟨ there"
@@ -488,7 +488,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an uncovered scalar drops once, naming the family"
     ((dropOut.diags.filter (·.code == "E0405")).map
       (fun d => (d.message, d.triggerText, d.recovery)) ==
-      #[("'Open Sans' has no glyph for U+27E8", none, some .skipped)])
+      #[("missing glyph U+27E8 for font 'Open Sans'", none, some .skipped)])
   let (plainDoc, _) := Elab.run "t" "plain words only"
   let noMap := Pdf.write geom bare (layoutOf bare plainDoc geom).pages
   let withMap := Pdf.write geom
@@ -1375,7 +1375,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the missing alphabet is named once by alphabet"
     ((alphaDiags.filter (·.code == "N0018")).map (fun d => (d.subject, d.message)) ==
       #[(some "math-alpha:cal",
-        "'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand")])
+        "missing alphabet calligraphic for font 'Fira Math'")])
   let twiceRaw := (Elab.run "synthetic.tex"
     "$\\mathcal{O}$ and $\\mathcal{P}$ and $\\mathfrak{Q}$").1
   let (_, twiceDiags) := Ir.resolveMathAlphas alphaCoverage fira.family twiceRaw
@@ -1667,7 +1667,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a glyph the math face lacks warns E0405 naming it"
     (((layoutOf mfs bDoc geom).diags.filter (·.code == "E0405")).map
       (fun d => (d.message, d.triggerText, d.recovery)) ==
-      #[("'Fira Math' has no glyph for U+20BF", none, some .skipped)])
+      #[("missing glyph U+20BF for font 'Fira Math'", none, some .skipped)])
   t "docScalars carries a formula's math scalars"
     ((Layout.docScalars (Elab.run "t" "$x$").1).contains '𝑥')
   let cfs : Font.FontSet := { mfs with fallback := #[('₿', 0)] }
@@ -1676,7 +1676,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((cOut.diags.filter (·.code == "E0405")).isEmpty &&
       (cOut.diags.filter (·.code == "W0009")).map
         (fun d => (d.message, d.triggerText, d.recovery)) ==
-        #[("'Fira Math' has no glyph for U+20BF", none,
+        #[("substituted font 'Source Serif Pro' for font 'Fira Math'", none,
           some (.replacedBy "a glyph from 'Source Serif Pro'"))] &&
       ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
         | .run 0 _ _ _ glyphs _ _ _ _ _ _ => glyphs.any (·.2.1 == '₿')
@@ -1909,7 +1909,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((calOut.diags.filter (·.code == "E0405")).isEmpty &&
       (calOut.diags.filter (·.code == "W0009")).isEmpty &&
       (calOut.diags.filter (·.code == "N0018")).map (·.message) ==
-        #["'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand"] &&
+        #["missing alphabet calligraphic for font 'Fira Math'"] &&
       glyphChars "$\\mathcal{L}$" == #['𝐿'])
   t "a covered alphabet stays silent"
     ((layoutOf mfs (Elab.run "t" "$\\mathbb{R}$").1 geom).diags.all
@@ -1921,7 +1921,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a bold letter in a covered range whose glyph is an isolated hole stands its base, named W0016"
     ((bbOut.diags.filter (·.code == "W0016")).map
       (fun d => (d.message, d.subject, d.triggerText, d.recovery)) ==
-      #[("'Fira Math' has no double-struck glyph for U+1D538", some "math-alpha:bb",
+      #[("substituted glyph A for U+1D538", some "math-alpha:bb",
         none, some (.replacedBy "the base letter 'A'"))] &&
       !bbOut.diags.any (·.code == "N0018") &&
       ((bbOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with

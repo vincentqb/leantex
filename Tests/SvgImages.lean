@@ -202,7 +202,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
         d.subject == some s!"img:{k}:sequence.pdf" &&
         match selected.entries[k]!.webError with
         | some err => hasStr (diagWords d) err
-        | none => hasStr d.message "PDF page no browser decodes")
+        | none => d.detail.isNone)
     t s!"image failure identity {name}: distinct losses survive site accounting"
       (losses.size == unique.size && (Diag.tallySites losses).all (·.sites == 1))
 

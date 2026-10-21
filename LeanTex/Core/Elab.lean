@@ -4888,7 +4888,7 @@ private def pictureMath (ctx : Ctx) (d : Bool) (raws : Array Parse.Raw) :
   match MathParse.parseMath d expanded (mathEnv ctx) with
   | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
   | .error what => (.math d (Parse.rawSrc raws),
-      #[(.W0012, let (noun, name, _) := mathConstruct what; Diag.say .W0012 noun name)])
+      #[(let (noun, name, said) := mathConstruct what; ⟨.W0012, Diag.say .W0012 noun name, said⟩)])
 
 private def subsetPicture (ctx : Ctx) (body : Array Raw) (size : Option String) :
     Ir.Pic.Picture × Array Picture.PDiag :=
@@ -4991,9 +4991,10 @@ private def cdReading (ctx : Ctx) (b : Array Raw) :
     ctx.page.fontSize Ir.Color.white
     ((src.size.map fun n =>
       (Ir.scaleStepIn ctx.page.scale (1000 * Length.quantum) n / Length.quantum).toNat).getD 1000)
+  -- premise: none — no check yet builds a diagram under '\tikzcdset' settings
   let pdiags := if (ctx.pic.preamble.splitOn "\\tikzcdset").length > 1 then
-      pdiags.push (.W0334, "the document's '\\tikzcdset' settings are outside the native \
-diagram reader; the diagram is drawn without them")
+      pdiags.push (Picture.PDiag.say .W0334 .command "\\tikzcdset"
+        (detail := some "the native diagram reader draws the diagram without its settings"))
     else pdiags
   return (src, id, pic, pdiags)
 
@@ -5005,16 +5006,18 @@ private def cdNamed (ctx : Ctx) (id : String) (pic : Ir.Pic.Picture)
   if declined then
     modify fun st => if st.spans.declined.contains id then st
       else { st with spans := { st.spans with declined := st.spans.declined.push id } }
-  for (code, msg) in pdiags do
+  for d in pdiags do
+    let (code, msg) := (d.code, d.message)
+    let said := msg ++ (d.detail.map (" " ++ ·)).getD ""
     let help : Option String := match code with
       | .W0334 => some "write it with arrows, labels and keys the diagram reader draws, \
 or let a boundary tool draw it"
       | _ => none
     -- premise: pictureRouteChecks — the driver folds these, none dropped
     if ctx.pic.withdrawn.contains id || declined then
-      warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
+      warnOnce ctx ("picture:" ++ id ++ ":" ++ said) code msg pos (help := help) (detail := d.detail)
     else
-      warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
+      warnOnce ctx ("picture:" ++ said) code msg pos (help := help) (detail := d.detail)
   recordNativePictureSpan ctx pos
 
 /-- States a diagram's boundary request once and returns the image source
@@ -11052,7 +11055,9 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   if declined then
     modify fun st => if st.spans.declined.contains id then st
       else { st with spans := { st.spans with declined := st.spans.declined.push id } }
-  for (code, msg) in pdiags do
+  for d in pdiags do
+    let (code, msg) := (d.code, d.message)
+    let said := msg ++ (d.detail.map (" " ++ ·)).getD ""
     -- Only a construct outside the subset is helped by the subset's reach.
     let help : Option String := match code with
       | .W0334 => some "write it with paths, nodes, trees, \\foreach and pgfmath values, \
@@ -11060,9 +11065,9 @@ which the rendered subset draws, or let a boundary tool draw it"
       | _ => none
     -- premise: pictureRouteChecks — the driver folds the picture's refusals
     if ctx.pic.withdrawn.contains id || declined then
-      warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
+      warnOnce ctx ("picture:" ++ id ++ ":" ++ said) code msg pos (help := help) (detail := d.detail)
     else
-      warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
+      warnOnce ctx ("picture:" ++ said) code msg pos (help := help) (detail := d.detail)
   unless pic.shapes.isEmpty do
     recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture pic)

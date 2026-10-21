@@ -167,7 +167,8 @@ as clauses, in the record of the site's first fragment, with `help`. -/
 public def lineOf (accepted : String → Bool) (help id : String) (ds : Array Diag)
     (first : Diag) : Diag :=
   let here := ((ds.filter fun e => taken accepted id e && e.span == first.span).map
-    (·.message)).foldl (fun acc m => if acc.contains m then acc else acc.push m) #[]
+    fun e => e.message ++ (e.detail.map (" (" ++ · ++ ")")).getD "").foldl
+    (fun acc m => if acc.contains m then acc else acc.push m) #[]
   { first with
     kind := .W0419
     message := Diag.say .W0419 .picture

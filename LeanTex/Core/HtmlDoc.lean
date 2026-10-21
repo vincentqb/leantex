@@ -829,8 +829,7 @@ private def markerRule (lit : Ir.Color → String) (scale : List (String × Nat)
     let body := String.join (decls.toList.map (" " ++ ·))
     .ok s!"{sel} \{ content: \"{cssString r.text}  \";{body} }\n"
   | none =>
-    .error (Diag.of .W0331
-      s!"the declared {what} marker is not expressible in HTML; the level default marks these items"
+    .error (Diag.of .W0331 (Diag.say .W0331 .marker (obj := some (none, what.replace "'" "")))
       (span := Ir.inlineSource m)
       (help := some s!"{spelling} reaches HTML as text or a formula's symbol with colour and font \
 styling (CSS Pseudo-Elements 4 §4.1); a link, an image or an overlay step does not"))
@@ -3803,12 +3802,7 @@ public def undecodableIndices (imgs : Image.Store) (uses : Array String) : Array
 /-- W0605, an image with no browser face, its subject keyed by store index. -/
 public def undecodableDiag (src : String) (reason : Option String := none)
     (index : Option Nat := none) : Diag :=
-  Diag.of .W0605
-    (match reason with
-      | some _ => s!"image '{src}' could not produce its browser face; the web page shows a \
-labelled placeholder instead"
-      | none => s!"image '{src}' is a PDF page no browser decodes; the web page shows a \
-placeholder box instead")
+  Diag.of .W0605 (Diag.say .W0605 .image src)
     (detail := reason)
     (subject := some (match index with
       | some k => s!"img:{k}:{src}"
@@ -9987,9 +9981,7 @@ private def snapWalk (id text label : String) (stepAnchors : Array Ir.SectionAnc
   | k :: rest =>
     let sa := (stepAnchors[k - 1]?).getD { base := s!"{id}-{k}", id := s!"{id}-{k}", clash := none }
     let diags := match sa.clash with
-      | some holder => diags.push (Diag.of .W0327
-          s!"titles share the step anchor '{sa.base}'; each after the first takes a \
-numbered anchor"
+      | some holder => diags.push (Diag.of .W0327 (Diag.say .W0327 .anchor sa.base)
           (help := some s!"an in-page link '#{sa.base}' reaches only the first; \
 retitle them apart, or link to the numbered anchor")
           (detail := some s!"{text.quote} takes '{sa.id}', after {holder.quote}"))
@@ -10049,8 +10041,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
       let text := Ir.firstPageText title
       let sa := (anchors[i]?.join).getD { base := slug title, id := slug title, clash := none }
       if let some holder := sa.clash then
-        diags := diags.push (Diag.of .W0327
-          s!"sections share the anchor '{sa.base}'; each after the first takes a numbered anchor"
+        diags := diags.push (Diag.of .W0327 (Diag.say .W0327 .anchor sa.base)
           (help := some s!"an in-page link '#{sa.base}' reaches only the first; \
 retitle the sections apart, or link to the numbered anchor")
           (detail := some s!"{text.quote} takes '{sa.id}', after {holder.quote}"))
@@ -10266,21 +10257,19 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
   let mut diags : Array Diag := judge.diags
   if Ir.foldBlocks (fun b _ => b) (fun b x => b || x matches .ref _ (.page) _ _ ||
       x matches .ref _ (.starred .page) _ _) false doc.body then
-    diags := diags.push (Diag.of .W0007
-      "a page reference names a paged-media folio; omitted from HTML"
+    diags := diags.push (Diag.of .W0007 (Diag.say .W0007 .reference)
+      (detail := some "a page reference names a paged-media folio")
       (help := "say where the target stands in words, or link it with \\ref"))
   if doc.head.isSome || doc.foot.isSome || doc.headEven.isSome || doc.footEven.isSome ||
       doc.page.markHeads then
-    diags := diags.push (Diag.of .W0007
-      "running head/foot is paged-media furniture; omitted from HTML"
+    diags := diags.push (Diag.of .W0007 (Diag.say .W0007 .runningHead)
       (help := "body content reaches both backends: move the masthead there"))
   -- outside the frame model a logo is paged-media furniture, and its drop is named
   if doc.docClass.record.model != .frame &&
       (doc.logo.isSome || doc.body.any (fun b => match b with
         | .logo c => !c.isEmpty
         | _ => false)) then
-    diags := diags.push (Diag.of .W0007
-      "the \\logo is paged-media furniture; omitted from HTML"
+    diags := diags.push (Diag.of .W0007 (Diag.say .W0007 .command "\\logo")
       (help := "body content reaches both backends: move the image there"))
   let title := doc.info.title.getD "Untitled"
   let mut head : Array Node := #[
@@ -10446,9 +10435,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
           frameFoot := if xs.isEmpty then none else some xs
           -- a continuous page has no physical page number, so the drop is named
           if Ir.hasPhysicalPage xs && walkDiags.isEmpty then
-            walkDiags := walkDiags.push (Diag.of .W0007
-              "\\pagenumber in a \\framefoot is paged-media furniture; \
-omitted from HTML"
+            walkDiags := walkDiags.push (Diag.of .W0007 (Diag.say .W0007 .command "\\pagenumber")
+              (detail := some "in a \\framefoot: the web page has no physical pages")
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
         | .frame title standout _ _ fbody =>
@@ -10463,8 +10451,7 @@ via \\chrome is the sequence both backends share"))
           if Ir.frameFills lists doc.styles .deck fbody <
               Ir.frameFills lists doc.styles .every fbody then
             walkDiags := walkDiags.push (Diag.of .W0399 (subject := some label)
-              "a \\vfill before more of its list item, or inside \\alt, spaces nothing \
-on the web slide"
+              (Diag.say .W0399 .command "\\vfill")
               (help := some "end the item at the \\vfill, or move it outside the \\alt")
               (detail := some s!"in frame {label}"))
           let (node, named2) := claimStageName named (blockNode frameCfg b)
@@ -10477,9 +10464,7 @@ on the web slide"
             { frame := { base := slug title, id := slug title, clash := none }, steps := #[] }
           let id := fa.frame.id
           if let some holder := fa.frame.clash then
-            walkDiags := walkDiags.push (Diag.of .W0327
-              s!"titles share the anchor '{fa.frame.base}'; each after the first takes a numbered \
-anchor"
+            walkDiags := walkDiags.push (Diag.of .W0327 (Diag.say .W0327 .anchor fa.frame.base)
               (help := some s!"an in-page link '#{fa.frame.base}' reaches only the first; \
 retitle them apart, or link to the numbered anchor")
               (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
@@ -10534,8 +10519,7 @@ retitle them apart, or link to the numbered anchor")
           let sa := deckIds.sections[i]?.join
           if let some a := sa then
             if let some holder := a.clash then
-              walkDiags := walkDiags.push (Diag.of .W0327
-                s!"titles share the anchor '{a.base}'; each after the first takes a numbered anchor"
+              walkDiags := walkDiags.push (Diag.of .W0327 (Diag.say .W0327 .anchor a.base)
                 (help := some s!"an in-page link '#{a.base}' reaches only the first; \
 retitle them apart, or link to the numbered anchor")
                 (detail := some s!"{(Ir.firstPageText title).quote} takes '{a.id}', after \
@@ -10672,17 +10656,15 @@ retitle them apart, or link to the numbered anchor")
   for (id, stage) in facts.ids do
     if let some target := routes[id]? then
       if stage != some target then
-        diags := diags.push (Diag.of .W0327
-          s!"fragment '#{id}' names both a slide and an element anchor; \
-slide navigation uses '#{target}'"
+        diags := diags.push (Diag.of .W0327 (Diag.say .W0327 .anchor s!"#{id}")
+          (detail := some s!"it names both a slide and an element; slide navigation uses '#{target}'")
           (subject := some id)
           (help := some (match stage with
             | some label => s!"use '#{label}' to reach the slide holding that anchor"
             | none => "rename the anchor so it differs from a slide label")))
   if facts.navs > 1 then
     -- ARIA asks each repeated landmark role for a unique label
-    diags := diags.push (Diag.of .W0325
-      "unlabeled <nav> landmarks repeat on one page, indistinguishable to assistive technology"
+    diags := diags.push (Diag.of .W0325 (Diag.say .W0325 .landmark "nav")
       (help := some "repeated landmarks need unique labels (ARIA Landmark \
 Regions): give each one a name, \\begin{nav}[label = Site]")
       (detail := some s!"{facts.navs} on one page"))
@@ -10703,8 +10685,7 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
     unless Ir.fragmentTop frag || anchors.contains frag || routes.contains frag ||
         checked.contains fref do
       checked := checked.insert fref
-      diags := diags.push (Diag.of .W0326
-        s!"in-page link '{fref}' has no target anchor on this page"
+      diags := diags.push (Diag.of .W0326 (Diag.say .W0326 .anchor fref)
         (help := some anchorHelp))
   for k in undecodableIndices cfg.imgs
       ((imageAttrs (some "data-image-index")).list () #[] body.toList) do

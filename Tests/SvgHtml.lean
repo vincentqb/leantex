@@ -334,10 +334,10 @@ def cssListChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref s!"CSS lists: a semicolon inside brackets ends no declaration ({subjects})"
     (subjects.all fun s => !hasStr s "css:declaration")
   let words := (f.diags ++ shaped.map (·.2)).filterMap fun d =>
-    if hasStr d.message "CSS selector" then some d.message else none
+    if hasStr d.message "stylesheet 'selector" then some d.message else none
   check ref s!"CSS lists: a dropped rule's line names its selector inside one pair of quotes ({words})"
     (!words.isEmpty && words.all fun w =>
-      !hasStr w "''" && !hasStr w "style:" && hasStr w "without its CSS selector 'rect")
+      !hasStr w "''" && !hasStr w "style:" && hasStr w "stylesheet 'selector rect")
   let fills := ((f.vector.map (·.marks)).getD #[]).filterMap fun m => match m with
     | .paint _ _ (some fl) _ _ _ => match fl.paint with
       | .solid c => some (c.r.toNat, c.g.toNat, c.b.toNat)

@@ -220,7 +220,7 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
           ((labelResult fs imgs geom xHeight leaf content color scale).diags.map
             (nameLabelDiag (Ir.plainText content))).push {
               kind := .W0328,
-              message := "picture label spans multiple lines; only its first line is kept",
+              message := LabelAudit.wrapsWords,
               span := (labelResult fs imgs geom xHeight leaf content color scale).source,
               subject := some (Ir.plainText content) }
         else (labelResult fs imgs geom xHeight leaf content color scale).diags.map
@@ -229,7 +229,7 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
       simpa [emitLabel, finishLabel, hl, he, hd] using labelFailureNamed_accounts content _ hd
     right
     refine ⟨{
-      kind := .E0395, message := "picture label produced no line",
+      kind := .E0395, message := LabelAudit.lineless,
       span := (labelResult fs imgs geom xHeight leaf content color scale).source,
       subject := some (Ir.plainText content) }, ?_, rfl, by simp⟩
     simp [emitLabel, finishLabel, hl, he, hd]
@@ -241,7 +241,7 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
     · right
       refine ⟨{
         kind := .W0328,
-        message := "picture label spans multiple lines; only its first line is kept",
+        message := LabelAudit.wrapsWords,
         span := (labelResult fs imgs geom xHeight leaf content color scale).source,
         subject := some (Ir.plainText content) }, ?_, rfl, by simp⟩
       simp only [emitLabel, finishLabel, hl, hn, ↓reduceIte]
@@ -251,7 +251,7 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
     · right
       refine ⟨{
         kind := .W0394,
-        message := "picture label has glyphs without measured outline bounds",
+        message := LabelAudit.unboundedWords,
         span := (labelResult fs imgs geom xHeight leaf content color scale).source,
         subject := some (Ir.plainText content) }, ?_, rfl, by simp⟩
       simp only [emitLabel, finishLabel, hl, hn, hk, ↓reduceIte]
@@ -268,7 +268,7 @@ public theorem emitLabel_ink_covered_or_named (fs : FontSet) (imgs : Image.Store
     · right
       refine ⟨{
         kind := .W0396,
-        message := "picture label extends beyond its reserved glyph box",
+        message := LabelAudit.overrunWords,
         span := (labelResult fs imgs geom xHeight leaf content color scale).source,
         subject := some (Ir.plainText content) }, ?_, rfl, by simp⟩
       simp [emitLabel, finishLabel, hl, hn, hk, hr]
@@ -302,7 +302,7 @@ public theorem emitLabel_unresolved_named (fs : FontSet) (imgs : Image.Store)
       d.kind = .W0394 ∧ d.subject = some (Ir.plainText content) := by
   refine ⟨{
     kind := .W0394,
-    message := "picture label has glyphs without measured outline bounds",
+    message := LabelAudit.unboundedWords,
     span := (labelResult fs imgs geom xHeight leaf content color scale).source,
     subject := some (Ir.plainText content) }, ?_, rfl, rfl⟩
   change (labelResult fs imgs geom xHeight leaf content color scale).line? =
@@ -324,7 +324,7 @@ public theorem emitLabel_unresolved_source_named (fs : FontSet) (imgs : Image.St
         d.span = (labelResult fs imgs geom xHeight leaf content color scale).source := by
   refine ⟨{
     kind := .W0394,
-    message := "picture label has glyphs without measured outline bounds",
+    message := LabelAudit.unboundedWords,
     span := (labelResult fs imgs geom xHeight leaf content color scale).source,
     subject := some (Ir.plainText content) }, ?_, rfl, rfl, rfl⟩
   change (labelResult fs imgs geom xHeight leaf content color scale).line? =

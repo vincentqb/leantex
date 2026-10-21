@@ -189,7 +189,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   t "path syntax: unsupported rotation names its loss, keeps edge and label"
     (counts (page rotated) == (1, 1) &&
       (bodyLines (page rotated)).any (lineText · == "Tag") &&
-      (losses rotated).any (fun d => d.code == "W0334" && hasStr d.message "'rotate'") &&
+      (losses rotated).any (fun d => d.code == "W0334" && hasStr (diagWords d) "rotate") &&
       !((losses rotated).any (·.code == "E0333")))
   for (body, code, word) in #[
       ("\\draw (absent) -- (e);", "E0333", "absent"),
@@ -202,5 +202,5 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       ("\\draw ($(n)+(0,1)*2$) -- (s);", "W0334", "calc"),
       ("\\draw (0,0) -- node {One} (2,1) node[midway] {Two};", "W0334", "multiple")] do
     t s!"path syntax: unsupported {word} stays diagnosed without a partial edge"
-      ((losses body).any (fun d => d.code == code && hasStr d.message word) &&
+      ((losses body).any (fun d => d.code == code && hasStr (diagWords d) word) &&
         counts (page body) == (0, 0))

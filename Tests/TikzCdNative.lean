@@ -80,7 +80,7 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   let (opted, optDs) := firstPass (dvDoc ("\\pictures{ tool = none }\n" ++ pre)
     "\\[\\begin{tikzcd} |[red]| \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]")
   t "diagram natively: a cell's |[...]| options are named, never set as its mathematics"
-    (optDs.any (fun d => d.code == "W0334" && hasStr (saidText d) "cell options") &&
+    (optDs.any (fun d => d.code == "W0334" && hasStr d.message "for cell") &&
       hasStr (censusText (page opted)) "Alpha" && !hasStr (censusText (page opted)) "red")
   let labelled := "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n" ++
     pre ++ "\\begin{document}\n\\section{One}\nSee \\ref{cd} and \\ref{al}.\n" ++

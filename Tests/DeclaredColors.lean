@@ -56,7 +56,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "declared colours: the pair on the bar is reported once, naming the bar"
     (let rs := reports deckDs
      rs.size == 1 && rs.all fun d =>
-       d.code == "W0315" && hasStr d.message "the frame-title bar" && d.help.isNone)
+       d.code == "W0315" && hasStr (diagWords d) "the frame-title bar" && d.help.isNone)
   let fg := hex 0x23 0x37 0x3B
   let page := hex 0xFA 0xFA 0xFA
   let mixed := fg.mix 60 page
@@ -100,14 +100,14 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   -- A style's colour with no key is reported by the style; a palette code role by its key.
   t "declared colours: a style's token colour is reported under the style"
     (let rs := reports (Contrast.docDiags listing)
-     rs.all fun d => hasStr d.message "'friendly' highlighting style" &&
-       !hasStr d.message "'codeerror'" && !hasStr d.message "'codecomment'")
+     rs.all fun d => hasStr d.message "for style friendly" &&
+       !hasStr d.message "colour codeerror" && !hasStr d.message "colour codecomment")
   let keyed : Ir.Doc :=
     { (elabStr ("\\documentclass{article}\\palette{ codecomment = #C0C0C0 }" ++
         "\\begin{document}x\\end{document}")).1 with body := #[.verbatim none source spec] }
   t "declared colours: a declared code role is reported under its key"
     ((reports (Contrast.docDiags keyed)).any fun d =>
-      hasStr d.message "'codecomment'" && hasStr (diagWords d) "#C0C0C0 on")
+      hasStr d.message "colour codecomment" && hasStr (diagWords d) "#C0C0C0 on")
   -- The medium's size: a grey between 3:1 and 4.5:1 on white.
   let greySrc (cls body : String) : String :=
     "\\documentclass{" ++ cls ++ "}\\palette{ bg = #FFFFFF }\\definecolor{quiet}{HTML}{808080}" ++
@@ -136,7 +136,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "declared colours: a declared style's literal colour ships as stated on a dark page"
     ((ListingHighlight.glyphColors (layoutOf fonts declDoc)).any (·.2 == friendlyString))
   t "declared colours: a declared style's colours short of the dark page are reported"
-    ((reports declDs).any fun d => hasStr d.message "'friendly' highlighting style")
+    ((reports declDs).any fun d => hasStr d.message "for style friendly")
   -- A declared accent short of non-text's 3:1 is reported once, where a link ships its focus ring.
   let focusSrc (body : String) : String :=
     "\\documentclass{article}\\palette{ accent = #FFE000 }\\begin{document}" ++ body ++
@@ -144,13 +144,13 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "declared colours: a failing focus ring is reported once, as the focus ring"
     (let rs := reports (elabStr (focusSrc "See \\href{https://example.org}{the probe}.")).2
      rs.size == 1 && rs.all fun d =>
-       d.code == "W0345" && hasStr d.message "the focus ring" && hasStr d.message "SC 1.4.11")
+       d.code == "W0345" && hasStr (diagWords d) "the focus ring" && hasStr (diagWords d) "SC 1.4.11")
   t "declared colours: a page with no link draws no focus ring to judge"
     ((reports (elabStr (focusSrc "No link here.")).2).isEmpty)
   for (what, body) in [("a reference", "\\section{One}\\label{one}See \\ref{one}."),
       ("a footnote", "Text\\footnote{An invented note}.")] do
     t s!"declared colours: {what} takes focus, so its ring is judged"
-      ((reports (elabStr (focusSrc body)).2).any fun d => hasStr d.message "the focus ring")
+      ((reports (elabStr (focusSrc body)).2).any fun d => hasStr (diagWords d) "the focus ring")
   t "declared colours: a page shipping no stylesheet of the engine's draws no ring to judge"
     ((reports (elabStr ("\\documentclass{article}\\output{ css = none }" ++
       "\\palette{ accent = #FFE000 }\\begin{document}See " ++
@@ -236,9 +236,9 @@ public def stageFocusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let roleMark := "html section.slide:not(.standout):not(.title-page):focus-visible::before, " ++
     "html section.section-page:focus-visible::before { border-color: var(--ltx-focus); }"
   t "stage focus: a declared focus colour the stages mark in is judged where no link ships it"
-    ((reports deckDs).any fun d => d.code == "W0345" && hasStr d.message "the focus ring")
+    ((reports deckDs).any fun d => d.code == "W0345" && hasStr (diagWords d) "the focus ring")
   let judged (src : String) : Bool :=
-    (reports (elabStr src).2).any fun d => d.code == "W0345" && hasStr d.message "the focus ring"
+    (reports (elabStr src).2).any fun d => d.code == "W0345" && hasStr (diagWords d) "the focus ring"
   t "stage focus: the declared focus colour is judged on a stage of content outside the frames"
     (judged ("\\documentclass{beamer}\\palette{ focus = #FFE000 }\\begin{document}" ++
       "Loose invented text.\\end{document}"))
@@ -247,7 +247,7 @@ public def stageFocusChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}\\section{Alpha}\\begin{frame}[standout]Questions?\\end{frame}\\end{document}"))
   let (plainDoc, plainDs) := deck "\\usetheme{default}"
   t "stage focus: a deck declaring no focus colour marks its stages in their ink, judged nowhere"
-    (!(reports plainDs).any (fun d => d.code == "W0345" && hasStr d.message "the focus ring") &&
+    (!(reports plainDs).any (fun d => d.code == "W0345" && hasStr (diagWords d) "the focus ring") &&
       !hasStr (HtmlDoc.emit {} plainDoc).1 roleMark)
   let (themedDoc, _) := deck ""
   t "stage focus: a theme's generated focus colour leaves the mark in the stage's ink"
@@ -327,6 +327,6 @@ public def listingGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
      !inks.isEmpty && inks.all (· == declared))
   t "listing ground: a declared code ink short of the ground is reported once"
     (let rs := reports keyDs
-     rs.size == 1 && rs.all fun d => hasStr d.message "'codeink'")
+     rs.size == 1 && rs.all fun d => hasStr d.message "colour codeink")
 
 end Tests.DeclaredColors

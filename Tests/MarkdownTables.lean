@@ -298,7 +298,7 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let lover := lout.diags.filter (·.kind == .W0338)
   t s!"a table overhanging its list item stays on the paper, named ({lover.map (·.message)})"
     (!llines.isEmpty && llines.all (fun l => 0 ≤ l.x && l.x + l.setWidth ≤ ldoc.page.width)
-      && lover.size == 1 && lover.all fun d => hasStr d.message "overhangs the margins")
+      && lover.size == 1 && lover.all fun d => d.message == "overfull table for margins")
   let longWords := ["internationalization", "extraordinarily", "characteristically",
     "incomprehensibility", "counterproductively", "interchangeability"]
   for k in [0:6] do

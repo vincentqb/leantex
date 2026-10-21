@@ -413,7 +413,7 @@ public def boxDiags (spec : PageSpec) : Array Diag :=
   let medium := s!"[0 0 {w.toBpString} {h.toBpString}]"
   spec.boxes.filterMap fun b =>
     let c := b.clampTo w h
-    let diag (msg : String) : Diag := Diag.of .W0442 msg b.span
+    let diag : Diag := Diag.of .W0442 (Diag.say .W0442 .pageBox b.kind.key) b.span
       (help := some s!"keep the box within the medium, '{medium}' in PDF points")
       (subject := some s!"pagebox:{b.kind.key}") (output := some .pdf)
       (detail := some s!"[{b.x0.toBpString} {b.y0.toBpString} {b.x1.toBpString} \
@@ -421,9 +421,9 @@ public def boxDiags (spec : PageSpec) : Array Diag :=
     -- a box the PDF spells as the medium's edge meets it
     let near (a d : Length) : Bool := a.toBpMilli == d.toBpMilli
     if !c.hasArea then
-      some (diag s!"the {b.kind.key} has no area inside the page's medium; it is not written")
+      some diag
     else if near c.x0 b.x0 && near c.y0 b.y0 && near c.x1 b.x1 && near c.y1 b.y1 then none
-    else some (diag s!"the {b.kind.key} reaches past the page's medium; it is written inside it")
+    else some diag
 
 public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
 
@@ -2501,7 +2501,8 @@ public theorem OutputContract.unmet_covers (c : OutputContract) (r : Realization
 public def contractDiags (us : Array Unmet) : Array Diag :=
   us.map fun u =>
     Diag.of .W0701
-      s!"output contract: '{u.fact} = {u.declared}' is declared and this artifact carries {u.realized}"
+      (Diag.say .W0701 .value (Diag.Name.value s!"{u.fact} = {u.declared}") (some (none, "\\output")))
+      (detail := some s!"this artifact carries {u.realized}")
       (help := some s!"drop '{u.fact} = {u.declared}' from '\\output', or build a format that carries it")
       (subject := some u.fact)
 
@@ -14227,14 +14228,13 @@ private def levelName : HeadingLevel → String
 
 /-- The broken-outline diagnostic, W0320. -/
 private def outlineGapDiag (p l : HeadingLevel) : Diag :=
-  Diag.of .W0320
-    s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
+  Diag.of .W0320 (Diag.say .W0320 .heading)
+    (detail := some s!"{levelName p} is followed by {levelName l}")
     (help := some "descend one rank at a time: 1, 2, 3, 4, 5, 6; \
 add the missing heading or promote the deeper one (HTML §4.3.11, WCAG G141)")
 
 private def outlineTitleDiag : Diag :=
-  Diag.of .W0321
-    "the document title follows another heading"
+  Diag.of .W0321 (Diag.say .W0321 .title)
     (help := some "put \\maketitle before the first \\section, so the \
 outline starts at its top")
 
@@ -14296,7 +14296,7 @@ private theorem outlineWalk_finds :
     by_cases hgap : headingRank l > headingRank prev + 1
     · refine ⟨outlineGapDiag prev l, ?_, by
         unfold outlineGapDiag
-        rw [Diag.of_code_exact]
+        rw [Diag.of_code_exact (detail := _)]
         exact DiagCode.w0320_code_exact⟩
       simp only [hgap, decide_true, Bool.not_false, Bool.and_true, ite_true]
       split <;>
@@ -14347,9 +14347,7 @@ public def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
   for b in doc.body do
     if let .framefoot xs := b then
       if hasPhysicalPage xs && out.isEmpty then
-        out := out.push (Diag.of .W0332
-          "the footer mixes the physical page number with the frame number; \
-a stepped frame advances one and not the other"
+        out := out.push (Diag.of .W0332 (Diag.say .W0332 .footer "\\framefoot")
           (help := some "declare the footer's slots yourself \
 (\\chrome{ footer = { left = ..., right = \\framenumber } }) to say the \
 mixing is meant, or drop \\pagenumber from \\framefoot"))
@@ -16433,9 +16431,7 @@ public def imagesSansAlt (doc : Doc) : Array String :=
   out.missing.filter (fun src => !(logoImageSrcs doc).contains src)
 
 /-- The picture faces' one message and help, native and boundary alike. -/
-public def pictureSansAltMessage : String :=
-  "this picture ships no text alternative; assistive technology " ++
-    "reads nothing in its place (WCAG 2.2 SC 1.1.1)"
+public def pictureSansAltMessage : String := Diag.say .N0376 .altText
 
 public def pictureSansAltHelp : String :=
   "describe the picture — \\begin{tikzpicture}[alt={...}] — mark it " ++
@@ -16452,9 +16448,7 @@ public def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => non
       Diag.of .N0376 pictureSansAltMessage span
         (help := some pictureSansAltHelp) (subject := some src)
     else
-      Diag.of .N0376
-        (s!"image '{src}' ships no text alternative; assistive technology " ++
-          "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
+      Diag.of .N0376 (Diag.say .N0376 .altText (obj := some (some .image, src)))
         span
         (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
           "mark it decorative with [artifact], or caption its figure: the " ++
@@ -16533,10 +16527,8 @@ public def linksSansText (doc : Doc) : Array String :=
 
 /-- The link-purpose judge (WCAG 2.2 SC 2.4.4): one diagnostic per distinct target. -/
 public def linkDiags (doc : Doc) : Array Diag :=
-  (linksSansText doc).map fun url =>
-    Diag.of .W0377
-      (s!"link '{url}' carries no text; assistive technology reads " ++
-        "nothing to name its purpose (WCAG 2.2 SC 2.4.4)")
+  (linksSansText doc).map fun (url : String) =>
+    Diag.of .W0377 (Diag.say .W0377 .text (obj := some (some .link, url)))
       (help := some ("give the link visible text — \\href{...}{words} — " ++
         "or an image with alt inside it"))
 
@@ -16887,8 +16879,7 @@ per missing alphabet. -/
   let diags := (missingAlphasOf coverage requests).map fun a =>
     let source := (requests.find? fun r =>
       (Math.missingMathAlphas coverage r.body).contains a).bind (·.source)
-    Diag.of .N0018
-      s!"'{family}' has no {a.styleLabel} alphabet for the characters used; ordinary math source glyphs stand"
+    Diag.of .N0018 (Diag.say .N0018 .alphabet a.styleLabel (some (some .font, family)))
       source
       (help := some "write \\fonts{ math = \"...\" } with a face that carries this alphabet")
       (subject := some ("math-alpha:" ++ a.name))
@@ -19397,21 +19388,21 @@ public def pendingRefKeys (doc : Doc) : Array String :=
 its first site with the cause the table knows. -/
 private def refDiagLeaf (look : String → Option (String × Option RefBinding))
     (spanOf : String → Option Span) (key : String) : Diag :=
-  let unnumbered := Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
-    (spanOf key)
+  let unnumbered := Diag.of .W0349 (Diag.say .W0349 .reference key)
+    (spanOf key) (detail := some "its \\label stands where nothing is numbered")
     (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
     (subject := some key)
   match look key with
   | some (_, some b) =>
     if b.num.isEmpty then unnumbered
     else
-      Diag.of .W0349 s!"'{key}' is \\label'ed where no heading or caption gives it a title; set as '??'"
-        (spanOf key)
+      Diag.of .W0349 (Diag.say .W0349 .reference key)
+        (spanOf key) (detail := some "its \\label stands where no heading or caption gives it a title")
         (help := "\\nameref sets the title of the heading or caption its \\label follows")
         (subject := some key)
   | some (_, none) => unnumbered
   | _ =>
-    Diag.of .W0349 s!"no \\label\{{key}} in the document; set as '??'" (spanOf key)
+    Diag.of .W0349 (Diag.say .W0349 .reference key) (spanOf key)
       (help := s!"declare \\label\{{key}} after the numbered thing it names")
       (subject := some key)
 

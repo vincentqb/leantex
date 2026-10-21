@@ -552,6 +552,10 @@ private def needClause : Need → String
   | .state => "a state change (SC 1.4.11)"
   | .decorative => "nothing"
 
+/-- A colour as a message names it: quoted when it holds a digit, which no word does. -/
+private def colourName (s : String) : Diag.Name :=
+  if s.any Char.isDigit then Diag.Name.value s else Diag.Name.of s
+
 /-- A failing site's diagnostic: W0345 for a themed element, W0315 for page text, W0330 for
 undeclared ink. -/
 private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site) : Diag :=
@@ -562,25 +566,20 @@ private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site
   let span := (site pal (some key) st.ink).map (·.2)
   if r.row.noun.isNone && (Design.declared? pal r).isNone then
     let onKey := (ColorRef.role st.on).key
-    Diag.of .W0330
-      (s!"the declared page keeps the defaulted ink, below the contrast WCAG 2.2 asks of " ++
-        clause)
+    Diag.of .W0330 (Diag.say .W0330 .colour (colourName key))
       (span := (site pal (some onKey) st.ground).map (·.2))
-      (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req}")
+      (detail := some s!"the defaulted ink, {st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req} for {clause}")
       (help := some ("a declared surface chooses its ink: declare " ++
         "\\palette{ " ++ key ++ " = ... }" ++ " beside " ++ onKey))
   else match r.row.noun with
     | some noun =>
-      Diag.of .W0345
-        (s!"{noun} pairs its ink and ground below the contrast WCAG 2.2 asks of " ++ clause)
+      Diag.of .W0345 (Diag.say .W0345 .colour (colourName key))
         (span := span) (subject := some (inkKey key st.ink st.ground))
-        (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req}")
+        (detail := some s!"{noun}: {st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req} for {clause}")
     | none =>
-      Diag.of .W0315
-        (s!"text coloured '{key}' reads on the page below the contrast WCAG 2.2 asks of " ++
-          clause)
+      Diag.of .W0315 (Diag.say .W0315 .colour (colourName key))
         (span := span) (subject := some (inkKey key st.ink st.ground))
-        (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req}")
+        (detail := some s!"{st.ink.hex} on {st.ground.hex}: {ratioString milli}, below {ratioString req} for {clause}")
 
 /-- Judge one shipped design site; only a failing site no earlier epoch reported speaks. -/
 private def judgeSite (site : ColorSite) (stage : Bool) (s : Array Diag × Array Site) :
@@ -731,12 +730,11 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
 public def schemeLossDiag (s : Scheme) (l : SchemeLoss) : Diag :=
   let key := l.name.key
   let ground := l.on.key
-  Diag.of .W0308
-    s!"the {s.name} scheme cannot carry '{key}' legibly on '{ground}'; the page ships without it"
+  Diag.of .W0308 (Diag.say .W0308 .colour (colourName key) (some (some .scheme, s.name)))
     (help := some "declare a colour that reaches the gate on its ground in that scheme, or name \
 the schemes the page offers: \\output{ schemes = print, light }")
     (subject := some s!"{s.name}:{key}@{ground}")
-    (detail := some s!"{ratioString l.ratio}, below {ratioString l.gate}")
+    (detail := some s!"on {ground}: {ratioString l.ratio}, below {ratioString l.gate}; the page ships without the scheme")
 
 /-- The colour schemes a web page ships, of those it asks: a scheme its colours were not
 declared for ships only where every colour the page paints stays legible. -/
@@ -820,22 +818,19 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
         site pal (some nm) active
       if coverHolds d.bg active covered then #[]
       else if contrastMilli covered d.bg ≥ contrastMilli active d.bg then
-        #[Diag.of .W0345
-          (s!"covering '{nm}' does not quiet it: the covered form " ++
-            "reads as loud on the page as the active one")
+        #[Diag.of .W0345 (Diag.say .W0345 .covering (colourName nm))
+          (detail := some "the covered form reads as loud on the page as the active one")
           (span := origin.map (·.2))
           (subject := some s!"covered:{nm}")
           (help := coverHelp)]
       else
         let milli := contrastMilli active covered
         if milli < aaNonText then
-          #[Diag.of .W0345
-            (s!"covered '{nm}' reads against its active form below the contrast " ++
-              "WCAG 2.2 asks of a state change (SC 1.4.11)")
+          #[Diag.of .W0345 (Diag.say .W0345 .covering (colourName nm))
             (span := origin.map (·.2))
             (subject := some s!"covered:{nm}")
             (detail := some (s!"{covered.hex} against {active.hex}: " ++
-              s!"{ratioString milli}, below {ratioString aaNonText}"))
+              s!"{ratioString milli}, below {ratioString aaNonText} for a state change (SC 1.4.11)"))
             (help := coverHelp)]
         else #[]
     out := out ++ judge "fg" d.fg (cov.of d.fg)
@@ -907,16 +902,15 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
       let spelled : Option String := match u.name with
         | some role => some role.key
         | none => origin.map Prod.fst
-      let label := match u.styleName, spelled with
-        | some st, _ => s!"by the '{st}' highlighting style"
-        | none, some e => s!"'{e}'"
-        | none, none => s!"'{u.color.hex}'"
+      let words := match u.styleName, spelled with
+        | some st, _ => Diag.say .W0315 .colour (colourName u.color.hex) (some (some .style, st))
+        | none, some e => Diag.say .W0315 .colour (colourName e)
+        | none, none => Diag.say .W0315 .colour (colourName u.color.hex)
       let s := s.pairing dup key u.site
-        (inkKey (spelled.getD u.color.hex) u.color u.surface)
-        (s!"text coloured {label} reads on {u.groundName.getD "the page"} below the contrast " ++
-          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-        (s!"{u.color.hex} on {u.surface.hex}: {ratioString assessment.ratio}, " ++
-          s!"below {ratioString threshold}")
+        (inkKey (spelled.getD u.color.hex) u.color u.surface) words
+        (s!"{u.color.hex} on {u.surface.hex} ({u.groundName.getD "the page"}): " ++
+          s!"{ratioString assessment.ratio}, below {ratioString threshold} for " ++
+          s!"{if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
         (origin.map (·.2))
       { s with done := done }
 
