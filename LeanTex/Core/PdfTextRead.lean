@@ -5,9 +5,9 @@ public import LeanTex.Core.PdfFont
 public import LeanTex.Core.PdfContentLex
 public import LeanTex.Core.PdfFilters
 
-/-! A PDF's text as a viewer extracts it (ISO 32000-2 §9.10, §14.6–14.9): each shown string decoded
-through its font's ToUnicode mapping in content order, under the marked content it stands in, an
-`ActualText` standing for its sequence, and a tagged file's text in structure order. -/
+/-! A PDF's text as a viewer extracts it (ISO 32000-2 §9.3–9.10, §14.6–14.9): shown strings through
+ToUnicode in content order under their marked content, breaks where the pen jumps or the baseline
+moves, `ActualText` standing for its sequence, and a tagged file's structure order. -/
 
 namespace LeanTex.Core.PdfTextRead
 
@@ -22,10 +22,23 @@ public inductive Mark where
   | unmarked
   deriving DecidableEq, BEq, Repr, Inhabited
 
-/-- One item a content stream yields: a run of text under its mark, opening a new line or not, or
-a form XObject painted under a mark, read where it stands. -/
+/-- What separates a run from the text before it: nothing, a word break, or a line break. -/
+public inductive Brk where
+  | none
+  | word
+  | line
+  deriving DecidableEq, BEq, Repr, Inhabited
+
+/-- The stronger of two breaks. -/
+@[expose] public def Brk.max : Brk → Brk → Brk
+  | .line, _ | _, .line => .line
+  | .word, _ | _, .word => .word
+  | .none, .none => .none
+
+/-- One item a content stream yields: a run of text under its mark after its break, or a form
+XObject painted under a mark, read where it stands. -/
 public inductive Item where
-  | text (mark : Mark) (line : Bool) (s : String)
+  | text (mark : Mark) (brk : Brk) (s : String)
   | form (mark : Mark) (name : String)
   deriving Repr, Inhabited
 
@@ -43,15 +56,45 @@ public structure Open where
   actual : Option String
   deriving Inhabited
 
-/-- The text interpreter's state: operands read so far, the open sequences innermost first, the
-current font, the text line's vertical position, whether the next run opens a line, the items
-read and the losses met. -/
+/-- The text state `q` saves and `Q` restores (§9.3): the font and its size, the horizontal
+scaling, and the character, word and line spacing. -/
+public structure TextState where
+  font : Option PdfFont.Loaded
+  size : Rat
+  scale : Rat
+  charSp : Rat
+  wordSp : Rat
+  leading : Rat
+  deriving Inhabited
+
+/-- A text or line matrix's six entries. -/
+public structure Mat where
+  a : Rat
+  b : Rat
+  c : Rat
+  d : Rat
+  e : Rat
+  f : Rat
+  deriving Inhabited, BEq
+
+@[expose] public def Mat.id : Mat := ⟨1, 0, 0, 1, 0, 0⟩
+
+/-- The matrix after a translation by `tx`, `ty` in its own space. -/
+@[expose] public def Mat.move (m : Mat) (tx ty : Rat) : Mat :=
+  { m with e := m.e + m.a * tx + m.c * ty, f := m.f + m.b * tx + m.d * ty }
+
+/-- The interpreter's state: operands read so far, the open sequences innermost first, the text
+state and its saved copies, the text and line matrices, where the last glyph shown ended and at
+what size, the break pending before the next run, the items read and the losses met. -/
 public structure St where
   args : Array Obj
   opens : List Open
-  font : Option PdfFont.Loaded
-  y : Option Rat
-  line : Bool
+  ts : TextState
+  saved : List TextState
+  tm : Mat
+  tlm : Mat
+  pen : Option (Rat × Rat × Rat)
+  brk : Brk
   items : Array Item
   losses : Array String
   deriving Inhabited
@@ -67,8 +110,7 @@ public def textString? (b : ByteArray) : Option String :=
     some (String.ofList (b.data.toList.map fun x => Char.ofNat x.toNat))
   else none
 
-/-- The mark content stands under while `opens` are open: the innermost artifact or identified
-sequence, else none. -/
+/-- The mark content stands under while `opens` are open. -/
 @[expose] public def markOf : List Open → Mark
   | [] => .unmarked
   | o :: _ => o.mark
@@ -76,34 +118,16 @@ sequence, else none. -/
 /-- Whether an open sequence's `ActualText` stands for the content shown now. -/
 @[expose] public def replaced (opens : List Open) : Bool := opens.any (·.actual.isSome)
 
-/-- A string's text through the current font: each code's ToUnicode text, in order. -/
-@[expose] public def shown (f : PdfFont.Loaded) (s : ByteArray) : String :=
-  (f.codes? s).foldl (fun acc c => acc ++ c.text) ""
+/-- An operand by position. -/
+@[expose] public def arg (a : Array Obj) (i : Nat) : Option Obj := a[i]?
 
-/-- Text shown under the open sequences: one run, unless an `ActualText` stands for it. -/
-@[expose] public def St.show (st : St) (s : String) : St :=
-  if replaced st.opens || s.isEmpty then st
-  else { st with items := st.items.push (.text (markOf st.opens) st.line s), line := false }
+/-- A number operand as an exact rational. -/
+@[expose] public def num? (o : Obj) : Option Rat := PdfContentLex.numRat? o
 
-/-- A string shown in the current font, or a loss where no font is set. -/
-@[expose] public def St.showBytes (st : St) (b : ByteArray) : St :=
-  match st.font with
-  | some f => st.show (shown f b)
-  | none => { st with losses := st.losses.push "no font set" }
-
-/-- A `TJ` array's strings shown in order; its numbers move the pen and show nothing. -/
-@[expose] public def St.showArray (st : St) (xs : Array Obj) : St :=
-  xs.foldl (fun st o => match PdfContentLex.strBytes? o with
-    | some b => st.showBytes b
-    | none => st) st
-
-/-- The vertical position a text matrix sets, opening a line where it changes. -/
-@[expose] public def St.moveTo (st : St) (y : Rat) : St :=
-  { st with y := some y, line := st.line || st.y != some y }
-
-/-- The mark a sequence opens: an artifact, an identified sequence, else its parent's. -/
+/-- The mark a sequence opens: an artifact's content stays an artifact, an `Artifact` opens one,
+an identified sequence its identifier, else its parent's mark. -/
 @[expose] public def openMark (outer : Mark) (tag : String) (props : Option Obj) : Mark :=
-  if tag == "Artifact" then .artifact
+  if outer == .artifact || tag == "Artifact" then .artifact
   else match props.bind (·.get? "MCID") with
     | some (.int n) => if 0 ≤ n then .content n.toNat else outer
     | _ => outer
@@ -113,40 +137,103 @@ sequence, else none. -/
   (props.bind (·.get? "ActualText")).bind fun o =>
     (PdfContentLex.strBytes? o).bind textString?
 
-/-- A number operand as an exact rational. -/
-@[expose] public def num? (o : Obj) : Option Rat := PdfContentLex.numRat? o
+/-- The break before a glyph of `size` whose origin is `(x, y)`, the last glyph shown having ended
+at `pen` at its own size: a line break where the baseline moves by more than half the larger
+size, a word break where the pen jumps forward or back by more than a fifth of the last size. -/
+@[expose] public def breakAt (size : Rat) (pen : Option (Rat × Rat × Rat)) (x y : Rat) : Brk :=
+  match pen with
+  | none => .none
+  | some (px, py, ps) =>
+    let s := if size < 0 then -size else size
+    let dy := if y < py then py - y else y - py
+    let dx := if x < px then px - x else x - px
+    if 2 * dy > max s ps then .line
+    else if 5 * dx > ps then .word
+    else .none
 
-/-- An operand by position. -/
-@[expose] public def arg (a : Array Obj) (i : Nat) : Option Obj := a[i]?
+/-- A run of text under the open sequences after a break, unless an `ActualText` stands for it. -/
+@[expose] public def St.emitText (st : St) (brk : Brk) (s : String) : St :=
+  if replaced st.opens || s.isEmpty then st
+  else { st with items := st.items.push (.text (markOf st.opens) brk s) }
 
-/-- One operator over the operands read before it (§9.3–9.4, §14.6). -/
+/-- A string shown in the current font (§9.4.3): each code's text, a word or line break before a
+code where the pen jumps or the baseline moves, the text matrix advanced by each code's width. -/
+public def St.showBytes (st : St) (b : ByteArray) : St :=
+  match st.ts.font with
+  | none => { st with losses := st.losses.push "a string shown with no font set" }
+  | some f => Id.run do
+    let ts := st.ts
+    let mut st := st
+    let mut cur := ""
+    let mut curBrk := st.brk
+    let size := (let z := ts.size * st.tm.d; if z < 0 then -z else z)
+    for code in f.codes? b do
+      let x := st.tm.e
+      let y := st.tm.f
+      let here := Brk.max (if cur.isEmpty then curBrk else .none) (breakAt size st.pen x y)
+      if !cur.isEmpty && here != .none then
+        st := st.emitText curBrk cur
+        cur := ""
+      if cur.isEmpty then curBrk := here
+      if code.text.isEmpty then st := { st with losses := st.losses.push s!"code {code.code} has no text" }
+      cur := cur ++ code.text
+      let ws := if code.bytes == 1 && code.code == 32 then ts.wordSp else 0
+      let tx := ((code.width / 1000) * ts.size + ts.charSp + ws) * ts.scale
+      st := { st with tm := st.tm.move tx 0 }
+      st := { st with pen := some (st.tm.e, st.tm.f, size) }
+    st := st.emitText curBrk cur
+    return { st with brk := if cur.isEmpty then curBrk else .none }
+
+/-- A `TJ` array: its strings shown, its numbers moving the pen back by thousandths of the size. -/
+public def St.showArray (st : St) (xs : Array Obj) : St :=
+  xs.foldl (fun st o => match PdfContentLex.strBytes? o with
+    | some b => st.showBytes b
+    | none => match num? o with
+      | some n => { st with tm := st.tm.move (-(n / 1000) * st.ts.size * st.ts.scale) 0 }
+      | none => st) st
+
+/-- A text line moved by `tx`, `ty` in the line matrix's space (§9.4.2). -/
+@[expose] public def St.nextLine (st : St) (tx ty : Rat) : St :=
+  let m := st.tlm.move tx ty
+  { st with tlm := m, tm := m }
+
+/-- One operator over the operands read before it (§8.4.4, §9.3–9.4, §14.6). -/
 public def St.op (res : Res) (st : St) (name : String) : St :=
   let a := st.args
   let st := { st with args := #[] }
+  let n (i : Nat) : Rat := ((arg a i).bind num?).getD 0
   match name with
-  | "BT" => { st with line := true }
+  | "q" => { st with saved := st.ts :: st.saved }
+  | "Q" => match st.saved with
+    | t :: rest => { st with ts := t, saved := rest }
+    | [] => st
+  | "BT" => { st with tm := Mat.id, tlm := Mat.id }
   | "Tf" =>
     match arg a 0 with
-    | some (.name n) =>
-      match res.fonts.get? n with
-      | some f => { st with font := some f }
-      | none => { st with font := none, losses := st.losses.push s!"font {n} unresolved" }
+    | some (.name nm) =>
+      match res.fonts.get? nm with
+      | some f => { st with ts := { st.ts with font := some f, size := n 1 } }
+      | none => { st with ts := { st.ts with font := none, size := n 1 },
+                          losses := st.losses.push s!"font {nm} unresolved" }
     | _ => st
-  | "Tm" => match (arg a 5).bind num? with
-    | some y => st.moveTo y
-    | none => st
-  | "Td" | "TD" => match (arg a 1).bind num? with
-    | some dy => if dy == 0 then st else { st with line := true, y := none }
-    | none => st
-  | "T*" => { st with line := true, y := none }
+  | "Tz" => { st with ts := { st.ts with scale := n 0 / 100 } }
+  | "Tc" => { st with ts := { st.ts with charSp := n 0 } }
+  | "Tw" => { st with ts := { st.ts with wordSp := n 0 } }
+  | "TL" => { st with ts := { st.ts with leading := n 0 } }
+  | "Tm" => let m : Mat := ⟨n 0, n 1, n 2, n 3, n 4, n 5⟩; { st with tm := m, tlm := m }
+  | "Td" => st.nextLine (n 0) (n 1)
+  | "TD" => { st.nextLine (n 0) (n 1) with ts := { st.ts with leading := -(n 1) } }
+  | "T*" => st.nextLine 0 (-st.ts.leading)
   | "Tj" => match (arg a 0).bind PdfContentLex.strBytes? with
     | some b => st.showBytes b
     | none => st
   | "'" => match (arg a 0).bind PdfContentLex.strBytes? with
-    | some b => { st with line := true, y := none }.showBytes b
+    | some b => (st.nextLine 0 (-st.ts.leading)).showBytes b
     | none => st
   | "\"" => match (arg a 2).bind PdfContentLex.strBytes? with
-    | some b => { st with line := true, y := none }.showBytes b
+    | some b =>
+      ({ st with ts := { st.ts with wordSp := n 0, charSp := n 1 } }.nextLine 0
+        (-st.ts.leading)).showBytes b
     | none => st
   | "TJ" => match arg a 0 with
     | some (.arr xs) => st.showArray xs
@@ -164,15 +251,17 @@ public def St.op (res : Res) (st : St) (name : String) : St :=
     | _ => st
   | "EMC" => match st.opens with
     | o :: rest =>
-      let st := { st with opens := rest }
       match o.actual with
-      | some t => st.show t
-      | none => st
+      | some t =>
+        let st' := { st with opens := rest }
+        if replaced rest || t.isEmpty then st'
+        else { st' with items := st'.items.push (.text o.mark st.brk t), brk := .none }
+      | none => { st with opens := rest }
     | [] => { st with losses := st.losses.push "EMC with no open sequence" }
   | "Do" => match arg a 0 with
-    | some (.name n) =>
+    | some (.name nm) =>
       if replaced st.opens then st
-      else { st with items := st.items.push (.form (markOf st.opens) n) }
+      else { st with items := st.items.push (.form (markOf st.opens) nm) }
     | _ => st
   | _ => st
 
@@ -184,7 +273,9 @@ public def St.tok (res : Res) (st : St) : Tok → St
 
 /-- The interpreter's state before a stream, its content under `mark`. -/
 @[expose] public def St.init (mark : Mark) : St :=
-  { args := #[], opens := [⟨mark, none⟩], font := none, y := none, line := true, items := #[],
+  { args := #[], opens := [⟨mark, none⟩],
+    ts := { font := none, size := 0, scale := 1, charSp := 0, wordSp := 0, leading := 0 },
+    saved := [], tm := Mat.id, tlm := Mat.id, pen := none, brk := .line, items := #[],
     losses := #[] }
 
 /-- A content stream's items, read under `mark`. -/
@@ -194,14 +285,37 @@ public def readToks (res : Res) (mark : Mark) (toks : Array Tok) : Array Item ×
 
 /-! ### Documents -/
 
-/-- A resource dictionary's fonts read for text and its named property lists. -/
-public def resOf (d : Doc) (resources : Option Obj) : Res := Id.run do
-  let some r := resources.bind (d.deref · |>.toOption) | return default
+/-- Fonts already read, by object number, so a font shared by pages is read once. -/
+public abbrev FontCache := Std.HashMap Nat PdfFont.Loaded
+
+/-- A font's losses that bear on its text: its ToUnicode map or its encoding unread. -/
+@[expose] public def textLosses (f : PdfFont.Loaded) : Array String :=
+  f.losses.filterMap fun
+    | .font k => if k.startsWith "tounicode" || k.startsWith "cmap" then some s!"font: {k}" else none
+    | _ => none
+
+/-- A resource dictionary's fonts read for text and its named property lists, fonts read through
+the cache, with the text losses of fonts read afresh. -/
+public def resOf (d : Doc) (cache : FontCache) (resources : Option Obj) :
+    Res × FontCache × Array String := Id.run do
+  let some r := resources.bind (d.deref · |>.toOption) | return (default, cache, #[])
+  let mut cache := cache
+  let mut losses : Array String := #[]
   let mut fonts : Std.HashMap String PdfFont.Loaded := {}
   match (d.field r "Font").toOption.getD none with
   | some (.dict es) =>
     for (k, v) in es do
-      if let .ok fo := d.deref v then fonts := fonts.insert k (PdfFont.load d fo)
+      let cached := match v with
+        | .ref num _ => cache.get? num
+        | _ => none
+      match cached with
+      | some f => fonts := fonts.insert k f
+      | none =>
+        if let .ok fo := d.deref v then
+          let f := PdfFont.load d fo
+          losses := losses ++ textLosses f
+          if let .ref num _ := v then cache := cache.insert num f
+          fonts := fonts.insert k f
   | _ => pure ()
   let mut props : Std.HashMap String Obj := {}
   match (d.field r "Properties").toOption.getD none with
@@ -209,32 +323,40 @@ public def resOf (d : Doc) (resources : Option Obj) : Res := Id.run do
     for (k, v) in es do
       if let .ok po := d.deref v then props := props.insert k po
   | _ => pure ()
-  return { fonts, props }
+  return ({ fonts, props }, cache, losses)
 
 /-- How deeply forms nested in forms are read; deeper nesting is a loss. -/
 @[expose] public def formDepth : Nat := 12
 
-/-- A run of text a page yields, form content read in place: its mark, whether it opens a line,
-and its characters. -/
+/-- A run of text a page yields, form content read in place: its mark, its break and its
+characters. -/
 public structure Run where
   mark : Mark
-  line : Bool
+  brk : Brk
   text : String
   deriving Repr, Inhabited
 
+/-- A form's own mark under the mark of the sequence painting it: its artifacts stay artifacts,
+anything else is the painting sequence's, since a form's identifiers name its own structure. -/
+@[expose] public def relabel (outer inner : Mark) : Mark :=
+  if inner == .artifact then .artifact else outer
+
 /-- Items with their forms read in place, `depth` the nesting still allowed. -/
-public def expand (d : Doc) (resources : Option Obj) : Nat → Array Item → Array Run × Array String
+public def expand (d : Doc) (resources : Option Obj) (cache : FontCache) :
+    Nat → Array Item → Array Run × FontCache × Array String
   | 0, items =>
     (items.filterMap fun
-      | .text m l s => some ⟨m, l, s⟩
-      | .form _ _ => none, if items.any (fun | .form .. => true | .text .. => false) then
+      | .text m b s => some ⟨m, b, s⟩
+      | .form _ _ => none, cache,
+      if items.any (fun | .form .. => true | .text .. => false) then
         #["forms nest past the reading's depth"] else #[])
   | depth + 1, items => Id.run do
     let mut runs : Array Run := #[]
     let mut losses : Array String := #[]
+    let mut cache := cache
     for it in items do
       match it with
-      | .text m l s => runs := runs.push ⟨m, l, s⟩
+      | .text m b s => runs := runs.push ⟨m, b, s⟩
       | .form m n =>
         let xo := (resources.bind (d.deref · |>.toOption)).bind fun r =>
           match (d.field r "XObject").toOption.getD none with
@@ -247,77 +369,63 @@ public def expand (d : Doc) (resources : Option Obj) : Nat → Array Item → Ar
             | .ok (.bytes data) =>
               let inner := ((dict.get? "Resources").bind (d.deref · |>.toOption)).orElse fun _ =>
                 resources.bind (d.deref · |>.toOption)
-              let (items', ls) := readToks (resOf d inner) m (PdfContentLex.scan data)
-              let (rs, ls') := expand d inner depth items'
-              runs := runs ++ rs
-              losses := losses ++ ls ++ ls'
+              let (res, cache1, ls0) := resOf d cache inner
+              let (items', ls) := readToks res m (PdfContentLex.scan data)
+              let (rs, cache2, ls') := expand d inner cache1 depth items'
+              cache := cache2
+              runs := runs ++ rs.map fun r => { r with mark := relabel m r.mark }
+              losses := losses ++ ls0 ++ ls ++ ls'
             | _ => losses := losses.push s!"form {n} does not decode"
         | none => losses := losses.push s!"XObject {n} unresolved"
-    return (runs, losses)
+    return (runs, cache, losses)
 
-/-- The page objects in page-tree order, each with its object number (§7.7.3). -/
-public def pagesOf (d : Doc) : Except String (Array (Nat × Page)) := do
-  let (catalog, _) ← d.get d.root
-  let some pagesRef := catalog.get? "Pages"
-    | throw "malformed PDF: the catalog has no /Pages"
-  let mut work : Array (Obj × Option Obj × Option Obj × Option Obj × Option Obj) :=
-    #[(pagesRef, none, none, none, none)]
-  let mut seen : Std.HashMap Nat Unit := {}
-  let mut out : Array (Nat × Page) := #[]
-  for _ in [0:d.objectCount + 2] do
-    let some (nodeRef, mb, cb, res, rot) := work.back? | break
-    work := work.pop
-    let num := match nodeRef with
-      | .ref n _ => n
-      | _ => 0
-    if seen.contains num then throw s!"malformed PDF: page tree node {num} repeats"
-    seen := seen.insert num ()
-    let node ← d.deref nodeRef
-    let mb := (node.get? "MediaBox").or mb
-    let cb := (node.get? "CropBox").or cb
-    let res := (node.get? "Resources").or res
-    let rot := (node.get? "Rotate").or rot
-    if node.get? "Type" matches some (.name "Page") then
-      out := out.push (num, { node, mediaBox := mb, cropBox := cb, resources := res, rotate := rot })
-    else
-      match node.get? "Kids" with
-      | some (.arr kids) =>
-        for k in [0:kids.size] do
-          if let some kid := kids[kids.size - 1 - k]? then
-            work := work.push (kid, mb, cb, res, rot)
-      | _ => throw "malformed PDF: a page tree node has neither /Type /Page nor /Kids"
-  return out
-
-/-- A file's text: each page's runs in content order, form content read in place, and what the
-reading could not read. -/
+/-- A file's text: each page's object number, where it has one, with its runs in content order,
+form content read in place, and what the reading could not read. -/
 public structure Extracted where
-  pages : Array (Nat × Array Run)
+  pages : Array (Option Nat × Array Run)
   losses : Array String
   deriving Inhabited
 
-/-- The text a file's pages show, read from its bytes. -/
-public def extract (b : ByteArray) : Except String Extracted := do
-  let d ← Doc.ofBytes b
-  let pages ← pagesOf d
-  let mut out : Array (Nat × Array Run) := #[]
+/-- The text an open file's pages show. -/
+public def extractDoc (d : Doc) : Except String Extracted := do
+  let pages ← d.pageList
+  let mut out : Array (Option Nat × Array Run) := #[]
   let mut losses : Array String := #[]
+  let mut cache : FontCache := {}
   for (num, p) in pages do
     let data ← d.content p
-    let (items, ls) := readToks (resOf d p.resources) .unmarked (PdfContentLex.scan data)
-    let (runs, ls') := expand d p.resources formDepth items
+    let (res, cache1, ls0) := resOf d cache p.resources
+    let (items, ls) := readToks res .unmarked (PdfContentLex.scan data)
+    let (runs, cache2, ls') := expand d p.resources cache1 formDepth items
+    cache := cache2
     out := out.push (num, runs)
-    losses := losses ++ ls ++ ls'
+    losses := losses ++ ls0 ++ ls ++ ls'
   return { pages := out, losses }
 
-/-- Runs as text: each line a line feed apart. -/
-@[expose] public def runsText (runs : Array Run) : String :=
-  runs.foldl (fun acc r => (if r.line && !acc.isEmpty then acc.push '\n' else acc) ++ r.text) ""
+/-- The text a file's pages show, read from its bytes. -/
+public def extract (b : ByteArray) : Except String Extracted := do
+  extractDoc (← Doc.ofBytes b)
 
-/-- The text of every page in content order, artifacts included or left out. -/
-public def Extracted.contentText (x : Extracted) (artifacts : Bool) : String :=
+/-- Runs as text: a word break a space, a line break a line feed, none at the start. -/
+@[expose] public def runsText (runs : Array Run) : String :=
+  runs.foldl (fun acc r =>
+    let sep := if acc.isEmpty then "" else match r.brk with
+      | .line => "\n"
+      | .word => " "
+      | .none => ""
+    acc ++ sep ++ r.text) ""
+
+/-- Every page's runs in content order, artifacts kept or left out, each page opening a line. -/
+@[expose] public def Extracted.contentRuns (x : Extracted) (artifacts : Bool) : Array Run :=
   x.pages.foldl (fun acc (_, runs) =>
     let rs := if artifacts then runs else runs.filter (·.mark != .artifact)
-    (if acc.isEmpty then acc else acc.push '\n') ++ runsText rs) ""
+    match rs.toList with
+    | [] => acc
+    | r :: rest => acc ++ (({ r with brk := .line } :: rest).toArray)) #[]
+
+/-- The text of every page in content order, artifacts kept or left out. -/
+public def Extracted.contentText (x : Extracted) (artifacts : Bool) : String :=
+  runsText (x.contentRuns artifacts)
 
 /-! ### Structure order -/
 
@@ -326,9 +434,10 @@ object number and identifier, or a structure element's `ActualText` standing for
 public inductive Leaf where
   | mcr (page : Nat) (mcid : Nat)
   | actual (s : String)
-  deriving Repr, Inhabited
+  deriving Repr, Inhabited, BEq
 
-/-- The leaves under a structure tree's root, depth first, every element visited once. -/
+/-- The leaves under an open file's structure tree root, depth first, every element visited once;
+a tree the walk cannot finish within the file's bytes is refused. -/
 public def leavesOf (d : Doc) : Except String (Array Leaf) := do
   let (catalog, _) ← d.get d.root
   let some rootRef := catalog.get? "StructTreeRoot" | return #[]
@@ -343,7 +452,7 @@ public def leavesOf (d : Doc) : Except String (Array Leaf) := do
   | none => pure ()
   let mut seen : Std.HashMap Nat Unit := {}
   let mut out : Array Leaf := #[]
-  for _ in [0:4 * d.objectCount + 4] do
+  for _ in [0:d.bytes.size + d.objectCount + 4] do
     let some (k, pg) := work.back? | break
     work := work.pop
     match k with
@@ -369,20 +478,32 @@ public def leavesOf (d : Doc) : Except String (Array Leaf) := do
           | some (.arr ks) => for c in ks.reverse do work := work.push (c, pg')
           | some c => work := work.push (c, pg')
           | none => pure ()
+  unless work.isEmpty do throw "malformed PDF: the structure tree exceeds the file"
   return out
 
-/-- The text a tagged file's structure reads in order: each marked-content reference's runs where
-its page shows them, an element's `ActualText` in its place. -/
+/-- The runs a tagged file's structure reads in order: each marked-content reference's runs where
+its page shows them, an element's `ActualText` in its place, each leaf opening a line. -/
+public def structureRuns (d : Doc) (x : Extracted) : Except String (Array Run) := do
+  let leaves ← leavesOf d
+  let mut index : Std.HashMap (Nat × Nat) (Array Run) := {}
+  for (num, runs) in x.pages do
+    if let some p := num then
+      for r in runs do
+        if let .content m := r.mark then
+          index := index.insert (p, m) ((index.getD (p, m) #[]).push r)
+  let mut out : Array Run := #[]
+  for l in leaves do
+    match l with
+    | .mcr p m =>
+      match (index.getD (p, m) #[]).toList with
+      | [] => pure ()
+      | r :: rest => out := out ++ ({ r with brk := .line } :: rest).toArray
+    | .actual s => out := out.push ⟨.unmarked, .line, s⟩
+  return out
+
+/-- The text a tagged file's structure reads, from its bytes. -/
 public def structureText (b : ByteArray) : Except String String := do
   let d ← Doc.ofBytes b
-  let x ← extract b
-  let leaves ← leavesOf d
-  let text (p m : Nat) : String :=
-    match x.pages.find? (·.1 == p) with
-    | some (_, runs) => runsText (runs.filter (·.mark == .content m))
-    | none => ""
-  return leaves.foldl (fun acc l => match l with
-    | .mcr p m => let t := text p m; acc ++ t
-    | .actual s => acc ++ s) ""
+  return runsText (← structureRuns d (← extractDoc d))
 
 end LeanTex.Core.PdfTextRead

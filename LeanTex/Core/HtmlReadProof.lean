@@ -13,20 +13,10 @@ namespace LeanTex.Core.Html
 
 open HtmlRead
 
-/-! ### The renderer as characters -/
+/-! ### Definitions: the renderer as characters, the condition read, the tree read -/
 
 /-- An indentation's spaces. -/
 @[expose] public def padL (i : Nat) : List Char := List.replicate (2 * i) ' '
-
-theorem pushn_toList (s : String) (c : Char) (n : Nat) :
-    (s.pushn c n).toList = s.toList ++ List.replicate n c := by
-  rw [String.pushn_eq_repeat_push]
-  induction n with
-  | zero => simp [Nat.repeat]
-  | succ n ih => simp [Nat.repeat, String.toList_push, ih, List.replicate_succ']
-
-theorem pad_toList (i : Nat) : ("".pushn ' ' (2 * i)).toList = padL i := by
-  simp [pushn_toList, padL]
 
 /-- One attribute as the renderer writes it. -/
 def attrL (kv : String × String) : List Char :=
@@ -35,21 +25,6 @@ def attrL (kv : String × String) : List Char :=
 
 /-- The attributes as the renderer writes them. -/
 def attrsL (attrs : List (String × String)) : List Char := attrs.flatMap attrL
-
-theorem attrsInto_toList (acc : String) (attrs : Array (String × String)) :
-    (attrsInto acc attrs).toList = acc.toList ++ attrsL attrs.toList := by
-  unfold attrsInto
-  rw [← Array.foldl_toList]
-  generalize attrs.toList = l
-  induction l generalizing acc with
-  | nil => simp [attrsL]
-  | cons kv rest ih =>
-    obtain ⟨k, v⟩ := kv
-    simp only [List.foldl_cons]
-    rw [ih]
-    simp only [attrsL, List.flatMap_cons, attrL, ← List.append_assoc]
-    congr 1
-    split <;> simp [String.toList_append, escapeAttr_spec, String.toList_ofList]
 
 /-- Whether an element's children render inline. -/
 public def inl (tag : String) (kids : Array Node) : Bool :=
@@ -102,6 +77,309 @@ def rIL (acc : List Char) : List Node → List Char
   | n :: rest => rIL (acc ++ rI n) rest
 
 end
+
+/-- The reading of characters from a state, as `parse` folds them. -/
+def run (o : Option St) (cs : List Char) : Option St := cs.foldl (fun o c => o.bind (step · c)) o
+
+/-- The builder with its current node's children rewritten. -/
+def withTop (b : Builder) (g : Array Dom → Array Dom) : Builder :=
+  match b.stack with
+  | f :: rest => { b with stack := { f with kids := g f.kids } :: rest }
+  | [] => b
+
+/-- Two stacks with the same elements, children aside. -/
+def sameShape : List Frame → List Frame → Prop
+  | [], [] => True
+  | f :: s, g :: t => f.ns = g.ns ∧ f.tag = g.tag ∧ f.attrs = g.attrs ∧ sameShape s t
+  | _, _ => False
+
+/-- The modes past the document's start, where a character is kept or refused. -/
+def Late (m : Mode) : Prop := m ≠ .initial ∧ m ≠ .beforeHtml ∧ m ≠ .beforeHead
+
+/-- Where escaped text is read: the data state, or a title's RCDATA. -/
+inductive Home where
+  | data
+  | rcdata (n : String)
+
+def Home.tok : Home → TState
+  | .data => .data
+  | .rcdata n => .raw .rcdata n
+
+def Home.ret : Home → RefRet
+  | .data => .data
+  | .rcdata n => .rcdata n
+
+/-- Characters inserted one by one at the current node. -/
+@[expose] public def addL (kids : Array Dom) (cs : List Char) : Array Dom := cs.foldl addChar kids
+
+/-- A character the tokenizer keeps inside a tag name. -/
+@[expose] public def nameChar (c : Char) : Bool :=
+  !isWs c && c != '/' && c != '>' && c != '\x00' && c != '\r'
+
+/-- A tag name the tokenizer reads as one name: a letter, then name characters. -/
+@[expose] public def validTag (tag : String) : Bool :=
+  match tag.toList with
+  | c :: rest => isAlpha c && rest.all nameChar
+  | [] => false
+
+/-- A character the tokenizer keeps inside an attribute name. -/
+@[expose] public def keyChar (c : Char) : Bool :=
+  nameChar c && c != '=' && c != '"' && c != '\'' && c != '<'
+
+/-- Attributes the tokenizer reads back as written: names it reads as one name, distinct once
+lower-cased, and values without a null. -/
+@[expose] public def validAttrs (attrs : Array (String × String)) : Bool :=
+  attrs.all (fun kv => !kv.1.isEmpty && kv.1.toList.all keyChar &&
+    kv.2.toList.all (fun c => c != '\x00' && c != '\r')) &&
+    decide (attrs.toList.map (fun kv => lower kv.1)).Nodup
+
+/-- Attributes as the parser stores them: names lower-cased. -/
+@[expose] public def lowAttrs (attrs : Array (String × String)) : Array (String × String) :=
+  attrs.map fun kv => (lower kv.1, kv.2)
+
+/-- The tag a state ends with when `>` follows: a name, a finished value, or a name with no value. -/
+def readyTag : TState → Option TagTok
+  | .tagName t => some t
+  | .afterAttrValue t => some t
+  | .attrName t k => some (t.add k "")
+  | _ => none
+
+/-- The tokenizer state a builder's content leaves after a start tag. -/
+def after (c : Content) (name : String) (next : TState) : TState :=
+  match c with
+  | .data => next
+  | k => .raw k name
+
+/-- A builder reading a raw element's content: past the document's start, its current node the
+element, no line feed pending. -/
+structure InText (b : Builder) : Prop where
+  text : inText b.stack = true
+  late : Late b.mode
+  nonempty : b.stack ≠ []
+  noLF : b.dropLF = false
+
+/-- The characters a raw-text state holds back: none, a `<`, or a partial end tag. -/
+def pendOf : TState → List Char
+  | .rawLt _ _ => ['<']
+  | .rawEnd _ _ seen => '<' :: '/' :: seen.toList
+  | _ => []
+
+/-- A raw-text state after a prefix: the characters emitted and those held back make it up. -/
+structure RawInv (k : Content) (n : String) (σ : TState) (e pre : List Char) : Prop where
+  shape : σ = .raw k n ∨ σ = .rawLt k n ∨ ∃ seen, σ = .rawEnd k n seen
+  pend : e ++ pendOf σ = pre
+
+/-- The names of raw elements: lower-case ASCII letters. -/
+def rawName (n : String) : Bool := n.toList.all (fun c => 'a' ≤ c && c ≤ 'z')
+
+/-- A raw payload the tokenizer reads back inside its element: no null and no carriage return,
+and in a script no `<!`, which opens the script's escaped states. -/
+@[expose] public def payloadOk (script : Bool) (p : String) : Bool :=
+  p.toList.all (fun c => c != '\x00' && c != '\r') &&
+    !(script && decide (['<', '!'] <:+: p.toList))
+
+/-- Whether a mode's start-tag rules insert an element named `t` as written. -/
+@[expose] public def startOk (m : Mode) (s : List Frame) (t : String)
+    (attrs : Array (String × String)) : Bool :=
+  match m with
+  | .inHead => headTags.contains t
+  | .inBody => startAccepts s t attrs
+  | _ => false
+
+/-- The namespace an element is read in under a mode. -/
+@[expose] public def nsIn (m : Mode) (s : List Frame) (t : String) : Ns :=
+  if m == .inHead then .html else nsFor s t
+
+mutual
+
+/-- Whether the parser reads a node, rendered under a mode at this stack, as the stack builder
+it is: every start tag inserted as written, every text kept, every raw payload ended only by its
+own end tag, and no void element given children. -/
+public def Accepts (m : Mode) (s : List Frame) : Node → Bool
+  | .text t => t.toList.all fun c => c != '\r' && c != '\x00' && charKeeps m s c
+  | .style css =>
+    htmlContext s && startOk m s "style" #[] && payloadOk false (rawPayload "</style" css)
+  | .script attrs js =>
+    htmlContext s && validAttrs attrs && startOk m s "script" (lowAttrs attrs) &&
+      payloadOk true (rawPayload "</script" js)
+  | .elem tag attrs kids =>
+    let t := lower tag
+    let ns := nsIn m s t
+    validTag tag && validAttrs attrs && !["html", "head", "body"].contains t &&
+      startOk m s t (lowAttrs attrs) &&
+      (HtmlRead.voidTags.contains t && ns == .html) == Html.voidTags.contains tag &&
+      (ns != .html || t == tag) && (ns == .html || !lfTags.contains tag) &&
+      (if Html.voidTags.contains tag then kids.isEmpty
+       else match contentOf ns t with
+         | .data => AcceptsList m (⟨ns, t, lowAttrs attrs, #[]⟩ :: s) kids.toList
+         | .rcdata => kids.toList.all fun k => match k with
+           | .text x => x.toList.all fun c => c != '\x00' && c != '\r'
+           | _ => false
+         | _ => false)
+
+public def AcceptsList (m : Mode) (s : List Frame) : List Node → Bool
+  | [] => true
+  | n :: rest => Accepts m s n && AcceptsList m s rest
+
+end
+
+mutual
+
+/-- The children a block-rendered node leaves at its parent: its indentation and line end as
+text, its element with names lower-cased, a raw payload as its one text child. -/
+public def fB (K : Array Dom) : Node → Nat → Array Dom
+  | .text t, i => addL K (padL i ++ t.toList ++ ['\n'])
+  | .style css, i =>
+    addL ((addL K (padL i)).push
+      (.elem "style" #[] (addL #[] ('\n' :: (rawPayload "</style" css).toList ++ '\n' :: padL i))))
+      ['\n']
+  | .script attrs js, i =>
+    addL ((addL K (padL i)).push
+      (.elem "script" (lowAttrs attrs)
+        (addL #[] ('\n' :: (rawPayload "</script" js).toList ++ '\n' :: padL i)))) ['\n']
+  | .elem tag attrs kids, i =>
+    addL ((addL K (padL i)).push (.elem (lower tag) (lowAttrs attrs)
+      (if Html.voidTags.contains tag then #[]
+       else if inl tag kids then fIL #[] kids.toList
+       else addL (fBL (addL #[] ['\n']) kids.toList (i + 1)) (padL i)))) ['\n']
+
+/-- The children an inline-rendered node leaves at its parent. -/
+public def fI (K : Array Dom) : Node → Array Dom
+  | .text t => addL K t.toList
+  | .style css => K.push (.elem "style" #[] (addL #[] (rawPayload "</style" css).toList))
+  | .script attrs js =>
+    K.push (.elem "script" (lowAttrs attrs) (addL #[] (rawPayload "</script" js).toList))
+  | .elem tag attrs kids =>
+    K.push (.elem (lower tag) (lowAttrs attrs)
+      (if Html.voidTags.contains tag then #[] else fIL #[] kids.toList))
+
+public def fBL (K : Array Dom) : List Node → Nat → Array Dom
+  | [], _ => K
+  | n :: rest, i => fBL (fB K n i) rest i
+
+public def fIL (K : Array Dom) : List Node → Array Dom
+  | [] => K
+  | n :: rest => fIL (fI K n) rest
+
+end
+
+/-- A builder in a mode the rendered tree's parts are read in: the head or the body, with an
+open element. -/
+structure InFlow (b : Builder) : Prop where
+  mode : b.mode = .inBody ∨ b.mode = .inHead
+  nonempty : b.stack ≠ []
+
+/-- The facts an accepted element's reading uses. -/
+structure ElemOk (m : Mode) (s : List Frame) (tag : String) (attrs : Array (String × String))
+    (kids : Array Node) : Prop where
+  vtag : validTag tag = true
+  vattrs : validAttrs attrs = true
+  skel : lower tag ≠ "html" ∧ lower tag ≠ "head" ∧ lower tag ≠ "body"
+  start : startOk m s (lower tag) (lowAttrs attrs) = true
+  void : (HtmlRead.voidTags.contains (lower tag) && nsIn m s (lower tag) == .html) =
+    Html.voidTags.contains tag
+  same : nsIn m s (lower tag) ≠ .html ∨ lower tag = tag
+  lf : nsIn m s (lower tag) = .html ∨ lfTags.contains tag = false
+  kidsOk : (if Html.voidTags.contains tag then kids.isEmpty
+       else match contentOf (nsIn m s (lower tag)) (lower tag) with
+         | .data => AcceptsList m (⟨nsIn m s (lower tag), lower tag, lowAttrs attrs, #[]⟩ :: s) kids.toList
+         | .rcdata => kids.toList.all fun k => match k with
+           | .text x => x.toList.all fun c => c != '\x00' && c != '\r'
+           | _ => false
+         | _ => false) = true
+
+/-- Whether a node is text a title's RCDATA reads back. -/
+def rcText : Node → Bool
+  | .text x => x.toList.all fun c => c != '\x00' && c != '\r'
+  | _ => false
+
+/-- The characters of a node when it is text. -/
+def textOf : Node → List Char
+  | .text x => x.toList
+  | .style _ | .script _ _ | .elem .. => []
+
+/-- The characters of a list's text nodes. -/
+def textsOf (l : List Node) : List Char := l.flatMap textOf
+
+/-- The `html` element's frame, its language as written. -/
+@[expose] public def htmlFrame (lang : String) : Frame := ⟨.html, "html", #[("lang", lang)], #[]⟩
+
+@[expose] public def headFrame : Frame := ⟨.html, "head", #[], #[]⟩
+
+@[expose] public def bodyFrame : Frame := ⟨.html, "body", #[], #[]⟩
+
+/-- Whether a page's language, head and body read back as the stack builder they are. -/
+@[expose] public def DocOk (lang : String) (head body : Array Node) : Bool :=
+  lang.toList.all (fun c => c != '\x00' && c != '\r') &&
+    AcceptsList .inHead [headFrame, htmlFrame lang] head.toList &&
+    AcceptsList .inBody [bodyFrame, htmlFrame lang] body.toList
+
+/-- The children an element of the document's skeleton reads as. -/
+public def fKids (tag : String) (kids : Array Node) (i : Nat) : Array Dom :=
+  if inl tag kids then fIL #[] kids.toList
+  else addL (fBL (addL #[] ['\n']) kids.toList (i + 1)) (padL i)
+
+/-- The document the parser builds from a rendered page: the head, the whitespace after it, and
+the body, which also takes the line ends after its own end tag and the document's. -/
+public def fDoc (lang : String) (head body : Array Node) : Dom :=
+  .elem "html" #[("lang", lang)]
+    #[.elem "head" #[] (fKids "head" head 1), .text "\n  ",
+      .elem "body" #[] (addL (fKids "body" body 1) ['\n', '\n'])]
+
+/-- The body's text as the parser reads it: `fKids`'s characters, with the two line ends after
+the body's end tag. -/
+@[expose] public def bodyChars (body : Array Node) : String :=
+  Dom.charsList (addL (fKids "body" body 1) ['\n', '\n']).toList
+
+mutual
+
+/-- The characters a tree's text nodes hold, outside style sheets and scripts. -/
+@[expose] public def Node.ink : Node → List Char
+  | .text s => s.toList
+  | .style _ => []
+  | .script _ _ => []
+  | .elem tag _ kids =>
+    if lower tag == "style" || lower tag == "script" then [] else Node.inkInto [] kids.toList
+
+/-- The characters nodes' text holds, in order, after `acc`. -/
+@[expose] public def Node.inkInto (acc : List Char) : List Node → List Char
+  | [] => acc
+  | n :: rest => Node.inkInto (acc ++ Node.ink n) rest
+
+end
+
+/-- The characters nodes' text holds, in order, outside style sheets and scripts. -/
+@[expose] public def Node.inkList (l : List Node) : List Char := Node.inkInto [] l
+
+/-- A character the page's text keeps once white space is set aside. -/
+@[expose] public def inked (c : Char) : Bool := !isWs c
+
+/-! ### The renderer as characters -/
+
+theorem pushn_toList (s : String) (c : Char) (n : Nat) :
+    (s.pushn c n).toList = s.toList ++ List.replicate n c := by
+  rw [String.pushn_eq_repeat_push]
+  induction n with
+  | zero => simp [Nat.repeat]
+  | succ n ih => simp [Nat.repeat, String.toList_push, ih, List.replicate_succ']
+
+theorem pad_toList (i : Nat) : ("".pushn ' ' (2 * i)).toList = padL i := by
+  simp [pushn_toList, padL]
+
+theorem attrsInto_toList (acc : String) (attrs : Array (String × String)) :
+    (attrsInto acc attrs).toList = acc.toList ++ attrsL attrs.toList := by
+  unfold attrsInto
+  rw [← Array.foldl_toList]
+  generalize attrs.toList = l
+  induction l generalizing acc with
+  | nil => simp [attrsL]
+  | cons kv rest ih =>
+    obtain ⟨k, v⟩ := kv
+    simp only [List.foldl_cons]
+    rw [ih]
+    simp only [attrsL, List.flatMap_cons, attrL, ← List.append_assoc]
+    congr 1
+    split <;> simp [String.toList_append, escapeAttr_spec, String.toList_ofList]
 
 theorem rBL_acc (l : List Node) (i : Nat) : ∀ acc, rBL acc l i = acc ++ rBL [] l i := by
   induction l with
@@ -190,9 +468,6 @@ end
 
 /-! ### The reader over characters -/
 
-/-- The reading of characters from a state, as `parse` folds them. -/
-def run (o : Option St) (cs : List Char) : Option St := cs.foldl (fun o c => o.bind (step · c)) o
-
 theorem run_append (o : Option St) (a b : List Char) : run o (a ++ b) = run (run o a) b := by
   simp [run, List.foldl_append]
 
@@ -206,12 +481,6 @@ theorem run_nil (o : Option St) : run o [] = o := rfl
 theorem run_cons (s : St) (c : Char) (cs : List Char) :
     run (some s) (c :: cs) = run (step s c) cs := by
   simp [run]
-
-/-- The builder with its current node's children rewritten. -/
-def withTop (b : Builder) (g : Array Dom → Array Dom) : Builder :=
-  match b.stack with
-  | f :: rest => { b with stack := { f with kids := g f.kids } :: rest }
-  | [] => b
 
 theorem withTop_comp (b : Builder) (g h : Array Dom → Array Dom) :
     withTop (withTop b g) h = withTop b (h ∘ g) := by
@@ -229,12 +498,6 @@ theorem withTop_id (b : Builder) (g : Array Dom → Array Dom) (hg : ∀ k, g k 
     withTop b g = b := by
   rcases b with ⟨m, st, d⟩
   cases st <;> simp [withTop, hg]
-
-/-- Two stacks with the same elements, children aside. -/
-def sameShape : List Frame → List Frame → Prop
-  | [], [] => True
-  | f :: s, g :: t => f.ns = g.ns ∧ f.tag = g.tag ∧ f.attrs = g.attrs ∧ sameShape s t
-  | _, _ => False
 
 theorem sameShape_refl : (s : List Frame) → sameShape s s
   | [] => trivial
@@ -254,9 +517,6 @@ theorem currentIs_shape (names : List String) {s t : List Frame} (h : sameShape 
 theorem charKeeps_shape (m : Mode) (c : Char) {s t : List Frame} (h : sameShape s t) :
     charKeeps m s c = charKeeps m t c := by
   simp [charKeeps, inText, inTableMode, currentIs_shape _ h]
-
-/-- The modes past the document's start, where a character is kept or refused. -/
-def Late (m : Mode) : Prop := m ≠ .initial ∧ m ≠ .beforeHtml ∧ m ≠ .beforeHead
 
 theorem char_keeps (b : Builder) (c : Char) (hm : Late b.mode) (hs : b.stack ≠ [])
     (hk : charKeeps b.mode b.stack c = true) : char b c = some (withTop b (addChar · c)) := by
@@ -339,19 +599,6 @@ theorem run_numeric (b : Builder) (ret : RefRet) (d1 d2 : Char) (ch : Char)
     simp [step, digitVal, hn]
   rw [run_cons, s1, run_cons, s2, run_cons, s3, run_cons, s4, run_nil]
 
-/-- Where escaped text is read: the data state, or a title's RCDATA. -/
-inductive Home where
-  | data
-  | rcdata (n : String)
-
-def Home.tok : Home → TState
-  | .data => .data
-  | .rcdata n => .raw .rcdata n
-
-def Home.ret : Home → RefRet
-  | .data => .data
-  | .rcdata n => .rcdata n
-
 theorem step_home_ref (h : Home) (b : Builder) : step ⟨h.tok, b⟩ '&' = some ⟨.ref h.ret [], b⟩ := by
   cases h <;> simp [step, Home.tok, Home.ret]
 
@@ -392,9 +639,6 @@ theorem run_escChar (h : Home) (b : Builder) (c : Char) (hb : b.dropLF = true �
         exact deliver_home h _ '>' _ hb hch
       · rw [ite_eq_right (by simpa using ha), ite_eq_right (by simpa using hl), ite_eq_right (by simpa using hg),
           run_cons, step_home_char h b c hl ha hn, emit_char' _ c _ _ hb hch, run_nil]
-
-/-- Characters inserted one by one at the current node. -/
-@[expose] public def addL (kids : Array Dom) (cs : List Char) : Array Dom := cs.foldl addChar kids
 
 theorem run_escText (h : Home) (s : List Char) : ∀ (b : Builder), b.dropLF = false →
     Late b.mode → b.stack ≠ [] → (∀ c ∈ s, charKeeps b.mode b.stack c = true ∧ c ≠ '\x00') →
@@ -446,32 +690,6 @@ theorem run_escText' (h : Home) (s : List Char) (b : Builder)
     rfl
 
 /-! ### Tags -/
-
-
-/-- A character the tokenizer keeps inside a tag name. -/
-@[expose] public def nameChar (c : Char) : Bool :=
-  !isWs c && c != '/' && c != '>' && c != '\x00' && c != '\r'
-
-/-- A tag name the tokenizer reads as one name: a letter, then name characters. -/
-@[expose] public def validTag (tag : String) : Bool :=
-  match tag.toList with
-  | c :: rest => isAlpha c && rest.all nameChar
-  | [] => false
-
-/-- A character the tokenizer keeps inside an attribute name. -/
-@[expose] public def keyChar (c : Char) : Bool :=
-  nameChar c && c != '=' && c != '"' && c != '\'' && c != '<'
-
-/-- Attributes the tokenizer reads back as written: names it reads as one name, distinct once
-lower-cased, and values without a null. -/
-@[expose] public def validAttrs (attrs : Array (String × String)) : Bool :=
-  attrs.all (fun kv => !kv.1.isEmpty && kv.1.toList.all keyChar &&
-    kv.2.toList.all (fun c => c != '\x00' && c != '\r')) &&
-    decide (attrs.toList.map (fun kv => lower kv.1)).Nodup
-
-/-- Attributes as the parser stores them: names lower-cased. -/
-@[expose] public def lowAttrs (attrs : Array (String × String)) : Array (String × String) :=
-  attrs.map fun kv => (lower kv.1, kv.2)
 
 theorem lower_cons (c : Char) (rest : List Char) :
     lower (String.ofList (c :: rest)) = (String.singleton c.toLower) ++ lower (String.ofList rest) := by
@@ -599,13 +817,6 @@ theorem run_attrValue (b : Builder) (t : TagTok) (k : String) (cs : List Char)
     congr 3
     apply String.ext
     simp [String.toList_append, String.toList_push]
-
-/-- The tag a state ends with when `>` follows: a name, a finished value, or a name with no value. -/
-def readyTag : TState → Option TagTok
-  | .tagName t => some t
-  | .afterAttrValue t => some t
-  | .attrName t k => some (t.add k "")
-  | _ => none
 
 theorem run_attrName (b : Builder) (t : TagTok) (rest : List Char) (h : rest.all keyChar = true) :
     ∀ key, run (some ⟨.attrName t key, b⟩) rest =
@@ -742,12 +953,6 @@ theorem validAttrs_parts (attrs : Array (String × String)) (h : validAttrs attr
   rw [← Array.all_toList] at h
   exact h.1
 
-/-- The tokenizer state a builder's content leaves after a start tag. -/
-def after (c : Content) (name : String) (next : TState) : TState :=
-  match c with
-  | .data => next
-  | k => .raw k name
-
 theorem emit_eq (s : St) (t : Tok) (next : TState) :
     emit s t next = (HtmlRead.build s.build t).map fun (b, c) =>
       ⟨after c (match t with | .start n _ _ => n | _ => "") next, b⟩ := by
@@ -789,14 +994,6 @@ theorem run_stopTag (b : Builder) (tag : String) (hv : validTag tag = true) :
 
 /-! ### Raw text -/
 
-/-- A builder reading a raw element's content: past the document's start, its current node the
-element, no line feed pending. -/
-structure InText (b : Builder) : Prop where
-  text : inText b.stack = true
-  late : Late b.mode
-  nonempty : b.stack ≠ []
-  noLF : b.dropLF = false
-
 theorem InText.top {b : Builder} (h : InText b) (g : Array Dom → Array Dom) : InText (withTop b g) where
   text := by rw [show inText (withTop b g).stack = inText b.stack from
     currentIs_shape _ (withTop_shape b g)]; exact h.text
@@ -822,17 +1019,6 @@ theorem emitChars_text (cs : List Char) : ∀ {b : Builder}, InText b → ∀ (�
     simp only [emitChars, emit_text_char h, Option.bind_some]
     rw [ih (h.top _) next next, withTop_comp]
     rfl
-
-/-- The characters a raw-text state holds back: none, a `<`, or a partial end tag. -/
-def pendOf : TState → List Char
-  | .rawLt _ _ => ['<']
-  | .rawEnd _ _ seen => '<' :: '/' :: seen.toList
-  | _ => []
-
-/-- A raw-text state after a prefix: the characters emitted and those held back make it up. -/
-structure RawInv (k : Content) (n : String) (σ : TState) (e pre : List Char) : Prop where
-  shape : σ = .raw k n ∨ σ = .rawLt k n ∨ ∃ seen, σ = .rawEnd k n seen
-  pend : e ++ pendOf σ = pre
 
 theorem infix_lower_of_seen (e : List Char) (seen n : String) (c : Char) (hs : lower seen = n) :
     ('<' :: '/' :: n.toList) <:+: ((e ++ ('<' :: '/' :: seen.toList) ++ [c]).map Char.toLower) := by
@@ -950,9 +1136,6 @@ theorem run_rawEnd (k : Content) (n : String) (b : Builder) (cs : List Char)
     apply String.ext
     simp [String.toList_push]
 
-/-- The names of raw elements: lower-case ASCII letters. -/
-def rawName (n : String) : Bool := n.toList.all (fun c => 'a' ≤ c && c ≤ 'z')
-
 theorem rawName_alpha {n : String} (h : rawName n = true) : n.toList.all isAlpha = true := by
   unfold rawName at h
   rw [List.all_eq_true] at h ⊢
@@ -1016,99 +1199,6 @@ theorem raw_close (k : Content) (n : String) (hn : rawName n = true) {b : Builde
     simp [step, isAlpha, rawName_lower hn]
   rw [this, emit_eq]
   simp [HtmlRead.build, after, Function.comp_def]
-
-/-! ### The tree the parser reads -/
-
-/-- A raw payload the tokenizer reads back inside its element: no null and no carriage return,
-and in a script no `<!`, which opens the script's escaped states. -/
-@[expose] public def payloadOk (script : Bool) (p : String) : Bool :=
-  p.toList.all (fun c => c != '\x00' && c != '\r') &&
-    !(script && decide (['<', '!'] <:+: p.toList))
-
-/-- Whether a mode's start-tag rules insert an element named `t` as written. -/
-@[expose] public def startOk (m : Mode) (s : List Frame) (t : String)
-    (attrs : Array (String × String)) : Bool :=
-  match m with
-  | .inHead => headTags.contains t
-  | .inBody => startAccepts s t attrs
-  | _ => false
-
-/-- The namespace an element is read in under a mode. -/
-@[expose] public def nsIn (m : Mode) (s : List Frame) (t : String) : Ns :=
-  if m == .inHead then .html else nsFor s t
-
-mutual
-
-/-- Whether the parser reads a node, rendered under a mode at this stack, as the stack builder
-it is: every start tag inserted as written, every text kept, every raw payload ended only by its
-own end tag, and no void element given children. -/
-public def Accepts (m : Mode) (s : List Frame) : Node → Bool
-  | .text t => t.toList.all fun c => c != '\r' && c != '\x00' && charKeeps m s c
-  | .style css =>
-    htmlContext s && startOk m s "style" #[] && payloadOk false (rawPayload "</style" css)
-  | .script attrs js =>
-    htmlContext s && validAttrs attrs && startOk m s "script" (lowAttrs attrs) &&
-      payloadOk true (rawPayload "</script" js)
-  | .elem tag attrs kids =>
-    let t := lower tag
-    let ns := nsIn m s t
-    validTag tag && validAttrs attrs && !["html", "head", "body"].contains t &&
-      startOk m s t (lowAttrs attrs) &&
-      (HtmlRead.voidTags.contains t && ns == .html) == Html.voidTags.contains tag &&
-      (ns != .html || t == tag) && (ns == .html || !lfTags.contains tag) &&
-      (if Html.voidTags.contains tag then kids.isEmpty
-       else match contentOf ns t with
-         | .data => AcceptsList m (⟨ns, t, lowAttrs attrs, #[]⟩ :: s) kids.toList
-         | .rcdata => kids.toList.all fun k => match k with
-           | .text x => x.toList.all fun c => c != '\x00' && c != '\r'
-           | _ => false
-         | _ => false)
-
-public def AcceptsList (m : Mode) (s : List Frame) : List Node → Bool
-  | [] => true
-  | n :: rest => Accepts m s n && AcceptsList m s rest
-
-end
-
-mutual
-
-/-- The children a block-rendered node leaves at its parent: its indentation and line end as
-text, its element with names lower-cased, a raw payload as its one text child. -/
-public def fB (K : Array Dom) : Node → Nat → Array Dom
-  | .text t, i => addL K (padL i ++ t.toList ++ ['\n'])
-  | .style css, i =>
-    addL ((addL K (padL i)).push
-      (.elem "style" #[] (addL #[] ('\n' :: (rawPayload "</style" css).toList ++ '\n' :: padL i))))
-      ['\n']
-  | .script attrs js, i =>
-    addL ((addL K (padL i)).push
-      (.elem "script" (lowAttrs attrs)
-        (addL #[] ('\n' :: (rawPayload "</script" js).toList ++ '\n' :: padL i)))) ['\n']
-  | .elem tag attrs kids, i =>
-    addL ((addL K (padL i)).push (.elem (lower tag) (lowAttrs attrs)
-      (if Html.voidTags.contains tag then #[]
-       else if inl tag kids then fIL #[] kids.toList
-       else addL (fBL (addL #[] ['\n']) kids.toList (i + 1)) (padL i)))) ['\n']
-
-/-- The children an inline-rendered node leaves at its parent. -/
-public def fI (K : Array Dom) : Node → Array Dom
-  | .text t => addL K t.toList
-  | .style css => K.push (.elem "style" #[] (addL #[] (rawPayload "</style" css).toList))
-  | .script attrs js =>
-    K.push (.elem "script" (lowAttrs attrs) (addL #[] (rawPayload "</script" js).toList))
-  | .elem tag attrs kids =>
-    K.push (.elem (lower tag) (lowAttrs attrs)
-      (if Html.voidTags.contains tag then #[] else fIL #[] kids.toList))
-
-public def fBL (K : Array Dom) : List Node → Nat → Array Dom
-  | [], _ => K
-  | n :: rest, i => fBL (fB K n i) rest i
-
-public def fIL (K : Array Dom) : List Node → Array Dom
-  | [] => K
-  | n :: rest => fIL (fI K n) rest
-
-end
 
 /-! ### Reading the rendered tree -/
 
@@ -1260,10 +1350,21 @@ theorem bodyAccepts_shape (name : String) {s t : List Frame} (h : sameShape s t)
 theorem sameShape_push (f : Frame) {s t : List Frame} (h : sameShape s t) :
     sameShape (f :: s) (f :: t) := ⟨rfl, rfl, rfl, h⟩
 
+theorem dispatchOdd_shape (name : String) {s t : List Frame} (h : sameShape s t) :
+    dispatchOdd s name = dispatchOdd t name := by
+  cases s with
+  | nil => rw [sameShape_nil_left h]
+  | cons f s =>
+    cases t with
+    | nil => simp [sameShape] at h
+    | cons g t =>
+      obtain ⟨h1, h2, h3, _⟩ := sameShape_cons h
+      simp only [dispatchOdd, h1, h2, integrationPoint_shape h1 h2 h3]
+
 theorem startOk_shape (m : Mode) (name : String) (attrs : Array (String × String))
     {s t : List Frame} (h : sameShape s t) : startOk m s name attrs = startOk m t name attrs := by
   unfold startOk startAccepts
-  rw [htmlContext_shape h, bodyAccepts_shape _ h]
+  rw [htmlContext_shape h, bodyAccepts_shape _ h, dispatchOdd_shape _ h]
 
 theorem nsIn_shape (m : Mode) (name : String) {s t : List Frame} (h : sameShape s t) :
     nsIn m s name = nsIn m t name := by
@@ -1390,6 +1491,7 @@ theorem infix_sep {t A B : List Char} {x : Char} (hx : x ∉ t) (h : t <:+: A ++
       right; exact ⟨ys, v, by rw [h2.2]; simp⟩
 
 theorem toLower_space : Char.toLower ' ' = ' ' := by decide
+
 theorem toLower_lf : Char.toLower '\n' = '\n' := by decide
 
 theorem no_sep_block (t raw : List Char) (i : Nat) (ht1 : '\n' ∉ t) (ht2 : ' ' ∉ t) (hne : t ≠ [])
@@ -1508,9 +1610,11 @@ theorem nsIn_html_of (m : Mode) (s : List Frame) (t : String) (hc : htmlContext 
   · simp [ht.1, ht.2]
 
 theorem lower_style : lower "style" = "style" := by decide
+
 theorem lower_script : lower "script" = "script" := by decide
 
 theorem rawName_style : rawName "style" = true := by decide
+
 theorem rawName_script : rawName "script" = true := by decide
 
 theorem payload_parts (script : Bool) (p : String) (h : payloadOk script p = true) :
@@ -1535,12 +1639,6 @@ theorem block_payload_parts (script : Bool) (raw : String) (i : Nat) (h : payloa
       · exact Or.inl h
       · exact Or.inr h.2
     rcases this with rfl | rfl <;> decide
-
-/-- A builder in a mode the rendered tree's parts are read in: the head or the body, with an
-open element. -/
-structure InFlow (b : Builder) : Prop where
-  mode : b.mode = .inBody ∨ b.mode = .inHead
-  nonempty : b.stack ≠ []
 
 theorem InFlow.top {b : Builder} (h : InFlow b) (g : Array Dom → Array Dom) : InFlow (withTop b g) :=
   ⟨by rw [withTop_mode]; exact h.mode, stack_ne_withTop h.nonempty g⟩
@@ -1626,25 +1724,6 @@ theorem bodyAccepts_listing (s : List Frame) : bodyAccepts s "listing" = false :
   unfold bodyAccepts tablePartOk
   split <;> (try split) <;> (try split) <;> (try split) <;> (try split) <;> (try split) <;>
     simp_all [bodyTags]
-
-/-- The facts an accepted element's reading uses. -/
-structure ElemOk (m : Mode) (s : List Frame) (tag : String) (attrs : Array (String × String))
-    (kids : Array Node) : Prop where
-  vtag : validTag tag = true
-  vattrs : validAttrs attrs = true
-  skel : lower tag ≠ "html" ∧ lower tag ≠ "head" ∧ lower tag ≠ "body"
-  start : startOk m s (lower tag) (lowAttrs attrs) = true
-  void : (HtmlRead.voidTags.contains (lower tag) && nsIn m s (lower tag) == .html) =
-    Html.voidTags.contains tag
-  same : nsIn m s (lower tag) ≠ .html ∨ lower tag = tag
-  lf : nsIn m s (lower tag) = .html ∨ lfTags.contains tag = false
-  kidsOk : (if Html.voidTags.contains tag then kids.isEmpty
-       else match contentOf (nsIn m s (lower tag)) (lower tag) with
-         | .data => AcceptsList m (⟨nsIn m s (lower tag), lower tag, lowAttrs attrs, #[]⟩ :: s) kids.toList
-         | .rcdata => kids.toList.all fun k => match k with
-           | .text x => x.toList.all fun c => c != '\x00' && c != '\r'
-           | _ => false
-         | _ => false) = true
 
 theorem elem_parts {m : Mode} {s : List Frame} {tag : String} {attrs : Array (String × String)}
     {kids : Array Node} (h : Accepts m s (.elem tag attrs kids) = true) : ElemOk m s tag attrs kids := by
@@ -1755,8 +1834,8 @@ theorem lf_eq_dl {m : Mode} {s : List Frame} {tag : String} {attrs : Array (Stri
       simp only [startOk, hm, startAccepts, hc, ite_true] at hst
       rcases hmem with rfl | rfl | rfl
       · rw [ht] at hns ⊢; rw [hm] at hns; simp [hm, hns]
-      · rw [ht, bodyAccepts_listing] at hst; exact absurd hst (by decide)
-      · rw [ht, bodyAccepts_textarea] at hst; exact absurd hst (by decide)
+      · rw [ht, bodyAccepts_listing] at hst; exact absurd hst (by simp)
+      · rw [ht, bodyAccepts_textarea] at hst; exact absurd hst (by simp)
     · simp only [startOk, hm] at hst
       have := headTags_not_lf _ hst
       rw [ht] at this
@@ -1834,19 +1913,6 @@ theorem run_elemInline (b1 : Builder) (hf1 : InFlow b1) (hd1 : b1.dropLF = false
       (lower tag) (lowAttrs attrs) #[] :: b1.stack) dl) ⟨hf1.mode, by simp⟩
       (fun h1 => by simp_all) hkids, withTop_mk, hfin]
 
-/-- Whether a node is text a title's RCDATA reads back. -/
-def rcText : Node → Bool
-  | .text x => x.toList.all fun c => c != '\x00' && c != '\r'
-  | _ => false
-
-/-- The characters of a node when it is text. -/
-def textOf : Node → List Char
-  | .text x => x.toList
-  | .style _ | .script _ _ | .elem .. => []
-
-/-- The characters of a list's text nodes. -/
-def textsOf (l : List Node) : List Char := l.flatMap textOf
-
 theorem fIL_texts (l : List Node) (hl : l.all rcText = true) : ∀ K, fIL K l = addL K (textsOf l) := by
   induction l with
   | nil => intro K; rfl
@@ -1914,7 +1980,7 @@ theorem run_elemRcdata (b1 : Builder) (hf1 : InFlow b1) (hd1 : b1.dropLF = false
       rcases hf1.mode with hm | hm
       · have hctx := ns_html_body hns hm
         simp only [startOk, hm, startAccepts, hctx, ite_true, ht, bodyAccepts_textarea] at hst
-        exact absurd hst (by decide)
+        exact absurd hst (by simp)
       · simp only [startOk, hm] at hst
         exact (headTags_not_lf _ hst).2.2 ht
   have htag : tag = "title" := by
@@ -1987,7 +2053,7 @@ theorem run_elemBlock (b1 : Builder) (hf1 : InFlow b1) (hd1 : b1.dropLF = false)
         have hst := h.start
         have ht : lower "listing" = "listing" := by decide
         simp only [startOk, hm, startAccepts, hctx, ite_true, ht, bodyAccepts_listing] at hst
-        exact absurd hst (by decide)
+        exact absurd hst (by simp)
       · simp [inl, preserveTags] at hinl
     · simpa using hl
   rw [run_append, run_open b1 hf1 tag attrs kids h hnv, hc, hdl]
@@ -2518,31 +2584,6 @@ end
 
 /-! ### The document -/
 
-/-- The `html` element's frame, its language as written. -/
-@[expose] public def htmlFrame (lang : String) : Frame := ⟨.html, "html", #[("lang", lang)], #[]⟩
-
-@[expose] public def headFrame : Frame := ⟨.html, "head", #[], #[]⟩
-
-@[expose] public def bodyFrame : Frame := ⟨.html, "body", #[], #[]⟩
-
-/-- Whether a page's language, head and body read back as the stack builder they are. -/
-@[expose] public def DocOk (lang : String) (head body : Array Node) : Bool :=
-  lang.toList.all (fun c => c != '\x00' && c != '\r') &&
-    AcceptsList .inHead [headFrame, htmlFrame lang] head.toList &&
-    AcceptsList .inBody [bodyFrame, htmlFrame lang] body.toList
-
-/-- The children an element of the document's skeleton reads as. -/
-public def fKids (tag : String) (kids : Array Node) (i : Nat) : Array Dom :=
-  if inl tag kids then fIL #[] kids.toList
-  else addL (fBL (addL #[] ['\n']) kids.toList (i + 1)) (padL i)
-
-/-- The document the parser builds from a rendered page: the head, the whitespace after it, and
-the body, which also takes the line ends after its own end tag and the document's. -/
-public def fDoc (lang : String) (head body : Array Node) : Dom :=
-  .elem "html" #[("lang", lang)]
-    #[.elem "head" #[] (fKids "head" head 1), .text "\n  ",
-      .elem "body" #[] (addL (fKids "body" body 1) ['\n', '\n'])]
-
 theorem run_doctype :
     run (some init) "<!DOCTYPE html>".toList =
       some ⟨.data, { mode := .beforeHtml, stack := [], dropLF := false }⟩ := by
@@ -2652,7 +2693,9 @@ theorem addL_html_ws (K : Array Dom) (e : Dom) (he : ∀ s, e ≠ .text s) :
     simp [Array.back?_push, Array.pop_push]
 
 theorem late_afterHead : Late .afterHead := ⟨by decide, by decide, by decide⟩
+
 theorem late_afterBody : Late .afterBody := ⟨by decide, by decide, by decide⟩
+
 theorem late_afterAfterBody : Late .afterAfterBody := ⟨by decide, by decide, by decide⟩
 
 theorem seg_open (lang : String) (hl : lang.toList.all (fun c => c != '\x00' && c != '\r') = true) :
@@ -2794,7 +2837,6 @@ public theorem parse_render_exact (lang : String) (head body : Array Node)
   rw [addL_head_ws _ (fun _ => by simp), ← addL_append]
   rfl
 
-
 mutual
 
 theorem charsInto_acc (acc : String) : (d : Dom) →
@@ -2835,11 +2877,6 @@ theorem chars_elem (tag : String) (a : Array (String × String)) (kids : Array D
 
 /-! ### The page's text -/
 
-/-- The body's text as the parser reads it: `fKids`'s characters, with the two line ends after
-the body's end tag. -/
-@[expose] public def bodyChars (body : Array Node) : String :=
-  Dom.charsList (addL (fKids "body" body 1) ['\n', '\n']).toList
-
 /-- The page text of a rendered page is the text of its body as the parser builds it. -/
 public theorem pageText_render_exact (lang : String) (head body : Array Node)
     (h : DocOk lang head body = true) :
@@ -2847,26 +2884,6 @@ public theorem pageText_render_exact (lang : String) (head body : Array Node)
   simp only [HtmlRead.pageText, parse_render_exact lang head body h, Option.bind_some, fDoc,
     Dom.bodyText]
   simp [List.find?, chars_elem, bodyChars]
-
-mutual
-
-/-- The characters a tree's text nodes hold, outside style sheets and scripts. -/
-@[expose] public def Node.ink : Node → List Char
-  | .text s => s.toList
-  | .style _ => []
-  | .script _ _ => []
-  | .elem tag _ kids =>
-    if lower tag == "style" || lower tag == "script" then [] else Node.inkInto [] kids.toList
-
-/-- The characters nodes' text holds, in order, after `acc`. -/
-@[expose] public def Node.inkInto (acc : List Char) : List Node → List Char
-  | [] => acc
-  | n :: rest => Node.inkInto (acc ++ Node.ink n) rest
-
-end
-
-/-- The characters nodes' text holds, in order, outside style sheets and scripts. -/
-@[expose] public def Node.inkList (l : List Node) : List Char := Node.inkInto [] l
 
 theorem inkInto_acc (l : List Node) : ∀ acc, Node.inkInto acc l = acc ++ Node.inkInto [] l := by
   induction l with
@@ -2888,9 +2905,6 @@ theorem ink_elem (tag : String) (a : Array (String × String)) (kids : Array Nod
     Node.ink (.elem tag a kids) =
       if lower tag == "style" || lower tag == "script" then [] else Node.inkList kids.toList := by
   simp only [Node.ink, Node.inkList]
-
-/-- A character the page's text keeps once white space is set aside. -/
-@[expose] public def inked (c : Char) : Bool := !isWs c
 
 theorem charsList_append (a b : List Dom) :
     (Dom.charsList (a ++ b)).toList = (Dom.charsList a).toList ++ (Dom.charsList b).toList := by

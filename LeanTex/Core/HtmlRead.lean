@@ -9,7 +9,8 @@ and `none` wherever the standard would repair, reparent or imply an element. -/
 
 namespace LeanTex.Core.HtmlRead
 
-/-- A node of the document tree: text, or an element under its lower-case name. -/
+/-- A node of the document tree: text, or an element, its name and its attributes' names
+lower-cased as the tokenizer reads them, before SVG's and MathML's case adjustment. -/
 public inductive Dom where
   | text (s : String)
   | elem (tag : String) (attrs : Array (String × String)) (kids : Array Dom)
@@ -265,10 +266,21 @@ namespace, foreign content keeps its own, the HTML rules make HTML elements. -/
     | f :: _ => f.ns
     | [] => .html
 
+/-- Start tags whose dispatch this reading leaves out (§13.2.6): `svg` under a MathML
+`annotation-xml` that is no integration point, which the HTML rules take, and `mglyph` or
+`malignmark` under a MathML text integration point, which foreign content takes. -/
+@[expose] public def dispatchOdd (s : List Frame) (name : String) : Bool :=
+  match s with
+  | f :: _ =>
+    (f.ns == .math && f.tag == "annotation-xml" && !integrationPoint f && name == "svg") ||
+      (f.ns == .math && ["mi", "mo", "mn", "ms", "mtext"].contains f.tag &&
+        (name == "mglyph" || name == "malignmark"))
+  | [] => false
+
 /-- Whether a start tag in the body's modes is read as this reading reads it. -/
 @[expose] public def startAccepts (s : List Frame) (name : String)
     (attrs : Array (String × String)) : Bool :=
-  if htmlContext s then bodyAccepts s name else foreignAccepts name attrs
+  !dispatchOdd s name && if htmlContext s then bodyAccepts s name else foreignAccepts name attrs
 
 /-- Whether an element is void as read: HTML void elements, or a self-closed foreign one. -/
 @[expose] public def voidAs (ns : Ns) (name : String) (selfClosing : Bool) : Bool :=
@@ -620,8 +632,8 @@ public def Dom.chars (d : Dom) : String := d.charsInto ""
 /-- The text of nodes in order, leaving out style sheets and scripts. -/
 public def Dom.charsList (l : List Dom) : String := Dom.charsListInto "" l
 
-/-- The page's text: what the body's text nodes hold, in order, outside style sheets and
-scripts. -/
+/-- The page's text: what the body's text nodes hold, in order, outside style sheets and scripts,
+shown or hidden. -/
 public def Dom.bodyText : Dom → Option String
   | .elem "html" _ kids => (kids.toList.find? fun d => match d with
       | .elem "body" _ _ => true

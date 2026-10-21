@@ -1,6 +1,6 @@
 /-
 The textlayer tier: how many corpus artifacts' text this engine's readers read as the host's
-tools do, from the committed text-layer matrix, its freshness key held to the readers' sources.
+tools do, from the committed text-layer matrix, its key held to the readers and the fixtures.
 Usage: lake env lean --run scripts/textlayer.lean [--check | --selftest]
 -/
 import scripts.Board
@@ -8,11 +8,6 @@ import scripts.Board
 open Scoreboard
 
 def matrixPath : String := "testdata/oracles/text-layer-matrix.txt"
-
-/-- The source files the readers' verdicts depend on, as `scripts/text-oracle.lean` keys them. -/
-def readerSources : List String :=
-  ["LeanTex/Core/HtmlRead.lean", "LeanTex/Core/HtmlEntity.lean", "LeanTex/Core/PdfTextRead.lean",
-   "LeanTex/Core/PdfFont.lean", "LeanTex/Core/PdfContentLex.lean"]
 
 /-- One section's counts for one tool: the rows with a verdict, and the passing ones. -/
 structure Cells where
@@ -59,13 +54,6 @@ def matrixValue (text name : String) : Option String :=
   | [value] => some value
   | _ => none
 
-/-- The readers' freshness key over this tree's sources. -/
-def readerKey : IO String := do
-  let mut blobs : Array (String × ByteArray) := #[]
-  for p in readerSources do
-    blobs := blobs.push (p, ← IO.FS.readBinFile p)
-  return contentKey blobs
-
 def measureTier : IO (Array String × Array Row) := do
   if !(← System.FilePath.pathExists matrixPath) then
     IO.eprintln s!"scoreboard: {matrixPath} is missing; regenerate it with \
@@ -76,17 +64,17 @@ lake env lean --run scripts/text-oracle.lean"
     | IO.eprintln s!"scoreboard: {matrixPath} carries no unique `reader-key:` line, so nothing \
 ties its verdicts to this tree's readers; regenerate it with lake env lean --run scripts/text-oracle.lean"
       return (#[], #[])
-  let key ← readerKey
+  let key ← textLayerKey
   if recorded != key then
-    IO.eprintln s!"scoreboard: {matrixPath} judged other readers (reader-key {recorded}, this \
-tree's are {key}); rerun the tools: lake env lean --run scripts/text-oracle.lean"
+    IO.eprintln s!"scoreboard: {matrixPath} judged other readers or fixtures (reader-key \
+{recorded}, this tree's {key}); rerun the tools: lake env lean --run scripts/text-oracle.lean"
     return (#[], #[])
   let mut rows : Array Row := #[]
   for c in readMatrix text do
     rows := rows.push { item := s!"{c.section_}.{c.tool}.pass", value := Int.ofNat c.pass }
     rows := rows.push { item := s!"{c.section_}.{c.tool}.rows", value := Int.ofNat c.rows }
   return (#[s!"# source: {matrixPath}; {(matrixValue text "tools").getD "tools unrecorded"}",
-    s!"# reader-key: {recorded} — the readers the tools judged, rebuilt and compared on every --check"],
+    s!"# reader-key: {recorded} — the readers and fixtures the tools judged, compared on every --check"],
     rows)
 
 def selftest : IO UInt32 := tierSelftest "textlayer" fun no => do
@@ -101,8 +89,8 @@ beta   untested\n"
   no "reader-key: absent when the matrix carries none" ((matrixValue "[pdf]\n" "reader-key").isNone)
   no "reader-key: a repeated line is no key"
     ((matrixValue "reader-key: a\nreader-key: b\n" "reader-key").isNone)
-  let k ← readerKey
-  no "reader-key: 16 hex digits over this tree's readers" (k.length == 16)
+  let k ← textLayerKey
+  no "reader-key: 16 hex digits over this tree's readers and fixtures" (k.length == 16)
 
 def main (args : List String) : IO UInt32 :=
   tierMain "textlayer" (.pairs "pass" "rows") measureTier selftest args

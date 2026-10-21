@@ -1548,4 +1548,28 @@ def hermeticHtmlKeys : IO (Except String Hermetic.CorpusKeys) := do
   try Hermetic.corpusKeys "testdata/corpus"
   catch e => return .error (toString e)
 
+/-- The sources the text readers' verdicts depend on: the readers and the modules they read
+through. -/
+def textReaderSources : List String :=
+  ["LeanTex/Core/HtmlRead.lean", "LeanTex/Core/HtmlEntity.lean", "LeanTex/Core/HtmlEntityData.lean",
+   "LeanTex/Core/PdfTextRead.lean", "LeanTex/Core/PdfFont.lean", "LeanTex/Core/PdfContentLex.lean",
+   "LeanTex/Core/PdfRead.lean", "LeanTex/Core/PdfFilters.lean", "LeanTex/Core/GlyphList.lean"]
+
+/-- Every file under a directory, sorted by path. -/
+def filesUnder (dir : System.FilePath) : IO (Array System.FilePath) := do
+  let mut out : Array System.FilePath := #[]
+  for f in ← dir.walkDir do
+    unless ← f.isDir do out := out.push f
+  return out.qsort (·.toString < ·.toString)
+
+/-- The text-layer matrix's freshness key: the readers' sources and the corpus fixtures they were
+judged on, so a changed reader or fixture needs the tools again. -/
+def textLayerKey : IO String := do
+  let mut blobs : Array (String × ByteArray) := #[]
+  for p in textReaderSources do
+    blobs := blobs.push (p, ← IO.FS.readBinFile p)
+  for f in ← filesUnder "testdata/corpus" do
+    blobs := blobs.push (f.toString, ← IO.FS.readBinFile f)
+  return contentKey blobs
+
 end Scoreboard

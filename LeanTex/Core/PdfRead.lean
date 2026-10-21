@@ -1684,6 +1684,44 @@ private def readPage (b : ByteArray) (page : PageSelection) :
 public def Doc.page (d : Doc) (page : PageSelection) : Except String (Nat × Page) :=
   selectPage d d.root page
 
+/-- The page objects in page-tree order (§7.7.3), each with its object number where it is an
+indirect object and the attributes it inherits; a tree the walk cannot finish within the
+cross-reference, or a node met twice, is refused. -/
+public def Doc.pageList (d : Doc) : Except String (Array (Option Nat × Page)) := do
+  let (catalog, _) ← d.get d.root
+  let some pagesRef := catalog.get? "Pages"
+    | throw "malformed PDF: the catalog has no /Pages"
+  let mut work : Array (Obj × Option Obj × Option Obj × Option Obj × Option Obj) :=
+    #[(pagesRef, none, none, none, none)]
+  let mut seen : Std.HashMap Nat Unit := {}
+  let mut out : Array (Option Nat × Page) := #[]
+  for _ in [0:d.objectCount + 2] do
+    let some (nodeRef, mb, cb, res, rot) := work.back? | break
+    work := work.pop
+    let num : Option Nat := match nodeRef with
+      | .ref n _ => some n
+      | _ => none
+    if let some n := num then
+      if seen.contains n then throw s!"malformed PDF: cycle or repeated node {n} in the page tree"
+      seen := seen.insert n ()
+    let node ← d.deref nodeRef
+    let mb := (node.get? "MediaBox").or mb
+    let cb := (node.get? "CropBox").or cb
+    let res := (node.get? "Resources").or res
+    let rot := (node.get? "Rotate").or rot
+    if node.get? "Type" matches some (.name "Page") then
+      out := out.push (num, { node, mediaBox := mb, cropBox := cb, resources := res, rotate := rot })
+    else
+      match node.get? "Kids" with
+      | some (.arr kids) =>
+        for k in [0:kids.size] do
+          if let some kid := kids[kids.size - 1 - k]? then
+            work := work.push (kid, mb, cb, res, rot)
+      | _ => throw "malformed PDF: a page tree node has neither /Type /Page nor /Kids"
+  unless work.isEmpty do
+    throw "malformed PDF: the page tree exceeds its cross-reference"
+  return out
+
 /-- A page's `Contents` as its ordered stream references (§7.7.3.3). -/
 public def Doc.contentParts (r : Doc) (contents : Obj) : Except String (Array Obj) := do
   match ← r.deref contents with
