@@ -1487,7 +1487,7 @@ def censusCodeRows :
     let bounds := (c.toList.flatMap (·.lines.toList)).dropWhile
       (!hasStr ·.text "Theorem (Ebb.barge_bounds).")
     let opening (w : String) : Option CensusLine := bounds.find? (·.text.startsWith w)
-    [("two pages", c.size == 2),
+    [("three pages", c.size == 3),
      ("a quantified hypothesis stands a step in under its condition, the conclusion back at its margin",
        linesStepAt step hyp 1 "for every" 1 && linesStepAt step hyp 2 "then False." 0),
      ("a laid-out paragraph's lines stand a leading apart, no gap between them, the head's taller faces aside",

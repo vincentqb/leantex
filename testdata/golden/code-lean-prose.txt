@@ -219,6 +219,38 @@ role trivlist-env
 verbatim language lean4
   "theorem both_all : And (forall n : Nat, 0 <= n) (exists m : Nat, m = m) :="
   "  And.intro Nat.zero_le (Exists.intro 0 rfl)"
+para
+  text "List literals and a function ignoring its argument, as Lean writes them."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.list_lits"
+        italicCorr maybe
+        text "). "
+        formula inline "[\\mathrm {1},\\mathrm {2},\\mathrm {3}].\\mathrm {length}={}"
+          open:[ ord:alpha:rm{ord:1} punct:, ord:alpha:rm{ord:2} punct:, ord:alpha:rm{ord:3} close:] ord:. ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑛 ord:𝑔 ord:𝑡 ord:ℎ} rel:= ord:{}
+        hspace 0pt
+        formula inline "\\mathrm {3}"
+          ord:alpha:rm{ord:3}
+        text " and "
+        formula inline "\\mathrm {List.map}\\  (\\_\\mapsto \\mathrm {0})\\  [\\mathrm {5}]={}"
+          ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡 ord:. ord:𝑚 ord:𝑎 ord:𝑝} mu:6 open:( ord:_ rel:↦ ord:alpha:rm{ord:0} close:) mu:6 open:[ ord:alpha:rm{ord:5} close:] rel:= ord:{}
+        hspace 0pt
+        formula inline "[\\mathrm {0}]"
+          open:[ ord:alpha:rm{ord:0} close:]
+        text "."
+verbatim language lean4
+  "theorem list_lits :"
+  "    And ([1, 2, 3].length = 3) (List.map (fun _ => 0) [5] = [0]) :="
+  "  And.intro rfl rfl"
 role trivlist-env
   ragged left
     lines
@@ -478,5 +510,5 @@ verbatim language lean4
   ""
   "end Ebb"
 -- diagnostics
-warning[W0415] 36:1 unsupported statement Ebb.Moored | detail: it is no proposition
-warning[W0415] 38:1 unsupported statement Ebb.nameOf | detail: it is no proposition
+warning[W0415] 41:1 unsupported statement Ebb.Moored | detail: it is no proposition
+warning[W0415] 43:1 unsupported statement Ebb.nameOf | detail: it is no proposition

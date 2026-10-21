@@ -2466,7 +2466,7 @@ def reports : List Report := [
       "a private deck's two cancellation frames re-rendered: each arrow at the cancel package's slope, placed as lualatex places it, in the PDF and in both browsers alike",
       "the corpus built by main's binary at b872b92db and by this tree's: every artifact byte-identical but the math fixtures, whose script operators, fractions, arrays and delimiters now stand as the PDF sets them"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R284", date := "2026-10-21"
+  { id := "R285", date := "2026-10-21"
     what := "a Lean list built by its constructors set as nested cons applications ending in List.nil, a function ignoring its argument named the unused binder, and a compound term in parentheses could not break inside them"
     pins := [check% Tests.LeanStatements.leanStatementChecks]
     accept := ["the parent branch's binary at 46702334 on the Lean prose fixture: (1::2::3::List.nil).length = 3 and List.map (x ↦ 0) (5::List.nil) = 0::List.nil, the guards failing there; this tree sets [1, 2, 3].length = 3 and List.map (_ ↦ 0) [5] = [0], in the PDF, on the web page and in the twin",
