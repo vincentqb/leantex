@@ -27,8 +27,7 @@ this tree builds {key}); rerun the oracle: lake env lean --run scripts/cancel-di
     return (#[], #[])
   let rows := readOracle text
   let mut out : Array Row := #[]
-  for (engine, against, tol) in [("pdf", "lualatex", pdfTolerance),
-      ("html", "pdf", htmlTolerance), ("html", "lualatex", htmlTolerance)] do
+  for (engine, against, tol) in judgements do
     let (pass, n) := judge rows engine against tol
     out := out.push { item := s!"{engine}-vs-{against}.pass", value := pass }
     out := out.push { item := s!"{engine}-vs-{against}.rows", value := n }
@@ -45,7 +44,7 @@ def selftest : IO UInt32 := tierSelftest "cancel" fun no => do
   no "oracle: header lines are not rows" ((readOracle text).size == 2)
   no "oracle: a case agreeing with itself passes" (judge (readOracle text) "pdf" "lualatex" 0 == (1, 1))
   no "oracle: a case missing an engine counts and fails"
-    (judge (readOracle text) "html" "pdf" 100 == (0, 1))
+    (judge (readOracle text) "chromium" "pdf" 100 == (0, 1))
 
 def main (args : List String) : IO UInt32 :=
   tierMain "cancel" (.pairs "pass" "rows") measureTier selftest args

@@ -168,6 +168,9 @@ public structure Config where
   /-- Measured cancellation in the surrounding text style. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
     Math.MList → Math.MList → Option Math.CancelMetric := fun _ _ _ _ _ _ => none
+  /-- The size, in the run's font units, and that em a `\left…\right` body's delimiters stretch to. -/
+  delimTarget : MeasureValues → Array Ir.Style → Math.MathStyle → Math.MList → Option (Int × Int) :=
+    fun _ _ _ _ => none
   /-- The same run's font unit for explicitly sized math lengths. -/
   mathEm : MeasureValues → Array Ir.Style → Math.MathStyle → Option Int := fun _ _ _ => none
   /-- The ambient text em that text-sourced math alphabets keep. -/
@@ -402,6 +405,7 @@ public def mathMarks (cfg : Config) : MathMl.Marks :=
     alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.SymLength.ofLength Math.minAlignSep)
       else classLengthCss cfg.page.fontSize (Dim.SymLength.ofLength Math.minAlignSep)
     metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
+    delim := cfg.delimTarget cfg.measureValues cfg.mathStyles
     em := cfg.mathEm cfg.measureValues cfg.mathStyles
     textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles
     literal := cfg.literal }

@@ -94,28 +94,34 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
     let width := boxWidth + margin
     let top ← readEm em (nodeAttr "height" node)
     let depth ← readEm em (nodeAttr "depth" node)
-    let text ← (nodeKids node)[0]?
+    let strike ← (nodeKids node)[0]?
     let b ← (nodeKids node)[1]?
     let v ← (nodeKids node)[2]?
     if (MathMl.nodeChars #[] b) != #['x'] || (MathMl.nodeChars #[] v) != #['7'] then none else do
       let (bl, ba, by_) ← cancelBox em b
       let (vl, _, vy) ← cancelBox em v
       let target ← (nodeKids v)[0]?
+      let text ← (nodeKids strike)[0]?
       let svg ← (nodeKids text)[0]?
-      if cancelTag text != "mtext" || cancelTag svg != "svg" ||
+      -- Both engines place a zero-size mpadded by its margins and voffset; Firefox ignores an SVG's
+      -- own margins inside mtext and stands it by its ink, so the SVG holds every vertex.
+      if cancelTag strike != "mpadded" || nodeAttr "width" strike != "0" ||
+          nodeAttr "height" strike != "0" || nodeAttr "depth" strike != "0" ||
+          nodeAttr "lspace" strike != "0" || (nodeKids strike).size != 1 ||
+          cancelTag text != "mtext" || cancelTag svg != "svg" ||
           !(nodeCss "position" svg).isEmpty || nodeCss "vertical-align" svg != "baseline" ||
-          nodeCss "overflow" svg != "visible" ||
+          nodeCss "overflow" svg != "visible" || hasStr (nodeAttr "style" svg) "margin" ||
           !(nodeAttr "preserveAspectRatio" svg).isEmpty then none else do
-        let ox ← readEm em (nodeCss "margin-left" svg)
-        let ob ← readEm em (nodeCss "margin-bottom" svg)
-        let right ← readEm em (nodeCss "margin-right" svg)
+        let ox ← readEm em (nodeCss "margin-left" strike)
+        let right ← readEm em (nodeCss "margin-right" strike)
+        let ob ← readEm em (nodeAttr "voffset" strike)
         let sw ← readEm em (nodeCss "width" svg)
         let sh ← readEm em (nodeCss "height" svg)
         let vb ← ((nodeAttr "viewBox" svg).splitOn " ").mapM String.toInt?
         match vb with
         | [x0, y0, w, h] =>
           -- The strike takes no advance and keeps its viewBox's aspect.
-          if w ≤ 0 || h ≤ 0 || sw ≤ 0 || sh ≤ 0 || (ox + sw + right).natAbs > 1 ||
+          if w ≤ 0 || h ≤ 0 || sw ≤ 0 || sh ≤ 0 || (ox + right).natAbs > 1 ||
               (sw * h - sh * w).natAbs > w + h then none else do
             let polys ← (nodeKids svg).mapM fun poly => do
               if cancelTag poly != "polygon" || !(nodeKids poly).isEmpty then none else do
@@ -124,6 +130,7 @@ private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := 
                   | [xs, ys] =>
                     let x ← xs.toInt?
                     let y ← ys.toInt?
+                    guard (x0 ≤ x && x ≤ x0 + w && y0 ≤ y && y ≤ y0 + h)
                     return (ox + (x - x0) * sw / w, ob + sh - (y - y0) * sh / h)
                   | _ => none
                 return pts.toArray
@@ -138,17 +145,21 @@ private def cancelEpsilon (em : Int) : Int := (em + 1999999) / 2000000 + 1
 
 private def cancelNear (eps a b : Int) : Bool := (a - b).natAbs ≤ eps.toNat
 
+/-- A strike vertex also carries the SVG's fixed user unit, its own and its viewport's rounding. -/
+private def cancelSvgEpsilon (em : Int) : Int := cancelEpsilon em + 2 * (em / MathMl.svgPerEm + 1)
+
 /-- Source parity as a projection check: the points SVG maps, the operand and the value against
 the shared geometry, untranslated. -/
 private def cancelProjection (em : Int) (i : CancelIn) (room : Bool)
     (r : CancelHtmlRead) : Bool :=
   let g := Math.cancelGeom .to room i
   let eps := 4 * cancelEpsilon em
+  let veps := 4 * cancelSvgEpsilon em
   r.polys.size == g.polys.size &&
     (List.zip r.polys.toList g.polys.toList).all (fun (got, want) =>
       got.size == want.size &&
       (List.zip got.toList want.toList).all (fun (p, q) =>
-        cancelNear eps p.1 q.1 && cancelNear eps p.2 q.2)) &&
+        cancelNear veps p.1 q.1 && cancelNear veps p.2 q.2)) &&
     cancelNear eps r.body.1 g.shift && cancelNear eps r.body.2 0 &&
     cancelNear eps r.value.1 g.valueX && cancelNear eps r.value.2 g.valueY
 
@@ -156,14 +167,16 @@ private def cancelContained (metric : CancelMetric) (room : Bool)
     (r : CancelHtmlRead) : Bool :=
   let i := metric.input
   let eps := cancelEpsilon metric.em
-  let points := r.polys.foldl (· ++ ·) #[]
-  let points := points ++ #[(r.body.1, i.bot), (r.body.1 + i.w, i.top),
+  let veps := cancelSvgEpsilon metric.em
+  let strike := r.polys.foldl (· ++ ·) #[]
+  let points : Array (Int × Int) := #[(r.body.1, i.bot), (r.body.1 + i.w, i.top),
     (r.body.1 + metric.bodyLeft, i.bot), (r.body.1 + metric.bodyRight, i.top),
     (r.value.1 + i.vleft, r.value.2 + i.vbot),
     (r.value.1 + i.vright, r.value.2 + i.vtop),
     (r.value.1, r.value.2), (r.value.1 + i.vw, r.value.2)]
   let logical := #[r.body.1, r.body.1 + i.w, r.value.1, r.value.1 + i.vw]
-  points.all (fun (_, y) => y + eps ≥ r.bot && y - eps ≤ r.top) &&
+  strike.all (fun (_, y) => y + veps ≥ r.bot && y - veps ≤ r.top) &&
+    points.all (fun (_, y) => y + eps ≥ r.bot && y - eps ≤ r.top) &&
     (!room || logical.all fun x => x + eps ≥ 0 && x - eps ≤ r.width) &&
     (room || (cancelNear eps r.width i.w && cancelNear eps r.body.1 0))
 
@@ -298,20 +311,26 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
                   (MathMl.measuredEm (r.value.2 - 200) em) (nodeKids node)[2]!
                let bad := cancelRead em (cancelSetChild 2 value node)
                bad.isSome && !(bad.any (cancelProjection em input room)))
+            let withSvg (svg : Html.Node) : Html.Node :=
+              let strike := (nodeKids node)[0]!
+              cancelSetChild 0 (cancelSetChild 0 (cancelSetChild 0 svg (nodeKids strike)[0]!)
+                strike) node
             t s!"cancel HTML measured {label}: a stretched strike is unreadable"
-              ((nodeKids node)[0]?.all fun text => (cancelRead em (cancelSetChild 0
-                (cancelSetChild 0 (cancelSetAttr "preserveAspectRatio" "none" r.svg) text)
-                node)).isNone)
+              (cancelRead em (withSvg (cancelSetAttr "preserveAspectRatio" "none" r.svg))).isNone
+            t s!"cancel HTML measured {label}: a strike placed by the SVG's own margins is unreadable"
+              (cancelRead em (withSvg (cancelSetAttr "style"
+                (nodeAttr "style" r.svg ++ "; margin-left: -0.1em") r.svg))).isNone
+            t s!"cancel HTML measured {label}: ink past the SVG's viewBox is unreadable"
+              (let narrowed := match ((nodeAttr "viewBox" r.svg).splitOn " ").map String.toInt? with
+                | [some x, some y, some w, some h] => s!"{x + w} {y} {w} {h}"
+                | _ => ""
+               (cancelRead em (withSvg (cancelSetAttr "viewBox" narrowed r.svg))).isNone)
             t s!"cancel HTML measured {label}: bounds judge rejects clipped height"
               (let bad := cancelRead em (cancelSetAttr "height" "0" node)
                bad.isSome && !(bad.any (cancelContained metric room)))
-            let moved := match ((nodeAttr "viewBox" r.svg).splitOn " ").map String.toInt? with
-              | [some x, some y, some w, some h] => s!"{x + em} {y} {w} {h}"
-              | _ => ""
-            let svg := cancelSetAttr "viewBox" moved r.svg
-            let text := cancelSetChild 0 svg (nodeKids node)[0]!
-            t s!"cancel HTML measured {label}: parity judge rejects a changed SVG origin"
-              (let bad := cancelRead em (cancelSetChild 0 text node)
+            let shifted := cancelSetAttr "voffset" (MathMl.measuredEm (-em) em) (nodeKids node)[0]!
+            t s!"cancel HTML measured {label}: parity judge rejects a moved strike"
+              (let bad := cancelRead em (cancelSetChild 0 shifted node)
                bad.isSome && !(bad.any (cancelProjection em input room)))
 
   -- Body ink past its advance overhangs as cancel.sty's box lets it; the box is the mark's advance.

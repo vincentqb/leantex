@@ -3620,16 +3620,19 @@ private def delimAssembleTo (e : MathEnv) (size raise : Length) (l r : Option Ch
   items := items ++ struts e (raise + top) (raise + bot)
   return (items, missing)
 
-/-- Assemble a laid `\left…\right` body between delimiters grown
-to cover its reach from the axis (TeXbook Appendix G rule 19). -/
-private def delimAssemble (e : MathEnv) (size raise : Length) (l r : Option Char)
-    (bItems : Array Item) (missing0 : Array (Nat × Char)) :
-    Array Item × Array (Nat × Char) :=
+/-- The size a `\left…\right` pair's delimiters grow to over a laid body: its reach from the
+axis, short by `\delimiterfactor` 901 or `\delimitershortfall` 5 pt (TeXbook Appendix G rule 19). -/
+private def delimTargetOf (e : MathEnv) (size : Length) (bItems : Array Item) : Length :=
   let axis := e.constAt size e.consts.axisHeight
   let (bTop, bBot) := mathItemsExtent e.fs bItems
   let δ := max (bTop - axis) (axis - bBot)
-  delimAssembleTo e size raise l r (max (2 * δ * 901 / 1000) (2 * δ - size / 2)) true
-    bItems missing0
+  max (2 * δ * 901 / 1000) (2 * δ - size / 2)
+
+/-- Assemble a laid `\left…\right` body between delimiters grown to `delimTargetOf`. -/
+private def delimAssemble (e : MathEnv) (size raise : Length) (l r : Option Char)
+    (bItems : Array Item) (missing0 : Array (Nat × Char)) :
+    Array Item × Array (Nat × Char) :=
+  delimAssembleTo e size raise l r (delimTargetOf e size bItems) true bItems missing0
 
 /-- Assemble laid grid cells as `\halign` does: each column as wide as its widest
 cell, rows a baselineskip plus `\jot` apart, the grid centred on the axis. -/
@@ -3647,10 +3650,12 @@ private def gridAssemble (e : MathEnv) (size raise : Length) (kind : Math.GridKi
     (colW[k]!, muAt size (kind.gapAfter k n : Int) + kind.pairSep k n)
   let total := Math.colOffset cols n
   let bl := leadingFor size
-  -- plain.tex's `\lineskip`, size-relative; a `smallmatrix` declares its own (`GridKind.small`).
+  -- plain.tex's `\lineskip`, size-relative; a `smallmatrix` declares its own (`GridKind.small`);
+  -- an `array`'s rows touch, as `\@array` zeroes it.
   let gridSkip := match kind with
     | .small => size * 15 / 100
-    | .array _ _ | .align | .aligned _ | .gather => size / 10
+    | .array _ _ => 0
+    | .align | .aligned _ | .gather => size / 10
   -- LaTeX's `\jot` (latex.ltx), size-relative; an `array` takes none.
   let jot := match kind with
     | .array _ _ | .small => 0
@@ -3660,10 +3665,14 @@ private def gridAssemble (e : MathEnv) (size raise : Length) (kind : Math.GridKi
     | .array _ s => bl * (s : Int) / 1000
     | .small => size * 6 / 10
     | .align | .aligned _ | .gather => bl
+  -- An array row holds `\@arstrut`, seven tenths of its pitch above and three below.
+  let strut : Length × Length := match kind with
+    | .array _ _ => (pitch * 7 / 10, -(pitch - pitch * 7 / 10))
+    | .small | .align | .aligned _ | .gather => (0, 0)
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
       let (ct, cb) := mathItemsExtent e.fs cell
-      (max t ct, min b cb)) ((0 : Length), (0 : Length))
+      (max t ct, min b cb)) strut
   let mut ys : Array Length := #[]
   let mut y : Length := 0
   for i in [0:cells.size] do
@@ -4337,6 +4346,17 @@ public def mathTextEm (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     (st : Math.MathStyle) (measures : Option MeasureValues := none) : Option Int := do
   let e ← MathEnv.forStyles geom fs styles measures
   if e.textSizeAt st ≤ 0 then none else some (e.textSizeAt st).units
+
+/-- A `\left…\right` body's delimiter size for another backend, and the em it is in, through the
+same walk as native placement. -/
+public def delimTarget (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
+    (st : Math.MathStyle) (body : Math.MList) (measures : Option MeasureValues := none) :
+    Option (Int × Int) := do
+  let e ← MathEnv.forStyles geom fs styles measures
+  let size := e.sizeAt st
+  if size ≤ 0 then none else
+    let (bs, _) := layMathTail e st 0 (Math.degrade body.classes) none (#[], #[]) body
+    some ((delimTargetOf e size bs).units, size.units)
 
 /-- Font-measured cancellation for another backend, resolved through the same
 text-style and math walks as native placement, style history outermost first. -/

@@ -15,7 +15,8 @@ structure Case where
   deriving Inhabited
 
 /-- Every slope class of `\cancel` and `\cancelto`, narrow, wide and tall operands, inline and
-display, a sum with a limit, an integral with both limits and a fraction. -/
+display, scripts, fractions, delimiters, matrices, edge operators, deep and tall values, sums and
+integrals with limits. -/
 def cases : List Case :=
   let v := "\\textcolor{probeval}"
   [ ⟨"cancel-narrow", "\\cancel{v}", false⟩
@@ -27,7 +28,32 @@ def cases : List Case :=
   , ⟨"to-wide", s!"\\cancelto\{{v}\{0}}\{a+b}", false⟩
   , ⟨"to-integral", s!"\\cancelto\{{v}\{\\infty}}\{\\int_0^1 t}", false⟩
   , ⟨"to-fraction", s!"\\cancelto\{{v}\{0}}\{\\frac\{r}\{s}}", true⟩
-  , ⟨"to-sum", s!"\\cancelto\{{v}\{0}}\{\\sum_\{n} c_n (z_n - w)}", true⟩ ]
+  , ⟨"to-sum", s!"\\cancelto\{{v}\{0}}\{\\sum_\{n} c_n (z_n - w)}", true⟩
+  , ⟨"sup-cancel", s!"e^\{\\cancel\{x}}", false⟩
+  , ⟨"sub-cancelto", s!"a_\{\\cancelto\{{v}\{0}}\{b}}", false⟩
+  , ⟨"sup-cancelto", s!"z^\{\\cancelto\{{v}\{0}}\{u+v}}", false⟩
+  , ⟨"nested", s!"\\cancel\{\\cancelto\{{v}\{0}}\{x+y}}", false⟩
+  , ⟨"frac-den", s!"\\frac\{a}\{\\cancelto\{{v}\{1}}\{c+d}}", true⟩
+  , ⟨"frac-in", s!"\\cancelto\{{v}\{0}}\{\\frac\{p}\{q}}", false⟩
+  , ⟨"leftright", s!"\\left(\\cancelto\{{v}\{0}}\{\\frac\{m}\{n}}\\right)", true⟩
+  , ⟨"edge-plus", s!"\\cancel\{+x}", false⟩
+  , ⟨"edge-rel", s!"\\cancel\{=y}", false⟩
+  , ⟨"edge-to", s!"\\cancelto\{{v}\{0}}\{-y}", false⟩
+  , ⟨"wide-inline", s!"\\cancelto\{{v}\{0}}\{a+b+c+d+e+f+g+h}", false⟩
+  , ⟨"narrow-dot", s!"\\cancel\{.}", false⟩
+  , ⟨"narrow-to", s!"\\cancelto\{{v}\{0}}\{l}", false⟩
+  , ⟨"raised", s!"\\cancel\{\{}^\{2}}", false⟩
+  , ⟨"raised-to", s!"\\cancelto\{{v}\{0}}\{\{}^\{\\prime}}", false⟩
+  , ⟨"deep-val", s!"\\cancelto\{{v}\{g_\{y}}}\{x+1}", false⟩
+  , ⟨"frac-val", s!"\\cancelto\{{v}\{\\frac\{1}\{2}}}\{x+1}", false⟩
+  , ⟨"tall-val", s!"\\cancelto\{{v}\{Q_j^2}}\{w}", true⟩
+  , ⟨"pmatrix", s!"\\cancel\{\\begin\{pmatrix}a\\\\b\\end\{pmatrix}}", true⟩
+  , ⟨"bcancel-tall", s!"\\bcancel\{\\frac\{a}\{b}}", true⟩
+  , ⟨"xcancel-wide", s!"\\xcancel\{a+b+c}", true⟩
+  , ⟨"int-op", s!"\\cancel\{\\int_0^1 f\\,dx}", true⟩
+  , ⟨"sum-both", s!"\\cancelto\{{v}\{0}}\{\\sum_\{i=1}^\{n} y_i}", true⟩
+  , ⟨"sum-paren", s!"\\cancelto\{{v}\{0}}\{\\sum_\{k} c_\{k} (a_\{k}-b_\{k})}", true⟩
+  , ⟨"inline-sum", s!"\\cancelto\{{v}\{0}}\{\\sum_\{k} c_\{k} (a_\{k}-b_\{k})}", false⟩ ]
 
 /-- The package options a case is set under. -/
 def rooms : List (String × String) :=
@@ -122,7 +148,13 @@ leantex's PDF also carries the browser's own layout of the operand. -/
 def pdfTolerance : Nat := 100
 def htmlTolerance : Nat := 100
 
-def engines : List String := ["lualatex", "pdf", "html"]
+def engines : List String := ["lualatex", "pdf", "chromium", "firefox"]
+
+/-- The pairs the tier judges, each engine against its reference at its tolerance. -/
+def judgements : List (String × String × Nat) :=
+  [("pdf", "lualatex", pdfTolerance), ("chromium", "pdf", htmlTolerance),
+   ("chromium", "lualatex", htmlTolerance), ("firefox", "pdf", htmlTolerance),
+   ("firefox", "lualatex", htmlTolerance)]
 
 /-- An oracle row: `<case>-<room> <engine> <left> <bottom> <right> <top> <valueX|-> <valueY|->`. -/
 def renderRow (label engine : String) (a : Anchors) : String :=

@@ -181,8 +181,8 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
           let vx ← (· + bodyAdvance) <$> readEm em (← css value "margin-left")
           let vy ← readEm em (nodeAttr "voffset" value)
           let #[svg] := elemNodesOne (· == "svg") #[] text | none
-          let ox ← readEm em (← css svg "margin-left")
-          let oy ← readEm em (← css svg "margin-bottom")
+          let ox ← readEm em (← css text "margin-left")
+          let oy ← readEm em (nodeAttr "voffset" text)
           let [x0, y0, width, height] ←
             ((nodeAttr "viewBox" svg).splitOn " ").mapM String.toInt? | none
           let sw ← readEm em (← css svg "width")
@@ -196,8 +196,9 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
                 return (Dim.Length.ofUnits (ox + (px - x0) * sw / width),
                   Dim.Length.ofUnits (oy + sh - (py - y0) * sh / height))).map List.toArray
             let .ok tip := CancelAlignment.arrowTip painted | none
-            -- Em spellings, viewport scaling and integer division add at most six unit roundings.
-            let k : Int := (em + 1999999) / 2000000 + 1
+            -- Em spellings, the SVG's fixed user unit, viewport scaling and integer division add
+            -- at most six roundings of each.
+            let k : Int := (em + 1999999) / 2000000 + 1 + em / MathMl.svgPerEm + 1
             let eps := 6 * k * Dim.Length.quantum
             return chars value == "0𝑔" &&
               (nodeAttr "preserveAspectRatio" svg).isEmpty &&

@@ -1,5 +1,5 @@
 /-
-The cancellation oracle: lualatex against leantex's PDF and Chromium page on scripts/CancelProbe's
+The cancellation oracle: lualatex against leantex's PDF and page in Chromium and Firefox on the
 invented probe, read off colour-coded rasters into testdata/oracles/cancel-anchors.txt.
 Usage: lake build leantex ScriptsModules && lake env lean --run scripts/cancel-diff.lean [--report | --selftest | --leantex <binary>]
 -/
@@ -131,12 +131,68 @@ def pdfBoxes (pdf : System.FilePath) (pages : Nat) (work : System.FilePath) :
       "-singlefile", pdf.toString, stem.toString]
     if r.exitCode != 0 then return .error s!"pdftoppm exited {r.exitCode} on {pdf} page {n}"
     let ppm := stem.addExtension "ppm"
+    let t ← run "magick" #[ppm.toString, "-trim", "+repage", ppm.toString]
+    if t.exitCode != 0 then return .error s!"magick exited {t.exitCode} on {ppm}"
     let bytes ← IO.FS.readBinFile ppm
     IO.FS.removeFile ppm
     match ppmBoxes bytes with
     | .error e => return .error s!"{pdf} page {n}: {e}"
     | .ok (some mark, value, some operand) => out := out.push { em, mark, value, operand }
     | .ok _ => return .error s!"{pdf} page {n}: no strike or no operand ink"
+  return .ok out
+
+/-- A page showing only its `k`th paragraph, its root size four times the default, since Firefox's
+headless shot takes no device scale and clips an SVG inside MathML under CSS zoom. -/
+def soloPage (html : String) (k : Nat) : String :=
+  let css := s!"<style>:root \{ font-size: 400% } main > p \{ display: none } \
+main > p:nth-of-type({k + 1}) \{ display: block }</style></head>"
+  match html.splitOn "</head>" with
+  | head :: rest => head ++ css ++ "</head>".intercalate rest
+  | [] => html
+
+/-- One Firefox shot of `page`, its own profile under `work`, trimmed to its ink and read as a PPM. -/
+def firefoxShot (page : System.FilePath) (work : System.FilePath) (stem : String) :
+    IO (Except String (Option Ink × Option Ink × Option Ink)) := do
+  let png := work / s!"{stem}.png"
+  let ppm := work / s!"{stem}.ppm"
+  let url := s!"file://{(← IO.FS.realPath page).toString}"
+  let shot := (← IO.FS.realPath work) / s!"{stem}.png"
+  -- A headless start now and then hangs, so each try is bounded and retried on a fresh profile.
+  let mut code : UInt32 := 0
+  for attempt in [0:3] do
+    let profile := work / s!"ff-profile-{stem}-{attempt}"
+    IO.FS.createDirAll profile
+    let r ← run "timeout" #["60", "firefox", "--headless", "--no-remote", "--profile",
+      (← IO.FS.realPath profile).toString, "--screenshot", shot.toString,
+      "--window-size=2400,1600", url]
+    IO.FS.removeDirAll profile
+    code := r.exitCode
+    if code == 0 && (← png.pathExists) then break
+  unless ← png.pathExists do
+    return .error s!"firefox exited {code} on {page}"
+  let c ← run "magick" #[png.toString, "-trim", "+repage", "-depth", "8", ppm.toString]
+  IO.FS.removeFile png
+  if c.exitCode != 0 then return .error s!"magick exited {c.exitCode} on {png}"
+  let bytes ← IO.FS.readBinFile ppm
+  IO.FS.removeFile ppm
+  return ppmBoxes bytes
+
+/-- Each case of a page in Firefox, one start at a time since simultaneous headless starts wedge
+one another, at the em Chromium measured for it. -/
+def firefoxBoxes (html : System.FilePath) (ems : Array Int) (work : System.FilePath)
+    (tag : String) : IO (Except String (Array Boxes)) := do
+  let text ← IO.FS.readFile html
+  let mut out : Array Boxes := #[]
+  for k in [0:ems.size] do
+    let page := work / s!"ff-{tag}-{k}.html"
+    IO.FS.writeFile page (soloPage text k)
+    let shot ← firefoxShot page work s!"ff-{tag}-{k}"
+    IO.FS.removeFile page
+    match shot with
+    | .error e => return .error e
+    | .ok (some mark, value, some operand) =>
+      out := out.push { em := ems[k]?.getD 0, mark, value, operand }
+    | .ok _ => return .error s!"firefox {tag} case {k}: no strike or no operand ink"
   return .ok out
 
 def selftest : IO UInt32 := Scoreboard.tierSelftest "cancel-diff" fun no => do
@@ -175,7 +231,8 @@ def main (args : List String) : IO UInt32 := do
     IO.eprintln "cancel-diff: build leantex first (lake build leantex)"
     return 2
   let leantex ← IO.FS.realPath (other.getD own)
-  for (cmd, probe) in [("lualatex", #["--version"]), ("pdftoppm", #["-v"]), ("node", #["--version"])] do
+  for (cmd, probe) in [("lualatex", #["--version"]), ("pdftoppm", #["-v"]), ("node", #["--version"]),
+      ("firefox", #["--version"]), ("magick", #["-version"])] do
     if (← toolVersion cmd probe ".") == "unavailable" then
       IO.eprintln s!"cancel-diff: {cmd} not available — untested"
       return 2
@@ -206,30 +263,30 @@ def main (args : List String) : IO UInt32 := do
     if html.exitCode != 0 then
       IO.eprintln s!"cancel-diff: the browser probe failed: {html.stderr.trimAscii}"; return 1
     let web := ((html.stdout.splitOn "\n").filterMap parseMathLine).toArray
-    match lua, pdf with
-    | .ok lua, .ok pdf =>
-      if lua.size != pages || pdf.size != pages || web.size != pages then
-        IO.eprintln s!"cancel-diff: {tag}: {lua.size}, {pdf.size} and {web.size} cases measured, \
-{pages} expected"
+    let ff ← firefoxBoxes (probeDir / s!"lean-{tag}.html") (web.map (·.em)) work tag
+    match lua, pdf, ff with
+    | .ok lua, .ok pdf, .ok ff =>
+      if lua.size != pages || pdf.size != pages || web.size != pages || ff.size != pages then
+        IO.eprintln s!"cancel-diff: {tag}: {lua.size}, {pdf.size}, {web.size} and {ff.size} cases \
+measured, {pages} expected"
         return 1
-      for ((c, l), (p, h)) in (cases.toArray.zip lua).zip (pdf.zip web) do
+      for (((c, l), (p, h)), f) in ((cases.toArray.zip lua).zip (pdf.zip web)).zip ff do
         let label := s!"{c.label}-{tag}"
-        for (engine, b) in [("lualatex", l), ("pdf", p), ("html", h)] do
+        for (engine, b) in [("lualatex", l), ("pdf", p), ("chromium", h), ("firefox", f)] do
           rows := rows.push (renderRow label engine b.anchors)
-    | .error e, _ | _, .error e => IO.eprintln s!"cancel-diff: {e}"; return 1
+    | .error e, _, _ | _, .error e, _ | _, _, .error e => IO.eprintln s!"cancel-diff: {e}"; return 1
   let parsed := rows.filterMap parseRow
-  let (pp, pn) := judge parsed "pdf" "lualatex" pdfTolerance
-  let (hp, hn) := judge parsed "html" "pdf" htmlTolerance
-  let (lp, ln) := judge parsed "html" "lualatex" htmlTolerance
   for r in rows do IO.println s!"  {r}"
-  IO.println s!"cancel-diff: pdf within {pdfTolerance}‰ em of lualatex: {pp}/{pn}; \
-html within {htmlTolerance}‰ of pdf: {hp}/{hn}; html within {htmlTolerance}‰ of lualatex: {lp}/{ln}"
+  for (engine, against, tol) in judgements do
+    let (n, d) := judge parsed engine against tol
+    IO.println s!"cancel-diff: {engine} within {tol}‰ em of {against}: {n}/{d}"
   if reportOnly then return 0
   let lv ← toolVersion "lualatex" #["--version"] "."
   let pv ← toolVersion "pdftoppm" #["-v"] "."
   let text := "# generated by scripts/cancel-diff.lean — do not hand-edit; regenerate: \
 lake env lean --run scripts/cancel-diff.lean\n" ++
-    s!"tools: {lv.trimAscii}; {pv.trimAscii}; chromium {chromium} (playwright {← moduleVersion module})\n" ++
+    s!"tools: {lv.trimAscii}; {pv.trimAscii}; chromium {chromium} (playwright {← moduleVersion module}); \
+{(← toolVersion "firefox" #["--version"] ".").trimAscii}\n" ++
     s!"src-key: {key}\n" ++
     "# <case>-<room> <engine> <left> <bottom> <right> <top> <valueX> <valueY>, thousandths of an em: \
 the strike's ink edges past the operand's, the value's left past its right and bottom above its bottom\n" ++

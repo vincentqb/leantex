@@ -62,9 +62,12 @@ def stretchPad (stretch : Nat) : Option String :=
     some s!"padding-top: calc(0.5ex + {em}); padding-bottom: calc(0.5ex + {em})"
 
 /-- A `\left`/`\right` delimiter: stretchy and symmetric about the math axis (MathML Core
-§3.2.4.2). -/
-def delimMo (c : Char) : Html.Node :=
-  .elem "mo" #[("stretchy", "true"), ("symmetric", "true")]
+§3.2.4.2), held to the size TeX's rule 19 asks of it where layout measured one. -/
+def delimMo (size : Option String) (c : Char) : Html.Node :=
+  let attrs := #[("stretchy", "true"), ("symmetric", "true")]
+  .elem "mo" (match size with
+    | some sz => attrs ++ #[("minsize", sz), ("maxsize", sz)]
+    | none => attrs)
     #[.text (charText c)]
 
 /-- A `\genfrac` delimiter stretched to exactly `size`. -/
@@ -163,6 +166,8 @@ public structure Marks where
   /-- The current style's em and measured input; `none` keeps the semantic fallback. -/
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
     fun _ _ _ _ => none
+  /-- The size, in provider units, and the em a `\left…\right` pair's delimiters stretch to. -/
+  delim : MathStyle → MList → Option (Int × Int) := fun _ _ => none
   style : MathStyle := .text false
   /-- The class of the atom before in the current list, `none` at its start. -/
   prev : Option MathClass := none
@@ -191,7 +196,10 @@ def fracNode (mk : Marks) (disp : Bool) (spec : FracSpec)
     (num den : Array Html.Node) : Html.Node :=
   let st := spec.style.getD mk.style
   let fm := { mk with style := st }
-  let bar := Html.Node.elem "mfrac" (ruleAttrs spec.rule (mk.em st))
+  -- `\nulldelimiterspace`, 0.12 em, on each side no delimiter stands, in place of the UA's 1px.
+  let nd (side : Option Char) : String := if side.isNone then "0.12em" else "0"
+  let bar := Html.Node.elem "mfrac" ((ruleAttrs spec.rule (mk.em st)).push
+      ("style", s!"padding-inline: {nd spec.left} {nd spec.right}"))
     #[.elem "mrow" (relativeStyle fm st.fracNum) num,
       .elem "mrow" (relativeStyle fm st.fracDen) den]
   if spec.style.isNone && spec.left.isNone && spec.right.isNone then bar
@@ -294,9 +302,20 @@ private def cancelReach (metric : CancelMetric) (g : CancelGeom) : CancelReach :
     else body
   g.polys.foldl (fun r ps => ps.foldl CancelReach.point r) body
 
-/-- One source polygon in SVG's downward y. -/
-def cancelPolygon (ink : String) (ps : Array (Int × Int)) : Html.Node :=
-  let points := String.intercalate " " (ps.toList.map fun (x, y) => s!"{x},{-y}")
+/-- SVG user units per em: Firefox drops path coordinates of a few million units, so a strike's
+coordinates stand at this fixed scale, never the provider's. -/
+public def svgPerEm : Int := 10000
+
+/-- A provider length in SVG user units, rounded half away from zero so that negation commutes. -/
+public def svgUnits (em v : Int) : Int :=
+  let d := max 1 em
+  let m := (v.natAbs * svgPerEm.toNat + d.toNat / 2) / d.toNat
+  if v < 0 then -(m : Int) else m
+
+/-- One source polygon in SVG user units and SVG's downward y. -/
+def cancelPolygon (em : Int) (ink : String) (ps : Array (Int × Int)) : Html.Node :=
+  let points := String.intercalate " " (ps.toList.map fun (x, y) =>
+    s!"{svgUnits em x},{-svgUnits em y}")
   .elem "polygon" #[("points", points), ("fill", ink)] #[]
 
 /-- A box of measured advance `width` whose start stands `x` past the pen, its content raised `y`. -/
@@ -357,8 +376,8 @@ its last. -/
 def edgeSpaced (e : Edges) (ns : Array Html.Node) : Array Html.Node :=
   (ns.modify e.first (zeroEdge "lspace" e.lead)).modify e.last (zeroEdge "rspace" e.trail)
 
-/-- Measured cancellation: the strike as one SVG at its own size, its margins standing it at the
-mark's origin with no advance and its depth below the baseline, then the struck MathML and the value at their measured
+/-- Measured cancellation: the strike as one SVG holding all its ink, set on a zero-size box whose
+margins and offset stand it at its reach, then the struck MathML and the value at their measured
 places. -/
 def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
     (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
@@ -370,21 +389,27 @@ def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
   let ink := match spec.color with
     | some (c, n) => inkCss mk.literal c n
     | none => "currentColor"
-  let sw := max 1 (reach.right - reach.left)
-  let sh := max 1 (reach.top - reach.bot)
+  let left := svgUnits em reach.left
+  let top := svgUnits em reach.top
+  let bot := svgUnits em reach.bot
+  let sw := max 1 (svgUnits em reach.right - left)
+  let sh := max 1 (top - bot)
   let svg := Html.Node.elem "svg"
     #[("xmlns", "http://www.w3.org/2000/svg"),
-      ("viewBox", s!"{reach.left} {-reach.top} {sw} {sh}"),
+      ("viewBox", s!"{left} {-top} {sw} {sh}"),
       ("aria-hidden", "true"), ("focusable", "false"),
-      ("style", s!"width: {measuredEm sw em}; height: {measuredEm sh em}; \
-margin-left: {measuredEm reach.left em}; margin-right: {measuredEm (-(reach.left + sw)) em}; \
-margin-bottom: {measuredEm reach.bot em}; vertical-align: baseline; overflow: visible; pointer-events: none")]
-    (g.polys.map (cancelPolygon ink))
+      ("style", s!"width: {measuredEm sw svgPerEm}; height: {measuredEm sh svgPerEm}; \
+vertical-align: baseline; overflow: visible; pointer-events: none")]
+    (g.polys.map (cancelPolygon em ink))
+  let strike := Html.Node.elem "mpadded" #[("width", "0"), ("height", "0"), ("depth", "0"),
+    ("lspace", "0"), ("voffset", measuredEm bot svgPerEm),
+    ("style", s!"margin-left: {measuredEm left svgPerEm}; margin-right: {measuredEm (-left) svgPerEm}")]
+    #[.elem "mtext" #[] #[svg]]
   let body := cancelAt em g.shift 0 i.w (.elem "mrow" #[] struck)
   let value := cancelAt em (g.valueX - g.shift - i.w) g.valueY i.vw
     (paint (spec.color.map fun (c, n) => inkCss mk.literal c n)
       (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals))
-  let kids := #[.elem "mtext" #[] #[svg], body]
+  let kids := #[strike, body]
   .elem "mpadded" (advanceAttrs em g.advance ++
     #[("height", measuredEm reach.top em), ("depth", measuredEm (-reach.bot) em),
       ("data-cancel-metric", "measured")])
@@ -516,6 +541,16 @@ def spaced (extra : Array (String × String)) : Html.Node → Html.Node
   | .style s => .style s
   | .script src nonce => .script src nonce
 
+/-- A `\left…\right` body's delimiter size as CSS reads it, where layout measured one. -/
+def delimSize (mk : Marks) (body : MList) : Option String :=
+  (mk.delim mk.style body).bind fun (t, em) => if 0 < em then some (measuredEm t em) else none
+
+/-- A lone operator's attributes: it never stretches, and in a script style any class but a large
+operator sets with no space, as TeX's spacing table gives (TeXbook p. 170). -/
+def moAttrs (st : MathStyle) (cls : MathClass) : Array (String × String) :=
+  if st.rank ≤ 1 && cls != .op then #[("stretchy", "false"), ("lspace", "0"), ("rspace", "0")]
+  else #[("stretchy", "false")]
+
 mutual
 
 /-- The MathML children of a math list, one element per item, onto `acc`;
@@ -549,14 +584,14 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
     -- A lone scalar never stretches: only `\left`/`\right` grow a delimiter.
     let tag := leafTag cls c
     .elem tag (if tag == "mi" then #[("mathvariant", "normal")]
-        else if tag == "mo" then #[("stretchy", "false")] else #[])
+        else if tag == "mo" then moAttrs mk.style cls else #[])
       #[.text (charText c)]
   | .styled style c =>
     -- Chromium honours no non-`normal` `mathvariant`, so a text style's axes ride on CSS.
     let tag := leafTag cls c
     let base : Array (String × String) := match tag with
       | "mi" => #[("mathvariant", "normal")]
-      | "mo" => #[("stretchy", "false")]
+      | "mo" => moAttrs mk.style cls
       | _ => #[]
     -- Firefox drops a plain relative font size beside a family change; `calc` keeps the ratio.
     let sizing := match mk.textEm mk.style, mk.em mk.style with
@@ -583,11 +618,11 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
       (relativeStyle mk (.scriptscript mk.style.cramped))
   | .delim l r body =>
     let opened := match l with
-      | some c => #[delimMo c]
+      | some c => #[delimMo (delimSize mk body) c]
       | none => (#[] : Array Html.Node)
     let withBody := listNodes mk disp none opened body
     let closed := match r with
-      | some c => withBody.push (delimMo c)
+      | some c => withBody.push (delimMo (delimSize mk body) c)
       | none => withBody
     .elem "mrow" #[] closed
   | .big d step =>
@@ -638,14 +673,15 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
       | .gather, .left => #[("style", "text-align: left")]
       | .gather, .right =>
         #[("style", "text-align: right; text-align: -webkit-right")]
+      -- `\arraycolsep` both sides of an inner column edge, none at the grid's outer edges.
       | .array _ s, a =>
         let align := match a with
           | .center => none
           | .left => some "text-align: left"
           | .right => some "text-align: right; text-align: -webkit-right"
-        match [align, stretchPad s].filterMap id with
-        | [] => #[]
-        | parts => #[("style", "; ".intercalate parts)]
+        let inline := s!"padding-inline: {if k == 0 then "0" else "0.5em"} \
+{if rest matches .nil then "0" else "0.5em"}"
+        #[("style", "; ".intercalate ([align, stretchPad s, some inline].filterMap id))]
       -- `\thickspace` before later columns, half `1.5\ex@` above and below, in a 70% script em.
       | .small, _ =>
         #[("style", if k == 0 then "padding: 0.107em 0" else "padding: 0.107em 0 0.107em 0.397em")]
@@ -797,8 +833,8 @@ theorem moLeaf_chars (t : String) (attrs : Array (String × String))
   show pushChars c (charText m).toList = c.push m
   exact pushChars_charText c m
 
-theorem delimMo_chars (m : Char) (c : Array Char) :
-    nodeChars c (delimMo m) = c.push m :=
+theorem delimMo_chars (sz : Option String) (m : Char) (c : Array Char) :
+    nodeChars c (delimMo sz m) = c.push m :=
   moLeaf_chars "mo" _ m c
 
 theorem toList_of_isEmpty {α : Type} {a : Array α} (h : a.isEmpty = true) :
@@ -834,9 +870,9 @@ theorem spaced_chars (extra : Array (String × String)) (n : Html.Node) (c : Arr
     nodeChars c (spaced extra n) = nodeChars c n := by
   cases n <;> rfl
 
-theorem cancelPolygons_chars (ink : String)
+theorem cancelPolygons_chars (em : Int) (ink : String)
     (ps : List (Array (Int × Int))) (c : Array Char) :
-    nodeListChars c (ps.map (cancelPolygon ink)) = c := by
+    nodeListChars c (ps.map (cancelPolygon em ink)) = c := by
   induction ps with
   | nil => rfl
   | cons p ps ih => simpa [cancelPolygon, nodeChars, nodeListChars] using ih
@@ -1147,28 +1183,28 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
         rfl
       | some cr =>
         show nodeListChars c
-            ((listNodes mk disp none #[] body).push (delimMo cr)).toList
+            ((listNodes mk disp none #[] body).push (delimMo (delimSize mk body) cr)).toList
           = (listChars c body).push cr
         rw [Array.toList_push, nodeListChars_append,
           listNodes_chars mk disp none body #[] c]
-        show nodeChars (listChars c body) (delimMo cr) = _
+        show nodeChars (listChars c body) (delimMo (delimSize mk body) cr) = _
         rw [delimMo_chars]
     | some cl =>
       cases r with
       | none =>
-        show nodeListChars c (listNodes mk disp none #[delimMo cl] body).toList
+        show nodeListChars c (listNodes mk disp none #[delimMo (delimSize mk body) cl] body).toList
           = listChars (c.push cl) body
         rw [listNodes_chars mk disp none body]
-        show listChars (nodeChars c (delimMo cl)) body = _
+        show listChars (nodeChars c (delimMo (delimSize mk body) cl)) body = _
         rw [delimMo_chars]
       | some cr =>
         show nodeListChars c
-            ((listNodes mk disp none #[delimMo cl] body).push (delimMo cr)).toList
+            ((listNodes mk disp none #[delimMo (delimSize mk body) cl] body).push (delimMo (delimSize mk body) cr)).toList
           = (listChars (c.push cl) body).push cr
         rw [Array.toList_push, nodeListChars_append,
           listNodes_chars mk disp none body]
-        show nodeChars (listChars (nodeChars c (delimMo cl)) body)
-            (delimMo cr) = _
+        show nodeChars (listChars (nodeChars c (delimMo (delimSize mk body) cl)) body)
+            (delimMo (delimSize mk body) cr) = _
         rw [delimMo_chars, delimMo_chars]
   | .big d step, c => by
     cases d with
@@ -1454,11 +1490,11 @@ theorem cancelNode_tagFree (mk : Marks) (disp : Bool) (mark : CancelMark) (spec 
   cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
     simp [tagFree, tagFreeList, tagFreeList_append, hs, hv, contentTags_false hp]
 
-theorem delimMo_tagFree (c : Char) : tagFree p (delimMo c) = true := by
+theorem delimMo_tagFree (sz : Option String) (c : Char) : tagFree p (delimMo sz c) = true := by
   simp [delimMo, tagFree, tagFreeList, contentTags_false hp]
 
-theorem cancelPolygons_tagFree (ink : String) (ps : List (Array (Int × Int))) :
-    tagFreeList p (ps.map (cancelPolygon ink)) = true := by
+theorem cancelPolygons_tagFree (em : Int) (ink : String) (ps : List (Array (Int × Int))) :
+    tagFreeList p (ps.map (cancelPolygon em ink)) = true := by
   induction ps with
   | nil => rfl
   | cons q ps ih => simp [cancelPolygon, tagFree, tagFreeList, ih, contentTags_false hp]
@@ -1615,7 +1651,7 @@ theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t =
       cases r <;> simp only [nucNode, tagFree, tagFreeList_push, hb, delimMo_tagFree p hp,
         hmrow, Bool.not_false, Bool.and_true]
     | some c =>
-      have hb := listNodes_tagFree p hp mk disp none body #[delimMo c] hbody
+      have hb := listNodes_tagFree p hp mk disp none body #[delimMo (delimSize mk body) c] hbody
         (by simp [tagFreeList, delimMo_tagFree p hp])
       cases r <;> simp only [nucNode, tagFree, tagFreeList_push, hb, delimMo_tagFree p hp,
         hmrow, Bool.not_false, Bool.and_true]
@@ -1850,8 +1886,8 @@ theorem cancelNode_held (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : C
   cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
     simp [linesHeld, linesHeldList, linesHeldList_append, hs, hv]
 
-theorem cancelPolygons_held (ink : String) (ps : List (Array (Int × Int))) :
-    linesHeldList (ps.map (cancelPolygon ink)) = true := by
+theorem cancelPolygons_held (em : Int) (ink : String) (ps : List (Array (Int × Int))) :
+    linesHeldList (ps.map (cancelPolygon em ink)) = true := by
   induction ps with
   | nil => rfl
   | cons q ps ih => simp [cancelPolygon, linesHeld, linesHeldList, ih]
@@ -1916,7 +1952,7 @@ theorem cancelWithMetric_held (mk : Marks) (disp : Bool) (mark : CancelMark)
     · exact cancelNode_held _ _ _ _ _ _ _ hs hv
   · exact cancelNode_held _ _ _ _ _ _ _ hs hv
 
-theorem delimMo_held (c : Char) : linesHeld (delimMo c) = true :=
+theorem delimMo_held (sz : Option String) (c : Char) : linesHeld (delimMo sz c) = true :=
   charText_held _ _ c
 
 theorem wordToken_held (a : Array (String × String)) (cs : List Char)
@@ -2019,7 +2055,7 @@ theorem nucNode_held (mk : Marks) (disp : Bool) (cls : MathClass) :
       cases r <;> simp only [nucNode, linesHeld, linesHeldList_push, hb, delimMo_held,
         Bool.and_true, Bool.or_true]
     | some c =>
-      have hb := listNodes_held mk disp none body #[delimMo c]
+      have hb := listNodes_held mk disp none body #[delimMo (delimSize mk body) c]
         (by simp [linesHeldList, delimMo_held])
       cases r <;> simp only [nucNode, linesHeld, linesHeldList_push, hb, delimMo_held,
         Bool.and_true, Bool.or_true]

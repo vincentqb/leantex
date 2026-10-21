@@ -432,9 +432,12 @@ def amsFracChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       | some (hi, upem), some (hd, _) =>
         hi * 100 ≥ 101 * (upem : Int) && hd * 100 ≥ 240 * (upem : Int) && hd > hi
       | _, _ => false)
+  let two := parenExtent "\\[ \\begin{pmatrix} a \\\\ b \\end{pmatrix} \\]"
+  t s!"amsmath pmatrix: two rows on their array struts grow a parenthesis past two ems ({two})"
+    (two.any fun (h, upem) => h * 100 ≥ 200 * (upem : Int))
   let html (src : String) : String := (HtmlDoc.emit {} (elabStr (dvDoc "" src)).1).1
   t "amsmath binom: the MathML stacks with no rule between fixed-size fences"
-    (hasStr (html "$\\binom{n}{k}$") "<mfrac linethickness=\"0\">" &&
+    (hasStr (html "$\\binom{n}{k}$") "<mfrac linethickness=\"0\" style=\"padding-inline: 0 0\">" &&
       hasStr (html "$\\binom{n}{k}$") "minsize=\"1.01em\" maxsize=\"1.01em\">(</mo>" &&
       hasStr (html "\\[ \\binom{n}{k} \\]") "minsize=\"2.4em\" maxsize=\"2.4em\">(</mo>")
   t "amsmath dfrac: the MathML declares the display style"

@@ -1076,6 +1076,8 @@ in the HTML" (← since t)
           blockLastBelow := Layout.blockLastBelow (Layout.Geom.ofPage doc.page) fs
           cancelMetric := fun measures ss st spec body value =>
             Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs ss st spec body value (some measures)
+          delimTarget := fun measures ss st body =>
+            Layout.delimTarget (Layout.Geom.ofPage doc.page) fs ss st body (some measures)
           mathEm := fun measures ss st =>
             Layout.mathEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
           mathTextEm := fun measures ss st =>

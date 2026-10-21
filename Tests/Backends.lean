@@ -95,6 +95,25 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "align columns alternate right and left through mtd CSS"
     (has "\\begin{align*} a &= b \\end{align*}"
       "<mtd style=\"text-align: right; text-align: -webkit-right; padding-right: 0\">")
+  t "a script's binary operator and relation set unspaced, as TeX's script style sets them"
+    (has "$z^{u+v}$" "<mo stretchy=\"false\" lspace=\"0\" rspace=\"0\">+</mo>" &&
+      has "$\\sum_{i=1}$" "<mo stretchy=\"false\" lspace=\"0\" rspace=\"0\">=</mo>" &&
+      has "$u+v$" "<mo stretchy=\"false\">+</mo>" &&
+      has "$z^{\\sum x}$" "<mo stretchy=\"false\">∑</mo>")
+  t "a matrix's columns stand two \\arraycolsep apart with none at its outer edges"
+    (has "\\[ \\begin{pmatrix} a & b \\end{pmatrix} \\]"
+      "<mtd style=\"padding-inline: 0 0.5em\">" &&
+      has "\\[ \\begin{pmatrix} a & b \\end{pmatrix} \\]"
+        "<mtd style=\"padding-inline: 0.5em 0\">" &&
+      has "\\[ \\begin{pmatrix} a \\end{pmatrix} \\]" "<mtd style=\"padding-inline: 0 0\">")
+  t "a fraction stands \\nulldelimiterspace clear of its neighbours on each side without a delimiter"
+    (has "$\\frac{1}{2}$" "<mfrac style=\"padding-inline: 0.12em 0.12em\">" &&
+      has "$\\binom{1}{2}$" "padding-inline: 0 0\"")
+  let sized := Html.render (MathMl.nucNode { delim := fun _ _ => some (2160, 1000) } true .inner
+    (.delim (some '(') (some ')') (.cons (.atom .ord (.sym 'x') .nil .nil false) .nil))) 0
+  t "a \\left…\\right pair's delimiters hold layout's rule 19 size, its shortfall included"
+    ((sized.splitOn "minsize=\"2.160000em\" maxsize=\"2.160000em\"").length == 3 &&
+      has "$\\left( x \\right)$" "<mo stretchy=\"true\" symmetric=\"true\">(</mo>")
   t "an array declares text style on its mtable"
     (hasAttrs "\\[ \\begin{array}{cc} 1 & 2 \\\\ 3 & 4 \\end{array} \\]"
       "mtable" #[("displaystyle", "false")])
