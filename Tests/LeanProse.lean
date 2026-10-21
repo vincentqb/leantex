@@ -252,14 +252,36 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
         i < j && !(stacked.extract i j).any (·.1))
   let (aloneDoc, aloneDs) := readAs "show = prose"
   let alone := codePageLines fonts aloneDoc
-  t s!"prose: a page that shows prose alone sets sentences, its title, no documentation, and in place of each statement its facts give none for its code ({(listings aloneDoc).map (·.2.trimAscii.toString)})"
+  let lineAt (ls : Array (Bool × String)) (opening : String) : Option Nat :=
+    ls.findIdx? fun (_, ink) => ink.startsWith opening
+  let docAt (ls : Array (Bool × String)) : Option Nat := lineAt ls "Rising twice"
+  let stmtAt (ls : Array (Bool × String)) : Option Nat := lineAt ls "Theorem (Tide.height_double)."
+  t s!"prose: a page that shows prose alone sets sentences, its title, each declaration's documentation just above its statement, and in place of each statement its facts give none for its code ({(listings aloneDoc).map (·.2.trimAscii.toString)})"
     (alone.any (fun (_, ink) => ink.startsWith "Theorem (Tide.le_or_gt). For all") &&
       aloneDoc.info.title == some "Tide arithmetic" &&
-      !alone.any (fun (_, ink) => ink.startsWith "Rising twice") &&
+      (match docAt alone, stmtAt alone with
+        | some i, some j => i + 1 == j
+        | _, _ => false) &&
+      (match lineAt alone "Read under an open namespace", lineAt alone "Theorem (Tide.succ_eq)" with
+        | some i, some j => i + 1 == j
+        | _, _ => false) &&
       (listings aloneDoc).map (·.2.trimAscii.toString) ==
         #["theorem placeholder (n : Nat) : n = Nat.notAThing n := rfl",
           "theorem refused (n : Nat) : n + (1 : String) = n := rfl"] &&
       (aloneDs.filter (·.kind == .W0415)).size == 7)
+  let below := codePageLines fonts (readAs "show = prose, doc = below").1
+  let hidden := codePageLines fonts (readAs "show = prose, doc = none").1
+  t "prose: doc = below sets a declaration's documentation just after its statement, doc = none nowhere"
+    ((match docAt below, stmtAt below with
+        | some i, some j => j < i && (below.extract (j + 1) i).all (!·.2.startsWith "Theorem (")
+        | _, _ => false) && (docAt hidden).isNone &&
+      (stmtAt hidden).isSome)
+  let (_, oddDocDs) := readAs "show = prose, doc = sideways"
+  let (_, codeDocDs) := readAs "show = prose, code, doc = below"
+  let (_, sizeDs) := readAs "show = prose, size = small"
+  t s!"prose: a doc no place names, a doc beside the code, which holds the documentation, and a page's size are named ({(oddDocDs ++ codeDocDs ++ sizeDs).map (·.subject)})"
+    (oddDocDs.any (·.subject == some "code:doc:sideways") && codeDocDs.any (·.subject == some "code:doc") &&
+      sizeDs.any (·.subject == some "code:size"))
   let (noneDoc, noneDs) := readWith "show = prose" none
   t "prose: a page that shows prose alone shows the file's code when it has no facts"
     ((listings noneDoc).size == (listings (readAs "show = code").1).size &&

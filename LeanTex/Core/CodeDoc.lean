@@ -159,6 +159,19 @@ public inductive Proofs where
   | remove
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- Where a declaration's documentation comment stands beside its statement on a page that sets
+no code: above it, below it, or nowhere. -/
+public inductive DocPlace where
+  | above
+  | below
+  | omit
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- LaTeX's text sizes, smallest first, as `size` names them. -/
+public def textSizes : List String :=
+  ["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large", "Large", "LARGE", "huge",
+   "Huge"]
+
 /-- What a page is asked to show: its views in order, the declarations it selects, what it does
 with proofs, the link a declaration's name reaches, each value it cannot read, and the phrases it
 declares by name and template. -/
@@ -181,6 +194,10 @@ public structure Showing where
   /-- The keys written. -/
   written : List String := []
   phrases : List (String × String) := []
+  /-- Where a declaration's documentation stands where its code does not. -/
+  doc : DocPlace := .above
+  /-- The text size an inclusion sets in, one of `textSizes`. -/
+  size : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- A proof a page folds or removes: its source offsets, and the paragraph standing for it where
@@ -485,7 +502,7 @@ public structure ShowKey where
 public def showKeyRows : List ShowKey :=
   [⟨"show", .list, true⟩, ⟨"decls", .list, true⟩, ⟨"proofs", .joined ", ", true⟩,
    ⟨"link", .joined ",", true⟩, ⟨"facts", .joined ",", true⟩, ⟨"bibliography", .list, true⟩,
-   ⟨"biblio-style", .joined ",", false⟩]
+   ⟨"biblio-style", .joined ",", false⟩, ⟨"doc", .joined ",", true⟩, ⟨"size", .joined ",", true⟩]
 
 /-- The keys a directive takes for what its page shows, which no declaration reads. -/
 public def showKeys : List String := showKeyRows.map (·.name)
@@ -522,6 +539,21 @@ public def Showing.statements (s : Showing) : Bool := s.math || s.prose
 public def Showing.around (s : Showing) : List View × List View :=
   (s.views.takeWhile (· != .code), (s.views.dropWhile (· != .code)).filter (· != .code))
 
+/-- Names in backticks, the last after "or". -/
+public def namesOr (names : List String) : String :=
+  match names.reverse with
+  | [] => ""
+  | last :: rest =>
+    let init := rest.reverse.map (s!"`{·}`")
+    if init.isEmpty then s!"`{last}`" else s!"{", ".intercalate init} or `{last}`"
+
+/-- What a key's unreadable value is told to be. -/
+public def unreadHelp (k : String) : String :=
+  match k with
+  | "doc" => "write `doc = above`, `below` or `none`"
+  | "size" => s!"write `size = ` one of {namesOr textSizes}"
+  | _ => "write `proofs = show`, `collapse` or `remove`"
+
 /-- A value with its surrounding quotes or braces taken off. -/
 public def unwrapValue (v : String) : String :=
   let t := v.trimAscii.toString
@@ -555,8 +587,18 @@ public def showingOfValues (lang : Ir.CodeLang) (values : List (String × String
     | some "collapse" => (.collapse, [])
     | some "remove" => (.remove, [])
     | some v => (.show, [("proofs", v)])
+  let (doc, unreadDoc) := match value "doc" with
+    | none | some "above" => (DocPlace.above, [])
+    | some "below" => (.below, [])
+    | some "none" => (.omit, [])
+    | some v => (.above, [("doc", v)])
+  let (size, unreadSize) := match value "size" with
+    | none => (none, [])
+    | some v => if textSizes.contains v then (some v, []) else (none, [("size", v)])
   { views := if views.isEmpty then [.code] else views
-    decls, proofs, unread
+    doc, size
+    decls, proofs
+    unread := unread ++ unreadDoc ++ unreadSize
     link := value "link"
     facts := value "facts"
     bibliography := (listField "bibliography").getD []
@@ -651,7 +693,16 @@ document's" "delete it"]
       [note "decls" "chooses the declarations whose statements a page sets, and it sets none"
         "write `show = math, code`"]
     else []
-  (foreign ++ unlinked ++ unread ++ uncited ++ restyled ++ docsAlone ++ empty ++ unchosen).toArray
+  let sized := if page && lang == .lean && s.written.contains "size" then
+      [note "size" "sets an inclusion's text size, and a page's is its document's"
+        "delete it, or write it on `\\inputlean`"]
+    else []
+  let placed := if lang == .lean && s.written.contains "doc" && (s.code || !s.statements) then
+      [note "doc" "places documentation where a statement stands without its code, and none does"
+        "write `show = math` or `show = prose`, or delete `doc`"]
+    else []
+  (foreign ++ unlinked ++ unread ++ uncited ++ restyled ++ docsAlone ++ empty ++ unchosen ++ sized ++
+    placed).toArray
 
 /-! ### Lean -/
 
@@ -2378,6 +2429,22 @@ public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Ta
       (if withMath then #[] else displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link,
         #[unsaidNote file d u], #[])
 
+/-- A declaration's documentation comment as the page's prose sets it, citing into `known`, and its
+notes: the comment its range opens on, where it has one. -/
+public def docRaws (file : String) (starts : Array Nat) (known : Option (Std.HashSet String))
+    (docs : List Seg) (d : LeanFacts.Decl) : Array Raw × Array Diag :=
+  match docs.find? fun s => s.isProse && s.start == offsetOf starts d.start with
+  | some seg => proseRaws .lean file starts known seg false
+  | none => (#[], #[])
+
+/-- A declaration's paragraph with its documentation where `place` sets it, and both's notes. -/
+@[expose] public def withDoc {β : Type} (place : DocPlace) (doc : Array Raw × Array Diag)
+    (p : Array Raw × Array Diag × β) : Array Raw × Array Diag × β :=
+  match place with
+  | .above => (doc.1 ++ p.1, doc.2 ++ p.2.1, p.2.2)
+  | .below => (p.1 ++ doc.1, doc.2 ++ p.2.1, p.2.2)
+  | .omit => p
+
 /-- What a page sets for one declaration the facts hold, when it is chosen, in the views given:
 each view's paragraph where the facts give a statement, its name linked where a link is given, else, on
 a page that shows no code, its code in the statement's place; its views' notes and templates. -/
@@ -2445,7 +2512,9 @@ out, where its statement cannot stand, and a link's notes once a statement is se
 public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) (segs : List Seg)
     (showing : Showing) (declared : LeanProse.Declared) (facts : LeanFacts.Facts)
     (place : LinkPlace := {}) (folds : List ProofFold := []) (foldParas : Array (Array Raw) := #[])
-    (request : Span := ⟨file, {}⟩) : Array (Array Raw) × List (Nat × Nat) × Array Diag :=
+    (request : Span := ⟨file, {}⟩) (docs : List Seg := segs)
+    (known : Option (Std.HashSet String) := none) :
+    Array (Array Raw) × List (Nat × Nat) × Array Diag :=
   let tb := declared.table
   let ds := facts.decls
   let chosen (n : String) : Bool := match showing.decls with
@@ -2461,7 +2530,10 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
   let after := showing.around.2
   let para (views : List View) (d : LeanFacts.Decl) :
       Array Raw × Array Diag × Array LeanProse.Template :=
-    declPara file facts tb starts src segs folds paras0 code showing.math (wanted d) views (linkOf d) d
+    withDoc showing.doc
+      (if code || views.isEmpty || !wanted d then (#[], #[]) else docRaws file starts known docs d)
+      (declPara file facts tb starts src segs folds paras0 code showing.math (wanted d) views
+        (linkOf d) d)
   let befores := ds.map (para before)
   let afters := ds.map (para after)
   let paras := befores.map (·.1) ++ afters.map (·.1)
@@ -2508,9 +2580,11 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
 /-- What a page sets from the file's facts, when it has them. -/
 @[expose] public def statementsFor (file : String) (starts : Array Nat) (src : Array Char)
     (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
-    (folds : List ProofFold) (foldParas : Array (Array Raw)) (request : Span) :
+    (folds : List ProofFold) (foldParas : Array (Array Raw)) (request : Span) (docs : List Seg)
+    (known : Option (Std.HashSet String)) :
     Option LeanFacts.Facts → Array (Array Raw) × List (Nat × Nat) × Array Diag
-  | some f => statementsOf file starts src segs showing declared f place folds foldParas request
+  | some f => statementsOf file starts src segs showing declared f place folds foldParas request docs
+    known
   | none => (#[], [], #[])
 
 /-- The first offset at or after `i` that holds no white space. -/
@@ -2673,7 +2747,8 @@ end
     title := if opens then heading else acc.title
     titled := acc.titled || (page.code && heading.isSome)
     sawModule := acc.sawModule || opens
-    cited := acc.cited || (page.code && citesRaws read.1.toList)
+    cited := acc.cited || (page.code && citesRaws read.1.toList) ||
+      (piece matches .statement _ && citesRaws raws.toList)
     refsAt := if acc.refsAt.isNone && page.code then (referencesEnd raws).map (acc.body.size + ·)
       else acc.refsAt }
 
@@ -2751,7 +2826,8 @@ public def declaredFor (lang : Ir.CodeLang) (showing : Showing) (stated : Option
 give stands, and the notes; a page asked for statements it has no facts for shows the file's
 code. -/
 @[expose] public def planOf (lang : Ir.CodeLang) (file text : String)
-    (facts : Option LeanFacts.Facts) (place : LinkPlace := {}) :
+    (facts : Option LeanFacts.Facts) (place : LinkPlace := {})
+    (known : Option (Std.HashSet String) := none) :
     PageSet × List (Nat × Nat) × Array Diag :=
   let src := text.toList.toArray
   let starts := lineStarts src
@@ -2768,7 +2844,7 @@ code. -/
     refusalNote file (directivePos lang src) name r
   let segs := if stated.isSome then segmentsOf lang text else []
   let st := statementsFor file starts src segs showing declared place folds foldParas
-    ⟨file, directivePos lang src⟩ stated
+    ⟨file, directivePos lang src⟩ segs known stated
   ({ stmts := st.1 ++ foldParas, code := showing.code || answer.isNone
      folds := if showing.code then folds else [] }, st.2.1, refused ++ st.2.2)
 
@@ -2780,14 +2856,6 @@ trailing white space aside. -/
     #[.verb "lstlisting" ⟨#[], (listingOpts .lean).push .breakLines, none, "",
       "\n" ++ String.ofList body⟩
       { line := (lineCol starts start).1 - 1 }]
-
-/-- Names in backticks, the last after "or". -/
-public def namesOr (names : List String) : String :=
-  match names.reverse with
-  | [] => ""
-  | last :: rest =>
-    let init := rest.reverse.map (s!"`{·}`")
-    if init.isEmpty then s!"`{last}`" else s!"{", ".intercalate init} or `{last}`"
 
 /-- A Lean file's documentation view: its code as listings and its documentation as prose citing into
 `known`, as its page sets them. -/
@@ -2811,6 +2879,12 @@ public structure Refs where
   path : String
   keys : Std.HashSet String
 
+/-- Raws in a group set at a text size, where one is given. -/
+@[expose] public def sizedRaws (size : Option String) (pos : Pos) (raws : Array Raw) : Array Raw :=
+  match size with
+  | some n => if textSizes.contains n then #[.group (#[.ctrl n pos] ++ raws) pos] else raws
+  | none => raws
+
 /-- A Lean file included at `request`, which `entry` names: one listing where nothing reads facts or
 none line up; with no `decls`, the whole file with each statement at its declaration and
 its folds cut out; else each chosen declaration's views in order. -/
@@ -2821,7 +2895,7 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
   let starts := lineStarts src
   let unread := showing.unread.toArray.map fun (k, v) =>
     Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value v) (some (some .key, k)))
-      (some request) (help := "write `proofs = show`, `collapse` or `remove`")
+      (some request) (help := unreadHelp k)
       (subject := some s!"code:{k}:{v}")
   let strange := showing.strange.toArray.map fun k =>
     let valueless := inclusionKeys.contains k
@@ -2836,7 +2910,8 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
       (subject := some s!"code:show:{n}")
   let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
-  let wrap (raws : Array Raw) : Array Raw := #[.env (Parse.keptInputEnv file) raws request.pos]
+  let wrap (raws : Array Raw) : Array Raw :=
+    #[.env (Parse.keptInputEnv file) (sizedRaws showing.size request.pos raws) request.pos]
   let whole : List Seg := [⟨.code, 0, text.toList⟩]
   -- The documentation view sets the file as its page does, citing into its bibliography's keys.
   if showing.docs then
@@ -2857,8 +2932,9 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     let foldParas := (folds.map (foldRaws starts src)).toArray
     let declared := declaredFor .lean showing stated
     let refused := declared.refused.map fun (name, r) => refusalNote request.file request.pos name r
+    let docs := if showing.code || showing.doc == .omit then [] else segmentsOf .lean text
     let st := statementsFor file starts src whole showing declared place folds foldParas request
-      stated
+      docs (refs.map (·.keys)) stated
     let paras := st.1 ++ foldParas
     let code (head stop : Nat × Nat) : Array Raw :=
       piecesRaws (listingAt starts) paras (assemble (withFolds folds (clipCode whole
@@ -3025,7 +3101,7 @@ the preamble's declarations, the file's name the title where no description open
   let src := text.toList.toArray
   let starts := lineStarts src
   let showing := showingOf lang src
-  let plan := planOf lang file text facts place
+  let plan := planOf lang file text facts place (refs.map (·.keys))
   let acc := readPieces lang file text (plan.1.citing (refs.map (·.keys))) plan.2.1
   let origin : Pos := {}
   let directive := match directive? lang src with
@@ -3052,7 +3128,7 @@ the preamble's declarations, the file's name the title where no description open
       (subject := some s!"code:show:{n}")
   let unread := showing.unread.toArray.map fun (k, v) =>
     Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value v) (some (some .key, k)))
-      (some ⟨file, directivePos lang src⟩) (help := "write `proofs = show`, `collapse` or `remove`")
+      (some ⟨file, directivePos lang src⟩) (help := unreadHelp k)
       (subject := some s!"code:{k}:{v}")
   let idle := showing.idle lang ⟨file, directivePos lang src⟩
   -- premise: Tests.UnusedSettings.metadataChecks — a page citing nothing reads none of these
@@ -3076,8 +3152,8 @@ public theorem read_body_exact (lang : Ir.CodeLang) (file text : String)
     (facts : Option LeanFacts.Facts) (place : LinkPlace) (refs : Option Refs) :
     ∃ head : Array Raw, (read lang file text facts place refs).1.back? =
       some (.env "document" (head ++ placedBody (readPieces lang file text
-        ((planOf lang file text facts place).1.citing (refs.map (·.keys)))
-        (planOf lang file text facts place).2.1) refs (showingOf lang text.toList.toArray).bibStyle)
+        ((planOf lang file text facts place (refs.map (·.keys))).1.citing (refs.map (·.keys)))
+        (planOf lang file text facts place (refs.map (·.keys))).2.1) refs (showingOf lang text.toList.toArray).bibStyle)
         {}) := by
   unfold read
   simp only [Array.back?_push, ite_prefix]

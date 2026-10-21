@@ -1018,11 +1018,12 @@ def elabMdFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
 
 /-- A Lean page's documentation reading citations into the bibliography files `sources` name,
 elaborated and resolved as the driver builds it. -/
-def leanCiteBuild (file src : String) (sources : Array (String × String)) : Ir.Doc × Array Diag :=
+def leanCiteBuild (file src : String) (sources : Array (String × String))
+    (facts : Option LeanFacts.Facts := none) : Ir.Doc × Array Diag :=
   let refs : Code.Refs := { path := ",".intercalate (sources.map (·.1)).toList
                             keys := sources.foldl (init := {}) fun ks (_, bib) =>
                               (Bib.keysOf bib).foldl (·.insert ·) ks }
-  let (raws, ds) := Surface.readCode .lean file src none {} (some refs)
+  let (raws, ds) := Surface.readCode .lean file src facts {} (some refs)
   let prepared := Elab.prepareExecuted file (Compat.kept file raws)
   let (doc, diags) := Elab.runPreparedFinal file prepared ds (fun _ _ => {})
   let (doc, bibDiags) := Bib.resolve file prepared sources doc

@@ -184,6 +184,19 @@ def leanCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "lean cite: a Python directive's bibliography is refused, its help the module docstring's line"
     (ds.any fun d => d.subject == some "code:bibliography" &&
       d.help.any (hasStr · "Bibliography: [refs.bib](refs.bib)"))
+  -- A statement standing without its code sets its documentation, which cites as the page's.
+  let heldFacts := "{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
+    "{\"name\":\"holds\",\"module\":\"F\",\"kind\":\"theorem\",\"range\":[6,0,7,31]," ++
+    "\"head\":[6,0],\"signature\":[7,14,7,20],\"proof\":[7,21,7,31],\"proved\":true," ++
+    "\"prop\":true,\"doc\":null,\"type\":[[\"const\",\"True\"]]}\n" ++
+    "{\"const\":\"True\",\"binders\":\"\"}\n{\"leantex-lean-export-end\":1}\n"
+  let (held, heldDs) := leanCiteBuild "F.lean"
+    ("-- leantex: show = math\n/-! # Held\n\nBibliography: [refs.bib](refs.bib) -/\n\n" ++
+      "/-- Holds, as [ash2001] shows. -/\ntheorem holds : True := trivial\n")
+    #[("refs.bib", leanBib)] (LeanFacts.decode heldFacts).toOption
+  t s!"lean cite: a statement's documentation set above it cites into the page's bibliography, its list set ({repr (inkText held.body)})"
+    (keysOf held == ["ash2001"] && (listsOf held).any (·.2.contains "ash2001") &&
+      !heldDs.any (·.kind == .W0449) && hasStr (inkText held.body) "Holds, as")
   let (_, ds) := elabCode "F.lean" "-- leantex: show = docs\n/-! Notes. -/\ndef x := 1\n"
   t "lean cite: a page has no docs view, which it names"
     (ds.any (·.subject == some "code:show:docs"))

@@ -295,10 +295,13 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (mathDoc, mathDs) := readAs "show = math"
   let mathLines := codePageLines fonts mathDoc
   let fallback := (listings mathDoc).map (·.2.trimAscii.toString)
-  t s!"statements: a page that shows math alone sets statements, its title, no prose, and the code of each declaration its facts give no statement for in its place ({fallback})"
+  t s!"statements: a page that shows math alone sets statements, its title, each declaration's documentation just above its statement, and the code of each declaration its facts give no statement for in its place ({fallback})"
     (mathLines.any (fun (_, ink) => ink.startsWith "Theorem (Tide.height_double).") &&
       mathDoc.info.title == some "Tide arithmetic" &&
-      !mathLines.any (fun (_, ink) => ink.startsWith "Rising twice") &&
+      (match mathLines.findIdx? (fun (_, ink) => ink.startsWith "Rising twice"),
+          mathLines.findIdx? (fun (_, ink) => ink.startsWith "Theorem (Tide.height_double).") with
+        | some i, some j => i + 1 == j
+        | _, _ => false) &&
       fallback == #["theorem placeholder (n : Nat) : n = Nat.notAThing n := rfl",
         "theorem refused (n : Nat) : n + (1 : String) = n := rfl"] &&
       (mathDs.filter (·.kind == .W0414)).all fun d => d.subject.any (·.startsWith "lean:"))

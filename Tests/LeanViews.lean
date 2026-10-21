@@ -552,6 +552,17 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"views: a page's key an inclusion is given bare is named as no option of it ({pageKey.map (·.message)})"
       (pageKey.any fun d => d.message == "ignored key biblio-style" &&
         hasStr (d.detail.getD "") "has no such key")
+    let (sized, sizedDs) ← build "sized.tex" ("\\documentclass{article}\n\\begin{document}\n" ++
+      "Before it.\n\n\\inputlean[size = small]{ex.lean}\n\n\\inputlean{ex.lean}\n\\end{document}\n")
+    let monoSizes := ((bodyLines (layoutOf fonts sized)).filter monoLine).map (·.size)
+    t s!"views: an inclusion's size sets its file at that size, the next inclusion back at the text's ({monoSizes.size} listing lines)"
+      (included sized && sizedDs.isEmpty && match monoSizes.toList with
+        | [a, b] => a < b
+        | _ => false)
+    let (_, oddDs) ← build "oddsize.tex" ("\\documentclass{article}\n\\begin{document}\n" ++
+      "\\inputlean[size = huger]{ex.lean}\n\\end{document}\n")
+    t s!"views: a size no LaTeX size names is named ({subjects oddDs})"
+      ((subjects oddDs).contains "code:size:huger")
     IO.FS.writeFile (tmp / "frag.md") "::: {.lean file=ex.lean}\n:::\n"
     let (hosted, _) ← build "host.tex" ("\\documentclass{article}\n\\usepackage{markdown}\n" ++
       "\\renewcommand{\\inputlean}[2][]{Zed}\n\\begin{document}\n\\markdownInput{frag.md}\n" ++

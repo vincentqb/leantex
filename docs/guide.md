@@ -317,8 +317,13 @@ sets each top-level declaration's statement as mathematics above its code,
 **Theorem** (`Tide.height_double`). ∀ rise, n : ℕ, height rise (2 · n) = 2 ·
 height rise n; `show = code, math` sets it after the code, `show = math` sets
 the statements alone, and `decls = height, height_double` chooses which. The
-default is `show = code`. leantex never runs Lean: a statement is Lean's own,
-read from the file's facts, which the exporter writes, a small Lake package in
+default is `show = code`. Where a statement stands without its code, its
+declaration's documentation comment sets as prose just above it, as the code
+view sets one opening a line above the code; `doc = below` sets it after the
+statement and `doc = none` leaves it out, and a `doc` on a page that shows the
+code, which holds the comment where its source does, is named. Its citations
+cite as the page's documentation does. leantex never runs Lean: a statement
+is Lean's own, read from the file's facts, which the exporter writes, a small Lake package in
 this repository's `export/` directory that the file's project requires and runs
 before leantex reads the file (see below). Each elaborated type sets through one
 notation table (arithmetic, relations, logic, existence, `×`, `::`, ℕ ℤ ℚ ℝ ℂ and
@@ -469,7 +474,11 @@ sets it. Showing math or prose, or folding or removing proofs, reads the
 file's facts, as above, and sets the whole file with each statement at its
 declaration; `decls` sets only the declarations it names (theorems,
 definitions and axioms), each with its views in order; `phrase.` entries
-give constants their words there as a directive's do. An included file's
+give constants their words there as a directive's do, `doc` places each
+statement's documentation as a page's does, and `size = small` (or any of
+LaTeX's sizes, `tiny` to `Huge`) sets the whole inclusion at that size, the
+text after it back at the document's; a page's own `size`, whose size is its
+document's, is named. An included file's
 documentation comments are code, as its source has them, unless `show = docs`
 sets the file as its page does, documentation as prose and code as listings.
 Its citations then cite into the including document's bibliography: a bracket

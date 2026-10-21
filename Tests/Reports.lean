@@ -2471,7 +2471,14 @@ def reports : List Report := [
     pins := [check% Tests.LeanStatements.leanStatementChecks]
     accept := ["the parent branch's binary at 46702334 on the Lean prose fixture: (1::2::3::List.nil).length = 3 and List.map (x ↦ 0) (5::List.nil) = 0::List.nil, the guards failing there; this tree sets [1, 2, 3].length = 3 and List.map (_ ↦ 0) [5] = [0], in the PDF, on the web page and in the twin",
       "the corpus built by the parent branch's binary at 46702334 and by this tree's: every PDF, web page and twin byte-identical but the Lean prose fixture's"]
-    state := .guarded "237edc3e" .before .author }
+    state := .guarded "237edc3e" .before .author },
+  { id := "R286", date := "2026-10-21"
+    what := "a Lean statement set without its code dropped its declaration's documentation comment, and an included Lean file could not set at a text size of its own"
+    pins := [check% Tests.LeanProse.leanProseChecks, check% Tests.LeanViews.leanViewChecks,
+      check% Tests.LeanStatements.leanStatementChecks]
+    accept := ["main's binary at b75023de on the invented statements file at show = prose: no documentation comment on the page, and size = small on its inclusion ignored with W0110 as no such key; the guards fail there; this tree sets each declaration's comment just above its statement, after it at doc = below, nowhere at doc = none, and the inclusion's listing at the small size, the text after it at the document's",
+      "the corpus built by main's binary at b75023de and by this tree's: every PDF, web page and twin byte-identical"]
+    state := .guarded "b75023de" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

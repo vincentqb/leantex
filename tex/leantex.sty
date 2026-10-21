@@ -6,6 +6,7 @@
 \tl_new:N \l__leantex_decls_tl
 \tl_new:N \l__leantex_proofs_tl
 \tl_new:N \l__leantex_link_tl
+\tl_new:N \l__leantex_size_tl
 \bool_new:N \l__leantex_phrased_bool
 \keys_define:nn { leantex }
   {
@@ -14,6 +15,8 @@
     proofs .tl_set:N = \l__leantex_proofs_tl ,
     link .tl_set:N = \l__leantex_link_tl ,
     facts .code:n = { } ,
+    doc .code:n = { } ,
+    size .tl_set:N = \l__leantex_size_tl ,
     bibliography .code:n = { } ,
     biblio-style .code:n =
       \PackageWarning { leantex }
@@ -38,6 +41,7 @@
     \tl_clear:N \l__leantex_decls_tl
     \tl_set:Nn \l__leantex_proofs_tl { show }
     \tl_clear:N \l__leantex_link_tl
+    \tl_clear:N \l__leantex_size_tl
     \bool_set_false:N \l__leantex_phrased_bool
     \keys_set:nn { leantex } { #1 }
     \bool_if:nF
@@ -54,6 +58,7 @@
             statements, ~ phrases, ~ chosen ~ declarations, ~ folded ~ proofs, ~ links ~ and ~
             documentation ~ need ~ leantex }
       }
+    \tl_if_empty:NF \l__leantex_size_tl { \use:c { \l__leantex_size_tl } }
     \inputminted [ breaklines ] { lean4 } { #2 }
     \group_end:
   }

@@ -19,7 +19,7 @@ breaks at between them. -/
 @[expose] public def vocabulary : Md.Vocab :=
   { Md.vocabulary with
     ctrls := Md.vocabulary.ctrls ++ ["title", "output", "theme", "hspace", "bibliographystyle",
-      "bibliography"]
+      "bibliography"] ++ textSizes
     envs := Md.vocabulary.envs ++ ["document", "flushleft", Parse.linesEnv]
     formulas := true
     mathCtrls := LeanNotation.MathCtrl.all.map (·.name) }
@@ -86,7 +86,7 @@ private theorem mono_one (b : Bool) : (r : Raw) →
     simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at h ⊢
     simp only [vocabulary, List.mem_append]
     rcases h with h | h
-    · exact Or.inl (Or.inl h)
+    · exact Or.inl (Or.inl (Or.inl h))
     · exact Or.inr h
   | .sym c _, h => by simpa [Md.Vocab.admits, vocabulary] using h
   | .group body _, h => by
@@ -802,12 +802,33 @@ private theorem foldRaws_adm (starts : Array Nat) (src : Array Char) (f : ProofF
     subst hr
     simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
 
+private theorem withDoc_adm {β : Type} (place : DocPlace) {doc : Array Raw × Array Diag}
+    {p : Array Raw × Array Diag × β} (hd : Adm true doc.1) (hp : Adm true p.1) :
+    Adm true (withDoc place doc p).1 := by
+  cases place
+  · exact adm_append hd hp
+  · exact adm_append hp hd
+  · exact hp
+
+private theorem docIf_adm (c : Bool) (file : String) (starts : Array Nat)
+    (known : Option (Std.HashSet String)) (docs : List Seg) (d : LeanFacts.Decl) :
+    Adm true (if c = true then ((#[], #[]) : Array Raw × Array Diag)
+      else docRaws file starts known docs d).1 := by
+  split
+  · intro r hr; simp at hr
+  · unfold docRaws
+    split
+    · rename_i seg _
+      simpa using proseRaws_adm .lean file starts known seg false
+    · intro r hr; simp at hr
+
 private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Array Char)
     (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
     (folds : List ProofFold) (foldParas : Array (Array Raw)) (hf : ∀ p ∈ foldParas, Adm true p)
-    (request : Span) (facts : Option LeanFacts.Facts) :
+    (request : Span) (docs : List Seg) (known : Option (Std.HashSet String))
+    (facts : Option LeanFacts.Facts) :
     ∀ p ∈ (statementsFor file starts src segs showing declared place folds foldParas request
-      facts).1, Adm true p := by
+      docs known facts).1, Adm true p := by
   cases facts with
   | none => intro p hp; simp [statementsFor] at hp
   | some f =>
@@ -823,8 +844,8 @@ private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Ar
     intro p hp
     simp only [statementsFor, statementsOf, Array.mem_append, Array.mem_map] at hp
     rcases hp with (⟨_, ⟨d, _, rfl⟩, rfl⟩ | ⟨_, ⟨d, _, rfl⟩, rfl⟩) | ⟨fl, _, rfl⟩
-    · exact declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _
-    · exact declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _
+    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
+    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
     · have hif : ∀ c : Bool, Adm true (if c = true then codeFor starts src segs folds
           (Array.replicate (2 * f.decls.size + f.failed.size) #[] ++ foldParas) fl.head fl.stop
           else #[]) := by
@@ -1036,22 +1057,24 @@ public theorem read_vocabularyFor_mem (lang : Ir.CodeLang) (file text : String)
     simp only [List.mem_toArray, List.mem_map] at hp
     obtain ⟨fo, _, rfl⟩ := hp
     exact foldRaws_adm _ _ _
-  have hplan : ∀ p ∈ (planOf lang file text facts place).1.stmts, Adm (lang == .lean) p := by
+  have hplan : ∀ p ∈ (planOf lang file text facts place (refs.map (·.keys))).1.stmts,
+      Adm (lang == .lean) p := by
     simp only [planOf]
     intro p hp
     rcases Array.mem_append.mp hp with hp | hp
     · cases hl : lang == .lean with
-      | true => exact statementsFor_adm _ _ _ _ _ _ _ _ _ (hl ▸ hfold _) _ _ p hp
+      | true => exact statementsFor_adm _ _ _ _ _ _ _ _ _ (hl ▸ hfold _) _ _ _ _ p hp
       | false =>
         simp [showingOf_statements lang hl, statementsFor] at hp
     · exact hfold _ p hp
-  have hcited : ∀ p ∈ ((planOf lang file text facts place).1.citing (refs.map (·.keys))).stmts,
+  have hcited : ∀ p ∈ ((planOf lang file text facts place (refs.map (·.keys))).1.citing
+      (refs.map (·.keys))).stmts,
       Adm (lang == .lean) p := by
     rw [PageSet.citing_stmts]
     exact hplan
   have hacc : Inv (lang == .lean) (readPieces lang file text
-      ((planOf lang file text facts place).1.citing (refs.map (·.keys)))
-      (planOf lang file text facts place).2.1) :=
+      ((planOf lang file text facts place (refs.map (·.keys))).1.citing (refs.map (·.keys)))
+      (planOf lang file text facts place (refs.map (·.keys))).2.1) :=
     foldl_inv lang file _ _ hcited _ {} ⟨by simp [Adm], by simp⟩
   show ∀ r ∈ _, (voc (lang == .lean)).admits r = true
   unfold read
@@ -1112,9 +1135,10 @@ private theorem docsRaws_adm (file text : String) (starts : Array Nat)
 
 private theorem paras_adm (file : String) (starts : Array Nat) (src : Array Char)
     (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
-    (folds : List ProofFold) (request : Span) (facts : Option LeanFacts.Facts) :
+    (folds : List ProofFold) (request : Span) (docs : List Seg)
+    (known : Option (Std.HashSet String)) (facts : Option LeanFacts.Facts) :
     ∀ p ∈ (statementsFor file starts src segs showing declared place folds
-      (folds.map (foldRaws starts src)).toArray request facts).1 ++
+      (folds.map (foldRaws starts src)).toArray request docs known facts).1 ++
       (folds.map (foldRaws starts src)).toArray, Adm true p := by
   have hfold : ∀ p ∈ (folds.map (foldRaws starts src)).toArray, Adm true p := by
     intro p hp
@@ -1123,7 +1147,7 @@ private theorem paras_adm (file : String) (starts : Array Nat) (src : Array Char
     exact foldRaws_adm _ _ _
   intro p hp
   rcases Array.mem_append.mp hp with hp | hp
-  · exact statementsFor_adm _ _ _ _ _ _ _ _ _ hfold _ _ p hp
+  · exact statementsFor_adm _ _ _ _ _ _ _ _ _ hfold _ _ _ _ p hp
   · exact hfold p hp
 
 private theorem getD_adm {paras : Array (Array Raw)} (h : ∀ p ∈ paras, Adm b p) (k : Nat) :
@@ -1156,6 +1180,25 @@ private theorem chosenRaws_adm (items : Array (Nat × Array Raw)) (h : ∀ x ∈
     exact ih (fun y hy => hm y (List.mem_cons_of_mem _ hy)) _
       (adm_append ha (hm x (List.mem_cons_self ..)))
 
+private theorem sizedRaws_adm (size : Option String) (pos : Pos) {raws : Array Raw}
+    (h : Adm true raws) : ∀ r ∈ sizedRaws size pos raws, vocabulary.admits r = true := by
+  unfold sizedRaws
+  split
+  · rename_i n
+    split
+    · rename_i hn
+      intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      refine adm_group _ _ (adm_append ?_ h)
+      intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      simp only [List.contains_iff_mem] at hn
+      simp [Md.Vocab.admits, vocabulary, hn]
+    · exact h
+  · exact h
+
 /-- A Lean inclusion sets its file as the one input environment naming it, every raw inside which
 lies in the reader's declared vocabulary. -/
 public theorem includeLean_vocabulary_mem (file text : String) (showing : Showing)
@@ -1166,22 +1209,22 @@ public theorem includeLean_vocabulary_mem (file text : String) (showing : Showin
   unfold includeLean
   dsimp only
   split
-  · exact ⟨_, rfl, docsRaws_adm _ _ _ _⟩
+  · exact ⟨_, rfl, sizedRaws_adm _ _ (docsRaws_adm _ _ _ _)⟩
   · split
-    · exact ⟨_, rfl, listingAt_adm _ _ _⟩
+    · exact ⟨_, rfl, sizedRaws_adm _ _ (listingAt_adm _ _ _)⟩
     · have hp := paras_adm
       split
-      · refine ⟨_, rfl, piecesRaws_adm _ _ (fun s t => ?_) (hp _ _ _ _ _ _ _ _ _ _) _⟩
+      · refine ⟨_, rfl, sizedRaws_adm _ _ (piecesRaws_adm _ _ (fun s t => ?_) (hp _ _ _ _ _ _ _ _ _ _ _ _) _)⟩
         split
         · exact listingAt_adm _ _ _
         · intro r hr; simp at hr
-      · refine ⟨_, rfl, chosenRaws_adm _ ?_⟩
+      · refine ⟨_, rfl, sizedRaws_adm _ _ (chosenRaws_adm _ ?_)⟩
         intro x hx
         simp only [Array.mem_append, Array.mem_map] at hx
         rcases hx with ⟨d, _, rfl⟩ | ⟨fl, _, rfl⟩
-        · exact adm_append (adm_append (adm_ite (getD_adm (hp _ _ _ _ _ _ _ _ _ _) _) adm_nil)
-            (adm_ite (piecesRaws_adm _ _ (listingAt_adm _) (hp _ _ _ _ _ _ _ _ _ _) _) adm_nil))
-            (adm_ite (getD_adm (hp _ _ _ _ _ _ _ _ _ _) _) adm_nil)
-        · exact piecesRaws_adm _ _ (listingAt_adm _) (hp _ _ _ _ _ _ _ _ _ _) _
+        · exact adm_append (adm_append (adm_ite (getD_adm (hp _ _ _ _ _ _ _ _ _ _ _ _) _) adm_nil)
+            (adm_ite (piecesRaws_adm _ _ (listingAt_adm _) (hp _ _ _ _ _ _ _ _ _ _ _ _) _) adm_nil))
+            (adm_ite (getD_adm (hp _ _ _ _ _ _ _ _ _ _ _ _) _) adm_nil)
+        · exact piecesRaws_adm _ _ (listingAt_adm _) (hp _ _ _ _ _ _ _ _ _ _ _ _) _
 
 end LeanTex.Core.Code
