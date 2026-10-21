@@ -4547,7 +4547,8 @@ private def boxExtentNote (ctx : Ctx) (b : Ir.InlineBox) (content : Array Inline
   -- premise: boxScopeChecks — the page holds a declared extent for all a box holds, the web page for its text
   if (b.height.isSome || b.depth.isSome) && paints then
     warnOnce ctx "raisebox:extent" .W0110 (Diag.say .W0110 .size (obj := some (none, "\\raisebox"))) pos
-      (detail := some "on a web page, an image, rule, frame or ground inside claims its own height and depth")
+      (detail := some "on a web page, an image, rule, frame or ground inside claims its own height \
+and depth")
       (help := "an image's height option sets the height it takes on the line")
       (trigger := "\\raisebox") (recovery := some .ignored) (output := some .html)
 

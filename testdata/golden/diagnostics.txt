@@ -559,8 +559,6 @@ warning: unsupported command \footnotemark [W0370]
 warning: unsupported command \footnotemark [W0370]
   note: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
 ── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin, a heading as a bold line
-warning: a paragraph break inside '\footnote' is set as a space [W0371]
-── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin
 warning: unsupported paragraph break for \footnote [W0371]
   note: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
@@ -788,13 +786,11 @@ warning: unexpected box \fbox [W0452]
 warning: unsupported tag {@inheritDoc} [W0453]
   note: delete it, or write its text as code, `{@code text}`
 ── W0454 (degraded) a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked
-warning: a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked [W0454]
-  note: `Other`
+warning: undefined target Other [W0454]
+  note: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
 ── W0455 (degraded) a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block
 warning: unexpected environment itemize for command \fbox [W0455]
   note: LaTeX refuses it in LR mode, and here the box holds it as a block; set it in a minipage inside the box's content: \begin{minipage}{...}...\end{minipage}
-warning: undefined target Other [W0454]
-  note: name the element as code, `{@code text}`, or link a URL, `<a href="https://example.org">text</a>`
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography
