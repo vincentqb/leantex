@@ -7502,7 +7502,8 @@ public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
       (classOptionFlags.lookup .flow).any (·.contains k) || abstractFormOptions.contains k
   | (k, none), m => sized k || (classOptionFlags.lookup m).any (·.contains k)
   | (k, some v), .flow =>
-    (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats")
+    (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats") ||
+      (k == "preset" && (Ir.FlowPreset.ofName? v.trimAscii.toString).isSome)
   | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome
   | (_, some _), .face => false
 
@@ -17979,6 +17980,18 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some named =>
       match Ir.DocClass.ofString? named with
       | some c =>
+        -- The flow class's `preset=` option picks its preset; an alias names its own.
+        let c ← match c, items.findSome? (fun o => match KeyVal.entry o with
+            | ("preset", some v) => some v.trimAscii.toString
+            | _ => none) with
+          | .flow p0, some v =>
+            match Ir.FlowPreset.ofName? v with
+            | some p => pure (Ir.DocClass.flow p)
+            | none =>
+              diag s.ctx .W0104 s!"'preset={v}' is not a preset of the flow class \
+({", ".intercalate (Ir.FlowPreset.all.map (·.name))}); the {p0.name} preset stands" pos
+              pure c
+          | _, _ => pure c
         return { s with docClass := c, palette := { s.palette with
           classColors := c.classColors (Ir.Surface.ofPath s.ctx.file) } }
       | none =>
@@ -19382,7 +19395,9 @@ private def classBodySize (record : Ir.ClassRecord) (classOptions : String) (pag
       | ("fontsize", some v) => v
       | (k, _) => k
     if o.endsWith "pt" then
-      ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
+      -- The flow class sets the size its option's file sets, as article.cls's `11pt` sets 10.95pt.
+      ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n =>
+        if record.design.isSome then Ir.classOptionSize n else Dim.pt n
     else none
   optSize.getD (record.fontSize.getD page.fontSize)
 

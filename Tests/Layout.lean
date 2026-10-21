@@ -2443,8 +2443,8 @@ def classLeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "class leading: one redefined size leaves the size file's other rows"
     (near (pitch "[11pt]{article}" "\\makeatletter\n\\renewcommand\\small{\\@setfontsize\\small{10}{12}}\n")
       (Dim.pt 136 / 10))
-  t "class leading: the resume class keeps the 6/5 rule"
-    (pitch "[fontsize=11pt]{resume}" == some (Ir.leadingFor (Dim.pt 11)))
+  t "class leading: the resume, the flow class's preset, takes its size file's leading"
+    (near (pitch "[fontsize=11pt]{resume}" "") (Dim.pt 136 / 10))
 
 /-- The strut box a preamble length reads stands as the class set it, `.7` and `.3` of its
 `\baselineskip` in TeX's arithmetic, and where the preamble may have set it again the length is

@@ -1830,6 +1830,7 @@ private def texSetting (what element : String) (entries : Array (String × Nativ
 lexer captured it for. -/
 private def verbatimRaws (file s : String) : Array Raw := (Parse.parse file (Lex.lex file s).1).1
 
+
 /-- Raws without the blanks at both ends, as their source trimmed reads. -/
 private def trimBlank (rs : Array Raw) : Array Raw :=
   ((rs.toList.dropWhile isBlankRaw).reverse.dropWhile isBlankRaw).reverse.toArray
@@ -2111,6 +2112,24 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
     | some (r@(.ctrl _ _)) => out := out.push #[r]; j := k + 1
     | _ => break
   return (out, j)
+
+/-- The flow class's own LaTeX after its `\documentclass`, read as the class file's input
+(`Ir.flowClassSource`): its packages, faces, theorems and its preset's commands. -/
+public def applyClassSource (raws : Array Raw) : Array Raw := Id.run do
+  let some i := raws.findIdx? (fun r => r matches .ctrl "documentclass" _) | return raws
+  let some (.ctrl _ pos) := raws[i]? | return raws
+  let (opt, j) := takeRawOpt raws (i + 1)
+  let (args, k) := takeGroups raws j 1
+  -- The class file is `ltflow`'s; the class words leantex alone reads take the record only.
+  let cls := (rawSrc (args.getD 0 #[])).trimAscii.toString
+  let some (.flow p0) := (if cls == "ltflow" then Ir.DocClass.ofString? cls else none) | return raws
+  let preset := ((KeyVal.items ((opt.map rawSrc).getD "")).toList.findSome? fun o =>
+    match KeyVal.entry o with
+    | ("preset", some v) => Ir.FlowPreset.ofName? v.trimAscii.toString
+    | _ => none).getD p0
+  let source := verbatimRaws "ltflow.cls" (Ir.flowClassSource preset)
+  return raws.extract 0 k ++ #[.env (Parse.inputEnv "ltflow.cls") source pos] ++
+    raws.extract k raws.size
 
 /-- The filename, read from the executed call the local-style reader sees. -/
 @[expose] public def InputRequest.name (request : InputRequest) : String :=
@@ -11004,15 +11023,22 @@ the option" else "the page is one-sided, as without the option")) pos
       -- KOMA-Script's report and book classes head chapters.
       let chapterOpt := if chapterClasses.contains cls && !keptItems.contains "chapters" then
         ["chapters"] else []
-      if cls == "ltflow" then
-        -- tex/ltflow.cls loads its packages after article.cls and declares its theorems.
-        let declaration := Native.Head.documentclass (passed ++ keptItems).toArray cls
-        let mut dependencies : Array Raw := #[]
-        for (pkg, opts) in Ir.flowPackageLoads do
-          dependencies := dependencies ++ (← rewritePackages "RequirePackage" [pkg]
-            (if opts.isEmpty then none else some opts) #[] pos)
-        let theorems := verbatimRaws "ltflow.cls" (Ir.flowFontsSource ++ Ir.flowTheoremSource)
-        return some (declaration.raws pos ++ dependencies ++ theorems, k)
+      if let some (.flow p0) := Ir.DocClass.ofString? cls then
+        -- The class's own LaTeX is spliced after it (`applyClassSource`); a cookbook's base is
+        -- book.cls, two-sided with chapters.
+        let preset := ((keptItems.findSome? fun o => match KeyVal.entry o with
+          | ("preset", some v) => Ir.FlowPreset.ofName? v.trimAscii.toString
+          | _ => none)).getD p0
+        let chapters := if preset.base == "book" && !keptItems.contains "chapters" then ["chapters"]
+          else []
+        let declaration := Native.Head.documentclass (passed ++ keptItems ++ chapters).toArray cls
+        let twosided : Native.Setting := .page (if preset.base == "book" then
+          #[(.twoside, "on"), (.openright, "on"), (.headings, "on")] else #[])
+        if preset.base == "book" then
+          write fun st => { st with chapters := true, chaptersRight := true, twoSided := true,
+                                    headingsStyle := some true }
+        let book ← if preset.base == "book" then carry twosided pos else pure #[]
+        return some (declaration.raws pos ++ book, k)
       if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty &&
           sides.isEmpty then
         return none
@@ -15461,7 +15487,7 @@ input-fulfilling path. -/
 public def execute (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := [])
     (ignoredDefs : List String := []) : Executed :=
-  executeBy (m := Id) none file raws provideKeeps warned inherited #[] ignoredDefs
+  executeBy (m := Id) none file (applyClassSource raws) provideKeeps warned inherited #[] ignoredDefs
 
 /-- Executes the document with a reader that fulfils file
 requests at their uses. -/

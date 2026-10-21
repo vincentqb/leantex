@@ -103,12 +103,40 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (bottomDoc, _) := outOf fonts (sample "Kilo." "\\page{ bmargin = 2in }\n")
   t "flow class: a declared bottom margin stands"
     (bottomDoc.page.bottomMargin == Dim.inch 2)
+  -- Presets and the class words that alias them.
+  let presetOf (src : String) : Ir.DocClass := (elabStr src).1.docClass
+  let doc0 (cls : String) : String := s!"\\documentclass{cls}\n\\begin\{document}\nx\n\\end\{document}\n"
+  t "flow class: preset=cv and the cv, resume and webpage words name their presets"
+    (presetOf (doc0 "[preset=cv]{ltflow}") == .flow .cv && presetOf (doc0 "{cv}") == .flow .cv &&
+      presetOf (doc0 "{resume}") == .flow .resume && presetOf (doc0 "{webpage}") == .flow .cvweb &&
+      presetOf (doc0 "[preset=cookbook]{ltflow}") == .flow .cookbook)
+  let (_, badDs) := elabStr (doc0 "[preset=nope]{ltflow}")
+  t "flow class: an unknown preset is named and the article stands"
+    (presetOf (doc0 "[preset=nope]{ltflow}") == .flow .article &&
+      badDs.any fun d => d.code == "W0104" && hasStr d.message "preset=nope")
+  t "flow class: the resume keeps the old class's one-page, in-area and legibility contracts"
+    ((Ir.DocClass.flow .resume).record.pagesBound == some (.lit .eq 1) &&
+      (Ir.DocClass.flow .resume).record.inkInArea.isSome &&
+      (Ir.DocClass.flow .resume).record.xHeightFloor.isSome)
+  let (webDoc, _) := elabStr (doc0 "{webpage}")
+  t "flow class: the web CV keeps the old class's build intent and twin"
+    (webDoc.output.formats.contains "html" && webDoc.output.formats.contains "md" &&
+      webDoc.output.md == some "llms.txt")
+  let (cvDoc, _) := elabStr ("\\documentclass[preset=cv]{ltflow}\n\\begin{document}\n" ++
+    "\\section{Work}\n\\entry{2020}{Keeper}{Kept an orchard.}\n\\end{document}\n")
+  let numbered := cvDoc.body.any fun b => match b with
+    | .section _ _ (some _) _ => true
+    | _ => false
+  t "flow class: a CV's headings stand unnumbered" (!numbered)
   t "flow class: tex/ltdefaults.tex is generated from the records it mirrors"
     ((← IO.FS.readFile "tex/ltdefaults.tex") == Ir.ltDefaultsTex)
+  t "flow class: tex/ltflowsource.tex is generated from the source leantex splices"
+    ((← IO.FS.readFile "tex/ltflowsource.tex") == Ir.ltFlowSourceTex)
 
 /-- `tex/ltdefaults.tex` written from `Ir.ltDefaultsTex` under `--update`. -/
 def update : IO Unit := do
   IO.FS.writeFile "tex/ltdefaults.tex" Ir.ltDefaultsTex
-  IO.println "updated tex/ltdefaults.tex"
+  IO.FS.writeFile "tex/ltflowsource.tex" Ir.ltFlowSourceTex
+  IO.println "updated tex/ltdefaults.tex and tex/ltflowsource.tex"
 
 end Tests.FlowClass

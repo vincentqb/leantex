@@ -1,7 +1,9 @@
 class resume
-page 612x792 vmargin 71.731 hmargin 150.583 parskip 0
+page 612x792 vmargin 71.731 hmargin 150.583 fontsize 10.909 size tiny 579 size scriptsize 694 size footnotesize 833 size small 913 skip tiny 1242 skip scriptsize 1242 skip footnotesize 1242 skip small 1242 skip normalsize 1242 skip large 2484 skip Large 2484 skip LARGE 2484 skip huge 2484 skip Huge 3726 parskip 0
 font dir "fonts"
 font body "Source Serif Pro"
+token topskip 13.6pt
+token footins 13.6pt
 assert pages == 1
 assert text.in_area
 assert text.xheight >= 3.983pt

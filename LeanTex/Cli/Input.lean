@@ -400,7 +400,7 @@ private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog
       modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
       return Compat.kept file (Code.joinBibliography raws (← get).joins)
     | .code _ => return Compat.kept file raws
-    | .tex => Elab.executeInputs (readAt dir file 8) file raws).run
+    | .tex => Elab.executeInputs (readAt dir file 8) file (Compat.applyClassSource raws)).run
       { log with surface := Ir.Surface.ofPath file }
 
 /-- Execute macros and fulfil input requests in source order, resolving beside the

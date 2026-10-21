@@ -238,10 +238,10 @@ or a list, a list or a quote opening a quotation, a fill in a verse line, beamer
 page's quotations, at lualatex's positions. -/
 def quoteBoundaryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  t "quote kinds: the web page's quote, quotation and verse keep the page's own rhythm"
+  t "quote kinds: the web CV's quote, quotation and verse stand on its grid, a leading apart"
     (gaps oneFace (doc "{webpage}" "" quotes) ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
       "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima"] ==
-        some [120, 60, 120, 120, 60, 120, 120, 0, 0, 60, 120] &&
+        some [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] &&
       (let out := layoutOf oneFace (elabStr (doc "{webpage}" "" quotes)).1
        inkOf out "Echo" == inkOf out "Bravo"))
   -- lualatex: `\@endpe` leaves no indent on text going on past a display or a list, and text after

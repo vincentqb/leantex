@@ -959,9 +959,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (["scrartcl", "scrreprt", "scrbook"].all fun c =>
       (elabStr s!"\\documentclass\{{c}}\\begin\{document}x\\end\{document}").1.docClass == .koma)
   t "compat moderncv is resume"
-    ((elabStr "\\documentclass{moderncv}\\begin{document}x\\end{document}").1.docClass == .resume)
+    ((elabStr "\\documentclass{moderncv}\\begin{document}x\\end{document}").1.docClass == .flow .resume)
   t "compat res is resume"
-    ((elabStr "\\documentclass{res}\\begin{document}x\\end{document}").1.docClass == .resume)
+    ((elabStr "\\documentclass{res}\\begin{document}x\\end{document}").1.docClass == .flow .resume)
   t "compat linespread is leading"
     ((elabStr (pre "\\linespread{1.15}")).1.page.leading == 1150)
   -- `\@setfontsize` 10/10.95 sets 10.95pt baselines over the engine's 6/5 base: a factor of 0.9125.
@@ -2763,7 +2763,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   let clsDoc (cls extra body : String) : Ir.Doc :=
     (elabStr s!"\\documentclass\{{cls}}\n{extra}\\begin\{document}\n{body}\n\\end\{document}").1
   let resumeDoc := clsDoc "resume" "" "x"
-  t "resume class enters the IR" (resumeDoc.docClass == .resume)
+  t "resume class enters the IR" (resumeDoc.docClass == .flow .resume)
   t "resume implies its contract: one page, ink in area, the x-height floor"
     (resumeDoc.asserts.any (·.kind == .pages .eq 1) &&
      resumeDoc.asserts.any (·.kind == .textInArea) &&
@@ -2776,7 +2776,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
        | .pages _ _ => true | _ => false).size == 1 &&
      d.asserts.any (·.kind == .pages .le 2))
   let webDoc := clsDoc "webpage" "" "x"
-  t "webpage class enters the IR" (webDoc.docClass == .webpage)
+  t "webpage class enters the IR" (webDoc.docClass == .flow .cvweb)
   t "webpage carries its build intent: html and the markdown twin"
     (webDoc.output.formats == #["html", "md"] && webDoc.output.md == some "llms.txt")
   t "webpage implies no shipped-page contract" (webDoc.asserts.isEmpty)

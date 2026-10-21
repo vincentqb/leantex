@@ -15,6 +15,7 @@
 \dim_new:N \l_lt_paperheight_dim
 \tl_new:N \l_lt_preset_tl
 \tl_new:N \l_lt_fontsize_tl
+\tl_new:N \l_lt_base_tl
 \bool_new:N \l_lt_twoside_bool
 
 \cs_new_protected:Npn \lt_unread:nn #1#2
@@ -52,6 +53,7 @@
 \keys_define:nn { lt / preset }
   {
     fontsize .tl_set:N = \l_lt_fontsize_tl ,
+    base .tl_set:N = \l_lt_base_tl ,
     measure .code:n = \int_set:Nn \l_lt_measure_int {#1} ,
     ratio .code:n = \fp_set:Nn \l_lt_ratio_fp {#1} ,
     grid .bool_set:N = \l_lt_grid_bool ,

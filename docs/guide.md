@@ -490,7 +490,13 @@ each size's line a whole number of leadings. The measure is 66 characters of the
 (memoir's copy-fitting count) to the nearest pica; the text block takes the page's proportions in
 whole lines, centred, with twice as much margin below it as above. A paragraph leaves no widow or
 club and no page ends on a heading. `\page{ measure = 60 }` sets another measure, `\page{ grid = off }` turns the grid
-off, and declared margins replace the derived ones. Under lualatex `\page`, `\fonts`,
+off, and declared margins replace the derived ones. Presets: `\documentclass[preset=cookbook]{ltflow}`
+sets two-sided chapters on `book.cls` with a `recipe` environment (`\begin{recipe}{Title}{Serves
+four}`); `preset=cv` sets unnumbered headings, unindented paragraphs, a 75-character measure and
+`\entry{dates}{title}{text}`; `preset=resume` is the CV asserted to fit one page with its ink in
+the margins and no type below a 1.4mm x-height; `preset=cvweb` is the CV built as a web page and a
+markdown twin (`llms.txt`). leantex reads `cookbook`, `cv`, `resume` and `webpage` as class names
+for the same presets. Under lualatex `\page`, `\fonts`,
 `\palette` and `\theme` are defined by `tex/ltkeys.sty`; a key only leantex reads warns once
 there.
 

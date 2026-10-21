@@ -1287,6 +1287,9 @@ private def displayOptions : List (Nat × Length) :=
   [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
    (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
 
+/-- The `\normalsize` a size option's file sets: size11.clo's 10.95pt for `11pt`. -/
+public def classOptionSize (n : Nat) : Length := (displayOptions.lookup n).getD (Dim.pt n)
+
 /-- The top-level `\topsep` each beamer class option's size file leaves in force. -/
 private def beamerTopsepTable : List (Nat × SymGlue) :=
   [(8, ptsGlue 600 200 300), (9, ptsGlue 600 200 300), (10, ptsGlue 800 200 400),
@@ -8515,19 +8518,42 @@ public structure FlowDesign where
 /-- The presets of the leantex flow class. -/
 public inductive FlowPreset where
   | article
+  /-- Two-sided chapters of recipes on `book.cls`. -/
+  | cookbook
+  /-- A curriculum vitae: unnumbered headings and dated entries at a wider measure. -/
+  | cv
+  /-- A one-page CV, its page count, ink and legibility asserted. -/
+  | resume
+  /-- A CV whose web page is its first artifact, with the markdown twin beside it. -/
+  | cvweb
   deriving Repr, BEq, DecidableEq, Inhabited
 
 public def FlowPreset.name : FlowPreset → String
   | .article => "article"
+  | .cookbook => "cookbook"
+  | .cv => "cv"
+  | .resume => "resume"
+  | .cvweb => "cvweb"
 
-public def FlowPreset.all : List FlowPreset := [.article]
+public def FlowPreset.all : List FlowPreset := [.article, .cookbook, .cv, .resume, .cvweb]
+
+/-- The standard class a preset loads under `tex/ltflow.cls`. -/
+public def FlowPreset.base : FlowPreset → String
+  | .cookbook => "book"
+  | .article | .cv | .resume | .cvweb => "article"
+
+/-- The class word leantex also reads for a preset: its own name, the article's `ltflow`, the CV
+web page's `webpage`. -/
+public def FlowPreset.classWord : FlowPreset → String
+  | .article => "ltflow"
+  | .cvweb => "webpage"
+  | p => p.name
 
 public def FlowPreset.ofName? (n : String) : Option FlowPreset :=
   FlowPreset.all.find? (·.name == n)
 
 public theorem FlowPreset.ofName?_name (p : FlowPreset) : FlowPreset.ofName? p.name = some p := by
-  match p with
-  | .article => rfl
+  cases p <;> rfl
 
 /-- The theorem-like environments the flow class declares, amsthm's style for each, on one
 counter named by the first: the shared practice of the AMS, ACM, IEEE and NeurIPS classes. -/
@@ -8558,14 +8584,41 @@ public def flowFaces : List (String × String × String × String × String) :=
 /-- The flow class's math face. -/
 public def flowMathFace : String := "latinmodern-math.otf"
 
-/-- The flow class's faces as the native `\fonts` declaration leantex reads. -/
-public def flowFontsSource : String :=
-  let q (v : String) : String := "\"" ++ v ++ "\""
-  let slots := flowFaces.map fun (slot, up, b, i, bi) =>
-    s!"{slot} = {q up}, {slot}.bold = {q b}, {slot}.italic = {q i}, {slot}.bolditalic = {q bi}"
-  "\\fonts{ " ++ ", ".intercalate (slots ++ [s!"math = {q flowMathFace}"]) ++ " }\n" ++
-  -- article.cls's `\footskip` at its 10, 11 and 12pt options.
-  "\\tokens{ footskip = 30pt }\n"
+/-- The flow class's LaTeX after its base class, its packages with their options, its faces and
+its theorems, the source both engines read (`tex/ltflowsource.tex`). -/
+public def flowCommonSource : String := Id.run do
+  let mut out := ""
+  for (pkg, opts) in flowPackageLoads do
+    let o := if opts.isEmpty then "" else s!"[{opts}]"
+    out := out ++ s!"\\RequirePackage{o}\{{pkg}}\n"
+  for (slot, up, b, i, bi) in flowFaces do
+    let cmd := if slot == "body" then "setmainfont" else if slot == "sans" then "setsansfont"
+      else "setmonofont"
+    out := out ++ s!"\\{cmd}\{{up}}[BoldFont={b},ItalicFont={i},BoldItalicFont={bi}]\n"
+  out := out ++ s!"\\setmathfont\{{flowMathFace}}\n"
+  -- size11.clo's and bk11.clo's `\headsep` and `\footskip`, stated where a page geometry is set.
+  return out ++ "\\setlength{\\headsep}{25pt}\n\\setlength{\\footskip}{30pt}\n"
+
+/-- What a preset declares past the article's, as LaTeX source both engines read: a CV's
+unnumbered headings, unindented paragraphs and dated entries, a cookbook's recipes. -/
+public def flowPresetSource : FlowPreset → String
+  | .article => ""
+  | .cookbook =>
+    "\\newenvironment{recipe}[2]{\\section{#1}\\noindent\\textit{#2}\\par}{}\n"
+  | .cv =>
+    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\par\\noindent #3\\par}\n"
+  -- A one-page CV carries no folio.
+  | .resume =>
+    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\par\\noindent #3\\par}\n" ++
+    "\\pagestyle{empty}\n"
+  -- A web page's lists stand in the flow with no space of their own, as the web lineage sets them.
+  | .cvweb =>
+    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\par\\noindent #3\\par}\n" ++
+    "\\def\\@listi{\\leftmargin\\leftmargini\\topsep\\z@" ++
+      "\\partopsep\\z@\\itemsep\\z@\\parsep\\z@}\n\\let\\@listI\\@listi\n\\@listi\n"
 
 /-- The flow class's theorem declarations as LaTeX source, the text `tex/ltdefaults.tex` holds. -/
 public def flowTheoremSource : String := Id.run do
@@ -8581,37 +8634,39 @@ public def flowTheoremSource : String := Id.run do
 
 /-- A preset's design: a 66-character measure, LaTeX's ratio 1.2, the grid on. -/
 public def FlowPreset.design : FlowPreset → FlowDesign
-  | .article => { ratio := 1200, measure := 66, grid := true }
+  | .article | .cookbook => { ratio := 1200, measure := 66, grid := true }
+  | .cv | .resume | .cvweb => { ratio := 1200, measure := 75, grid := true }
 
 /-- A preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
 public def FlowPreset.keys (p : FlowPreset) : String :=
   let d := p.design
   let ratio := s!"{d.ratio / 1000}.{toString (d.ratio % 1000 + 1000) |>.drop 1}"
   s!"fontsize = 11pt , measure = {d.measure} , ratio = {ratio} , grid = {d.grid} , " ++
-    "paper = letter , twoside = false"
+    s!"paper = letter , twoside = {p == .cookbook} , base = {p.base}"
 
-/-- `tex/ltdefaults.tex`: the presets, packages, faces and theorems of the classes, generated from
+/-- A preset's whole class source after its base class. -/
+public def flowClassSource (p : FlowPreset) : String :=
+  let preset := flowPresetSource p
+  flowCommonSource ++ flowTheoremSource ++ preset
+
+/-- `tex/ltflowsource.tex`: the class's source in LaTeX's own syntax, each block under the preset
+it serves (`\\ltflowsource{all}` for every one), generated so lualatex and leantex read one text. -/
+public def ltFlowSourceTex : String := Id.run do
+  let mut out := "% Generated by leantex's test suite under --update; never edited by hand.\n" ++
+    "\\ltflowsource{all}{%\n" ++ flowCommonSource ++ flowTheoremSource ++ "}\n"
+  for p in FlowPreset.all do
+    unless (flowPresetSource p).isEmpty do
+      out := out ++ s!"\\ltflowsource\{{p.name}}\{%\n" ++ flowPresetSource p ++ "}\n"
+  return out
+
+/-- `tex/ltdefaults.tex`: the presets of the classes, generated from
 the records leantex reads so the two never differ. -/
 public def ltDefaultsTex : String := Id.run do
   let mut out := "% Generated by leantex's test suite under --update; never edited by hand.\n" ++
     "\\ProvidesFile{ltdefaults.tex}[2026/10/20 v0.1 leantex class defaults]\n"
   for p in FlowPreset.all do
     out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltflow_{p.name}_tl } \{ {p.keys} }\n"
-  out := out ++ "\\cs_new_protected:Npn \\lt_flow_packages:\n  {\n"
-  for (pkg, opts) in flowPackageLoads do
-    let o := if opts.isEmpty then "" else s!"[{opts}]"
-    out := out ++ s!"    \\RequirePackage {o} \{ {pkg} }\n"
-  out := out ++ "  }\n\\cs_new_protected:Npn \\lt_flow_faces:\n  {\n"
-  for (slot, up, b, i, bi) in flowFaces do
-    let cmd := if slot == "body" then "setmainfont" else if slot == "sans" then "setsansfont"
-      else "setmonofont"
-    out := out ++ s!"    \\{cmd} \{ {up} } [ BoldFont = {b} , ItalicFont = {i} , BoldItalicFont = {bi} ]\n"
-  out := out ++ s!"    \\setmathfont \{ {flowMathFace} }\n  }\n"
-  out := out ++ "\\cs_new_protected:Npn \\lt_flow_theorems:\n  {\n"
-  for line in (flowTheoremSource.splitOn "\n").filter (!·.isEmpty) do
-    out := out ++ "    " ++ line ++ "\n"
-  return out ++ "  }\n"
-
+  return out
 
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/
@@ -8691,11 +8746,6 @@ public inductive DocClass where
   | article
   | slides
   | card
-  /-- An article with the résumé genre's contract implied: one page, ink
-  inside the margins, nothing below the legibility floor. -/
-  | resume
-  /-- An article, HTML-primary, declaring its own build intent (html and md). -/
-  | webpage
   /-- One fixed, printed, trimmed surface at a large base: the face model's second class. -/
   | poster
   /-- KOMA-Script's article, report and book classes, one record for the three. -/
@@ -8709,11 +8759,9 @@ public def DocClass.name : DocClass → String
   | .article => "article"
   | .slides => "slides"
   | .card => "card"
-  | .resume => "resume"
-  | .webpage => "webpage"
   | .poster => "poster"
   | .koma => "scrartcl"
-  | .flow _ => "ltflow"
+  | .flow p => p.classWord
 
 /-- The class a `\documentclass` argument names, if any: the inverse of `name`, KOMA-Script's
 report and book spelling its article. -/
@@ -8721,25 +8769,27 @@ public def DocClass.ofString? : String → Option DocClass
   | "article" => some .article
   | "slides" => some .slides
   | "card" => some .card
-  | "resume" => some .resume
-  | "webpage" => some .webpage
   | "poster" => some .poster
   | "scrartcl" | "scrreprt" | "scrbook" => some .koma
   | "ltflow" => some (.flow .article)
+  | "cookbook" => some (.flow .cookbook)
+  | "cv" => some (.flow .cv)
+  | "resume" => some (.flow .resume)
+  | "webpage" => some (.flow .cvweb)
   | _ => none
 
 public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
   cases c with
-  | flow p => match p with | .article => rfl
+  | flow p => cases p <;> rfl
   | _ => rfl
 
 /-- Every class, in the order a help lists them. -/
 @[expose] public def DocClass.all : List DocClass :=
-  [.article, .slides, .card, .resume, .webpage, .poster, .koma, .flow .article]
+  [.article, .slides, .card, .poster, .koma] ++ FlowPreset.all.map .flow
 
 public theorem DocClass.all_complete (c : DocClass) : c ∈ DocClass.all := by
   cases c with
-  | flow p => match p with | .article => simp [DocClass.all]
+  | flow p => cases p <;> simp [DocClass.all, FlowPreset.all]
   | _ => simp [DocClass.all]
 
 public theorem DocClass.all_nodup : DocClass.all.Nodup := by decide
@@ -8779,25 +8829,6 @@ the trim; declare \\assert{ text.in_area } to take control"
 distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control")
       trimDefault := some (Dim.mm100 8560, Dim.mm100 5398)
       safeMargin := some (Dim.mm 5) }
-  | .resume =>
-    { model := .flow
-      measureBand := true
-      parskip := some {}
-      pagesBound := some (.lit .eq 1)
-      pagesHelp := "the resume class asserts content fits one page; \
-declare \\assert{ pages <= N } to take control"
-      inkInArea := some "the margins frame what every printer keeps: ink past \
-them risks the clip; declare \\assert{ text.in_area } to take control"
-      xHeightFloor := some (cardXHeightFloor,
-        "1.4mm x-height is the fluent-reading floor at hand-held \
-distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control") }
-  | .webpage =>
-    { model := .flow
-      measureBand := true
-      lists := .web
-      colorRow := .web
-      formats := #["html", "md"]
-      mdName := some "llms.txt" }
   | .poster =>
     { model := .face
       abstractForm := .inset
@@ -8835,16 +8866,29 @@ calibration reads fluently; declare \
       measureBand := true
       pageNumbers := true
       area := .typearea }
-  -- tex/ltflow.cls loads article.cls at its 11pt option.
+  -- tex/ltflow.cls loads article.cls (book.cls for the cookbook) at its 11pt option.
   | .flow p =>
+    let cv := p == .cv || p == .resume || p == .cvweb
     { model := .flow
-      fontSize := some (Dim.pt 11)
+      fontSize := some (classOptionSize 11)
       sizeFileSkip := true
-      parskip := some {}
-      numberHeadings := true
+      parskip := if cv then some {} else none
+      numberHeadings := !cv
       measureBand := true
-      lists := .grid
-      pageNumbers := true
+      lists := if p == .cvweb then .web else .grid
+      pageNumbers := p != .resume
+      pagesBound := if p == .resume then some (.lit .eq 1) else none
+      pagesHelp := if p == .resume then "the resume preset asserts content fits one page; \
+declare \\assert{ pages <= N } to take control" else ""
+      inkInArea := if p == .resume then some "the margins frame what every printer keeps: ink past \
+them risks the clip; declare \\assert{ text.in_area } to take control" else none
+      xHeightFloor := if p == .resume then some (cardXHeightFloor,
+        "1.4mm x-height is the fluent-reading floor at hand-held \
+distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control") else none
+      colorRow := if p == .cvweb then .web else .latex
+      formats := if p == .cvweb then #["html", "md"] else #[]
+      mdName := if p == .cvweb then some "llms.txt" else none
+      webLayout := if p == .cookbook then .book else .article
       area := .flow
       design := some p.design }
 

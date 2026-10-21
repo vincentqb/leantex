@@ -4,10 +4,8 @@
 \ExplSyntaxOn
 \lt_preset:nn { ltflow } { article }
 \bool_if:NTF \l_lt_twoside_bool
-  { \LoadClass [ \l_lt_fontsize_tl , twoside ] { article } }
-  { \LoadClass [ \l_lt_fontsize_tl ] { article } }
-\lt_flow_packages:
-\lt_flow_faces:
+  { \use:e { \exp_not:N \LoadClass [ \l_lt_fontsize_tl , twoside ] { \l_lt_base_tl } } }
+  { \use:e { \exp_not:N \LoadClass [ \l_lt_fontsize_tl , oneside ] { \l_lt_base_tl } } }
 \lt_grid_init:
 \cs_new_protected:Npn \lt_flow_design:
   {
@@ -69,14 +67,17 @@
       }
   }
 \lt_flow_design:
-\lt_flow_theorems:
+\cs_new_protected:Npn \ltflowsource #1#2
+  { \bool_lazy_or:nnT { \str_if_eq_p:nn {#1} { all } } { \str_if_eq_p:Vn \l_lt_preset_tl {#1} } {#2} }
 \ExplSyntaxOff
-\renewcommand\@maketitle{%
+\input{ltflowsource.tex}
+\def\@maketitle{%
   {\centering
    {\LARGE\bfseries\@title\par}%
    {\@author\par}%
    {\@date\par}}}
-\renewenvironment{abstract}{%
+\providecommand\abstractname{Abstract}
+\@ifundefined{abstract}{\newenvironment{abstract}}{\renewenvironment{abstract}}{%
   \par{\centering\small\bfseries\abstractname\par}%
   \small\list{}{\topsep\z@\partopsep\z@\itemsep\z@\parsep\z@
     \listparindent1.5em\itemindent\z@\rightmargin\leftmargin}\item\relax}
