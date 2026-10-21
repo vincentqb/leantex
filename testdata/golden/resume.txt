@@ -92,4 +92,4 @@ info[N0100] 4:1 translated command \newcommand{\entry} | detail: \define \entry(
 info[N0100] 4:28 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
 info[N0100] 4:59 translated command \relax | detail: nothing: it means do nothing
 info[N0100] 6:1 translated command \pagestyle{empty} | detail: \page{ numbers = off }, and no running fields
-warning[W0387] 23:1 '\palette' entry 'ink' declares a colour nothing in the document paints with; the page's text colour is the 'fg' key | help: declare \palette{ fg = ... } for the page's text, or name 'ink' where it is used
+warning[W0387] 23:1 ignored key ink for \palette | detail: the page's text colour is the 'fg' key | help: declare \palette{ fg = ... } for the page's text, or name 'ink' where it is used
