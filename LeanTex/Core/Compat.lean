@@ -9696,13 +9696,21 @@ private def journalClass (st : St) : Option String :=
 
 /-- Whether a journal class gathers what stands here for its `\maketitle` still ahead. -/
 private def journalHolds (st : St) : Bool :=
-  (journalClass st).isSome && st.journal.titleAhead == some true && !st.journal.titled && !st.inDef
+  (journalClass st).isSome && st.journal.titleAhead != some false && !st.journal.titled && !st.inDef
 
-/-- Whether a document's text, or the body a top-matter command stands in, holds a `\maketitle`. -/
+/-- Whether a list holds a `\maketitle`, through the files it inputs. -/
+private def holdsTitle (raws : Array Raw) : Bool :=
+  let title (r : Raw) : Bool := r matches .ctrl "maketitle" _
+  raws.any fun r => match r with
+    | .env n b _ => (Parse.inputEnvFile? n).isSome && b.any title
+    | r => title r
+
+/-- Whether a document's text, or the body a top-matter command stands in, holds a `\maketitle`;
+`none` where the list holds neither it nor the document's body. -/
 private def titleAheadIn (raws : Array Raw) : Option Bool :=
-  if raws.any (· matches .ctrl "maketitle" _) then some true
+  if holdsTitle raws then some true
   else raws.findSome? fun
-    | .env "document" b _ => some (b.any (· matches .ctrl "maketitle" _))
+    | .env "document" b _ => some (holdsTitle b)
     | _ => none
 
 /-- The authors one `\author` names, each apart where `\and` separates them. -/
@@ -10530,6 +10538,8 @@ private def classOptionsOffered (pos : Pos) (raws : Array Raw) (start : Nat) :
     (args.getD i #[]).toList.filterMap fun | .word w _ => some w | _ => none
   let cls := rawSrc (args.getD 0 #[])
   let offered := offeredOptions raws k (words 1)
+  if (← get).journal.titleAhead.isNone then
+    write fun st => { st with journal := { st.journal with titleAhead := titleAheadIn raws } }
   write fun st => { st with globalOffered := st.globalOffered ++
     (offered.filter (!st.globalOffered.contains ·)).toArray }
   for o in words 2 do
@@ -17312,7 +17322,7 @@ private def classLineList (given : String) (acc : Array Raw × ClassLoads) :
 private def classLineRaw (given : String) : Raw → Raw × ClassLoads
   | .group body p =>
     let (body, seen) := classLineList given (#[], {}) body.toList
-    (.group body p, seen)
+    (.group body p, { seen with loads := false })
   | .env n body p =>
     let (body, seen) := classLineList given (#[], {}) body.toList
     (.env n body p, seen)

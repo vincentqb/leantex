@@ -94,6 +94,13 @@ def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       (match lineAt amsLines "An Invented Result", lineAt amsLines "Invented summary words" with
         | some ti, some ab => ti < ab
         | _, _ => false))
+  let (amsInput, _, _) ← runStyParity "cls-amsinput"
+  let inputLines := bodyTexts (layoutOf fonts amsInput)
+  t "a journal class gathers the top matter a file the document inputs declares"
+    ((lineAt inputLines "Ada Example and Bea Sample").isSome &&
+      (match lineAt inputLines "An Invented Result", lineAt inputLines "Invented summary words" with
+        | some ti, some ab => ti < ab
+        | _, _ => false))
   let (global, globalDs, _) ← runStyParity "cls-global"
   t "the document's options reach the packages after its local class, as global options do"
     (linePlaces (layoutOf fonts global) == places ("\\documentclass[doublespacing]{article}\n" ++
