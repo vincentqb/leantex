@@ -23,6 +23,9 @@ public inductive AreaRule where
   | letter
   /-- KOMA-Script's typearea. -/
   | typearea
+  /-- The leantex flow class's (`tex/ltflow.cls`): a measure in characters in typearea's proportions,
+  whole leadings high. -/
+  | flow
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The text block a class sets, and its furniture's distances from it. -/
@@ -55,6 +58,8 @@ public structure AreaInput where
   bcor : Length
   headinclude : Bool
   footinclude : Bool
+  /-- The flow class's measure in characters. -/
+  measure : Nat
   deriving Repr, BEq, Inhabited
 
 /-- The size option whose file a body size reads: 10, 11 or 12, the nearest. -/
@@ -184,11 +189,36 @@ private def typeareaOf (i : AreaInput) : TextArea :=
       else if i.bcor != 0 then some (hblk * 3 / 2 + i.bcor, hblk * 3 / 2) else none
     headsep := hs, footskip := fs, maxDepth := Dim.pt i.points / 2 }
 
+/-- The width `n` characters of Latin Modern take at a `\normalsize`, by memoir's copy-fitting lines
+(45 and 65 characters from the lowercase alphabet), to the nearest pica, as `tex/ltkeys.sty` sets it
+from the face. -/
+public def measureWidth (size : Length) (n : Nat) : Length :=
+  let alphabet := (alphabets size).1
+  let l45 : Length := (1415 : Int) * alphabet / (1000 : Int) + Dim.pt 2303 / (100 : Int) -- memoir
+  let l65 : Length := (2042 : Int) * alphabet / (1000 : Int) + Dim.pt 3341 / (100 : Int) -- memoir
+  let w : Length := l45 + ((n : Int) - 45) * (l65 - l45) / (20 : Int)
+  let pica := Dim.pt 12 -- one pica
+  ((w + pica / (2 : Int)) / pica) * pica
+
+/-- The flow class's area: the measure's width, the page's proportion of it in whole leadings
+below a `\topskip` of one, a third of the free height above it; sides 1:1, two-sided 1:2. -/
+private def flowAreaOf (i : AreaInput) : TextArea :=
+  let width := measureWidth i.size i.measure
+  let lead := if i.baselineskip > 0 then i.baselineskip else Dim.pt 12 -- size10.clo's
+  let room := Length.ofUnits (width.units * i.paperH.units / max 1 i.paperW.units)
+  let height := (room / lead) * lead
+  let free := i.paperW - width
+  { width, height, top := (i.paperH - height) / 3
+    sides := if i.twoside then some (free / 3, free - free / 3) else none
+    headsep := Dim.pt 25, footskip := Dim.pt 30 -- size1x.clo's
+    maxDepth := Dim.pt (max 10 (min 12 i.option)) / 2 }
+
 /-- The rule a LaTeX class's name selects. -/
 public def AreaRule.ofClass (cls : String) : AreaRule :=
   if cls == "article" || cls == "report" then .sizeFile
   else if cls == "book" then .book else if cls == "memoir" then .memoir
-  else if cls == "letter" then .letter else if cls.startsWith "scr" then .typearea else .engine
+  else if cls == "letter" then .letter else if cls.startsWith "scr" then .typearea
+  else if cls == "ltflow" then .flow else .engine
 
 /-- The rule the native article's `layout` option names, a class the compatibility layer lowers
 onto it. -/
@@ -212,6 +242,7 @@ public def AreaRule.seps? (rule : AreaRule) (option : Nat) (baselineskip : Lengt
   match rule with
   | .engine => none
   | .typearea => let (_, hs, fs) := komaFurniture baselineskip; some (hs, fs)
+  | .flow => let f := sizeFileOf .sizeFile option; some (f.headsep, f.footskip)
   | r => let f := sizeFileOf r option; some (f.headsep, f.footskip)
 
 /-- The area a class's rule sets; `none` where the engine's page stands. -/
@@ -219,6 +250,7 @@ public def AreaRule.area? (rule : AreaRule) (i : AreaInput) : Option TextArea :=
   match rule with
   | .engine => none
   | .typearea => some (typeareaOf i)
+  | .flow => some (flowAreaOf i)
   | r => some (sizeFileArea (sizeFileOf r i.option) i)
 
 /-- The heights typearea's loop sets reach their target, short of it by less than a baseline. -/

@@ -21490,58 +21490,6 @@ private theorem bgStep_landTrailing {b0 X : B} (h : BgStep b0 X) (h0 : b0.pages 
     simp at hin
   · exact hf
 
-/-- The body face's lowercase alphabet at a size, with its pair kerns, as `\settowidth` sets it. -/
-public def alphabetWidth (size : Length) (font : Font) : Length := Id.run do
-  let mut units : Int := 0
-  let mut prev : Option Nat := none
-  for k in List.range 26 do
-    let c := Char.ofNat ('a'.toNat + k)
-    units := units + font.advance c
-    match font.gid c with
-    | some g =>
-      if let some p := prev then units := units + font.kernAdv p g
-      prev := some g
-    | none => prev := none
-  return units * max 0 size / font.unitsPerEm
-
-/-- The width `n` characters of a face take by memoir's copy-fitting lines (45 and 65 characters
-from the lowercase alphabet), to the nearest pica, as `tex/ltkeys.sty` computes it. -/
-public def measureWidth (alphabet : Length) (n : Nat) : Length :=
-  let l45 : Length := (1415 : Int) * alphabet / (1000 : Int) + Dim.pt 2303 / (100 : Int) -- memoir
-  let l65 : Length := (2042 : Int) * alphabet / (1000 : Int) + Dim.pt 3341 / (100 : Int) -- memoir
-  let w : Length := l45 + ((n : Int) - 45) * (l65 - l45) / (20 : Int)
-  let pica := Dim.pt 12 -- one pica
-  ((w + pica / (2 : Int)) / pica) * pica
-
-/-- A page whose measure is a count of characters, its text block set from the body face: the width
-`measureWidth` gives, the height the page's proportion gives it in whole leadings, the margins in
-typearea's proportions (sides 1:1, two-sided 1:2; top to bottom 1:2); declared margins stand. -/
-public def settleMeasure (fs : FontSet) (doc : Ir.Doc) : Ir.Doc :=
-  let page := doc.page
-  let hDeclared := page.hDeclared || page.blockWidth.isSome || page.widthScale.isSome
-  let vDeclared := page.vDeclared || page.bmargin.isSome
-  match page.measureChars <|> doc.docClass.record.design.map (·.measure),
-      doc.docClass.record.model with
-  | none, _ | some _, .frame | some _, .face => doc
-  | some n, .flow =>
-    let lead := page.bodySkip.getD (Ir.leadingFor page.fontSize)
-    let lead := if lead > 0 then lead else Dim.pt 12 -- size10.clo's \baselineskip
-    let tw := match page.blockWidth, page.widthScale with
-      | some w, _ => w
-      | none, some sc => page.width * (sc : Int) / (1000 : Int)
-      | none, none => if hDeclared then page.width - 2 * page.hmargin
-        else measureWidth (alphabetWidth page.fontSize fs.body) n
-    let room := if vDeclared then page.height - page.vmargin - page.bottomMargin
-      else Length.ofUnits (tw.units * page.height.units / max 1 page.width.units)
-    let th := (room / lead) * lead
-    let hm := if page.hDeclared then page.hmargin else (page.width - tw) / 2
-    let top := if vDeclared then page.vmargin else (page.height - th) / 3
-    let bottom := if page.bmargin.isSome then page.bmargin else some (page.height - th - top)
-    { doc with page := { page with
-        hmargin := hm, vmargin := top, bmargin := bottom
-        sideRatio := if page.hDeclared then page.sideRatio
-          else some (if page.twoside then (1, 2) else (1, 1)) } }
-
 /-- Each page's ink set by its own side's margins: a two-sided document's verso moved to its
 mirrored text block, a declared side ratio's page off the centre. -/
 public def mirrorSides (geom : Geom) (page : Ir.PageSpec) (pages : Array PageOut) : Array PageOut :=

@@ -25,7 +25,7 @@ private def gridBody : String :=
 
 /-- The page a flow class document sets: its measure settled against the face, then laid out. -/
 private def outOf (fonts : Font.FontSet) (src : String) : Ir.Doc × Layout.Out :=
-  let doc := Layout.settleMeasure fonts (elabStr src).1
+  let doc := (elabStr src).1
   (doc, layoutOf fonts doc)
 
 /-- Whether a baseline stands on the grid, within a hundredth of a point. -/
@@ -54,8 +54,8 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let lead := page.bodySkip.getD (Ir.leadingFor page.fontSize)
   let width := page.width - 2 * page.hmargin
   let height := page.height - page.vmargin - page.bottomMargin
-  t s!"flow class: the measure is 66 characters of the body face, to a pica ({width.toPtString})"
-    (width == Layout.measureWidth (Layout.alphabetWidth page.fontSize fonts.body) 66 &&
+  t s!"flow class: the measure is 66 characters of Latin Modern, to a pica ({width.toPtString})"
+    (width == Ir.measureWidth page.fontSize 66 &&
       (width / Dim.pt 12) * Dim.pt 12 == width)
   t s!"flow class: the text block is a whole number of leadings ({height.toPtString})"
     (0 < height && (height / lead) * lead == height)

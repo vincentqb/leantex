@@ -939,7 +939,6 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file 1 (← since t0)
       return 1
     | .ok (fs, doc, fontDiags, paths) =>
-      let doc := Layout.settleMeasure fs doc
       resolved := resolved.append
         (← ui.resolve doc.allow allowAll (outputs := outputs) (fontDiags.map sourceDiag))
       if resolved.stops > 0 then
@@ -961,8 +960,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
             (phases := false) (withdrawn := w.ids) (ledger := front.ledger)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
-        pure (Layout.settleMeasure fs
-          (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1), spans2)
+        pure (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
       let (imgs, imgDiags, imgHits, _, imgReads, judged) ←
         if Ir.imageRequests doc == Ir.imageRequests front.doc then

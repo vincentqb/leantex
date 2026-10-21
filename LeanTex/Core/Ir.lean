@@ -263,9 +263,6 @@ public structure PageSpec where
   grid : Option Bool := none
   /-- The leantex class's body leading, set where its record carries a design. -/
   classLead : Option Length := none
-  /-- Whether a declaration named the side margins, or the top and bottom ones. -/
-  hDeclared : Bool := false
-  vDeclared : Bool := false
   /-- How far past the trim edge the PDF page extends on every side, for print finishing. -/
   bleed : Length := 0
   /-- Whether the pages ship printer's cut marks (`\page{ marks = cut }`). -/
@@ -8793,6 +8790,7 @@ calibration reads fluently; declare \
       measureBand := true
       lists := .grid
       pageNumbers := true
+      area := .flow
       design := some p.design }
 
 /-- A document's class defaults: its class's colour row and ground depth, the

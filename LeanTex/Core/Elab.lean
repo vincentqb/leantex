@@ -7277,6 +7277,8 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
     | .sizeFile, some r => r
     | r, _ => r
   let rule := if surface == .tex then rule else Ir.DocClass.article.record.area
+  -- A measure in characters sets a flow page's text block by the flow class's rule.
+  let rule := if record.model == .flow && page.measureChars.isSome then .flow else rule
   let typearea := rule == .typearea
   let input : Ir.AreaInput :=
     { paperW := page.width, paperH := page.height, option := Ir.sizeOptionOf page.fontSize
@@ -7287,7 +7289,8 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
       div := if typearea then ((value "DIV").bind divValue?).getD 0 else 0
       bcor := if typearea then ((value "BCOR").bind bcorValue?).getD 0 else 0
       headinclude := typearea && included "headinclude"
-      footinclude := typearea && included "footinclude" }
+      footinclude := typearea && included "footinclude"
+      measure := page.measureChars.getD ((record.design.map (·.measure)).getD 66) }
   match rule.area? input with
   | some a =>
     let page := { page with maxDepth := a.maxDepth }
@@ -15854,12 +15857,10 @@ private def pageDim : Native.PageKey → Option (Length → PageSpec → PageSpe
   | .height => some fun d s => { s with height := d, heightSized := true }
   -- Declared side margins are equal on both sides, so they split the width 1:1 on either page.
   | .margin => some fun d s =>
-    { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1)
-             hDeclared := true, vDeclared := true }
-  | .vmargin => some fun d s => { s with vmargin := d, vDeclared := true }
+    { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1) }
+  | .vmargin => some fun d s => { s with vmargin := d }
   | .hmargin => some fun d s =>
-    { s with hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1)
-             hDeclared := true }
+    { s with hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1) }
   | .markGap => some fun d s => { s with markGap := d }
   | .markThickness => some fun d s => { s with markThickness := d }
   -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
