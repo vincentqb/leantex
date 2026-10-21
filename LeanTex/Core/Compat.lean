@@ -1098,6 +1098,8 @@ private structure St where
   /-- The declared class's page model is the flow model,
   whose text block is the engine's. -/
   flowPage : Bool := true
+  /-- The declared class indents its paragraphs' first lines (`Ir.ClassRecord.design`). -/
+  indents : Bool := false
   /-- Constructs already warned about. -/
   warned : Array String := #[]
   /-- Every control word the conditional pass has seen bound, with its
@@ -1630,6 +1632,24 @@ private def became (what native : String) (pos : Pos)
 `ctrl:nothing:<key>`, naming the reason. -/
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
+
+/-- The controls after which TeX stands in vertical mode: the headings and skips. -/
+private def verticalCtrls : List String :=
+  ["part", "chapter", "section", "subsection", "subsubsection", "par", "smallskip", "medskip",
+   "bigskip", "vspace", "newpage", "clearpage", "pagebreak", "maketitle"]
+
+/-- Whether a control at `i` stands where TeX is in vertical mode: past only spaces since the start,
+a paragraph end, an environment, or a heading or skip with its arguments. -/
+private def opensParagraph (raws : Array Raw) (i : Nat) : Bool :=
+  let before := (raws.extract 0 i).toList.reverse.dropWhile (· matches .space)
+  match before with
+  | [] | .par _ :: _ | .env .. :: _ => true
+  | .ctrl n _ :: _ => verticalCtrls.contains n
+  | .group .. :: rest =>
+    match rest.dropWhile (fun r => r matches .group .. | .sym '*' _ | .space) with
+    | .ctrl n _ :: _ => verticalCtrls.contains n
+    | _ => false
+  | _ => false
 
 /-- The census subject of a declared setting: its reader and its name. -/
 public def paramSubject (reader name : String) : String := s!"param:{reader}:{name}"
@@ -6738,7 +6758,11 @@ spaced per level, in the preamble"
     else
       nothing s!"the next list sets '\\{n}' again from its class's parameters, so no list reads it"
   | .unmodelled why, false =>
-    if n == "parindent" && Decl.parseGlue src == some {} then
+    -- premise: firstIndentChecks — an indenting class reads the preamble's `\parindent`
+    if n == "parindent" && st.indents then
+      if preamble && !st.inDef then emit (.tokens #[(n, src)])
+      else named "is read where the preamble sets it; the body leaves the page as declared"
+    else if n == "parindent" && Decl.parseGlue src == some {} then
       nothing "paragraphs here are set flush, as declared"
     else named why
 
@@ -8579,7 +8603,7 @@ public inductive Lowering where
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
-  | texOrPdf | changeFontSizes | addvspace
+  | texOrPdf | changeFontSizes | addvspace | noIndent
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8786,7 +8810,7 @@ private def ctrlRows5 : List CtrlRow :=
    ⟨"newgeometry", [.needed], .lower .geometry {}⟩,
    ⟨"newlength", [.group], .lower .newLength { leaves := [.notCtrl 0] }⟩,
    ⟨"newpage", [], .tokens [.ctrl "pagebreak" {}] (some "\\pagebreak")⟩,
-   nothingRow "noindent" 0 "no paragraph carries a first-line indent here",
+   ⟨"noindent", [], .lower .noIndent {}⟩,
    ⟨"nolinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
    nothingRow "nonfrenchspacing" 0 "inter-sentence space is uniform here either way",
    ⟨"nopagecolor", [], .tokens [.ctrl (Marker.name .pageColorReset "") {}]
@@ -11246,6 +11270,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let flow := ((Ir.DocClass.ofString? (classModelName cls)).map (·.record.model == .flow)).getD true
     write fun st => { st with
       flowPage := flow,
+      indents := ((Ir.DocClass.ofString? native).bind (·.record.design)).isSome,
       -- KOMA-Script's titlepage environment never resets the page counter (scrbook.cls), and memoir
       -- has none.
       titlepageReset := !twoside && !koma && cls != "memoir" }
@@ -12194,6 +12219,16 @@ declare the furniture directly")
     setting "\\vspace" native c.pos
   -- latex.ltx's `\addvspace` after a paragraph, where the space before it is the paragraph's own.
   | .addvspace => setting "\\addvspace" (skipNative (skipSrc (lengthSrc (c.arg 0))) "addvspace") c.pos
+  | .noIndent => do
+    -- premise: firstIndentChecks — an indenting class sets the paragraph after the mark flush
+    let st ← get
+    if st.indents && st.topLevel && (!st.inGroup || st.defTop) && opensParagraph c.raws (c.start - 1)
+    then
+      became "\\noindent" "the paragraph it opens is set flush" c.pos
+      return #[.ctrl Ir.parContinuesRole c.pos]
+    discard "\\noindent" (if st.indents then "TeX ignores it inside a paragraph or a box"
+      else "no paragraph carries a first-line indent here") "noindent" c.pos
+    return #[]
   | .pageBreak => do
     -- Every `\pagebreak` is taken whole; the demand level is not weighed.
     if (c.given 0).isSome then
@@ -12428,13 +12463,15 @@ that graph")
       return #[]
     return blueprintSiteRaws c.name (urlText (c.arg 0)) c.pos
 
-/-- An invented call: its arguments' sources, whether it stands in the body, the source after it
-and the bibliography files declared before it. -/
+/-- An invented call: its arguments' sources, whether it stands in the body, the source after it,
+the bibliography files declared before it and whether the class indents. -/
 public structure LowerWitness where
   args : List (Option String)
   inDoc : Bool
   after : String := ""
   resources : Array String := #[]
+  /-- The class indents its paragraphs (`St.indents`). -/
+  indents : Bool := false
 
 /-- A call on which a lowering emits raws: none exactly for the lowerings proved to emit nothing
 (`Lowering.emitsNothing`). -/
@@ -12460,6 +12497,7 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .selectLanguage => some { args := [some "french"], inDoc := true }
   | .vspace => some { args := [none, none, some "1em"], inDoc := true }
   | .pageBreak => some { args := [none], inDoc := true }
+  | .noIndent => some { args := [], inDoc := true, indents := true }
   | .komaFont => some { args := [some "section", some "\\bfseries"], inDoc := false }
   | .sectionSkips => some { args := [some "beforeskip=1em", some "section"], inDoc := false }
   | .setList => some { args := [none, none, some "itemsep=0pt"], inDoc := false }
@@ -12489,7 +12527,7 @@ public def Lowering.emitsOn (l : Lowering) (name : String) (w : LowerWitness) : 
   let call : CtrlCall := ⟨name, {}, (w.args.map (·.map (verbatimRaws file))).toArray,
     verbatimRaws file w.after, 0, 0⟩
   let st : St := { file := file, docFile := file, inDoc := w.inDoc, wholeDoc := true,
-                   bibResources := w.resources }
+                   bibResources := w.resources, indents := w.indents }
   !((lowerCall call l).run st).1.isEmpty
 
 /-- Whether a lowered control is left, as written, to elaboration where it stands. -/

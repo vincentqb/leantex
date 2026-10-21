@@ -4115,7 +4115,9 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
   let level : Int := if name == "paragraph" then 4 else 5
   -- premise: counterChecks — numbered only within secnumdepth
   let shaped (head : Inline) : Inline :=
-    if ctx.listNest.shaped.isSome then .role Ir.runInHeadRole #[head] else head
+    if ctx.listNest.shaped.isSome || (ctx.tokens.find? "parindent").isSome then
+      .role Ir.runInHeadRole #[head]
+    else head
   -- hyperref's `\@currentlabelname`: a label after the head names it.
   let name := Ir.nameOf title
   if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
@@ -13617,6 +13619,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
     || n == Ir.trivItemRole || n == Ir.captionAtRole
+    || (n == Ir.parContinuesRole && cur.all (· matches .space))
     || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || ((n == Ir.plainPageRole || n == Ir.styledPageRole) && cur.isEmpty)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
@@ -13676,8 +13679,8 @@ private def pastSkips (raws : Array Raw) (k : Nat) : Nat := Id.run do
   return k
 
 /-- `blocks` with `Ir.parContinuesRole`'s marker after an environment leaving `\@endpe` (`endPe`) in a
-quotation or a verse, where text follows it past any bare skip, unless it opened in a label, which
-`\@noparlist` leaves without one. -/
+quotation, a verse or an indenting class's top level, where text follows it past any bare skip,
+unless it opened in a label, which `\@noparlist` leaves without one. -/
 private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (endPe : Bool)
     (blocks : Array Block) : Array Block :=
   let k := skipSpaces raws j
@@ -13688,7 +13691,10 @@ private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (endPe : Bool)
     !Ir.pageMarkerBlock b && !(b matches .setPalette _ | .setTokens _) &&
       !(match b with | .para c => Ir.anchorsOnly c | _ => false)
   let labelled := 0 < ctx.listNest.depth && content.size ≤ 1
-  if text && ctx.listNest.shaped.isSome && !labelled && endPe then
+  -- An indenting class's text going on at the top level, its abstract a list, sets it flush.
+  let indents := ctx.listNest.depth == 0 && (ctx.tokens.find? "parindent").isSome
+  let endPe := endPe || (indents && (Ir.lastContent? blocks matches some (.abstract _)))
+  if text && (ctx.listNest.shaped.isSome || indents) && !labelled && endPe then
     blocks.push (.role Ir.parContinuesRole #[])
   else blocks
 
@@ -14000,7 +14006,8 @@ private def pageMark? (n : String) : Option Block :=
   if n == "pagebreak" then some .pagebreak
   else if n == Compat.vspaceAnchorMark then some (.role Ir.pageAnchorRole #[])
   else if n == "nointerlineskip" then some (.role Ir.noInterlineRole #[])
-  else if n == Ir.captionCloseRole || n == Ir.trivItemRole || n == Ir.captionAtRole then
+  else if n == Ir.captionCloseRole || n == Ir.trivItemRole || n == Ir.captionAtRole ||
+      n == Ir.parContinuesRole then
     some (.role n #[])
   else if (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || n == Ir.plainPageRole ||
       n == Ir.styledPageRole then
@@ -19280,7 +19287,7 @@ public def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
   let st ← get
   let blocks := Ir.anchorReferents (referentKeys plan.ctx st) (Ir.numberFloats blocks st.ctr.chapters)
   let completion ← plan.finish blocks
-  return (completion.attach blocks, completion.table, completion.pictureReport)
+  return ((completion.attach blocks).withIndents, completion.table, completion.pictureReport)
 
 public def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
   finishDocBody plan (← elabBlocks plan.ctx plan.raws)
@@ -19362,8 +19369,8 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
       ((elabBlocks plan.ctx plan.raws).run st).2).1.attach
         (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
           (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1
-            ((elabBlocks plan.ctx plan.raws).run st).2.ctr.chapters))).body) = _
-  rw [hbs, numbered_recovered_para, referent_recovered_para, attach_paraUnder,
+            ((elabBlocks plan.ctx plan.raws).run st).2.ctr.chapters))).withIndents.body) = _
+  rw [Ir.Doc.withIndents_text, hbs, numbered_recovered_para, referent_recovered_para, attach_paraUnder,
     BodyCompletion.resolved_body_exact]
   split
   · rw [resolve_recovered_para]
@@ -19473,15 +19480,16 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   return { state := s, decls, body, trailing }
 
 /-- The flow class's grid as the tokens and heading styles it sets where the document declares
-none: `\topskip` and the footnote gap one leading, and heading spaces whole leadings
-(`tex/ltflow.cls`). -/
+none: `\topskip` and the footnote gap one leading, the size file's `\parindent`, and heading
+spaces whole leadings (`tex/ltflow.cls`). -/
 private def flowDesignDecls (body : Length) (tokens : Ir.Tokens) (styles : Ir.Styles) :
     Ir.Tokens × Ir.Styles :=
   let lead := Ir.sizeFileLeading body 1000 "normalsize"
   let g (k : Nat) : SymGlue := { width := Dim.SymLength.ofLength (lead * (k : Int)) }
   let tok (t : Ir.Tokens) (n : String) (v : SymGlue) : Ir.Tokens :=
     if (t.find? n).isSome then t else t.declare n v
-  let tokens := tok (tok tokens "topskip" (g 1)) "footins" (g 1)
+  let tokens := tok (tok (tok tokens "topskip" (g 1)) "footins" (g 1)) "parindent"
+    { width := Dim.SymLength.ofLength (Ir.sizeFileParindent body) }
   let head (st : Ir.Styles) (name : String) (b : Nat) (a : Option Nat) : Ir.Styles :=
     let e := (st.find? name).getD {}
     st.declare name { e with before := e.before <|> some (g b), after := e.after <|> a.map g }

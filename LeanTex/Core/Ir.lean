@@ -7094,7 +7094,7 @@ public def engineTokenNames : List String :=
    "floatsep", "footins", "marginparwidth", "marginparsep", "marginparpush", bibHangName, bibSepName,
    displaySkipAbove, displaySkipBelow, displaySkipAboveShort, displaySkipBelowShort,
    "smallskipamount", "medskipamount", "bigskipamount", "fboxsep", "fboxrule", "headsep", "footskip",
-   "topskip",
+   "topskip", "parindent",
    "progressheight", "frametitlepadding", "algindent", "algnumindent", "subtitlegap",
    "separatorheight", "separatorgap", "authorgap", "institutegap", "captionmargin"] ++
     ([1, 2, 3, 4, 5, 6].map leftMarginName) ++ tableLengths.map (·.1) ++
@@ -8438,6 +8438,14 @@ private def sizeFileLeadings : Nat → List (String × Nat)
       ("normalsize", 25000), ("large", 30000), ("Large", 35000), ("LARGE", 41000),
       ("huge", 52000), ("Huge", 63000)]
   | _ => []
+
+/-- The `\parindent` the standard classes' size files set at a body size: 15pt, 17pt and 1.5em
+(size10.clo, size11.clo, size12.clo), 1.5em at a size they do not name. -/
+public def sizeFileParindent (body : Length) : Length :=
+  match displayOptions.find? fun o => Dim.pt o.1 == body || o.2 == body with
+  | some (10, _) => Dim.pt 15 -- size10.clo
+  | some (11, _) => Dim.pt 17 -- size11.clo
+  | _ => body * 3 / (2 : Int)
 
 /-- The `\baselineskip` a named size of the engine's ladder sets: the size file's where the
 body is an option's size, else the engine's leading of the size. -/
@@ -14250,6 +14258,71 @@ public theorem titleBars_text (st : ElementStyle) (ink : Color × Option ColorRe
   · rfl
   · rw [titleBarsList_text]
     simp [blocksText, blockTextList]
+
+/-- One top-level block under a `\parindent` of `w`, and whether text goes on past it
+(`Block.continuesPar`); skips, marks and anchor-only paragraphs keep the state. -/
+private def indentStep (w : SymGlue) (cont : Bool) (b : Block) : Block × Bool :=
+  match b with
+  | .para c =>
+    if anchorsOnly c then (b, cont)
+    else if cont || opensRunIn c then (b, false)
+    else (.para (#[.hspace (.lit w) true] ++ c), false)
+  | .setPalette _ | .setTokens _ => (b, cont)
+  | b => (b, if b.continuesPar then true else if pageMarkerBlock b || b.isSkip then cont else false)
+
+public def indentParagraphsList (w : SymGlue) (out : Array Block) (cont : Bool) :
+    List Block → Array Block
+  | [] => out
+  | b :: rest =>
+    let (b', cont') := indentStep w cont b
+    indentParagraphsList w (out.push b') cont' rest
+
+/-- The top-level body with each paragraph's first line indented by `w` as TeX's `\everypar` sets
+it (`indentStep`). -/
+public def indentParagraphs (w : SymGlue) (body : Array Block) : Array Block :=
+  indentParagraphsList w #[] false body.toList
+
+private theorem indentStep_text (w : SymGlue) (cont : Bool) (acc : String) (b : Block) :
+    blockTextOne acc (indentStep w cont b).1 = blockTextOne acc b := by
+  unfold indentStep
+  split
+  · split
+    · rfl
+    · split
+      · rfl
+      · simp [blockTextOne, plainText, plainTextList, plainTextOne]
+  · rfl
+  · rfl
+  · rfl
+
+private theorem indentParagraphsList_text (w : SymGlue) (out : Array Block) (cont : Bool)
+    (l : List Block) :
+    blocksText (indentParagraphsList w out cont l) = blockTextList (blocksText out) l := by
+  induction l generalizing out cont with
+  | nil => rfl
+  | cons b rest ih =>
+    simp only [indentParagraphsList, ih, blocksText_push, indentStep_text, blockTextList]
+
+public theorem indentParagraphs_text (w : SymGlue) : Conserves blocksText (indentParagraphs w) := by
+  intro xs
+  unfold indentParagraphs
+  rw [indentParagraphsList_text]
+  simp [blocksText, blockTextList]
+
+/-- The document with its paragraphs on the `\parindent` its tokens hold (`firstIndentChecks`). -/
+public def Doc.withIndents (doc : Doc) : Doc :=
+  match doc.tokens.find? "parindent" with
+  | some g => if g == {} then doc else { doc with body := indentParagraphs g doc.body }
+  | none => doc
+
+public theorem Doc.withIndents_text (doc : Doc) :
+    blocksText doc.withIndents.body = blocksText doc.body := by
+  unfold Doc.withIndents
+  split
+  · split
+    · rfl
+    · exact indentParagraphs_text _ _
+  · rfl
 
 mutual
 

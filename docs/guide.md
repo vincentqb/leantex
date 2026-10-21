@@ -509,7 +509,9 @@ display or a box moves to the nearest grid line. The type scale is LaTeX's ratio
 each size's line a whole number of leadings. The measure is 66 characters of the body face
 (memoir's copy-fitting count) to the nearest pica; the text block takes the page's proportions in
 whole lines, centred, with twice as much margin below it as above. A paragraph leaves no widow or
-club and no page ends on a heading. `\page{ measure = 60 }` sets another measure, `\page{ grid = off }` turns the grid
+club and no page ends on a heading. A paragraph opens on the size file's `\parindent` (17pt at
+11pt), none after a heading, `\noindent` or text going on past a list, and the preamble's
+`\setlength{\parindent}{...}` replaces it. `\page{ measure = 60 }` sets another measure, `\page{ grid = off }` turns the grid
 off, and declared margins replace the derived ones. Presets: `\documentclass[preset=cookbook]{ltflow}`
 sets two-sided chapters on `book.cls` with a `recipe` environment (`\begin{recipe}{Title}{Serves
 four}`); `preset=cv` sets unnumbered headings, unindented paragraphs, a 75-character measure and
