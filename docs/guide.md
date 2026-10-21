@@ -8,10 +8,11 @@ layout of MyST's book theme: where the screen is wide enough, its outline
 stands in a sidebar before the text and stays in view as the page scrolls.
 `\page{ web = article }`, or `web: article` in a Markdown document's metadata
 block, takes the article theme's instead, the outline in a margin column after a
-wider text. A Markdown or code page sets its text at the
-book layout's measure, sixty digits of its face wide; a TeX page sets its text
-block's width unless it declares a layout and no text width, which then sets
-that layout's measure, the article's seventy-two digits.
+wider text. A Markdown or code page sets its text at its layout's measure, the
+book's sixty digits of its face unless its metadata declares the article's
+seventy-two; a TeX page sets its text block's width unless it declares a layout
+and no text width, which then sets that layout's measure, the article's
+seventy-two digits.
 
 Diagnostics identify the source location and unsupported construct. A warning
 repeated in the same words within one phase of a build prints once, at its
@@ -126,7 +127,9 @@ the entries in a comment there, and closes with a metadata block naming the
 bibliography from where the twin stands, every listed entry as `nocite`,
 wherever each citation reads back so in one list; otherwise it sets every
 citation as its marks, linked to the entries it writes. Every other metadata
-key is named as not read, `csl` among them, since no CSL processor runs. A
+key but `web` (under Output and diagnostics) is named as not read, `csl` among
+them, since no CSL processor runs; an included file's `web` is named, its page
+taking the including document's layout. A
 Markdown file included in TeX reads citations, into the TeX document's
 bibliography, where the document loads the markdown package with its
 `citations` option or `\markdownInput[citations]{…}` asks, as the markdown

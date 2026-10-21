@@ -111,6 +111,18 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, mdListDs) := elabMd ("---\nweb: [book, article]\n---\n\n" ++ guide)
   t "web measure: a markdown layout that is no single name is named unread"
     (mdListDs.any fun d => d.kind == .W0307 && hasStr d.message "'web'")
+  let (_, mdEmptyDs) := elabMd ("---\nweb:\n---\n\n" ++ guide)
+  t "web measure: an empty markdown layout is named unread"
+    (mdEmptyDs.size == 1 && mdEmptyDs.all fun d => d.kind == .W0307 && hasStr d.message "'web'")
+  t "web measure: TeX names a layout no theme names in the markdown words, its help in its own spelling"
+    (badDs.size == 1 && badDs.all fun d => d.kind == .E0323 &&
+      d.message == "invalid value 'magazine' for key web" &&
+      (d.help.getD "") == "write '\\page{ web = book }' or '\\page{ web = article }'")
+  let (inc, incDs) := includedDoc "host.tex" (neutralHost "a")
+    [("a", "a.md", "---\nweb: article\n---\n\nAn included line.\n")]
+  t "web measure: an included markdown file's layout is named and the page keeps the host's"
+    (inc.page.web.isNone && incDs.any fun d => d.kind == .W0307 && hasStr d.message "'web'" &&
+      hasStr d.message "including document's layout")
   let (_, dimDs) := elabStr ("\\documentclass{article}\\page{ web = 3pt }\\begin{document}" ++
     "x\\end{document}")
   t "web measure: a value of the wrong type names the layouts"

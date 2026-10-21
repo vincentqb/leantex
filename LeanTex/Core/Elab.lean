@@ -15895,6 +15895,14 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .hscale | .vscale => "a fraction of the page between 0 and 1, or auto"
   | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
 
+/-- E0323's words for a web layout no theme names. -/
+private def webLayoutUnknown (v : String) : String :=
+  Diag.say .E0323 .value (Diag.Name.value v) (obj := some (some .key, Parse.markdownWebKey))
+
+/-- The help naming each web layout as `spell` writes its declaration. -/
+private def webLayoutHelp (spell : String → String) : String :=
+  "write " ++ " or ".intercalate (Ir.WebLayout.names.map fun (n, _) => s!"'{spell n}'")
+
 /-- A fraction of the page between zero and one, in thousandths. -/
 private def scaleOf (v : Decl.Value) : Option Nat :=
   let milli : Option Int := match v with
@@ -16121,7 +16129,9 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       | .web, .ident v =>
         match Ir.WebLayout.ofName? v with
         | some l => spec := { spec with web := some l }
-        | none => evs := say evs .E0323 s!"'web' in '\\page' expects {pageExpects .web}, got '{v}'"
+        | none =>
+          evs := say evs .E0323 (webLayoutUnknown v)
+            (some (webLayoutHelp fun n => s!"\\page\{ web = {n} }"))
       | .bottom, .ident v =>
         match v with
         | "flush" => spec := { spec with flushBottom := some true }
@@ -18099,8 +18109,8 @@ draws; skipped" pos
     match Ir.WebLayout.ofName? v with
     | some l => return { s with page := { s.page with web := some l } }
     | none =>
-      diag s.ctx .E0323 (Diag.say .E0323 .value (Diag.Name.value v) (obj := some (some .key, "web")))
-        pos (help := some ("write " ++ " or ".intercalate (Ir.WebLayout.names.map fun (n, _) => s!"'web: {n}'")))
+      diag s.ctx .E0323 (webLayoutUnknown v) pos
+        (help := some (webLayoutHelp fun n => s!"{Parse.markdownWebKey}: {n}"))
       return s
   | .fonts (some body) pos => stepDone s.ctx (stepFonts s body pos)
   | .fonts none pos => stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos)
@@ -19094,11 +19104,26 @@ private def applyTemplate (s : PreState) : Compat.TemplateDecl → EM PreState
   | .block element r colors file pos => applyBlockShape s element r colors file pos
   | .titlePage .. => pure s
 
-/-- How many raws open a document with its markdown metadata's declarations. -/
-private def mdDeclPrefix (raws : Array Raw) : Nat :=
-  match raws[0]?, raws[1]? with
-  | some (Raw.ctrl n _), some (Raw.group _ _) => if n == Parse.markdownWebControl then 2 else 0
-  | _, _ => 0
+/-- A markdown document's metadata declarations, each its control and value group wherever they
+stand at the top level, apart from the rest of its raws. -/
+private def mdDeclsApart (raws : Array Raw) : Array Raw × Array Raw := Id.run do
+  let mut decls : Array Raw := #[]
+  let mut body : Array Raw := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    let some r := raws[i]? | break
+    match r, raws[i + 1]? with
+    | .ctrl n _, some g@(.group _ _) =>
+      if n == Parse.markdownWebControl then
+        decls := (decls.push r).push g
+        i := i + 2
+      else
+        body := body.push r
+        i := i + 1
+    | _, _ =>
+      body := body.push r
+      i := i + 1
+  return (decls, body)
 
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
@@ -19117,9 +19142,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
         | _ => #[]
       (raws.extract 0 idx, bodyRaws, raws.extract (idx + 1) raws.size)
     | none =>
-      -- A markdown document's metadata declarations stand before its text.
-      let k := mdDeclPrefix raws
-      (raws.extract 0 k, raws.extract k raws.size, #[])
+      let (decls, body) := mdDeclsApart raws
+      (decls, body, #[])
   let decls := scanDecls file preamble
   -- Read before the fold, so a `\pictures` line binds the settings above it.
   let picTool0 : Option String :=

@@ -1079,14 +1079,17 @@ private def MetaValue.bool? : MetaValue → Option Bool
     else none
   | _ => none
 
+/-- The keys only a document's citations read. -/
+private def citationKeys : List String :=
+  ["bibliography", "biblio-style", "natbiboptions", "nocite", "reference-section-title",
+   "link-citations"]
+
 /-- The keys metadata reads, each with the role it is read in. -/
 public def metaKeys : List (String × Role) :=
   [("bibliography", .document), ("biblio-style", .document), ("natbiboptions", .document),
    ("nocite", .document), ("nocite", .included), ("reference-section-title", .document),
-   ("link-citations", .document), ("link-citations", .included), ("web", .document)]
-
-/-- The keys only a document's citations read. -/
-private def citationKey (key : String) : Bool := key != "web"
+   ("link-citations", .document), ("link-citations", .included),
+   (Parse.markdownWebKey, .document)]
 
 /-- What a metadata block's fields declare for citations, read as Pandoc reads them, and for the
 web layout; every other key is named, as is a key written twice, which takes its last value, and in
@@ -1108,7 +1111,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
     let known := metaKeys.any fun (k, r) => k == f.key && r == role
     if !known then
       let csl := f.key == "csl" || f.key == "citation-style"
-      let why := if role == .included && f.key == "web" then
+      let why := if role == .included && f.key == Parse.markdownWebKey then
           "an included file's page takes the including document's layout"
         else if role == .included && metaKeys.any (·.1 == f.key) then
           "an included file's citations take the including document's bibliography and style"
@@ -1119,7 +1122,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         else none
       out := { out with diags := out.diags.push (unread f why help) }
       continue
-    if role == .document && !declared && f.key != "bibliography" && citationKey f.key then
+    if role == .document && !declared && f.key != "bibliography" && citationKeys.contains f.key then
       out := { out with diags := out.diags.push (unread f "the document declares no bibliography"
         (some "name the .bib file the citations take, as 'bibliography: refs.bib'")) }
       continue
@@ -1173,9 +1176,12 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         out := { out with diags := out.diags.push d }
       | some true => pure ()
       | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
-    | "web", .scalar v => out := { out with web := some (v.trimAscii.toString, f.pos) }
+    | "web", .scalar v =>
+      let v := v.trimAscii.toString
+      if v.isEmpty then out := { out with diags := out.diags.push (unread f "its value is empty") }
+      else out := { out with web := some (v, f.pos) }
     | _, _ => out := { out with diags := out.diags.push (unread f "its value is not one the key takes") }
-    if out.diags.size == before && f.key != "nocite" && citationKey f.key then
+    if out.diags.size == before && f.key != "nocite" && citationKeys.contains f.key then
       out := { out with taken := out.taken.push (f.key, f.pos) }
   return out
 
