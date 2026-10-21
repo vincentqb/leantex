@@ -52,7 +52,8 @@ definition; a file the document inputs is the document's own.
 leantex supports a subset of LaTeX commands and package interfaces, including
 document-local `.sty` and `.cls` files. A local class is read as a local style is, its options
 scheduled by its own `\DeclareOption` and `\ProcessOptions`, and set on the class its
-`\LoadClass` names, or on the article model when it loads none. amsart, amsproc and acmart are
+`\LoadClass` names; a class that loads none is not run, and its document stands on the article
+model as under an unknown class. amsart, amsproc and acmart are
 set on the article model with their top matter: every author, address and key-word line, and
 the abstract written before `\maketitle`. It does not execute arbitrary installed TeX packages
 or Lua code; unsupported constructs produce diagnostics. A TeX installation

@@ -21,6 +21,13 @@ private def inventedPaper (classLine preamble body : String) : String :=
 private def sitedIn (ds : Array Diag) (code file : String) : Array Diag :=
   ds.filter fun d => d.code == code && d.span.any (·.file == file)
 
+/-- Every body line's text, in page order. -/
+private def bodyTexts (out : Layout.Out) : Array String := (bodyLines out).map (lineText ·)
+
+/-- The index of the first line holding `s`. -/
+private def lineAt (lines : Array String) (s : String) : Option Nat :=
+  lines.findIdx? fun l => hasStr l s
+
 /-- A local class schedules its options, loads its base as the class line, and sets every line
 where that class line sets it; a class it cannot load stands on the article model, named once. -/
 def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -47,8 +54,8 @@ def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "a class loading its base without options leaves the document's options to no class"
     (linePlaces (layoutOf fonts plain) ==
       places (inventedPaper "\\documentclass{article}" "" "Widgets turn."))
-  t "each option a class neither handles nor passes on is named once, at the class"
-    ((sitedIn plainDs "W0110" "inventedplain.cls").size == 2)
+  t "each option a class neither handles nor passes on is named once, at the class line"
+    ((sitedIn plainDs "W0110" "testdata/corpus/sty-parity/cls-plain.tex").size == 2)
   let (with_, withDs, _) ← runStyParity "cls-with"
   t "a class loading its base with its options sets the page that class line sets"
     (linePlaces (layoutOf fonts with_) ==
@@ -62,28 +69,42 @@ def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "the nested class's options reach the base, and its redefinitions stand"
     (linePlaces (layoutOf fonts nest) == places (inventedPaper "\\documentclass[12pt]{article}"
       "\\newcommand{\\journalname}{Invented Nested Letters}\n" "Widgets turn. \\journalname."))
-  let (scratch, scratchDs, _) ← runStyParity "cls-scratch"
-  t "a class loading no class stands on the article model, named once"
-    (linePlaces (layoutOf fonts scratch) == places (inventedPaper "\\documentclass{article}"
-      "\\newcommand{\\journalname}{Invented Scratch}\n" "Widgets turn. \\journalname.") &&
-      (scratchDs.filter fun d => d.code == "N0100" &&
-        (d.message.splitOn "inventedscratch").length > 1).size == 1)
+  let (_, scratchDs, scratchRead) ← runStyParity "cls-scratch"
+  t "a class building on no class is not run, its document on the article model as unknown"
+    (scratchRead.isEmpty && (scratchDs.filter (·.code == "E0309")).size == 1)
   let (base, baseDs, _) ← runStyParity "cls-base"
   t "a base class with no file and no model is the class file's refusal, the class's commands kept"
     ((sitedIn baseDs "E0309" "inventedbase.cls").size == 1 &&
       baseDs.all (fun d => d.code != "E0309" || d.span.any (·.file == "inventedbase.cls")) &&
       hasStr (String.join ((bodyLines (layoutOf fonts base)).toList.map (lineText ·)))
         "Invented Base")
+  let (shadow, shadowDs, shadowRead) ← runStyParity "cls-shadow"
   t "a class the engine models reads no file of its name"
-    (Compat.modeledClass "article" && Compat.modeledClass "report" &&
-      Compat.modeledClass "beamer" && !Compat.modeledClass "inventedletters")
-
-/-- Every body line's text, in page order. -/
-private def bodyTexts (out : Layout.Out) : Array String := (bodyLines out).map (lineText ·)
-
-/-- The index of the first line holding `s`. -/
-private def lineAt (lines : Array String) (s : String) : Option Nat :=
-  lines.findIdx? fun l => hasStr l s
+    (shadowRead.isEmpty && !shadowDs.any (·.code == "E0309") &&
+      linePlaces (layoutOf fonts shadow) == places
+        "\\documentclass{amsart}\n\\begin{document}\nWidgets turn.\n\\end{document}\n")
+  let (book, bookDs, _) ← runStyParity "cls-book"
+  t "the class a local class loads is the class loaded, its release date no text"
+    (hasStr (String.join ((bodyTexts (layoutOf fonts book)).toList)) "Book base." &&
+      !bookDs.any (·.code == "E0313"))
+  let (ams, _, _) ← runStyParity "cls-ams"
+  let amsLines := bodyTexts (layoutOf fonts ams)
+  t "a local class on a journal class gathers that class's top matter"
+    ((lineAt amsLines "Ada Example and Bea Sample").isSome &&
+      (match lineAt amsLines "An Invented Result", lineAt amsLines "Invented summary words" with
+        | some ti, some ab => ti < ab
+        | _, _ => false))
+  let (global, globalDs, _) ← runStyParity "cls-global"
+  t "the document's options reach the packages after its local class, as global options do"
+    (linePlaces (layoutOf fonts global) == places ("\\documentclass[doublespacing]{article}\n" ++
+      "\\usepackage{setspace}\n\\begin{document}\nWidgets turn in a line of invented text " ++
+      "long enough to wrap onto a second line of the page,\nso that the leading between its " ++
+      "lines shows how far apart the lines stand.\n\\end{document}\n") &&
+      !globalDs.any (·.code == "W0110"))
+  let (_, cycleDs, cycleRead) ← runStyParity "cls-cycle"
+  t "a class loading a class already read reads nothing again, the loop named once"
+    (cycleRead.map (·.1) == #["inventedcyca.cls", "inventedcycb.cls"] &&
+      (cycleDs.filter (·.code == "E0309")).size == 1 && !cycleDs.any (·.code == "E0501"))
 
 /-- A journal class sets its gathered top matter under its title: every author, address and
 key-word line, and the abstract written before `\maketitle`; `\and` keeps authors apart, and an
@@ -111,6 +132,14 @@ def journalClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
         lineAt amsLines "Key words and phrases.", lineAt amsLines "Opening" with
       | some ti, some ab, some kw, some op => ti < ab && ab < kw && kw < op
       | _, _, _, _ => false)
+  let three := paper "amsart" "\\author{Ada Example \\and Bea Sample}\n\\author{Cy Placeholder}\n"
+  t "authors \\and separates are authors, three joined by commas and a last and"
+    ((lineAt (bodyTexts (layoutOf fonts (elabStr three).1))
+      "Ada Example, Bea Sample, and Cy Placeholder").isSome)
+  let lone := "\\documentclass{amsart}\n\\begin{document}\n\\begin{abstract}\nLone summary.\n" ++
+    "\\end{abstract}\nWidgets turn.\n\\end{document}\n"
+  t "an abstract no \\maketitle follows stands where it is written"
+    ((lineAt (bodyTexts (layoutOf fonts (elabStr lone).1)) "Lone summary.").isSome)
   t "the subject classification line names its scheme's year"
     ((lineAt amsLines "2020 Mathematics Subject Classification.").isSome)
   let acm := paper "acmart" ("\\author{Ada Example}\n" ++
@@ -135,6 +164,13 @@ def journalClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "acmart's theorem environments are declared, numbered within the section"
     (!thmDs.any (·.code == "W0302") && (lineAt thmLines "Theorem 1.1.").isSome &&
       (lineAt thmLines "Definition 1.2.").isSome)
+  let (offDoc, offDs) := elabStr ("\\documentclass[acmthm = false]{acmart}\n" ++
+    "\\newtheorem{theorem}{Theorem}\n\\begin{document}\n\\section{Opening}\n" ++
+    "\\begin{theorem}Widgets turn.\\end{theorem}\n\\end{document}\n")
+  t "acmart's acmthm option, however spaced, leaves the theorems to the document, unnamed"
+    ((lineAt (bodyTexts (layoutOf fonts offDoc)) "Theorem 1.").isSome &&
+      (lineAt (bodyTexts (layoutOf fonts offDoc)) "Theorem 1.1.").isNone &&
+      !offDs.any (·.code == "W0104"))
   let gaps (src : String) : Dim.Length :=
     let lines := bodyLines (layoutOf fonts (elabStr src).1)
     match lines.find? fun l => hasStr (lineText l) "Ada" with
@@ -148,6 +184,10 @@ def journalClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "\\and sets authors apart by at least LaTeX's 1em and both column paddings"
     (gaps (authors "Ada Example \\and Bea Sample") ≥
       gaps (authors "Ada Example Bea Sample") + Dim.pt 22 - Dim.pt 4)
+  t "a document's own \\and stands"
+    (pageTextOf fonts ("\\documentclass{article}\n\\renewcommand{\\and}{ \\& }\n\\title{T}\n" ++
+      "\\author{Ada \\and Bea}\n\\begin{document}\n\\maketitle\n\\end{document}\n") |>
+      fun txt => hasStr txt "Ada & Bea" || hasStr txt "Ada &Bea")
   let engine (test : String) : String :=
     pageTextOf fonts (dvDoc "" s!"\\{test} Yes\\else No\\fi")
   t "an engine test answers as lualatex answers it"

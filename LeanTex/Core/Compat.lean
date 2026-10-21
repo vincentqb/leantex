@@ -197,10 +197,17 @@ private def themeBlockFont (theme element : String) (pos : Pos) : List (String �
 /-- Beamer's font axes in the order `\usebeamerfont` selects them. -/
 private def beamerFontKeys : List String := Ir.FontAxis.all.map (·.key)
 
-/-- The gap `\and` leaves between authors: latex.ltx sets each in a tabular column, `\and` their
-`\hskip 1em` beside both columns' `\tabcolsep`. -/
-private def authorGap : List Raw :=
-  [.ctrl "hspace" {}, .group #[.word "1em" {}] {}, .ctrl "hspace" {}, .group #[.word "12pt" {}] {}]
+/-- The marker before the class line a local class loads its base with, unforgeable because it
+holds a space. -/
+private def classBaseMark : String := "class loads its base"
+/-- The marker of what a local class's options offer the packages after it. -/
+private def classOptionsMark : String := "class options offered"
+
+/-- An option's `acmthm` setting, whitespace aside: acmart's switch for its theorem environments. -/
+private def acmThm (option : String) : Option Bool :=
+  let strip (t : String) : String := String.ofList (t.toList.filter (!·.isWhitespace))
+  match KeyVal.entry option with
+  | (k, v) => if strip k != "acmthm" then none else some ((v.map strip).getD "true" != "false")
 
 /-- The theorem environments acmart.cls declares unless its `acmthm` option is false. -/
 private def acmTheoremSource : String :=
@@ -865,7 +872,9 @@ private structure JournalTop where
   authors : Array (Array Raw) := #[]
   addresses : Array (Array Raw) := #[]
   keys : Array (Array Raw) := #[]
-  abstract : Option Raw := none
+  abstracts : Array Raw := #[]
+  /-- Whether the document body holds a `\maketitle` to set the gathered abstracts. -/
+  titleAhead : Option Bool := none
   titled : Bool := false
 
 private structure St where
@@ -3840,6 +3849,8 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let os := (PackageImports.literalOptions ((opt.map rawSrc).getD "")).toArray
     unless c.isEmpty do
       write fun st => { st with loads := st.loads.setCls c os }
+  else if name == classBaseMark then
+    write fun st => { st with loads := { st.loads with cls := none } }
   else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
     let (args, _) := takeGroups raws (i + 1) 2
     let os := (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
@@ -8604,7 +8615,6 @@ private def ctrlRows2 : List CtrlRow :=
    packageRow "RequirePackage",
    ⟨"addbibresource", [.opt, .needed], .lower .addBibResource {}⟩,
    ⟨"addtocounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
-   ⟨"and", [], .tokens authorGap none⟩,
    beamerConfigRow "beamertemplatenavigationsymbolsempty" 0,
    ⟨"bibliography", [.needed], .lower .bibResources { leaves := [.inBody, .without "biblatex"] }⟩,
    ⟨"bibliographystyle", [.needed], .lower .bibliographyStyle { leaves := [.inBody, .inSeam] }⟩,
@@ -9211,8 +9221,6 @@ because it holds a space. -/
 private def styOptionsLoadMark : String := "package options load"
 private def styOptionsProcessedMark : String := "package options processed"
 private def styOptionsUnhandledMark : String := "package options unhandled"
-/-- The marker of a local class that loads no class, unforgeable because it holds a space. -/
-private def classUnloadedMark : String := "class loads no class"
 
 private def unhandledStyOption (pkg option why : String) (pos : Pos) : M Unit :=
   let cls := pkg.endsWith ".cls"
@@ -9230,11 +9238,9 @@ private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
   if name == styOptionsProcessedMark then
     became "\\ProcessOptions" "the selected local package option bodies" pos
     return some (#[], start)
-  if name == classUnloadedMark then
-    let (args, k) := takeGroups raws start 1
-    became s!"\\documentclass\{{rawSrc (args.getD 0 #[])}}"
-      "the article model, since the class loads no class" pos
-    return some (#[], k)
+  if name == classBaseMark then
+    became "\\LoadClass" "the class line of the class it loads" pos
+    return some (#[], start)
   if name != styOptionsLoadMark && name != styOptionsUnhandledMark then return none
   let (args, k) := takeGroups raws start 2
   if args.size != 2 then return none
@@ -9688,6 +9694,23 @@ private def journalNames : List String :=
 private def journalClass (st : St) : Option String :=
   st.loads.cls.bind fun (c, _) => if amsArticleClasses.contains c then some c else none
 
+/-- Whether a journal class gathers what stands here for its `\maketitle` still ahead. -/
+private def journalHolds (st : St) : Bool :=
+  (journalClass st).isSome && st.journal.titleAhead == some true && !st.journal.titled && !st.inDef
+
+/-- Whether a document's text, or the body a top-matter command stands in, holds a `\maketitle`. -/
+private def titleAheadIn (raws : Array Raw) : Option Bool :=
+  if raws.any (· matches .ctrl "maketitle" _) then some true
+  else raws.findSome? fun
+    | .env "document" b _ => some (b.any (· matches .ctrl "maketitle" _))
+    | _ => none
+
+/-- The authors one `\author` names, each apart where `\and` separates them. -/
+private def authorsIn (body : Array Raw) : Array (Array Raw) :=
+  let (done, cur) := body.foldl (init := (#[], #[])) fun (done, cur) r =>
+    if r matches .ctrl "and" _ then (done.push (trimBlank cur), #[]) else (done, cur.push r)
+  done.push (trimBlank cur)
+
 /-- Words and the spaces between them, as the reader reads a phrase. -/
 private def phraseRaws (phrase : String) (pos : Pos) : Array Raw :=
   ((phrase.splitOn " ").filter (!·.isEmpty)).toArray.foldl (init := #[]) fun out w =>
@@ -9700,17 +9723,17 @@ private def joinParts (sep : Array Raw) (parts : Array (Array Raw)) : Array Raw 
 /-- Authors joined as amsart's `\andify` joins them: two by "and", more by commas and a last
 "and". -/
 private def andJoined (pos : Pos) (authors : Array (Array Raw)) : Array Raw :=
-  let lastAnd := if authors.size > 2 then #[.word "," pos, .space, .word "and" pos]
-    else phraseRaws "and" pos
+  let lastAnd : Array Raw := if authors.size > 2 then #[.word "," pos, .space, .word "and" pos]
+    else #[.space, .word "and" pos]
   match authors.back? with
   | some last =>
     if authors.size < 2 then last
-    else joinParts (#[.word "," pos, .space]) authors.pop ++ #[.space] ++ lastAnd ++ #[.space] ++ last
+    else joinParts (#[.word "," pos, .space]) authors.pop ++ lastAnd ++ #[.space] ++ last
   | none => #[]
 
 /-- An ACM affiliation as acmart prints it: each institution and department on a line, then the
 city, state and country joined by commas; a street address and postcode are not printed. -/
-private def acmAffiliation (body : Array Raw) : Array Raw := Id.run do
+private def acmAffiliation (body : Array Raw) (pos : Pos) : Array Raw := Id.run do
   let mut lines : Array Raw := #[]
   let mut place : Array (Array Raw) := #[]
   let mut i := 0
@@ -9724,21 +9747,22 @@ private def acmAffiliation (body : Array Raw) : Array Raw := Id.run do
           lines := lines.push (.ctrl n p)
           i := i + 1
         else if n == "institution" || n == "department" then
-          lines := lines ++ part ++ #[.ctrl "\\" p]
-          i := k
+          lines := (if lines.isEmpty then lines else lines.push (.ctrl "\\" p)) ++ part
+          i := skipSpaces body k
         else if n == "city" || n == "state" || n == "country" then
           place := place.push part
-          i := k
-        else if n == "streetaddress" || n == "postcode" then i := k
+          i := skipSpaces body k
+        else if n == "streetaddress" || n == "postcode" then i := skipSpaces body k
         else
           lines := lines.push (.ctrl n p)
           i := i + 1
-      | .space => i := i + 1
       | r =>
         lines := lines.push r
         i := i + 1
-  let p : Pos := { line := 1, col := 1 }
-  return lines ++ joinParts #[.word "," p, .space] place
+  let kept := trimBlank lines
+  if place.isEmpty then return kept
+  let brk : Array Raw := if kept.isEmpty then #[] else #[.ctrl "\\" pos]
+  return kept ++ brk ++ joinParts #[.word "," pos, .space] place
 
 /-- A journal class's top-matter declaration before `\maketitle`: each author, address and
 key-word line kept for the title block, which `\maketitle` sets with the abstract written before
@@ -9747,7 +9771,10 @@ private def journalTopMatter (name : String) (pos : Pos) (raws : Array Raw) (sta
     M (Option (Array Raw × Nat)) := do
   let st ← get
   let some cls := journalClass st | return none
-  if st.inDef || st.journal.titled then return none
+  if st.journal.titleAhead.isNone then
+    write fun st => { st with journal := { st.journal with titleAhead := titleAheadIn raws } }
+  let st ← get
+  if !journalHolds st then return none
   let acm := cls == "acmart"
   let (opt, j) := takeRawOpt raws start
   let (args, k) := takeGroups raws j 1
@@ -9755,13 +9782,14 @@ private def journalTopMatter (name : String) (pos : Pos) (raws : Array Raw) (sta
   match name with
   | "author" =>
     if args.isEmpty then return none
-    let authors := st.journal.authors.push body
+    let authors := st.journal.authors.append (authorsIn body)
     write fun st => { st with journal := { st.journal with authors } }
-    let joined := if acm then joinParts authorGap.toArray authors else andJoined pos authors
+    let joined := if acm then joinParts #[.space, .ctrl "and" pos, .space] authors
+      else andJoined pos authors
     return some (#[.ctrl "author" pos, .group joined pos], k)
   | "address" | "curraddr" | "email" | "urladdr" | "affiliation" =>
     if args.isEmpty then return none
-    let addresses := st.journal.addresses.push (if name == "affiliation" then acmAffiliation body
+    let addresses := st.journal.addresses.push (if name == "affiliation" then acmAffiliation body pos
       else body)
     write fun st => { st with journal := { st.journal with addresses } }
     return some (#[.ctrl "institute" pos, .group (joinParts #[.ctrl "\\" pos] addresses) pos], k)
@@ -9778,8 +9806,7 @@ private def journalTopMatter (name : String) (pos : Pos) (raws : Array Raw) (sta
     return some (#[], k)
   | "maketitle" =>
     write fun st => { st with journal := { st.journal with titled := true } }
-    return some (#[.ctrl "maketitle" pos] ++ st.journal.abstract.toArray ++
-      st.journal.keys.flatten, start)
+    return some (#[.ctrl "maketitle" pos] ++ st.journal.abstracts ++ st.journal.keys.flatten, start)
   | _ => return none
 
 /-- W0411's help for a written listing TeX reads through an argument scan. -/
@@ -10494,6 +10521,22 @@ private def offeredOptions (raws : Array Raw) (start : Nat) (opts : List String)
     let k := (KeyVal.entry o).1
     k != "draft" && k != "final" && pkgs.any (packageTakes · o)
 
+/-- What a local class's options offer the packages after it, as the document's class options
+offer theirs; an option neither the class nor those packages take is named once, at the class. -/
+private def classOptionsOffered (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let (args, k) := takeGroups raws start 3
+  let words (i : Nat) : List String :=
+    (args.getD i #[]).toList.filterMap fun | .word w _ => some w | _ => none
+  let cls := rawSrc (args.getD 0 #[])
+  let offered := offeredOptions raws k (words 1)
+  write fun st => { st with globalOffered := st.globalOffered ++
+    (offered.filter (!st.globalOffered.contains ·)).toArray }
+  for o in words 2 do
+    unless offered.contains o do
+      unhandledStyOption cls o "has no handler, and no package after the class takes it" pos
+  return some (#[], k)
+
 /-- The options of a package the loading branch does not read: each a native declaration, machinery
 the engine already answers, or a setting nothing reads. -/
 private def packageOptions (name p : String) (opts : List String) (pos : Pos)
@@ -11037,6 +11080,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if journalNames.contains name then
     if let some r ← journalTopMatter name pos raws start then return some r
+  if name == classOptionsMark then return ← classOptionsOffered pos raws start
   if let some r := Definer.row? name then
     match r.defines, r.family with
     | .command, .latex | .command, .xparse => return ← commandDefinerArm name pos raws start
@@ -11132,7 +11176,8 @@ the option" else "the page is one-sided, as without the option")) pos
         inertParam "documentclass" "openright" s!"\\documentclass[openright]\{{cls}}"
           (.asWithout "a chapter opens on a recto, as without the option") pos
       let kept := (keptItems.filter (!sided ·) ++ extra).filter fun kv =>
-        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright") && !memoirTitle kv
+        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright") && !memoirTitle kv &&
+          !(cls == "acmart" && (acmThm kv).isSome)
       -- A class's `\parskip` is latex.ltx's `0pt plus 1pt` unless KOMA's `parskip=` asks for a skip
       -- (scrkernel-paragraphs.dtx `\setparsizes`).
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
@@ -11159,7 +11204,9 @@ the option" else "the page is one-sided, as without the option")) pos
       let dependencies ← match classPackages cls [] with
         | [] => pure #[]
         | packages => rewritePackages "RequirePackage" packages none #[] pos
-      let theorems := if cls == "acmart" && !keptItems.contains "acmthm=false" then
+      if amsArticleClasses.contains cls then
+        write fun st => { st with journal := { st.journal with titleAhead := titleAheadIn raws } }
+      let theorems := if cls == "acmart" && !keptItems.any (acmThm · == some false) then
           verbatimRaws "acmart.cls" acmTheoremSource else #[]
       return some (cls0.raws pos ++ (← carry page pos) ++ dependencies ++ theorems, k)
     else if cls == "beamer" then
@@ -14494,10 +14541,10 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         sayOnce "env:abstract" .W0302 (Diag.say .W0302 .environment "abstract") p
           (help := "the class defines no abstract; '\\chapter*{Abstract}' heads one")
         return .group (← rewriteList inBody body #[] body.toList 0 0) p
-      if n == "abstract" && (journalClass (← get)).isSome && !(← get).journal.titled &&
-          !(← get).inDef then
+      if n == "abstract" && journalHolds (← get) then
         let body' ← rewriteList inBody body #[] body.toList 0 0
-        write fun st => { st with journal := { st.journal with abstract := some (.env n body' p) } }
+        write fun st => { st with journal := { st.journal with
+          abstracts := st.journal.abstracts.push (.env n body' p) } }
         return .space
       if n == "abstract" then abstractUnderTitlePage p
       if mathEnvs.contains n then
@@ -17239,7 +17286,7 @@ private structure ClassLoads where
   loads : Bool := false
   withOptions : Bool := false
 
-/-- Both texts' loads. -/
+/-- Either text's loads. -/
 private def ClassLoads.join (a b : ClassLoads) : ClassLoads :=
   ⟨a.loads || b.loads, a.withOptions || b.withOptions⟩
 
@@ -17252,10 +17299,12 @@ private def classLineList (given : String) (acc : Array Raw × ClassLoads) :
     List Raw → Array Raw × ClassLoads
   | [] => acc
   | .ctrl "LoadClass" p :: rest =>
-    classLineList given (acc.1.push (.ctrl "documentclass" p), { acc.2 with loads := true }) rest
+    classLineList given (acc.1 ++ #[.ctrl classBaseMark p, .ctrl "documentclass" p],
+      { acc.2 with loads := true }) rest
   | .ctrl "LoadClassWithOptions" p :: rest =>
     let opts : Array Raw := if given.isEmpty then #[] else #[.sym '[' p, .word given p, .sym ']' p]
-    classLineList given (acc.1.push (.ctrl "documentclass" p) ++ opts, ⟨true, true⟩) rest
+    classLineList given (acc.1 ++ #[.ctrl classBaseMark p, .ctrl "documentclass" p] ++ opts,
+      ⟨true, true⟩) rest
   | r :: rest =>
     let (r, seen) := classLineRaw given r
     classLineList given (acc.1.push r, acc.2.join seen) rest
@@ -17277,17 +17326,47 @@ private def classLineRaw (given : String) : Raw → Raw × ClassLoads
 
 end
 
-/-- Splices one local class: its options scheduled as a package's, none unused once it loads a
-class with them, its class lines the classes it loads, and the article model where it loads none. -/
+/-- Whether a local class's text loads a class, so that it builds on that class's model. -/
+public def localClassLoads (raws : Array Raw) : Bool :=
+  (classLineList "" (#[], {}) raws.toList).2.loads
+
+/-- A class's text without the release date a `\LoadClass` may name after its class. -/
+private def classLoadDates (raws : Array Raw) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    if h : i < raws.size then
+      match raws[i] with
+      | .ctrl n p =>
+        out := out.push (.ctrl n p)
+        i := i + 1
+        if n == "LoadClass" || n == "LoadClassWithOptions" then
+          let (_, j) := takeRawOpt raws i
+          let (args, k) := takeGroups raws j 1
+          unless args.isEmpty do
+            out := out ++ raws.extract i k
+            i := (takeRawOpt raws k).2
+      | r =>
+        out := out.push r
+        i := i + 1
+  return out
+
+/-- Splices one local class that loads a class: its options scheduled as a package's, its class
+lines the classes it loads, then what the document's options offer the packages after it and the
+options neither the class nor those packages take. -/
 public def spliceLocalClass (name : String) (passed : List String) (raws : Array Raw) (pos : Pos) :
     Array Raw :=
-  let given := ",".intercalate (passed.map (·.replace " " "") |>.filter (!·.isEmpty))
-  let (body, seen) := classLineList given (#[], {}) raws.toList
-  let floor : Array Raw := if seen.loads then #[] else
-    #[.ctrl classUnloadedMark pos, .group #[.word name pos] pos, .ctrl "documentclass" pos,
-      .group #[.word "article" pos] pos]
-  #[.env (Parse.inputEnv (name ++ ".cls"))
-    (floor ++ spliceStyOptions (name ++ ".cls") passed body seen.withOptions) pos]
+  let names := passed.map (·.replace " " "") |>.filter (!·.isEmpty)
+  let (body, seen) := classLineList (",".intercalate names) (#[], {}) (classLoadDates raws).toList
+  let steps := resolveStyOptions passed body
+  let unused := if seen.withOptions then [] else
+    if steps.any (· matches .processed _) then
+      steps.toList.filterMap fun | .unhandled o _ => some o | _ => none
+    else names
+  let words (os : List String) : Array Raw := os.toArray.map (.word · pos)
+  #[.env (Parse.inputEnv (name ++ ".cls")) (spliceStyOptions (name ++ ".cls") passed body true) pos,
+    .ctrl classOptionsMark pos, .group #[.word (name ++ ".cls") pos] pos, .group (words names) pos,
+    .group (words unused) pos]
 
 /-- The replacement for one `\usepackage`/`\RequirePackage` at `i` given the
 style files read; `none` when it names no local file. -/

@@ -354,6 +354,9 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
           modify fun log => { log with diags := log.diags.push { d with span := some site } }
           pure ""
       let (raws, _) := Surface.read .tex (name ++ ".cls") text
+      -- A class building on no class, or one already read, stands on the article model unread.
+      if !Compat.localClassLoads raws || (← get).spliced.any (·.1 == name ++ ".cls") then
+        return (none, context)
       let source := if request.file == root then none else some request.file
       modify fun log => { log with spliced := log.spliced.push (name ++ ".cls", source, request.pos) }
       let sub := Compat.spliceLocalClass name (context.classOptions name request.options) raws

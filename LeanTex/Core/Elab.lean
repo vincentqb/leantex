@@ -8383,6 +8383,23 @@ private def storeTitlePart (name : String) (content : Array Inline)
     | "institute" => { st with institute := some content }
     | _ => { st with date := some content }
 
+/-- The gap `\and` sets between authors: beamer's `\quad`, else latex.ltx's, which sets each author
+in a tabular column with `\hskip 1em` between them beside both columns' `\tabcolsep`. -/
+private def authorGap (slides : Bool) (p : Pos) : Array Raw :=
+  if slides then #[.ctrl "quad" p] else
+    #[.ctrl "hspace" p, .group #[.word "1em" p] p, .ctrl "hspace" p, .group #[.word "12pt" p] p]
+
+/-- An author list with each `\and` the class's gap between authors. -/
+private def authorsApart (slides : Bool) (body : Array Raw) : Array Raw :=
+  body.foldl (init := #[]) fun out r => match r with
+    | .ctrl "and" p => out.append (authorGap slides p)
+    | r => out.push r
+
+/-- A title declaration's text, an author list's `\and` the class's gap unless the document defines
+it. -/
+private def titleBody (ctx : Ctx) (slides : Bool) (name : String) (body : Array Raw) : Array Raw :=
+  if name == "author" && (lookupUser ctx "and").isNone then authorsApart slides body else body
+
 /-- Stores one `\title`-family declaration, returning the index past its
 arguments and the run of an unclosed optional argument. -/
 private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
@@ -8391,7 +8408,7 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
   match raws[j]? with
   | some (.group body _) =>
     let short ← (bracketArgRaws? raws start pos).mapM (elabInlines ctx)
-    storeTitlePart name (← elabInlines ctx body) short
+    storeTitlePart name (← elabInlines ctx (titleBody ctx ctx.slides name body)) short
     return (⟨j + 1, by omega⟩, junk)
   | _ =>
     if recovered then
@@ -18507,7 +18524,8 @@ convert = none refuses both")
     match body with
     | some (b, short) =>
       let short ← short.mapM (elabInlines s.ctx)
-      storeTitlePart name (← elabInlines s.ctx b) short
+      storeTitlePart name
+        (← elabInlines s.ctx (titleBody s.ctx (s.docClass == .slides || s.ctx.slides) name b)) short
       return s
     | none =>
       if recovered then
