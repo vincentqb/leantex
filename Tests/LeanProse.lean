@@ -86,6 +86,18 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       failed := failed.push (showToks leafWord (render s))
   t s!"evidence: 600 random statements over the core table and declared phrases read back, no list item opening on a block but a nested list ({failed.toList.take 2})"
     failed.isEmpty
+  let mut listed : Array String := #[]
+  for _ in [0:200] do
+    let (a, s1) := randStmt (phrasedTable ()) 3 seed
+    let (b, s2) := randStmt (phrasedTable ()) 3 s1
+    let (c, s3) := randStmt (phrasedTable ()) 3 s2
+    seed := s3
+    let l : Stmt Leaf := .tfae (.conj a (.conj b c))
+    for s in [l, .imp l a, .conj a l, .all (randBinder s3).1 l, .iff a l] do
+      unless !s.ok (phrasedTable ()).lexicon || parse (phrasedTable ()).lexicon (render s) == some s do
+        listed := listed.push (showToks leafWord (render s))
+  t s!"evidence: 200 random lists of three or more equivalent statements read back wherever they stand ({listed.toList.take 2})"
+    listed.isEmpty
   -- Declared phrases, taken or refused by name.
   let declare (binders : Array (String × Array LeanFacts.Binder)) (declared : List (String × String)) :=
     (tableFor (factsWith binders) declared).refused.map (·.2)

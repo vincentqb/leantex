@@ -59,6 +59,7 @@ public inductive Stmt (α : Type) where
   | conj (a b : Stmt α)
   | disj (a b : Stmt α)
   | iff (a b : Stmt α)
+  | tfae (items : Stmt α)
   | neg (a : Stmt α)
   | rel (t : Template) (args : List (Term α))
   | atom (x : α)
@@ -163,10 +164,13 @@ private def stops : List String := ["and", "or", ",", "if", "."]
 private def closing (s : String) : Bool := s == "," || s == "."
 
 /-- The words an equivalence set as a list of its two sides opens with, one token. -/
-private def equivWords : String := "the following are equivalent"
+public def equivWords : String := "the following are equivalent"
+
+/-- The token a list of three or more equivalent statements opens with, set as `equivWords` say. -/
+public def tfaeKey : String := "the following are equivalent:3"
 
 /-- The words that open a statement or an operand, so no phrase begins with one. -/
-private def opens : List String := ["for", "there", "if", equivWords, "both", "either", "it"]
+private def opens : List String := ["for", "there", "if", equivWords, tfaeKey, "both", "either", "it"]
 
 private def isRel (t : Template) : Bool :=
   match t.parts with
@@ -197,10 +201,12 @@ public def Term.ok (lex : Lexicon) : Term α → Bool
   | .leaf _ => true
   | .phrase p args => lex.phrases.contains p && args.length == p.arity
 
-/-- Every template used is the lexicon's, with as many arguments as slots. -/
+/-- Every template used is the lexicon's, with as many arguments as slots, and a list of equivalent
+statements three or more. -/
 public def Stmt.ok (lex : Lexicon) : Stmt α → Bool
   | .all _ s | .ex _ s | .neg s => s.ok lex
   | .imp a b | .conj a b | .disj a b | .iff a b => a.ok lex && b.ok lex
+  | .tfae s => s.ok lex && (s matches .conj _ (.conj ..))
   | .rel t args => lex.rels.contains t && args.length == t.arity && args.all (·.ok lex)
   | .atom _ => true
 
@@ -258,15 +264,15 @@ public def Stmt.prec : Stmt α → Nat
   | .rel t args => if t.splits || args.any Term.splits then 2 else 0
   | .atom _ => 0
   | .neg _ | .conj .. | .disj .. => 1
-  | .all .. | .ex .. | .imp .. | .iff .. => 2
+  | .all .. | .ex .. | .imp .. | .iff .. | .tfae _ => 2
 
 private def Stmt.isImp : Stmt α → Bool
   | .imp .. => true
-  | .all .. | .ex .. | .conj .. | .disj .. | .iff .. | .neg _ | .rel .. | .atom _ => false
+  | .all .. | .ex .. | .conj .. | .disj .. | .iff .. | .tfae _ | .neg _ | .rel .. | .atom _ => false
 
 private def Stmt.isIff : Stmt α → Bool
   | .iff .. => true
-  | .all .. | .ex .. | .imp .. | .conj .. | .disj .. | .neg _ | .rel .. | .atom _ => false
+  | .all .. | .ex .. | .imp .. | .conj .. | .disj .. | .tfae _ | .neg _ | .rel .. | .atom _ => false
 
 /-- Whether a conjunction a scope holds sets inline, "A and B": both its sides are atomic. -/
 public def inline (a b : Stmt α) : Bool := a.prec == 0 && b.prec == 0
@@ -274,7 +280,7 @@ public def inline (a b : Stmt α) : Bool := a.prec == 0 && b.prec == 0
 /-- Whether a statement a scope holds sets as a list of items: a conjunction not set inline. -/
 public def Stmt.isList : Stmt α → Bool
   | .conj a b => !inline a b
-  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .neg _ | .rel .. | .atom _ => false
+  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .tfae _ | .neg _ | .rel .. | .atom _ => false
 
 /-- What may follow a statement, ending its extent: the end, a block's end, a list item's start, the
 closing word a block sets inside it, or the full stop. -/
@@ -309,7 +315,7 @@ private def wrapWith (k : Nat) (s : Stmt α) (f : List (Tok α) → List (Tok α
 opening it, else atomic, so "it is not the case that" or "either" never reads as covering it. -/
 public def Stmt.leftK : Stmt α → Nat
   | .conj .. => 1
-  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .neg _ | .rel .. | .atom _ => 0
+  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .tfae _ | .neg _ | .rel .. | .atom _ => 0
 
 /-- An equivalence's right side: a block where its left side is one and it is no atom, the two
 standing alike, else an operand. -/
@@ -386,6 +392,7 @@ private def renderTo : Place → Stmt α → List (Tok α) → List (Tok α)
       mark p (.w equivWords :: .w ":" :: .indent :: .item ::
         renderTo .lead a (.item :: renderTo .lead b (.dedent :: rest)))
     else mark p (iffTo p a b (renderTo .operand a) (renderTo .operand b) rest)
+  | p, .tfae s, rest => mark p (.w tfaeKey :: .w ":" :: .indent :: renderTo .item s (.dedent :: rest))
   | p, .neg a, rest =>
     mark p (wordsTo ["it", "is", "not", "the", "case", "that"] (wrapWith 1 a (renderTo .operand a) rest))
   | p, .rel t args, rest => mark p (fillTo Term.renderTo args t.parts rest)
@@ -569,7 +576,7 @@ private theorem parseAtomic_len {lex : Lexicon} {t r : List (Tok α)} {s : Stmt 
 /-- Whether tokens open with a word that opens a statement: a quantifier's, an existential's, "if"
 or a listed equivalence's. -/
 private def opensStmt : List (Tok α) → Bool
-  | .w s :: _ => s == "for" || s == "there" || s == "if" || s == equivWords
+  | .w s :: _ => s == "for" || s == "there" || s == "if" || s == equivWords || s == tfaeKey
   | [] | .leaf _ :: _ | .bind _ :: _ | .indent :: _ | .dedent :: _ | .item :: _ => false
 
 /-- A parse with its remainder, shorter than the input. -/
@@ -609,6 +616,11 @@ private def parseOpened (lex : Lexicon) (t : List (Tok α)) : Parsed α (Stmt α
         | some (b, ⟨.dedent :: r', h'⟩) =>
           some (.iff a b, ⟨r', by simp only [List.length_cons] at h h' ⊢; omega⟩)
         | _ => none
+      | _ => none
+    else if k = tfaeKey then
+      match parseSpine lex (.item :: t) with
+      | some (s, ⟨.dedent :: r, h⟩) =>
+        some (.tfae s, ⟨r, by simp only [List.length_cons] at h ⊢; omega⟩)
       | _ => none
     else none
   | _ => none
@@ -922,7 +934,8 @@ private theorem parseBinder_render (b : Binder α) (s : String) (r : List (Tok �
     parseBinder (b.renderTo (.w s :: r)) = some (b, .w s :: r) := by
   simp [parseBinder, Binder.renderTo, parseGroups_groupToks s r hs hr]
 
-private theorem notMem_kw {w : String} (h : w ∉ opens) : w ∉ ["for", "there", "if", equivWords] :=
+private theorem notMem_kw {w : String} (h : w ∉ opens) :
+    w ∉ ["for", "there", "if", equivWords, tfaeKey] :=
   fun hm => h (List.subset_def.mp (by simp [opens]) hm)
 
 private theorem notMem_op {w : String} (h : w ∉ opens) : w ∉ ["both", "either", "it"] :=
@@ -1000,6 +1013,7 @@ private theorem renderTo_head {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt �
         split
         · exact iha hs.1 .operand _ (by decide)
         · obtain ⟨r, hr⟩ := blockWith_head _ _; rw [hr]; rfl
+  | tfae _ _ => intro p rest hp; simp [renderTo, mark_of hp, plainHead]
   | neg a _ => intro p rest hp; simp [renderTo, mark_of hp, wordsTo, plainHead]
   | rel t args =>
     intro p rest hp
@@ -1082,7 +1096,8 @@ private theorem followsOpnd_of {r : List (Tok α)} (h : followsStmt r = true) :
 
 /-- Tokens whose first word opens no statement, or that open on no word, open no statement. -/
 private theorem opensStmt_of_head {t : List (Tok α)}
-    (h : ∀ w r, t = .w w :: r → w ∉ ["for", "there", "if", equivWords]) : opensStmt t = false := by
+    (h : ∀ w r, t = .w w :: r → w ∉ ["for", "there", "if", equivWords, tfaeKey]) :
+    opensStmt t = false := by
   match t, h with
   | [], _ => rfl
   | .leaf _ :: _, _ => rfl
@@ -1093,7 +1108,7 @@ private theorem opensStmt_of_head {t : List (Tok α)}
   | .w w :: r, h =>
     have hw := h w r rfl
     simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hw
-    simp [opensStmt, hw.1, hw.2.1, hw.2.2.1, hw.2.2.2]
+    simp [opensStmt, hw.1, hw.2.1, hw.2.2.1, hw.2.2.2.1, hw.2.2.2.2]
 
 private theorem parseStmt_opened {lex : Lexicon} {t : List (Tok α)} (h : opensStmt t = true) :
     parseStmt lex t = parseOpened lex t := by
@@ -1103,20 +1118,21 @@ private theorem parseOperand_opened {lex : Lexicon} {t : List (Tok α)} (h : ope
     parseOperand lex t = parseOpened lex t := by
   match t, h with
   | .w w :: r, h =>
-    have hw : w = "for" ∨ w = "there" ∨ w = "if" ∨ w = equivWords := by
+    have hw : w = "for" ∨ w = "there" ∨ w = "if" ∨ w = equivWords ∨ w = tfaeKey := by
       simp only [opensStmt, Bool.or_eq_true, beq_iff_eq] at h
-      rcases h with ((h | h) | h) | h
+      rcases h with (((h | h) | h) | h) | h
       · exact Or.inl h
       · exact Or.inr (Or.inl h)
       · exact Or.inr (Or.inr (Or.inl h))
-      · exact Or.inr (Or.inr (Or.inr h))
+      · exact Or.inr (Or.inr (Or.inr (Or.inl h)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inr h)))
     rw [parseOperand.eq_6 lex _ (fun _ ht => by simp at ht) (fun _ ht => by simp at ht)
       (fun _ ht => by
-        simp only [List.cons.injEq, Tok.w.injEq] at ht; rcases hw with rfl | rfl | rfl | rfl <;> simp [equivWords] at ht)
+        simp only [List.cons.injEq, Tok.w.injEq] at ht; rcases hw with rfl | rfl | rfl | rfl | rfl <;> simp [equivWords, tfaeKey] at ht)
       (fun _ ht => by
-        simp only [List.cons.injEq, Tok.w.injEq] at ht; rcases hw with rfl | rfl | rfl | rfl <;> simp [equivWords] at ht)
+        simp only [List.cons.injEq, Tok.w.injEq] at ht; rcases hw with rfl | rfl | rfl | rfl | rfl <;> simp [equivWords, tfaeKey] at ht)
       (fun _ ht => by
-        simp only [List.cons.injEq, Tok.w.injEq] at ht; rcases hw with rfl | rfl | rfl | rfl <;> simp [equivWords] at ht),
+        simp only [List.cons.injEq, Tok.w.injEq] at ht; rcases hw with rfl | rfl | rfl | rfl | rfl <;> simp [equivWords, tfaeKey] at ht),
       ite_eq_left h]
 
 private theorem parseOpened_if {lex : Lexicon} (t : List (Tok α)) :
@@ -1185,7 +1201,7 @@ private theorem wrap_head {lex : Lexicon} (hlex : lex.wf = true) {a : Stmt α}
       exact opensStmt_of_head fun w r h =>
         notMem_kw (render_rel_head hlex ha .operand (by decide) X w r h)
     | atom x => rfl
-    | conj _ _ | disj _ _ | neg _ => simp [renderTo, mark, wordsTo, opensStmt, equivWords]
+    | conj _ _ | disj _ _ | neg _ => simp [renderTo, mark, wordsTo, opensStmt, equivWords, tfaeKey]
     | _ => simp only [Stmt.prec] at hp; omega
   · rw [ite_eq_right (by simp [hp, hX])]
     obtain ⟨r, hr⟩ := blockWith_head (renderTo .operand a) X
@@ -1677,6 +1693,48 @@ private theorem reads {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt α)
             scope := hS .scope (Or.inl rfl), item := item_of (fun _ _ h => by cases h) hL
             wrap := wrap_of hlex hs' hO (fun h => by simp [Stmt.prec] at h)
               (fun h => by simp [Stmt.isIff] at h) }
+  | tfae s ih =>
+    have hs' := hs
+    simp only [Stmt.ok, Bool.and_eq_true] at hs
+    obtain ⟨a, b, rfl⟩ : ∃ a b, s = .conj a b := by
+      cases s with
+      | conj a b => exact ⟨a, b, rfl⟩
+      | _ => simp at hs
+    have rs := ih hs.1
+    have hop : ∀ p rest, p ≠ .item → opensStmt (renderTo p (.tfae (.conj a b)) rest) = true :=
+      fun p rest hp => by simp [renderTo, mark, hp, opensStmt]
+    have hP : ∀ p, p ≠ .item → ∀ rest, followsStmt rest = true →
+        forget (parseOpened lex (renderTo p (.tfae (.conj a b)) rest)) =
+          some (.tfae (.conj a b), rest) := by
+      intro p hp rest _
+      have e0 := rs.item (.dedent :: rest) rfl (fun _ h => by cases h)
+      have ht : renderTo p (.tfae (.conj a b)) rest = .w tfaeKey :: .w ":" :: .indent :: .item ::
+          renderTo .lead a (renderTo .item b (.dedent :: rest)) := by
+        simp [renderTo, mark, hp]
+      have he : renderTo .item (.conj a b) (.dedent :: rest) =
+          .item :: renderTo .lead a (renderTo .item b (.dedent :: rest)) := by simp [renderTo]
+      rw [he] at e0
+      obtain ⟨h1, e1⟩ := forget_eq.mp e0
+      rw [ht, parseOpened.eq_4 lex _ _ (by simp [tfaeKey]) (by simp [tfaeKey])
+        (by simp [tfaeKey]), ite_eq_right (by simp [tfaeKey, equivWords]),
+        ite_eq_left (rfl : tfaeKey = tfaeKey), e1]
+      rfl
+    have hS : ∀ p, p ≠ .item → ∀ rest, followsStmt rest = true →
+        forget (parseStmt lex (renderTo p (.tfae (.conj a b)) rest)) =
+          some (.tfae (.conj a b), rest) :=
+      fun p hp rest hr => by rw [parseStmt_opened (hop p rest hp)]; exact hP p hp rest hr
+    have hO := hS .operand (by decide)
+    have hL := hS .lead (by decide)
+    have hOp : ∀ rest, followsStmt rest = true →
+        forget (parseOperand lex (renderTo .operand (.tfae (.conj a b)) rest)) =
+          some (.tfae (.conj a b), rest) :=
+      fun rest hr => by
+        rw [parseOperand_opened (hop .operand rest (by decide))]
+        exact hP .operand (by decide) rest hr
+    exact { operand := hO, inner := hS .inner (by decide), lead := hL
+            scope := hS .scope (by decide)
+            item := item_of (fun _ _ h => by cases h) hL
+            wrap := wrap_of hlex hs' hO (fun h => by simp [Stmt.prec] at h) (fun _ => hOp) }
   | neg a iha =>
     have hB : ∀ rest, followsOpnd rest = true →
         forget (parseOperand lex (renderTo .operand (.neg a) rest)) = some (.neg a, rest) := by
@@ -1889,6 +1947,45 @@ public def both {β γ δ : Type} (a : Except Unsaid β) (b : Except Unsaid γ) 
   | .error e, _ => .error e
   | .ok _, .error e => .error e
 
+/-- A conjunction's spine over statements, the first outermost. -/
+public def spineOf : Stmt Leaf → List (Stmt Leaf) → Stmt Leaf
+  | x, [] => x
+  | x, y :: ys => .conj x (spineOf y ys)
+
+/-- Whether a statement is a conjunction, which a list's spine would take for more items. -/
+public def isConjStmt (s : Stmt Leaf) : Bool := s matches .conj ..
+
+/-- Equivalent statements in their order, the conjunctions moved first where one would end it. -/
+public def tfaeOrder (items : List (Stmt Leaf)) : List (Stmt Leaf) :=
+  if (items.getLast?.map isConjStmt).getD false then
+    items.filter isConjStmt ++ items.filter (!isConjStmt ·)
+  else items
+
+/-- Three or more statements said as equivalent, the last no conjunction. -/
+public def tfaeOf (items : List (Stmt Leaf)) : Option (Stmt Leaf) :=
+  match tfaeOrder items with
+  | x :: y :: z :: zs =>
+    if ((tfaeOrder items).getLast?.map isConjStmt).getD true then none
+    else some (.tfae (spineOf x (y :: z :: zs)))
+  | _ => none
+
+/-- Statements said as equivalent: two as an equivalence, more as a list, else `d`. -/
+public def listedOf (items : List (Stmt Leaf)) (d : Stmt Leaf) : Stmt Leaf :=
+  match items with
+  | [a, b] => .iff a b
+  | _ => (tfaeOf items).getD d
+
+/-- Whether a term is a list literal, its constructors down to its end. -/
+public def isListLit : LeanFacts.Term → Bool
+  | .apps (.const "List.cons") [_, _, xs] => isListLit xs
+  | .apps (.const "List.nil") [_] => true
+  | _ => false
+
+/-- The items a list literal's statements say, its conjunction spine's left sides. -/
+public def itemsOf : Stmt Leaf → List (Stmt Leaf)
+  | .conj x rest => x :: itemsOf rest
+  | _ => []
+
 /-- A proposition said in words, or why it cannot be: a proposition's or an instance's binder a
 hypothesis, a binder predicate's its group, any other a quantifier but where `top` hides it. -/
 public def stmtOf (lk : LeanStatement.Lookup) (tb : Table) (top : Bool) (ctx : List String) :
@@ -1916,6 +2013,11 @@ public def stmtOf (lk : LeanStatement.Lookup) (tb : Table) (top : Bool) (ctx : L
   | .apps (.const "And") [a, b] => both (stmtOf lk tb false ctx a) (stmtOf lk tb false ctx b) .conj
   | .apps (.const "Or") [a, b] => both (stmtOf lk tb false ctx a) (stmtOf lk tb false ctx b) .disj
   | .apps (.const "Iff") [a, b] => both (stmtOf lk tb false ctx a) (stmtOf lk tb false ctx b) .iff
+  | t@(.apps (.const "List.TFAE") [l]) =>
+    if top && isListLit l then
+      (stmtOf lk tb false ctx l).map fun sp => listedOf (itemsOf sp) (atomOf lk tb ctx t)
+    else .ok (atomOf lk tb ctx t)
+  | .apps (.const "List.cons") [_, x, xs] => both (stmtOf lk tb false ctx x) (stmtOf lk tb false ctx xs) .conj
   | .apps (.const "Not") [a] => (stmtOf lk tb false ctx a).map .neg
   | .letE n .. => .error (.local n)
   | .lam .. => .error .function
@@ -1926,6 +2028,7 @@ termination_by t => sizeOf t
 public def Stmt.templates (acc : Array Template) : Stmt α → Array Template
   | .all _ s | .ex _ s | .neg s => s.templates acc
   | .imp a b | .conj a b | .disj a b | .iff a b => b.templates (a.templates acc)
+  | .tfae s => s.templates acc
   | .rel t args => args.foldl (fun acc x => match x with
       | .phrase p _ => acc.push p
       | .leaf _ => acc) (acc.push t)
@@ -2068,6 +2171,62 @@ private theorem map_ok {β γ : Type} {e : Except Unsaid β} {f : β → γ} {s 
   | error _ => simp [Except.map] at h
   | ok x => exact ⟨x, rfl, by simpa [Except.map] using h.symm⟩
 
+private theorem itemsOf_ok (lex : Lexicon) : ∀ {sp : Stmt Leaf}, sp.ok lex = true →
+    ∀ x ∈ itemsOf sp, x.ok lex = true
+  | .conj a b, h, x, hx => by
+    simp only [Stmt.ok, Bool.and_eq_true] at h
+    simp only [itemsOf, List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · exact h.1
+    · exact itemsOf_ok lex h.2 x hx
+  | .all .., _, _, hx | .ex .., _, _, hx | .imp .., _, _, hx | .disj .., _, _, hx
+  | .iff .., _, _, hx | .tfae .., _, _, hx | .neg .., _, _, hx | .rel .., _, _, hx
+  | .atom .., _, _, hx => by simp [itemsOf] at hx
+
+private theorem spineOf_ok (lex : Lexicon) : ∀ (x : Stmt Leaf) (ys : List (Stmt Leaf)),
+    x.ok lex = true → (∀ y ∈ ys, y.ok lex = true) → (spineOf x ys).ok lex = true
+  | _, [], hx, _ => hx
+  | x, y :: ys, hx, hy => by
+    simp only [spineOf, Stmt.ok, Bool.and_eq_true]
+    exact ⟨hx, spineOf_ok lex y ys (hy y (by simp)) (fun z hz => hy z (by simp [hz]))⟩
+
+private theorem tfaeOf_ok (lex : Lexicon) {items : List (Stmt Leaf)}
+    (h : ∀ x ∈ items, x.ok lex = true) {r : Stmt Leaf} (hr : tfaeOf items = some r) :
+    r.ok lex = true := by
+  have hmem : ∀ x ∈ tfaeOrder items, x.ok lex = true := by
+    intro x hx
+    unfold tfaeOrder at hx
+    split at hx
+    · simp only [List.mem_append, List.mem_filter] at hx
+      rcases hx with hx | hx
+      · exact h x hx.1
+      · exact h x hx.1
+    · exact h x hx
+  unfold tfaeOf at hr
+  split at hr
+  next _ a b c cs heq =>
+    split at hr
+    · cases hr
+    · simp only [Option.some.injEq] at hr
+      subst hr
+      simp only [Stmt.ok, spineOf, Bool.and_eq_true]
+      refine ⟨⟨hmem a (by simp [heq]), hmem b (by simp [heq]),
+        spineOf_ok lex c cs (hmem c (by simp [heq])) ?_⟩, trivial⟩
+      intro z hz; exact hmem z (by simp [heq, hz])
+  · cases hr
+
+private theorem listed_ok (lex : Lexicon) {sp : Stmt Leaf} (h : sp.ok lex = true)
+    {d : Stmt Leaf} (hd : d.ok lex = true) : (listedOf (itemsOf sp) d).ok lex = true := by
+  have hi := itemsOf_ok lex h
+  unfold listedOf
+  split
+  · rename_i a b heq
+    simp only [Stmt.ok, Bool.and_eq_true]
+    exact ⟨hi a (by simp [heq]), hi b (by simp [heq])⟩
+  · cases hr : tfaeOf (itemsOf sp) with
+    | none => exact hd
+    | some r => exact tfaeOf_ok lex hi hr
+
 /-- Every template a statement said in words uses is its table's, with as many arguments as
 slots. -/
 public theorem stmtOf_mem (lk : LeanStatement.Lookup) (tb : Table) (top : Bool)
@@ -2083,6 +2242,7 @@ public theorem stmtOf_mem (lk : LeanStatement.Lookup) (tb : Table) (top : Bool)
     | (rename_i ih1
        obtain ⟨x, hx, rfl⟩ := map_ok h
        first
+         | exact listed_ok _ (ih1 hx) (atomOf_ok lk tb _ _)
          | (rw [forAll_ok]; exact ih1 hx)
          | (rw [thereIs_ok]; exact ih1 hx)
          | (simp only [Stmt.ok]; exact ih1 hx))

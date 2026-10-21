@@ -407,7 +407,12 @@ the following are equivalent: and its two sides as a numbered list where a
 sentence, an item or a scope holds it, so no item opens on a block; any other
 equivalence is a block wherever it stands below the sentence's top or an
 item's, its first side a block where it needs one, and its second side then too
-where it is more than a formula or a plain relation, so the two stand alike. A negation, conjunction or disjunction as a conjunction's or a
+where it is more than a formula or a plain relation, so the two stand alike. A list of
+equivalent statements, `List.TFAE [a, b, c]` as Mathlib writes it, where the
+statement or its leading quantifiers' scope is the list, reads the same words
+with its statements as the numbered list, two of them as an equivalence; the
+list's last statement is no conjunction, which its items would swallow, so one
+that is moves first. A negation, conjunction or disjunction as a conjunction's or a
 disjunction's first side or as a hypothesis before another, and a relation that
 is not plain where more of its sentence follows it, are blocks too, for the eye:
 

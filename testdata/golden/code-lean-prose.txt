@@ -5,7 +5,33 @@ section* 0
   text "Laid-out statements"
 para
   text "Invented statements whose scopes the prose view sets as indented blocks and whose clauses it sets as numbered lists."
+para
+  text "Each statement of a list implies every other, as Mathlib’s TFAE says."
+role trivlist-env
+  ragged left
+    para
+      styled bold
+        italicCorr maybe
+        text "Definition"
+      italicCorr maybe
+      text " ("
+      styled mono
+        italicCorr maybe
+        text "List.TFAE"
+      italicCorr maybe
+      text "). "
+      formula inline "\\mathrm {TFAE}:"
+        ord:alpha:rm{ord:𝑇 ord:𝐹 ord:𝐴 ord:𝐸} rel::
+      text " "
+      formula inline "\\mathrm {List}\\  \\mathrm {Prop}\\to {}"
+        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝} rel:→ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {Prop}"
+        ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
 verbatim language lean4
+  "def List.TFAE (l : List Prop) : Prop := forall x, Membership.mem l x ->"
+  "  forall y, Membership.mem l y -> (x <-> y)"
+  ""
   "namespace Ebb"
 para
   text "A quantified hypothesis stands as a block under its condition."
@@ -507,8 +533,84 @@ verbatim language lean4
   "  And.intro (fun _ _ => Nat.le_add_right _ _)"
   "    (And.intro (fun _ _ => And.intro (fun _ hk => hk) (Exists.intro _ rfl))"
   "      (Nat.le_add_right _ _))"
+para
+  text "Three equivalent statements, one a quantifier’s, listed."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.parity"
+        italicCorr maybe
+        text "). For every "
+        formula inline "\\mathit {n}:\\mathbb {N}"
+          ord:alpha:it{ord:𝑛} rel:: ord:alpha:bb{ord:𝑁}
+        text ", the following are equivalent:"
+    list ordered
+      item
+        para
+          formula inline "\\mathit {n}\\bmod {}"
+            ord:alpha:it{ord:𝑛} mu:5 ord:"mod" mu:5 ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {2}={}"
+            ord:alpha:rm{ord:2} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {0}"
+            ord:alpha:rm{ord:0}
+          text "."
+      item
+        para
+          formula inline "(\\mathit {n}+{}"
+            open:( ord:alpha:it{ord:𝑛} bin:+ ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {2})\\bmod {}"
+            ord:alpha:rm{ord:2} close:) mu:5 ord:"mod" mu:5 ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {2}={}"
+            ord:alpha:rm{ord:2} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {0}"
+            ord:alpha:rm{ord:0}
+          text "."
+      item
+        para
+          text "For every "
+          formula inline "\\mathit {k}:\\mathbb {N}"
+            ord:alpha:it{ord:𝑘} rel:: ord:alpha:bb{ord:𝑁}
+          text ", if "
+          formula inline "\\mathit {k}={}"
+            ord:alpha:it{ord:𝑘} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathit {n}"
+            ord:alpha:it{ord:𝑛}
+          text ", then "
+          formula inline "\\mathit {k}\\bmod {}"
+            ord:alpha:it{ord:𝑘} mu:5 ord:"mod" mu:5 ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {2}={}"
+            ord:alpha:rm{ord:2} rel:= ord:{}
+          hspace 0pt
+          formula inline "\\mathrm {0}"
+            ord:alpha:rm{ord:0}
+          text "."
+verbatim language lean4
+  "theorem parity (n : Nat) :"
+  "    List.TFAE [n % 2 = 0, (n + 2) % 2 = 0, forall k : Nat, k = n -> k % 2 = 0] := by"
+  "  intro x hx y hy"
+  "  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx hy"
+  "  have h : (forall k : Nat, k = n -> k % 2 = 0) <-> n % 2 = 0 :="
+  "    Iff.intro (fun f => f n rfl) (fun e k hk => hk ▸ e)"
+  "  rcases hx with rfl | rfl | rfl <;> rcases hy with rfl | rfl | rfl <;>"
+  "    (try simp only [h]) <;> omega"
   ""
   "end Ebb"
 -- diagnostics
-warning[W0415] 41:1 unsupported statement Ebb.Moored | detail: it is no proposition
-warning[W0415] 43:1 unsupported statement Ebb.nameOf | detail: it is no proposition
+warning[W0415] 7:1 unsupported statement List.TFAE | detail: it is no proposition
+warning[W0415] 45:1 unsupported statement Ebb.Moored | detail: it is no proposition
+warning[W0415] 47:1 unsupported statement Ebb.nameOf | detail: it is no proposition

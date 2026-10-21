@@ -333,12 +333,13 @@ def readsN (vc : Vocab) (scope : Bool) (l : List Piece) : List (Stmt String) :=
       if _h : seqSize rest < seqSize l then
         ((readsN vc false rest).filter (unblocked rest)).map .neg else []
     | [.item (.word "the"), .item (.word "following"), .item (.word "are"),
-        .item (.word "equivalent"), .item (.word ":"), .list [x, y]] =>
-      if _h1 : seqSize x < seqSize l then
-        if _h2 : seqSize y < seqSize l then
-          (readsN vc true x).flatMap fun a => (readsN vc true y).map (.iff a ·)
-        else []
-      else []
+        .item (.word "equivalent"), .item (.word ":"), .list items] =>
+      let rs := listReadings (items.attach.map fun ⟨i, _⟩ =>
+        if _h : seqSize i < seqSize l then readsN vc true i else [])
+      if items.length == 2 then rs.filterMap fun
+        | .conj a b => some (.iff a b)
+        | _ => none
+      else rs.map .tfae
     | _ => []
   let atoms := match onlyItems l with
     | some is => (atomsAt vc is).filterMap fun (s, r) => if r.isEmpty then some s else none
@@ -418,14 +419,17 @@ def unitG (vc : Vocab) (l : List Piece) : Option (Stmt String × List Piece) :=
       .item (.word "case") :: .item (.word "that") :: rest =>
     if _h : seqSize rest < seqSize l then (unitG vc rest).map fun (a, r) => (.neg a, r) else none
   | .item (.word "the") :: .item (.word "following") :: .item (.word "are") ::
-      .item (.word "equivalent") :: .item (.word ":") :: .list [x, y] :: r =>
-    if _h1 : seqSize x < seqSize l then
-      if _h2 : seqSize y < seqSize l then
-        match stmtG vc true x, stmtG vc true y with
-        | some (a, []), some (b, []) => some (.iff a b, r)
-        | _, _ => none
+      .item (.word "equivalent") :: .item (.word ":") :: .list items :: r =>
+    let read := items.attach.mapM fun ⟨i, _⟩ =>
+      if _h : seqSize i < seqSize l then
+        match stmtG vc true i with
+        | some (s, []) => some s
+        | _ => none
       else none
-    else none
+    match read with
+    | some [x, y] => some (.iff x y, r)
+    | some (x :: y :: ys) => some (.tfae (conjChain x (y :: ys)), r)
+    | _ => none
   | _ =>
     match quantified l with
     | some (all, bd, body) =>
@@ -769,6 +773,11 @@ def htmlLaid (spoken head : Bool) (kids : List Html.Node) : List Piece :=
 read, and whether the statement's head still stands to be dropped. -/
 abbrev WebAcc := Array Piece × Array Item × Bool
 
+/-- An item's pieces without the label its text opens with, as a lettered list writes it. -/
+def unlabelled : List Piece → List Piece
+  | .item (.word w) :: rest => if isLabel w then rest else .item (.word w) :: rest
+  | l => l
+
 /-- A web reader's pieces, its open run read. -/
 def WebAcc.pieces (st : WebAcc) : List Piece :=
   (st.1 ++ (normal st.2.1.toList).toArray.map Piece.item).toList
@@ -793,7 +802,7 @@ def webItems (spoken : Bool) (acc : Array (List Piece)) : List Html.Node → Arr
   | n :: rest => webItems spoken (webItem spoken acc n) rest
 def webItem (spoken : Bool) (acc : Array (List Piece)) : Html.Node → Array (List Piece)
   | .elem tag _ kids =>
-    if tag == "li" then acc.push (lowered (unstopped (webList spoken kids.toList (#[], #[], false)).pieces))
+    if tag == "li" then acc.push (lowered (unlabelled (unstopped (webList spoken kids.toList (#[], #[], false)).pieces)))
     else acc
   | _ => acc
 end
@@ -860,7 +869,9 @@ decreasing_by
 em and en spaces a hundred columns past where its text starts. -/
 def twinLine (head : Bool) (line : String) : PLine :=
   let spaces := (line.toList.takeWhile (· == ' ')).length
-  let (labels, col, after) := twinLabels spaces (line.toList.drop spaces)
+  let body := line.toList.drop spaces
+  let body := if body.take 2 == ['*', ' '] then body.drop 2 else body
+  let (labels, col, after) := twinLabels (spaces + (line.toList.drop spaces).length - body.length) body
   let (d, rest) := twinDepth (String.ofList after)
   let raw := twinItems rest
   let items := normal (if head then dropHead raw else raw)
@@ -881,7 +892,8 @@ def twinParas (md : String) : Array (List Piece) := Id.run do
       let lines := b.splitOn "\\\n"
       for (line, i) in lines.zipIdx do
         cur := cur.push (twinLine (i == 0) line)
-    else if open_ && (b.trimAsciiStart.toString.take 1).all Char.isDigit && !b.isEmpty then
+    else if open_ && !b.isEmpty && ((b.trimAsciiStart.toString.take 1).all Char.isDigit ||
+        b.trimAsciiStart.toString.startsWith "* (") then
       for line in (b.splitOn "\n") do
         let part := if line.endsWith "\\" then (line.dropEnd 1).toString else line
         cur := cur.push (twinLine false part)
@@ -1016,8 +1028,8 @@ def groups (gs : List (List String × String)) : Binder Leaf :=
   | g :: more => ⟨g, more⟩
   | [] => ⟨grp ["x"] "N", []⟩
 
-/-- Invented statements, each named by what its scopes and lists do. -/
-def corpus : List (String × Stmt Leaf) :=
+/-- Invented statements, each named by what its scopes and lists do, as written. -/
+def corpusAsSaid : List (String × Stmt Leaf) :=
   [("a quantifier inside a quantifier", .all (nat "x") (.ex (nat "y") (lt "x" "y"))),
    ("an existential over a universal", .ex (nat "x") (.all (nat "y") (le "y" "x"))),
    ("quantifiers over two types", .all (ty "A") (.all (elt "a" "A") (eq "a" "a"))),
@@ -1054,6 +1066,10 @@ def corpus : List (String × Stmt Leaf) :=
    ("a disjunction as a conclusion", .imp (P "P") (.disj (P "Q") (P "R"))),
    ("an equivalence whose left side a quantifier opens lists its two sides",
      .iff (.all (nat "x") (le "x" "x")) (P "Q")),
+   ("three equivalent statements, lettered",
+     .tfae (.conj (lt "x" "y") (.conj (.all (nat "z") (le "z" "z")) (P "Q")))),
+   ("a quantifier over three equivalent statements",
+     .all (nat "n") (.tfae (.conj (eq "n" "n") (.conj (P "P") (.ex (nat "m") (lt "n" "m")))))),
    ("an equivalence whose left side is a conjunction sets it bare",
      .iff (.conj (P "P") (P "Q")) (P "R")),
    ("an equivalence whose left side is a negation lists its sides",
@@ -1125,6 +1141,9 @@ def corpus : List (String × Stmt Leaf) :=
    ("a term holding 'and' in a conjunction's hypothesis",
      .imp (.conj (P "P") (.rel (relT "Eq") [gapOf "a" "b", gapOf "b" "a"])) (P "R"))]
 
+/-- The invented statements as a page says them. -/
+def corpus : List (String × Stmt Leaf) := corpusAsSaid
+
 /-- `n` random statements of depth at most four over the invented table. -/
 def randoms (n : Nat) : List (Stmt Leaf) :=
   ((List.range n).foldl (fun (acc : Array (Stmt Leaf) × UInt64) _ =>
@@ -1149,6 +1168,7 @@ def stmtMap {α β : Type} (f : α → β) : Stmt α → Stmt β
   | .conj a b => .conj (stmtMap f a) (stmtMap f b)
   | .disj a b => .disj (stmtMap f a) (stmtMap f b)
   | .iff a b => .iff (stmtMap f a) (stmtMap f b)
+  | .tfae s => .tfae (stmtMap f s)
   | .neg a => .neg (stmtMap f a)
   | .rel t args => .rel t (args.map (termMap f))
   | .atom x => .atom (f x)

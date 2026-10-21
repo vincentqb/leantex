@@ -2153,7 +2153,9 @@ opens after it: past a block's bounds and a list item's mark it does. -/
 public def tokRaws (pos : Pos) (opening : Bool) : LeanProse.Tok LeanProse.Leaf → Array Raw × Bool
   | .w s => match LeanProse.relGlyph? s with
     | some g => (#[formulaRaw pos g], false)
-    | none => (wordRaws pos (if opening then s.capitalize else s), false)
+    | none =>
+      let said := if s == LeanProse.tfaeKey then LeanProse.equivWords else s
+      (wordRaws pos (if opening then said.capitalize else said), false)
   | .leaf l => (leafRaws pos l, false)
   | .bind g => (leafRaws pos (groupLeaf g), false)
   | .indent | .dedent | .item => (#[], opening)

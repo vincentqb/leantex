@@ -4,6 +4,10 @@
 Invented statements whose scopes the prose view sets as indented blocks and whose clauses it
 sets as numbered lists. -/
 
+/-- Each statement of a list implies every other, as Mathlib's TFAE says. -/
+def List.TFAE (l : List Prop) : Prop := forall x, Membership.mem l x ->
+  forall y, Membership.mem l y -> (x <-> y)
+
 namespace Ebb
 
 /-- A quantified hypothesis stands as a block under its condition. -/
@@ -62,5 +66,15 @@ theorem barge_bounds (bs : List Barge) (cap : Nat) :
   And.intro (fun _ _ => Nat.le_add_right _ _)
     (And.intro (fun _ _ => And.intro (fun _ hk => hk) (Exists.intro _ rfl))
       (Nat.le_add_right _ _))
+
+/-- Three equivalent statements, one a quantifier's, listed. -/
+theorem parity (n : Nat) :
+    List.TFAE [n % 2 = 0, (n + 2) % 2 = 0, forall k : Nat, k = n -> k % 2 = 0] := by
+  intro x hx y hy
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hx hy
+  have h : (forall k : Nat, k = n -> k % 2 = 0) <-> n % 2 = 0 :=
+    Iff.intro (fun f => f n rfl) (fun e k hk => hk ▸ e)
+  rcases hx with rfl | rfl | rfl <;> rcases hy with rfl | rfl | rfl <;>
+    (try simp only [h]) <;> omega
 
 end Ebb
