@@ -9,6 +9,7 @@ import LeanTex.Core.KeyVal
 import Std.Data.HashMap
 import Std.Data.HashSet
 import LeanTex.Core.DeriveBEq
+import LeanTex.Core.TexText
 
 namespace LeanTex.Core.Parse
 
@@ -729,7 +730,10 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
             acc := ({ f with openPos := { f.openPos with closeEol := pos.closeEol } } : Frame).close acc
           | none => pure ()
         else
-          diags := diags.push (err file .E0202 (Diag.say .E0202 .character "}") pos)
+          -- Inside an environment's group or math, TeX names the group the brace closes instead.
+          let inner := frames.any fun f => !f.cmd && f.stop != .env "document"
+          diags := diags.push (err file .E0202
+            (if inner then Diag.say .E0202 .character "}" else Diag.tex .brace) pos)
       | .math =>
         match frames.back? with
         | some f =>
@@ -829,8 +833,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
                 acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
                 continue
               diags := diags.push (match f.stop with
-                | .env inner => err file .E0205 (Diag.say .E0205 .environment name) pos
-                    (detail := some s!"\\end\{{name}} closes \\begin\{{inner}}")
+                | .env inner => err file .E0205 (Diag.tex .envMismatch [inner, name]) pos
+                    (detail := some s!"on input line {f.openPos.line}")
                 | _ => err file .E0201 f.stop.unclosed f.openPos)
               acc := f.close acc
             | none => break
@@ -851,8 +855,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           | .env expected =>
             if name != expected then
               diags := diags.push
-                (err file .E0205 (Diag.say .E0205 .environment name) pos
-                  (detail := some s!"\\end\{{name}} closes \\begin\{{expected}}"))
+                (err file .E0205 (Diag.tex .envMismatch [expected, name]) pos
+                  (detail := some s!"on input line {f.openPos.line}"))
             frames := frames.pop
             acc := f.close acc
           | .brace =>

@@ -22,6 +22,7 @@ import LeanTex.Core.PdfObj
 public import LeanTex.Core.TikzCommands
 import LeanTex.Core.UnusedSetting
 public import LeanTex.Core.Definer
+import LeanTex.Core.TexText
 
 namespace LeanTex.Core.Compat
 
@@ -12159,7 +12160,8 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
       -- premise: ctrlGateChecks — a declaration in the body leaves none of its arguments' ink
       if (← get).inDoc then
         sayOnce ("ctrl:" ++ row.name) .W0340
-          (Diag.bodyDeclaration row.name) pos (help := help)
+          (if TexText.preambleOnly.contains row.name then Diag.tex .preambleOnly
+            else Diag.bodyDeclaration row.name) pos (help := help)
         return #[]
     lowerCall c l
 

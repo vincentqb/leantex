@@ -3,6 +3,7 @@ module
 public import Tests.Support
 public import scripts.Rung
 public import Tests.TitleTemplateScan
+import LeanTex.Core.TexText
 
 public section
 
@@ -2681,7 +2682,7 @@ def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => "?") == #["document"])
   let list := "\\begin{document}\n\\begin{itemize}\n\\item a\n\\end{document}"
   t s!"parse: an open list an enclosing end closes is one loss ({(praw list).2.map (·.message)})"
-    (((praw list).2.map (·.message)) == #["invalid environment document"])
+    (((praw list).2.map (·.message)) == #[Diag.tex .envMismatch ["itemize", "document"]])
   let nameless := "\\begin{document}\n\\begin{ x\n\\end{document}"
   t s!"parse: a begin naming nothing opens nothing ({(praw nameless).2.map (·.message)})"
     (((praw nameless).2.map (·.message)) == #["invalid environment name"])

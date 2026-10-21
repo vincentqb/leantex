@@ -30,7 +30,7 @@ error: unsupported definition \sectionlinesformat [E0113]
 ── E0201 (dropped) unclosed group or environment at end of input
 error: unclosed group { [E0201]
 ── E0202 (dropped) unexpected closer
-error: unexpected character } [E0202]
+error: Too many }'s [E0202]
 ── E0205 (dropped) malformed or mismatched environment name
 error: invalid environment name [E0205]
 ── E0303 (dropped) malformed \define signature
@@ -48,15 +48,15 @@ error: undefined parameter \b [E0306]
 error: unsupported class proseplate [E0309]
   note: classes: article, slides, card, resume, webpage, poster, scrartcl, ltflow
 ── E0310 (dropped) content before the first \item in a list
-error: unexpected text for \item [E0310]
+error: Something's wrong--perhaps a missing \item [E0310]
 ── E0311 (dropped) reserved character in text
-error: unexpected character & [E0311]
+error: Misplaced alignment tab character & [E0311]
   note: escape it as '\&'
 ── E0312 (dropped) block-level command used inline
 error: unexpected command \section [E0312]
   note: it is a block-level command: use it between paragraphs, not inside inline content
 ── E0313 (dropped) only declarations may appear before \begin{document}
-error: unexpected text [E0313]
+error: Missing \begin{document} [E0313]
   note: before '\begin{document}', where only declarations stand
 ── E0316 (dropped) unclosed optional argument
 error: unclosed optional argument for \x [E0316]
@@ -145,7 +145,7 @@ error: missing glyph U+27E8 for font 'Open Sans' [E0405]
 error: invalid nesting for \input [E0501]
   note: deeper than 8 files
 ── E0502 (dropped) \input file not found; skipped
-error: missing file chapter1.tex [E0502]
+error: File `chapter1.tex' not found [E0502]
   note: named by \input
 ── E0606 (dropped) the HTML page has unresolved rendering resources; publication is refused
 error: missing resource [E0606]
@@ -280,7 +280,7 @@ warning: missing directory fonts [W0008]
 warning: substituted font 'Source Code Pro' for font 'Open Sans' [W0009]
   note: U+2200
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
-warning: unsupported nesting [W0010]
+warning: Too deeply nested [W0010]
   note: level 5
 ── W0011 (degraded) declared math face has no OpenType MATH table
 warning: unsupported math font 'Open Sans' [W0011]
@@ -455,7 +455,7 @@ warning: overfull picture [W0335]
 warning: overfull label [W0336]
   note: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
-warning: invalid row for environment tabular [W0337]
+warning: Extra alignment tab has been changed to \cr [W0337]
   note: 3 cells where the spec declares 2
 warning: invalid row for environment tabular [W0337]
   note: fewer cells than the column spec's 3
@@ -469,7 +469,7 @@ warning: overfull table [W0338]
 ── W0340 (config) a declaration in the document body is ignored
 warning: ignored declaration \page [W0340]
   note: declare it before \begin{document}
-warning: ignored declaration \usepackage [W0340]
+warning: Can be used only in preamble [W0340]
   note: load the package in the preamble, before '\begin{document}'
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
 warning: duplicate command \muted [W0342]
@@ -493,15 +493,15 @@ warning: ignored declaration \page [W0346]
 warning: ignored key alert for \palette [W0348]
   note: theme moloch replaces it
 ── W0349 (degraded) reference to a key no \label numbers; set as '??'
-warning: undefined reference nowhere [W0349]
+warning: Reference `nowhere' undefined [W0349]
   note: declare \label{nowhere} after the numbered thing it names
 ── W0350 (config) a key is \label'ed more than once; the first wins
-warning: duplicate label twice [W0350]
+warning: Label `twice' multiply defined [W0350]
   note: one \label{twice} per key: give this one its own name
 ── W0351 (degraded) a citation names no bibliography entry; its mark shows as ?
-warning: undefined citation ghost [W0351]
+warning: Citation `ghost' undefined [W0351]
   note: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite
-warning: undefined citation ghost [W0351]
+warning: Citation `ghost' undefined [W0351]
   note: the document declares no bibliography; \bibliography{file} names the .bib file
 ── W0352 (degraded) a malformed .bib entry is skipped; the rest of the file is kept
 warning: invalid entry for file refs.bib [W0352]

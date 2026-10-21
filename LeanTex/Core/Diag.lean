@@ -584,6 +584,25 @@ public def Diag.say (c : DiagCode) (noun : Diag.Noun) (name : Option Diag.Name :
     (obj : Option (Option Diag.Noun × Diag.Name) := none) : String :=
   { qual := c.qual, noun, name, obj : Diag.Words }.render
 
+/-- One of TeX's or LaTeX's own texts for a cause lualatex also reports: `#1`, `#2` its name
+slots, `source` the line or engine raising it. -/
+public structure TexText where
+  key : String
+  code : DiagCode
+  text : String
+  source : String
+  deriving Repr
+
+/-- A TeX text with its slots filled in one pass, `#k` standing for the k-th name. -/
+public def TexText.fill (t : TexText) (names : List String) : String :=
+  let rec go : List Char → String → String
+    | '#' :: d :: rest, acc =>
+      if d.isDigit then go rest (acc ++ (names[d.toNat - '1'.toNat]?).getD "")
+      else go (d :: rest) (acc.push '#')
+    | c :: rest, acc => go rest (acc.push c)
+    | [], acc => acc
+  go t.text.toList ""
+
 /-- The name inside a construct's last `{...}` group, when it ends with one. -/
 private def Diag.groupName? (what : String) : Option String :=
   if what.endsWith "}" then

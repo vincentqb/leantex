@@ -28,6 +28,7 @@ import Init.Data.Nat.ToString
 public import Std.Data.HashMap
 import Std.Data.HashSet
 import LeanTex.Core.DeriveBEq
+import LeanTex.Core.TexText
 
 namespace LeanTex.Core.Ir
 
@@ -19605,7 +19606,7 @@ private def refDiagLeaf (look : String → Option (String × Option RefBinding))
         (subject := some key)
   | some (_, none) => unnumbered
   | _ =>
-    Diag.of .W0349 (Diag.say .W0349 .reference key) (spanOf key)
+    Diag.of .W0349 (Diag.tex .reference [key]) (spanOf key)
       (help := s!"declare \\label\{{key}} after the numbered thing it names")
       (subject := some key)
 

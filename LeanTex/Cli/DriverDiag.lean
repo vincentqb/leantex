@@ -6,6 +6,7 @@ public import LeanTex.Core.PdfWriteContract
 public import LeanTex.Cli.PublicationPaths
 import LeanTex.Cli.Args
 import LeanTex.Core.PdfRead
+import LeanTex.Core.TexText
 
 /-! The driver's diagnostics as pure builders, so the registry golden and the message lint
 read the text the user sees. -/
@@ -314,7 +315,8 @@ public def htmlResourceUnavailable (detail : String) : Diag :=
 /-- E0502: an included source file is not there; its content is absent. -/
 public def inputMissing (name : String) (span : Option Span) (command : String := "input")
     (spelled : Option String := none) : Diag :=
-  Diag.of .E0502 (Diag.say .E0502 .file name) span
+  Diag.of .E0502 (if command == "input" && spelled.isNone then Diag.tex .inputMissing [name]
+      else Diag.say .E0502 .file name) span
     (detail := some s!"named by {spelled.getD s!"\\{command}"}")
     (help := "\\allow{E0502} accepts the loss")
 

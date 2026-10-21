@@ -23,6 +23,7 @@ import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
 public import LeanTex.Core.Layout.LabelAudit
 import LeanTex.Core.LoopProgress
+import LeanTex.Core.TexText
 
 /-! Bibliography: [references.bib](../../docs/references.bib) -/
 
@@ -14106,8 +14107,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let depth := (if ordered then a.enumDepth else if desc then a.descDepth else a.itemDepth) + 1
     let level := min depth 4
     let a := if depth > 4 then { a with diags := a.diags.push (
-        Diag.of .W0010 (Diag.say .W0010 .nesting)
-          (help := "LaTeX errors here ('Too deeply nested'); flatten the nesting")
+        Diag.of .W0010 (if desc then Diag.say .W0010 .nesting else Diag.tex .nesting)
           (detail := some s!"level {depth}")) }
       else a
     let element := if ordered then "enumerate" else "itemize"

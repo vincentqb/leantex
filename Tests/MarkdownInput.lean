@@ -3,6 +3,7 @@ module
 public import Tests.Markdown
 public import Tests.Artifact
 public import Tests.DriverAssets
+import LeanTex.Core.TexText
 
 public section
 
@@ -78,7 +79,8 @@ def quotedInputFilenameChecks (ref : IO.Ref (List String)) : IO Unit := do
         let preferred := if command == "input" then "absent name.md.tex" else "absent name.md"
         t s!"quoted input {command}/{nested}: missing file names normalized path and caller"
           (missing.size == 1 && missing.any fun d =>
-            d.message == Diag.say .E0502 .file preferred &&
+            d.message == (if command == "input" then Diag.tex .inputMissing [preferred]
+              else Diag.say .E0502 .file preferred) &&
               d.detail == some s!"named by \\{command}" &&
               d.span.any fun sp =>
                 sp.file == (if nested then nestedFile else file) &&

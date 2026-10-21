@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.ControlContract
 import Tests.Support.Check
+import LeanTex.Core.TexText
 
 public section
 
@@ -256,7 +257,8 @@ def ctrlGateChecks (ref : IO.Ref (List String)) : IO Unit := do
           ((Ir.blocksText doc.body).splitOn "omega").length == 2)
       t s!"control gate: a body \\{row.name} is named in the one wording"
         (ds.any fun d => d.kind == .W0340 && d.subject == some ("ctrl:" ++ row.name) &&
-          d.message == Diag.bodyDeclaration row.name &&
+          d.message == (if TexText.preambleOnly.contains row.name then Diag.tex .preambleOnly
+            else Diag.bodyDeclaration row.name) &&
           d.help == some help)
       let (_, early) := Elab.run file ("\\documentclass{article}" ++ loads ++ "\\" ++ row.name ++
         operandText row.sig ++ "\\begin{document}alpha omega\\end{document}")

@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.FigureLoss
+public import LeanTex.Core.TexText
 public import LeanTex.Cli.FontDiscovery
 public import LeanTex.Cli.FontAssembly
 public import LeanTex.Cli.FaceUse
@@ -911,9 +912,44 @@ def formDebt : List String :=
   ["W0361",
    "W0363"]
 
-/-- Does a message read as its code's form: its code's word, a noun of the vocabulary, a name. -/
+/-- A template's literal runs between its `#k` slots. -/
+def dvTemplateRuns (template : String) : List String := Id.run do
+  let cs := template.toList.toArray
+  let mut runs : Array String := #[]
+  let mut cur := ""
+  let mut i := 0
+  for _ in [0:cs.size] do
+    if i ≥ cs.size then break
+    let c := cs[i]?.getD ' '
+    if c == '#' && ((cs[i + 1]?.map Char.isDigit).getD false) then
+      runs := runs.push cur
+      cur := ""
+      i := i + 2
+    else
+      cur := cur.push c
+      i := i + 1
+  return (runs.push cur).toList
+
+/-- Does `msg` read as `template`, each `#k` standing for a nonempty run. -/
+def dvTemplate (template msg : String) : Bool :=
+  match dvTemplateRuns template with
+  | [] => msg.isEmpty
+  | first :: rest => msg.startsWith first && go (msg.drop first.length).toString rest
+where
+  go (s : String) : List String → Bool
+    | [] => s.isEmpty
+    | [last] => s.length > last.length && s.endsWith last
+    | lit :: more =>
+      (List.range s.length).any fun i =>
+        i > 0 && (s.drop i).toString.startsWith lit && go (s.drop (i + lit.length)).toString more
+
+/-- Is a message TeX's own text for its code, a row of the generated table. -/
+def dvTexOk (d : Diag) : Bool :=
+  TexText.rows.any fun r => r.code == d.kind && dvTemplate r.text d.message
+
+/-- Does a message read as its code's form, or as TeX's own words for its cause. -/
 def dvFormOk (d : Diag) : Bool :=
-  (dvForm? d.message).any (·.qual == d.kind.qual)
+  (dvForm? d.message).any (·.qual == d.kind.qual) || dvTexOk d
 
 /-- The form reader read in both directions: what it must accept and what it must refuse. -/
 def dvFormSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -926,6 +962,18 @@ def dvFormSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("undefined banana \\foo", false), ("undefined command \\foo bar", false),
       ("undefined command 'a b", false), ("missing font it's", false)] do
     check ref s!"diag form reader: {text} reads {ok}" ((dvForm? text).isSome == ok)
+  for (template, text, ok) in [("Citation `#1' undefined", "Citation `zzghost' undefined", true),
+      ("Citation `#1' undefined", "Citation `' undefined", false),
+      ("\\begin{#1} ended by \\end{#2}", "\\begin{itemize} ended by \\end{enumerate}", true),
+      ("Too many }'s", "Too many }'s.", false),
+      ("character #' in mode", "character #' in mode", true),
+      ("character #' in mode", "character x' in mode", false)] do
+    check ref s!"diag TeX template: {text} reads {ok} as {template}"
+      (dvTemplate template text == ok)
+  let keys := TexText.rows.map (·.key)
+  check ref "diag TeX texts: one row per key" (keys.eraseDups.length == keys.length)
+  check ref "diag TeX texts: every row has a fixed word" (TexText.rows.all fun r =>
+    (dvTemplateRuns r.text).any fun run => run.any Char.isAlpha)
 
 /-- The lint over one fired diagnostic; the `\allow` codes (W0013, E0329, N0105) may quote the
 user's own codes. -/
@@ -944,7 +992,7 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
     unless d.code == "W0013" || d.code == "E0329" || d.code == "N0105" do
       for tok in dvForeignCodes d.code s do
         fail s!"{d.code} {part}: names {tok}, which the reader cannot look up: {s}"
-  judge "message" d.message
+  unless dvTexOk d do judge "message" d.message
   unless formDebt.contains d.code || dvFormOk d do
     fail s!"{d.code} message: not the form '{d.kind.qual.label} <noun> [name] [for [noun] name]': {d.message}"
   if let some text := d.detail then judge "detail" text
@@ -953,7 +1001,7 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
   if d.kind.loss.severity.isWarning then
     if let some n := dvNumber? d.message then
       fail s!"{d.code} message: states '{n}', a particular of its site, which belongs in its detail: {d.message}"
-  if d.message.startsWith "\\" then
+  if d.message.startsWith "\\" && !dvTexOk d then
     fail s!"{d.code} message: the construct it names is unquoted: {d.message}"
   unless d.message.length ≤ dvMsgMax do
     fail s!"{d.code} message: {d.message.length} chars, over {dvMsgMax}: {d.message}"

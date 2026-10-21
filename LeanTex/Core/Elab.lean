@@ -34,6 +34,7 @@ public import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Definer
 public import LeanTex.Core.Blueprint
 import LeanTex.Core.Split
+import LeanTex.Core.TexText
 
 namespace LeanTex.Core.Elab
 
@@ -2722,7 +2723,8 @@ private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBindin
     (pos : Pos) : EM Unit := do
   let st ← get
   if st.labelKeys.contains key then
-    diag ctx .W0350 (Diag.say .W0350 .labelKey key) (some pos)
+    diag ctx .W0350 (Diag.texOr (ctx.surface != .markdown) .labelTwice [key]
+      (Diag.say .W0350 .labelKey key)) (some pos)
       (help := s!"one \\label\{{key}} per key: give this one its own name")
   else
     modify fun st => labelStep st key target
@@ -5411,6 +5413,13 @@ private def definerEnd (raws : Array Raw) (name : String) (i : Nat) : Nat :=
   else if name == "defineenv" then Compat.defineEnvEnd raws i
   else Compat.theoremDeclEnd raws name i
 
+/-- E0311's words for a reserved character: TeX's own where TeX names it. -/
+@[noinline] private def reservedWords (c : Char) : String :=
+  match c with
+  | '&' => Diag.tex .tab
+  | '^' | '_' => Diag.tex .math
+  | _ => Diag.say .E0311 .character c.toString
+
 /-- A block-level command reached as inline content, named, and the index past what it takes: a
 definer's whole form, any other command's word alone. -/
 private def inlineBlockOnly (ctx : Ctx) (raws : Array Raw) (name : String) (i : Nat) (pos : Pos) :
@@ -5649,7 +5658,8 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabInlinesFrom ctx raws (i + 1)
           ((flushText acc sb).push (sourceInline ctx pos (.text (String.singleton c)))) ""
       else
-        diag ctx .E0311 (Diag.say .E0311 .character c.toString) pos (help := s!"escape it as '\\{c}'")
+        diag ctx .E0311 (reservedWords c) pos
+          (help := if c == '^' then "write \\textasciicircum{}" else s!"escape it as '\\{c}'")
         elabInlinesFrom ctx raws (i + 1) acc sb
     | .math d body mpos =>
       let acc := flushText acc sb
@@ -10225,7 +10235,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (scope : List
               awaitSpec inOpt seen strayDiagged bound pbound
               (hfit.skip h .refl)
         if !isSpaceOrPar item && !strayDiagged then
-          diag ctx .E0310 (Diag.say .E0310 .text (obj := some (none, "\\item"))) ((rawPos? item).getD pos)
+          diag ctx .E0310 (Diag.tex .itemMissing) ((rawPos? item).getD pos)
         itemSplitGo ctx body pos scope (j + 1) items steps curItem
           curStep awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
@@ -11745,8 +11755,7 @@ or absolute lengths")
   -- Every walk below trusts `cols.size`.
   let widest := rows.foldl (fun m r => max m r.size) cols.size
   if cols.size < widest then
-    warnOnce ctx "tabular:wide" .W0337
-      (Diag.say .W0337 .row (obj := some (some .environment, n))) pos
+    warnOnce ctx "tabular:wide" .W0337 (Diag.tex .extraTab) pos
       (help := "declare one column type per cell: l, c, r, or p{width}")
       (detail := some s!"{widest} cells where the spec declares {cols.size}")
     for _ in [cols.size:widest] do
@@ -18507,7 +18516,7 @@ convert = none refuses both")
     if s.textDiagged then
       return s
     else
-      diagDetail s.ctx .E0313 (Diag.say .E0313 .text) pos
+      diagDetail s.ctx .E0313 (Diag.tex .preambleText) pos
         "before '\\begin{document}', where only declarations stand"
       return { s with textDiagged := true }
 
@@ -19516,7 +19525,8 @@ the {docClass.name} class's page keeps its own" none
 the .bib file"
           else "the document declares no bibliography; \\bibliography{file} names the .bib file"
         modify fun st => { st with diags := st.diags.push (Diag.of .W0351
-          (Diag.say .W0351 .citation site.key)
+          (Diag.texOr (ctx.surface != .markdown) .citation [site.key]
+            (Diag.say .W0351 .citation site.key))
           (some site.span) (help := help) (subject := some site.key)) }
     -- The final flow palette only judges shadowing; the document keeps epoch 0.
     let stBody ← get

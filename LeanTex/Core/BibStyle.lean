@@ -10,6 +10,7 @@ import LeanTex.Core.Collate
 import LeanTex.Core.BibMacro
 import LeanTex.Core.Nfc
 import Std.Data.HashSet
+import LeanTex.Core.TexText
 
 /-! A bibliography style decomposed into independent pure choices: inline
 citations, list order, each entry type's fields, and name format. -/
@@ -2574,7 +2575,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         -- The fix is spelled in the surface the citation was written in, its own command's name.
         let written := (site.bind (·.span.pos.command)).filter (·.startsWith "\\")
         let spelling := if md then s!"@{k}" else written.getD s!"\\{cmd}"
-        diags := diags.push (Diag.of .W0351 (Diag.say .W0351 .citation k) atEntry
+        diags := diags.push (Diag.of .W0351
+          (if md then Diag.say .W0351 .citation k else Diag.tex .citation [k]) atEntry
           (help := if own.isEmpty then s!"add an entry with key '{k}' to the .bib file, \
             or fix the spelling in {spelling}"
             else s!"add \\bibitem\{{k}} to the reference list, or fix the spelling in {spelling}")

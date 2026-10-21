@@ -42,4 +42,4 @@ para
   ref "sec:extras" shows "A" -> #sec:extras
   text " letters itself."
 -- diagnostics
-warning[W0349] 10:42 undefined reference sec:gamma | help: declare \label{sec:gamma} after the numbered thing it names
+warning[W0349] 10:42 Reference `sec:gamma' undefined | help: declare \label{sec:gamma} after the numbered thing it names
