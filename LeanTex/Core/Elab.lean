@@ -10940,14 +10940,19 @@ private def headingShown (n : String) : String :=
 
 /-- A heading's number: a chapter's head label, or a section's number at its level. -/
 private def headingNumber (ctx : Ctx) (n : String) (level : Nat) (starred : Bool) (pos : Pos) :
-    EM (Option String) := do
-  if n == Parse.chapterControl then return ← chapterHead ctx starred pos
-  let some num ← sectionNumber ctx level starred | return none
+    EM (Option String) :=
+  if n == Parse.chapterControl then chapterHead ctx starred pos else sectionNumber ctx level starred
+
+/-- A heading's head label and the bare number its contents line sets, when they differ: the appendix
+package's `title` option heads an article class's `{appendices}` section with `\appendixname`. -/
+private def appendixHead (ctx : Ctx) (n : String) (level : Nat) (number : Option String) (pos : Pos) :
+    EM (Option (String × String)) := do
   let ctr := (← get).ctr
-  if level == 1 && ctr.inAppendices && ctr.appendixTitles then
-    let word ← definedOr ctx "appendixname" pos (pure #[.text ctx.locale.appendix])
-    return some s!"{Ir.plainText word} {num}"
-  return some num
+  let some num := number | return none
+  if n == Parse.chapterControl || level != 1 || !ctr.inAppendices || !ctr.appendixTitles ||
+      ctr.chapters then return none
+  let word ← definedOr ctx "appendixname" pos (pure #[.text ctx.locale.appendix])
+  return some (s!"{Ir.plainText word} {num}", num)
 
 /-- A heading's block from its title's and short title's raws: numbered, its short title held for
 the contents and bookmarks (`Ir.Doc.shortTitles`), a deck's section set in force. -/
@@ -10957,14 +10962,17 @@ private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
   let title ← elabInlines ctx title
   -- A heading ends the name a run-in heading gave the labels after it.
   modify fun st => { st with refTarget := st.refTarget.map ({ · with name := none }) }
-  let number ← headingNumber ctx n level starred pos
+  let bare ← headingNumber ctx n level starred pos
+  let titled ← appendixHead ctx n level bare pos
+  let number := (titled.map (·.1)).orElse fun _ => bare
   let words := Ir.plainText title
   let nth := ((← get).headingCounts.getD (number, words) 0)
   unless starred do
     modify fun st => { st with headingCounts := st.headingCounts.insert (number, words) (nth + 1) }
   -- A chapter's contents line sets its bare number, as report.cls's `\numberline{\thechapter}`.
   let target := (← get).refTarget
-  let listed := if n == Parse.chapterControl && number.isSome then target.map (·.num) else none
+  let listed := if titled.isSome || (n == Parse.chapterControl && number.isSome) then
+      target.map (·.num) else none
   let head ← match short with
     | some s => elabInlines ctx s
     | none => pure title
@@ -12619,7 +12627,7 @@ private def itemLabelSpec (ctx : Ctx) (n : String) (kd : Nat) (body : Array Raw)
         match e.key, e.value with
         | "label", some v => template := some (.raws v)
         | "start", some v => start := (rawSrc v).trimAscii.toString.toNat?
-        | "resume", none => resume := true
+        | "resume", none | "resume*", none => resume := true
         | _, _ => pure ()
   if template.isSome then return (template, start, resume)
   let level := if 1 < kd then (ctx.styles.find? s!"{n}{kd}").orElse fun _ => ctx.styles.find? n
@@ -12660,7 +12668,7 @@ private def itemSeriesSpec (body : Array Raw) (pos : Pos) : Option String × Opt
       for e in Entries.read .keyval (body.extract (j + 1) (k' - 1)) do
         match e.key, e.value with
         | "series", some v => series := some (rawSrc v).trimAscii.toString
-        | "resume", some v => resumed := some (rawSrc v).trimAscii.toString
+        | "resume", some v | "resume*", some v => resumed := some (rawSrc v).trimAscii.toString
         | _, _ => pure ()
   return (series, resumed)
 
@@ -13846,8 +13854,8 @@ private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) 
             (detail := some s!"unreadable length '{value.getD ""}'")
             (help := "give a length such as 2pt, 0.5em or a token name")
       else unless key.isEmpty || (key == "label" && n != "description") ||
-          ((key == "start" || key == "resume" || key == "ref" || key == "series") &&
-            n == "enumerate") do
+          ((key == "start" || key == "resume" || key == "resume*" || key == "ref") &&
+            n == "enumerate") || key == "series" do
         warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
           (Diag.say .W0104 .option key (some (some .environment, n))) pos
     bodyFrom := k'

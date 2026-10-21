@@ -16,3 +16,4 @@ body refuse:W0301 \restartlist{enumerate}
 body impl x \begin{enumerate*}\item a \item b\end{enumerate*} y
 body impl x \begin{itemize*}\item a \item b\end{itemize*} y
 body impl \begin{enumerate}[series=s]\item a\end{enumerate}\begin{enumerate}[resume=s]\item b\end{enumerate}
+body impl x \begin{description*}\item[a] b\end{description*} y

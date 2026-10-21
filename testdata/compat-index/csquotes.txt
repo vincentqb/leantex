@@ -8,3 +8,4 @@ body refuse:W0301 \foreignquote{french}{x}
 pre refuse:W0301 \MakeOuterQuote{"}
 pre refuse:W0301 \setquotestyle{english}
 body impl \begin{displayquote}x\end{displayquote}
+body impl \begin{displayquote}[Someone][.]x\end{displayquote}

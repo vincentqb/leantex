@@ -415,7 +415,8 @@ decreasing_by all_goals raws_dec
 
 /-- enumitem's inline list (`enumerate*`, `itemize*`, `description*`): its items in the running
 line, each after its label, joined by its `itemjoin`, a space unless declared. -/
-private def starListRaws (n : String) (body : Array Raw) (p : Pos) : Array Raw := Id.run do
+private def starListRaws (n : String) (body : Array Raw) (p : Pos) : Array Raw × Array String :=
+  Id.run do
   let k0 := skipSpaces body 0
   let close := if body[k0]? matches some (.sym '[' _) then
       (List.range (body.size - k0)).find? fun d => body[k0 + d]? matches some (.sym ']' _)
@@ -425,6 +426,9 @@ private def starListRaws (n : String) (body : Array Raw) (p : Pos) : Array Raw :
     | none => #[]
   let template := (opts.find? (·.key == "label")).bind (·.value)
   let join := ((opts.find? (·.key == "itemjoin")).bind (·.value)).getD #[.space]
+  let lastJoin := ((opts.find? (·.key == "itemjoin*")).bind (·.value)).getD join
+  let unread := (opts.filter fun e =>
+    !(["label", "itemjoin", "itemjoin*", "start"].contains e.key) && !e.key.isEmpty).map (·.key)
   let start := ((opts.find? (·.key == "start")).bind fun e =>
     (e.value.map rawSrc).bind (·.trimAscii.toString.toNat?)).getD 1
   let mut items : Array (Option (Array Raw) × Array Raw) := #[]
@@ -452,20 +456,19 @@ private def starListRaws (n : String) (body : Array Raw) (p : Pos) : Array Raw :
     | none => break
   let mut out : Array Raw := #[]
   let mut num := start
-  for (given, text) in items do
+  for ((given, text), i) in items.zipIdx do
     let label : Array Raw := match given with
       | some l => if n == "description*" then #[.ctrl "textbf" p, .group l p] else l
       | none =>
-        if n == "enumerate*" then
-          match template with
-          | some t => starLabelAt num #[] t.toList
-          | none => #[.word s!"{num}." p]
-        else if n == "itemize*" then #[.ctrl "textbullet" p] else #[]
+        match template, n == "enumerate*" with
+        | some t, _ => starLabelAt num #[] t.toList
+        | none, true => #[.word s!"{num}." p]
+        | none, false => if n == "itemize*" then #[.ctrl "textbullet" p] else #[]
     if given.isNone && n == "enumerate*" then num := num + 1
     let text := (text.toList.reverse.dropWhile (· matches .space)).reverse.toArray
-    unless out.isEmpty do out := out ++ join
+    if i > 0 then out := out ++ (if i + 1 == items.size then lastJoin else join)
     out := (out ++ label).push .space ++ text
-  return out
+  return (out, unread)
 
 /-- A list set in a line: each item on a line of its own after its mark, as a footnote's text sets
 it, the line after the list a line of its own. -/
@@ -14706,10 +14709,25 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         return .group (#[Raw.ctrl (Marker.name .lang tag) p] ++ body'.extract j body'.size) p
       else if n == "displayquote" then
         became "\\begin{displayquote}" "\\begin{quote}" p
-        return .env "quote" (← rewriteList inBody body #[] body.toList 0 0) p
-      else if n == "enumerate*" || n == "itemize*" || n == "description*" then
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        -- csquotes sets the citation in parentheses after the quotation and its punctuation.
+        let (cite, j) := takeRawOpt body' 0
+        let (punct, j) := if cite.isSome then takeRawOpt body' j else (none, j)
+        let text := ((body'.extract j body'.size).toList.reverse.dropWhile
+          (fun r => r matches .space || r matches .par _)).reverse.toArray
+        let tail : Array Raw := (punct.getD #[]) ++ (match cite with
+          | some c => #[.space, .word "(" p] ++ c ++ #[.word ")" p]
+          | none => #[])
+        return .env "quote" (text ++ tail) p
+      -- premise: listTablePackageChecks — a starred list is inline only where enumitem loads
+      else if (n == "enumerate*" || n == "itemize*" || n == "description*") &&
+          (← get).loads.pkgs.any (·.1 == "enumitem") then
         became s!"\\begin\{{n}}" "its items in the line, each after its label" p
-        return .group (starListRaws n (← rewriteList inBody body #[] body.toList 0 0) p) p
+        let (inline, unread) := starListRaws n (← rewriteList inBody body #[] body.toList 0 0) p
+        for key in unread do
+          sayOnce ("param:" ++ n ++ ":" ++ key) .W0104
+            (Diag.say .W0104 .option key (some (some .environment, Diag.Name.of n))) p
+        return .group inline p
       else if n == "document" then
         rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) p
       else if n == "frame" then

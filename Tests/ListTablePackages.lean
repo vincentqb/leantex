@@ -48,9 +48,39 @@ def listTablePackageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   t "each undrawn cell command is named once"
     (["\\cellcolor", "\\rowcolor", "\\multirow"].all fun c =>
       (tableDs.filter fun d => d.code == "W0104" && hasStr d.message c).size == 1)
+  t "an inline list joins its last item by its itemjoin*, the others by its itemjoin"
+    (page "\\usepackage{enumitem}\n"
+      "\\begin{enumerate*}[itemjoin={,}, itemjoin*={, and}] \\item red \\item green \\item blue\\end{enumerate*}." ==
+      "1. red,2. green, and3. blue.")
+  t "an inline itemize takes its declared label"
+    (page "\\usepackage{enumitem}\n" "Kinds: \\begin{itemize*}[label=+]\\item red \\item blue\\end{itemize*}." ==
+      "Kinds: + red + blue.")
+  t "an inline list's key the reader does not read is named once"
+    (((elabStr (dvDoc "\\usepackage{enumitem}\n"
+        "\\begin{enumerate*}[mode=boxed]\\item a\\end{enumerate*}")).2.filter fun d =>
+        d.code == "W0104" && hasStr d.message "mode").size == 1)
+  t "a starred list is no inline list unless enumitem defines one"
+    (!hasStr (page "" "Kinds: \\begin{itemize*}\\item red \\item blue\\end{itemize*}.") "• red • blue")
+  t "resume* continues a series, and a series on an itemize is no unread key"
+    (hasStr (page "\\usepackage{enumitem}\n"
+      ("\\begin{enumerate}[series=s]\n\\item One\n\\end{enumerate}\n" ++
+       "\\begin{enumerate}[resume*=s]\n\\item Two\n\\end{enumerate}")) "2. Two" &&
+      !(elabStr (dvDoc "\\usepackage{enumitem}\n"
+        "\\begin{itemize}[series=b]\n\\item x\n\\end{itemize}")).2.any (·.code == "W0104"))
+  t "a displayed quotation's citation follows it and its punctuation, in parentheses"
+    (hasStr (page "\\usepackage{csquotes}\n"
+      "\\begin{displayquote}[Some One][.]Quoted words\\end{displayquote}") "Quoted words. (Some One)")
   let appendixBody := "\\begin{appendices}\n\\section{Tools}\\label{a:tools}\nSee \\ref{a:tools}.\n" ++
     "\\end{appendices}"
   let titled := page "\\usepackage[title]{appendix}\n" appendixBody
   t "the appendix package's title option heads each appendix with its name, its reference the letter"
     (hasStr titled "Appendix ATools" && hasStr titled "See A." &&
       !hasStr (page "\\usepackage{appendix}\n" appendixBody) "Appendix")
+  let contents := page "\\usepackage[title]{appendix}\n" ("\\tableofcontents\n" ++ appendixBody)
+  t "the contents line of a titled appendix sets its bare letter"
+    ((contents.splitOn "Appendix").length == 2 && hasStr contents "ContentsA Tools")
+  let chaptered := pageTextOf fonts ("\\documentclass{report}\n\\usepackage[title]{appendix}\n" ++
+    "\\begin{document}\n\\begin{appendices}\n\\chapter{Extra}\n\\section{More}\nx\n" ++
+    "\\end{appendices}\n\\end{document}")
+  t "a chapter class's appendix sections are numbered without the appendix name"
+    (hasStr chaptered "A.1" && !hasStr chaptered "Appendix A.1")
