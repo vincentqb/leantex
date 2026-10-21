@@ -773,11 +773,6 @@ def htmlLaid (spoken head : Bool) (kids : List Html.Node) : List Piece :=
 read, and whether the statement's head still stands to be dropped. -/
 abbrev WebAcc := Array Piece × Array Item × Bool
 
-/-- An item's pieces without the label its text opens with, as a lettered list writes it. -/
-def unlabelled : List Piece → List Piece
-  | .item (.word w) :: rest => if isLabel w then rest else .item (.word w) :: rest
-  | l => l
-
 /-- A web reader's pieces, its open run read. -/
 def WebAcc.pieces (st : WebAcc) : List Piece :=
   (st.1 ++ (normal st.2.1.toList).toArray.map Piece.item).toList
@@ -802,7 +797,7 @@ def webItems (spoken : Bool) (acc : Array (List Piece)) : List Html.Node → Arr
   | n :: rest => webItems spoken (webItem spoken acc n) rest
 def webItem (spoken : Bool) (acc : Array (List Piece)) : Html.Node → Array (List Piece)
   | .elem tag _ kids =>
-    if tag == "li" then acc.push (lowered (unlabelled (unstopped (webList spoken kids.toList (#[], #[], false)).pieces)))
+    if tag == "li" then acc.push (lowered (unstopped (webList spoken kids.toList (#[], #[], false)).pieces))
     else acc
   | _ => acc
 end
@@ -869,9 +864,7 @@ decreasing_by
 em and en spaces a hundred columns past where its text starts. -/
 def twinLine (head : Bool) (line : String) : PLine :=
   let spaces := (line.toList.takeWhile (· == ' ')).length
-  let body := line.toList.drop spaces
-  let body := if body.take 2 == ['*', ' '] then body.drop 2 else body
-  let (labels, col, after) := twinLabels (spaces + (line.toList.drop spaces).length - body.length) body
+  let (labels, col, after) := twinLabels spaces (line.toList.drop spaces)
   let (d, rest) := twinDepth (String.ofList after)
   let raw := twinItems rest
   let items := normal (if head then dropHead raw else raw)
@@ -892,8 +885,7 @@ def twinParas (md : String) : Array (List Piece) := Id.run do
       let lines := b.splitOn "\\\n"
       for (line, i) in lines.zipIdx do
         cur := cur.push (twinLine (i == 0) line)
-    else if open_ && !b.isEmpty && ((b.trimAsciiStart.toString.take 1).all Char.isDigit ||
-        b.trimAsciiStart.toString.startsWith "* (") then
+    else if open_ && (b.trimAsciiStart.toString.take 1).all Char.isDigit && !b.isEmpty then
       for line in (b.splitOn "\n") do
         let part := if line.endsWith "\\" then (line.dropEnd 1).toString else line
         cur := cur.push (twinLine false part)
@@ -1028,8 +1020,8 @@ def groups (gs : List (List String × String)) : Binder Leaf :=
   | g :: more => ⟨g, more⟩
   | [] => ⟨grp ["x"] "N", []⟩
 
-/-- Invented statements, each named by what its scopes and lists do, as written. -/
-def corpusAsSaid : List (String × Stmt Leaf) :=
+/-- Invented statements, each named by what its scopes and lists do. -/
+def corpus : List (String × Stmt Leaf) :=
   [("a quantifier inside a quantifier", .all (nat "x") (.ex (nat "y") (lt "x" "y"))),
    ("an existential over a universal", .ex (nat "x") (.all (nat "y") (le "y" "x"))),
    ("quantifiers over two types", .all (ty "A") (.all (elt "a" "A") (eq "a" "a"))),
@@ -1066,7 +1058,7 @@ def corpusAsSaid : List (String × Stmt Leaf) :=
    ("a disjunction as a conclusion", .imp (P "P") (.disj (P "Q") (P "R"))),
    ("an equivalence whose left side a quantifier opens lists its two sides",
      .iff (.all (nat "x") (le "x" "x")) (P "Q")),
-   ("three equivalent statements, lettered",
+   ("three equivalent statements, listed",
      .tfae (.conj (lt "x" "y") (.conj (.all (nat "z") (le "z" "z")) (P "Q")))),
    ("a quantifier over three equivalent statements",
      .all (nat "n") (.tfae (.conj (eq "n" "n") (.conj (P "P") (.ex (nat "m") (lt "n" "m")))))),
@@ -1140,9 +1132,6 @@ def corpusAsSaid : List (String × Stmt Leaf) :=
      .disj (.rel (relT "LT.lt") [gapOf "a" "b", .leaf (L "c")]) (P "Q")),
    ("a term holding 'and' in a conjunction's hypothesis",
      .imp (.conj (P "P") (.rel (relT "Eq") [gapOf "a" "b", gapOf "b" "a"])) (P "R"))]
-
-/-- The invented statements as a page says them. -/
-def corpus : List (String × Stmt Leaf) := corpusAsSaid
 
 /-- `n` random statements of depth at most four over the invented table. -/
 def randoms (n : Nat) : List (Stmt Leaf) :=

@@ -69,7 +69,8 @@ theorem barge_bounds (bs : List Barge) (cap : Nat) :
 
 /-- Three equivalent statements, one a quantifier's, listed. -/
 theorem parity (n : Nat) :
-    List.TFAE [n % 2 = 0, (n + 2) % 2 = 0, forall k : Nat, k = n -> k % 2 = 0] := by
+    List.TFAE [n % 2 = 0, (n + 2) % 2 = 0,
+      forall k : Nat, k = n -> k % 2 = 0] := by
   intro x hx y hy
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hx hy
   have h : (forall k : Nat, k = n -> k % 2 = 0) <-> n % 2 = 0 :=

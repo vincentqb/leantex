@@ -2479,6 +2479,13 @@ def reports : List Report := [
       check% Tests.LeanCite.leanCiteInclusionChecks]
     accept := ["main's binary at b75023de on the invented statements file at show = prose: no documentation comment on the page, and size = small on its inclusion ignored with W0110 as no such key; the guards fail there; this tree sets each declaration's comment just above its statement, after it at doc = below, nowhere at doc = none, and the inclusion's listing at the small size, the text after it at the document's",
       "the corpus built by main's binary at b75023de and by this tree's: every PDF, web page and twin byte-identical"]
+    state := .guarded "b75023de" .before .author },
+  { id := "R999", date := "2026-10-21"
+    what := "a Lean statement listing equivalent propositions, List.TFAE over a list literal as Mathlib writes it, set as one formula ending in .TFAE, its statements unread"
+    pins := [check% censusChecks, check% Tests.LeanProseReading.readingChecks,
+      check% Tests.LeanProse.leanProseChecks, thm% LeanProse.parse_render_exact]
+    accept := ["main's binary at b75023de on the Lean prose fixture: For every n : ℕ, [n mod 2 = 0, (n + 2) mod 2 = 0, ∀ k : ℕ, k = n → k mod 2 = 0].TFAE, the guards failing there; this tree says For every n : ℕ, the following are equivalent: and the three statements as a numbered list, the third in words, in the PDF, on the web page and in the twin",
+      "the corpus built by main's binary at b75023de and by this tree's: every PDF, web page and twin byte-identical but the Lean prose fixture's"]
     state := .guarded "b75023de" .before .author }
 ]
 

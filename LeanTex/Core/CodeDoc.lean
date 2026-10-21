@@ -2154,7 +2154,7 @@ public def tokRaws (pos : Pos) (opening : Bool) : LeanProse.Tok LeanProse.Leaf â
   | .w s => match LeanProse.relGlyph? s with
     | some g => (#[formulaRaw pos g], false)
     | none =>
-      let said := if s == LeanProse.tfaeKey then LeanProse.equivWords else s
+      let said := LeanProse.Tok.said s
       (wordRaws pos (if opening then said.capitalize else said), false)
   | .leaf l => (leafRaws pos l, false)
   | .bind g => (leafRaws pos (groupLeaf g), false)

@@ -1484,6 +1484,9 @@ def censusCodeRows :
     let swap := linesFrom c "Theorem (Ebb.swap)."
     let both := linesFrom c "Theorem (Ebb.both_all)."
     let listed := linesFrom c "Theorem (Ebb.all_iff)."
+    let parityAt := (c.toList.flatMap (·.lines.toList)).dropWhile
+      (!hasStr ·.text "Theorem (Ebb.parity).")
+    let parity := parityAt.dropWhile (!·.text.startsWith "1.")
     let bounds := (c.toList.flatMap (·.lines.toList)).dropWhile
       (!hasStr ·.text "Theorem (Ebb.barge_bounds).")
     let opening (w : String) : Option CensusLine := bounds.find? (·.text.startsWith w)
@@ -1503,6 +1506,12 @@ def censusCodeRows :
          h.text.endsWith "the following are equivalent:" && a.text.startsWith "1. For every" &&
            b.text.startsWith "2. True" && a.x == b.x
        | _, _, _ => false),
+     ("a list of three equivalent statements says the same words, its statements numbered, the third in words",
+       match (parityAt.take 3).any (hasStr ·.text "equivalent:"), parity with
+       | true, a :: b :: d :: _ =>
+         a.text.startsWith "1." &&
+           b.text.startsWith "2." && d.text.startsWith "3. For every" && a.x == b.x && b.x == d.x
+       | _, _ => false),
      ("a conjunction of quantified statements sets as a numbered list right of the head's margin, each item a sentence",
        match both[0]?, both[1]?, both[2]? with
        | some h, some a, some b =>

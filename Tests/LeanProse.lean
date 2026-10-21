@@ -87,6 +87,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"evidence: 600 random statements over the core table and declared phrases read back, no list item opening on a block but a nested list ({failed.toList.take 2})"
     failed.isEmpty
   let mut listed : Array String := #[]
+  let mut okLists := 0
   for _ in [0:200] do
     let (a, s1) := randStmt (phrasedTable ()) 3 seed
     let (b, s2) := randStmt (phrasedTable ()) 3 s1
@@ -94,10 +95,30 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     seed := s3
     let l : Stmt Leaf := .tfae (.conj a (.conj b c))
     for s in [l, .imp l a, .conj a l, .all (randBinder s3).1 l, .iff a l] do
-      unless !s.ok (phrasedTable ()).lexicon || parse (phrasedTable ()).lexicon (render s) == some s do
-        listed := listed.push (showToks leafWord (render s))
-  t s!"evidence: 200 random lists of three or more equivalent statements read back wherever they stand ({listed.toList.take 2})"
-    listed.isEmpty
+      if s.ok (phrasedTable ()).lexicon then
+        okLists := okLists + 1
+        unless parse (phrasedTable ()).lexicon (render s) == some s do
+          listed := listed.push (showToks leafWord (render s))
+  t s!"evidence: {okLists} of 1000 random statements holding a list of three or more equivalent ones read back from their tokens wherever the list stands ({listed.toList.take 2})"
+    (listed.isEmpty && okLists ≥ 900)
+  let prop : LeanFacts.Term := .apps (.sort "0") []
+  let tfaeOver (xs : List LeanFacts.Term) : LeanFacts.Term := .apps (.const "List.TFAE")
+    [xs.foldr (fun x acc => .apps (.const "List.cons") [prop, x, acc]) (.apps (.const "List.nil") [prop])]
+  let sayTy (ty : LeanFacts.Term) := proseOf (factsWith #[]) (coreTable true) (theoremAt "tt" 2 ty) ty
+  let truth : LeanFacts.Term := .apps (.const "True") []
+  t "prose: a list of three equivalent statements says them as a list, of two as an equivalence, and one it cannot say or a last conjunction leaves the list a formula"
+    ((match sayTy (tfaeOver [truth, truth, truth]) with
+        | .ok (.tfae _) => true
+        | _ => false) &&
+      (match sayTy (tfaeOver [truth, truth]) with
+        | .ok (.iff _ _) => true
+        | _ => false) &&
+      (match sayTy (tfaeOver [truth, .lam "x" .explicit prop (.apps (.bvar 0) []), truth]) with
+        | .ok (.atom _) => true
+        | _ => false) &&
+      (match sayTy (tfaeOver [truth, truth, .apps (.const "And") [truth, truth]]) with
+        | .ok (.atom _) => true
+        | _ => false))
   -- Declared phrases, taken or refused by name.
   let declare (binders : Array (String × Array LeanFacts.Binder)) (declared : List (String × String)) :=
     (tableFor (factsWith binders) declared).refused.map (·.2)

@@ -166,8 +166,11 @@ private def closing (s : String) : Bool := s == "," || s == "."
 /-- The words an equivalence set as a list of its two sides opens with, one token. -/
 public def equivWords : String := "the following are equivalent"
 
-/-- The token a list of three or more equivalent statements opens with, set as `equivWords` say. -/
+/-- The token a list of three or more equivalent statements opens with, its words `equivWords`. -/
 public def tfaeKey : String := "the following are equivalent:3"
+
+/-- The words a token sets: its own, the list's key `equivWords`. -/
+public def Tok.said (s : String) : String := if s == tfaeKey then equivWords else s
 
 /-- The words that open a statement or an operand, so no phrase begins with one. -/
 private def opens : List String := ["for", "there", "if", equivWords, tfaeKey, "both", "either", "it"]
@@ -1955,17 +1958,12 @@ public def spineOf : Stmt Leaf → List (Stmt Leaf) → Stmt Leaf
 /-- Whether a statement is a conjunction, which a list's spine would take for more items. -/
 public def isConjStmt (s : Stmt Leaf) : Bool := s matches .conj ..
 
-/-- Equivalent statements in their order, the conjunctions moved first where one would end it. -/
-public def tfaeOrder (items : List (Stmt Leaf)) : List (Stmt Leaf) :=
-  if (items.getLast?.map isConjStmt).getD false then
-    items.filter isConjStmt ++ items.filter (!isConjStmt ·)
-  else items
-
-/-- Three or more statements said as equivalent, the last no conjunction. -/
+/-- Three or more statements said as equivalent in their order, where the last is no conjunction,
+which the spine would take for more items. -/
 public def tfaeOf (items : List (Stmt Leaf)) : Option (Stmt Leaf) :=
-  match tfaeOrder items with
+  match items with
   | x :: y :: z :: zs =>
-    if ((tfaeOrder items).getLast?.map isConjStmt).getD true then none
+    if (items.getLast?.map isConjStmt).getD true then none
     else some (.tfae (spineOf x (y :: z :: zs)))
   | _ => none
 
@@ -2015,7 +2013,9 @@ public def stmtOf (lk : LeanStatement.Lookup) (tb : Table) (top : Bool) (ctx : L
   | .apps (.const "Iff") [a, b] => both (stmtOf lk tb false ctx a) (stmtOf lk tb false ctx b) .iff
   | t@(.apps (.const "List.TFAE") [l]) =>
     if top && isListLit l then
-      (stmtOf lk tb false ctx l).map fun sp => listedOf (itemsOf sp) (atomOf lk tb ctx t)
+      .ok (match stmtOf lk tb false ctx l with
+        | .ok sp => listedOf (itemsOf sp) (atomOf lk tb ctx t)
+        | .error _ => atomOf lk tb ctx t)
     else .ok (atomOf lk tb ctx t)
   | .apps (.const "List.cons") [_, x, xs] => both (stmtOf lk tb false ctx x) (stmtOf lk tb false ctx xs) .conj
   | .apps (.const "Not") [a] => (stmtOf lk tb false ctx a).map .neg
@@ -2193,26 +2193,16 @@ private theorem spineOf_ok (lex : Lexicon) : ∀ (x : Stmt Leaf) (ys : List (Stm
 private theorem tfaeOf_ok (lex : Lexicon) {items : List (Stmt Leaf)}
     (h : ∀ x ∈ items, x.ok lex = true) {r : Stmt Leaf} (hr : tfaeOf items = some r) :
     r.ok lex = true := by
-  have hmem : ∀ x ∈ tfaeOrder items, x.ok lex = true := by
-    intro x hx
-    unfold tfaeOrder at hx
-    split at hx
-    · simp only [List.mem_append, List.mem_filter] at hx
-      rcases hx with hx | hx
-      · exact h x hx.1
-      · exact h x hx.1
-    · exact h x hx
   unfold tfaeOf at hr
   split at hr
-  next _ a b c cs heq =>
+  next a b c cs =>
     split at hr
     · cases hr
     · simp only [Option.some.injEq] at hr
       subst hr
       simp only [Stmt.ok, spineOf, Bool.and_eq_true]
-      refine ⟨⟨hmem a (by simp [heq]), hmem b (by simp [heq]),
-        spineOf_ok lex c cs (hmem c (by simp [heq])) ?_⟩, trivial⟩
-      intro z hz; exact hmem z (by simp [heq, hz])
+      refine ⟨⟨h a (by simp), h b (by simp), spineOf_ok lex c cs (h c (by simp)) ?_⟩, trivial⟩
+      intro z hz; exact h z (by simp [hz])
   · cases hr
 
 private theorem listed_ok (lex : Lexicon) {sp : Stmt Leaf} (h : sp.ok lex = true)
@@ -2242,11 +2232,15 @@ public theorem stmtOf_mem (lk : LeanStatement.Lookup) (tb : Table) (top : Bool)
     | (rename_i ih1
        obtain ⟨x, hx, rfl⟩ := map_ok h
        first
-         | exact listed_ok _ (ih1 hx) (atomOf_ok lk tb _ _)
          | (rw [forAll_ok]; exact ih1 hx)
          | (rw [thereIs_ok]; exact ih1 hx)
          | (simp only [Stmt.ok]; exact ih1 hx))
     | (rename_i ih1; exact ih1 h)
+    | (rename_i ih1
+       simp only [Except.ok.injEq] at h; subst h
+       split
+       · rename_i sp hsp; exact listed_ok _ (ih1 hsp) (atomOf_ok lk tb _ _)
+       · exact atomOf_ok lk tb _ _)
     | (simp only [Except.ok.injEq] at h; subst h; exact atomOf_ok lk tb _ _)
 
 /-- The words a declaration's statement is said in read back as that statement, through a table
