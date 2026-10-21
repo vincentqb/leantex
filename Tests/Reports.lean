@@ -1244,17 +1244,17 @@ def reports : List Report := [
       "on the branch before cells measured their code as they set it and the decision read the table's own measure, invented probes ran off the paper or out of their container: a table whose code holds hyphens kept its body size with its last column past the paper edge, a table in a quotation and one in a list item kept a size their measure could not hold, and a sixteen-column table of figures lost its edge columns; on this tree each fits its measure at the step both artifacts state, or stands centred on the paper at the last step"]
     state := .guarded "08e2326b" .revert .author },
   { id := "R130", date := "2026-10-10"
-    what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
+    what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page; decided since: a markdown or code PDF takes LaTeX article's text block"
     pins := [check% Tests.MarkdownPage.markdownPageChecks,
       check% Tests.MarkdownCode.markdownCodeChecks]
     accept := ["eight shipped layout and HTML measure assertions fail before markdown pages take their own text block",
       "eight listing and shipped layout assertions fail before markdown code sets small and wraps as listings wraps",
       "three more fail where inline code could not break: a justified markdown paragraph now breaks a long identifier after the url package's break characters, every line inside the measure and no word space three of its own wide, and the page's stylesheet lets a browser break one where it would overflow, while a tex document's typewriter run never breaks",
-      "every shipped text face sets the markdown measure between seventy and ninety characters with the readable band judge quiet",
-      "a long markdown report's side margins narrow from about two inches to about one and a half, and none of its code runs past its measure or off the page, where two hundred twenty-two lines ran off before",
+      "a long markdown report's code no longer runs past its measure or off the page, where two hundred twenty-two lines ran off before",
       "a wrapped code line continues twenty points in on screen as on paper",
-      "a justified paragraph holding a kebab-case flag longer than the measure breaks after the flag's hyphens, every line inside the measure, where on the branch before it the paragraph's rest ran past the paper on one overfull line"]
-    state := .guarded "fa516a82" .before .author },
+      "a justified paragraph holding a kebab-case flag longer than the measure breaks after the flag's hyphens, every line inside the measure, where on the branch before it the paragraph's rest ran past the paper on one overfull line",
+      "decided since by the user, LaTeX being the PDF reference: a markdown or code page takes LaTeX article's text block and furniture at its paper and size, 345 points on a letter page at 10 points, its side margins about 1.86 inches, every shipped text face setting as many characters per line as the article does with the readable band judge quiet, while the web page keeps its own measure"]
+    state := .answered },
   { id := "R131", date := "2026-10-10"
     what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"
     pins := [check% Tests.MarkdownWarnings.markdownWarningChecks,

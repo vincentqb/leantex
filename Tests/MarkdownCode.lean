@@ -51,10 +51,11 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font)
   let lines := bodyLines out
   let left := doc.page.hmargin
   let measure := doc.page.width - 2 * doc.page.hmargin
-  -- Protrusion hangs a glyph a few points into the margin; an overfull line runs tens past it.
+  -- Protrusion hangs a final stop seven tenths of a code cell into the margin; an overfull line
+  -- runs tens past it.
   t s!"markdown inline code: every line fits the measure and none is overfull ({lines.size})"
     (lines.size ≥ 6 && lines.all (fun l => left - Dim.pt 3 ≤ l.x
-        && l.x + l.setWidth ≤ left + measure + Dim.pt 3)
+        && l.x + l.setWidth ≤ left + measure + Dim.pt 5)
       && !out.diags.any (·.kind == .W0005))
   let midCode (out : Layout.Out) : Array String := (bodyLines out).filterMap fun l =>
     (lineRuns l).back?.bind fun (f, s, _, _) =>
@@ -557,13 +558,13 @@ omicron pi rho sigma tau upsilon phi chi psi omega"
         (lines[k]?.bind firstGlyphX) == x0.map (· + 4 * cell) &&
           (lines[k + 1]?.bind firstGlyphX) == x0.map (· + 4 * cell + Ir.listingBreakIndent)
       | none => false)
-  -- The markdown measure holds 80 columns of this face at footnotesize: 80 stay one line, 81 wrap.
+  -- A line of as many columns as the measure holds at footnotesize stays whole, one more wraps.
   let cols (n : Nat) : String :=
     String.ofList ((List.range n).map fun k => if k % 5 == 4 && k + 1 < n then ' ' else 'a')
   let linesOf := codeFenceLines fonts ""
-  t "markdown code: an 80-column line fits the markdown measure whole"
-    ((linesOf (cols 79)).size == 1 && (linesOf (cols 80)).size == 1
-      && (linesOf (cols 81)).size == 2)
+  let fit := (measure.units / cell.units).toNat
+  t s!"markdown code: a {fit}-column line fits the markdown measure whole"
+    (fit ≥ 70 && (linesOf (cols fit)).size == 1 && (linesOf (cols (fit + 1))).size == 2)
   let ident := String.ofList (List.replicate 100 'q')
   let identLines := linesOf ident
   t "markdown code: an identifier wider than the measure is never split"

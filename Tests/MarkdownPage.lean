@@ -23,15 +23,20 @@ def fullLineChars (out : Layout.Out) (measure : Dim.Length) : Array Nat :=
 
 def avg (xs : Array Nat) : Nat := if xs.isEmpty then 0 else xs.foldl (· + ·) 0 / xs.size
 
-/-- The markdown measure on both artifacts, and in every shipped text face a line length inside the
-readable band. -/
+/-- The markdown measure on both artifacts, LaTeX article's on the PDF, and in every shipped text face
+a line length inside the readable band. -/
 def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mdDoc := (elabMd (prose ++ "\n")).1
   let texDoc := (elabStr (dvDoc "" prose)).1
   let width (d : Ir.Doc) : Dim.Length := d.page.width - 2 * d.page.hmargin
-  t "markdown takes the markdown text block, an article its own"
-    (width mdDoc == Ir.markdownTextBlock && width texDoc == Dim.pt 345)
+  let codeDoc := (elabCode "t.py" "x = 1\n").1
+  let samePage (d : Ir.Doc) : Bool :=
+    width d == Dim.pt 345 && d.page.vmargin == texDoc.page.vmargin &&
+      d.page.bmargin == texDoc.page.bmargin && d.page.maxDepth == texDoc.page.maxDepth &&
+      d.page.classSeps == texDoc.page.classSeps
+  t "markdown and code take LaTeX article's text block and furniture, as an article does"
+    (width texDoc == Dim.pt 345 && samePage mdDoc && samePage codeDoc)
   t "a declared page geometry still keeps every value it names"
     (width (elabStr (dvDoc "\\page{ hmargin = 100pt }\n" prose)).1 == Dim.bp 612 - 2 * Dim.pt 100)
   let measureOf (d : Ir.Doc) : String :=
@@ -48,15 +53,16 @@ def markdownPageChecks (ref : IO.Ref (List String)) : IO Unit := do
     let fonts := oneFaceOf font
     let mdOut := layoutOf fonts mdDoc
     let texOut := layoutOf fonts texDoc
-    let mdLines := fullLineChars mdOut Ir.markdownTextBlock
+    let mdLines := fullLineChars mdOut (Dim.pt 345)
     let texLines := fullLineChars texOut (Dim.pt 345)
     t s!"markdown page in {font.family}: full lines set to the markdown measure ({mdLines.size})"
       (mdLines.size ≥ 8
         -- protrusion hangs a boundary glyph's edge past the measure, no more
-        && (bodyLines mdOut).all (·.setWidth ≤ Ir.markdownTextBlock + Dim.pt 3))
-    t s!"markdown page in {font.family}: {avg mdLines} characters per line, inside 70–90 \
-and wider than the article's {avg texLines}"
-      (70 ≤ avg mdLines && avg mdLines ≤ 90 && avg texLines < avg mdLines)
+        && (bodyLines mdOut).all (·.setWidth ≤ Dim.pt 345 + Dim.pt 3))
+    t s!"markdown page in {font.family}: {avg mdLines} characters per line, inside 55–90 \
+and the article's {avg texLines}"
+      (55 ≤ avg mdLines && avg mdLines ≤ 90 && avg mdLines + 2 ≥ avg texLines &&
+        avg texLines + 2 ≥ avg mdLines)
     t s!"markdown page in {font.family}: the readable-band judge stays quiet"
       (!mdOut.diags.any (·.kind == .W0201))
     let digit := font.advance '0' * 1000 / font.unitsPerEm

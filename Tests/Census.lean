@@ -111,7 +111,9 @@ abbreviation an unbreakable glue",
         "Doe and Hale [2024, p.46]", "[Doe and Hale, 2024, chap.2]", "key [?] shows"].all
         (hasStr (censusProse c) ·)),
     ("what is not a citation ships as written",
-      ["someone@example.org", "@roe2020 and an escaped @roe2020"].all (hasStr (censusProse c) ·)),
+      -- lualatex's `\showhyphens` sets the address as text, some-one@ex-am-ple.org
+      hasStr ((censusProse c).replace "- " "") "someone@example.org" &&
+        hasStr (censusProse c) "@roe2020 and an escaped @roe2020"),
     ("the list ships under its declared title, sorted, the nocite entry among them",
       ((lineYOf c 0 "Works cited").bind fun h => (lineYOf c 0 "Alex B. Doe").bind fun d =>
         (lineYOf c 0 "Kim Poe").bind fun p => (lineYOf c 0 "Sam Roe").bind fun r =>
@@ -1540,7 +1542,7 @@ def censusCodeRows :
     ("a key the bibliography lacks ships as written, as does a bracketed key in code",
       hasStr (censusText c) "[unknown1999]" && hasStr (censusInk c) "[ash2001]"),
     ("Pandoc's spelling cites, and an @name the bibliography lacks ships as written",
-      hasStr (censusText c) "[Roe20, p. 3]" && hasStr (censusInk c) "BirchandCole[BC02]" &&
+      hasStr (censusProse c) "[Roe20, p. 3]" && hasStr (censusInk c) "BirchandCole[BC02]" &&
         hasStr (censusText c) "@List.map"),
     ("the list ships last, under its heading", shipsAbove c "References" "Ada Ash. Alpha Notes")]),
   ("lean-cite-include", fun _ c => [

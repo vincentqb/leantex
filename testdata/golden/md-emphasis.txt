@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 71.731 hmargin 114.717
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
 section* h1
   text "Emphasis and Escapes"
 para

@@ -433,15 +433,6 @@ public def baselineSkipOf (spec : PageSpec) : Length := leadingFor spec.fontSize
 copy-fitting measure for a 10 pt text face. -/
 public def articleTextBlock : Length := pt 312
 
-/-- The text block of a markdown page: 32 picas, which keeps every default
-family within 75 to 85 characters per line. -/
-public def markdownTextBlock : Length := pt 384
-
-/-- The text block an undeclared flow page takes on this surface. -/
-public def Surface.textBlock : Surface → Length
-  | .tex => articleTextBlock
-  | .markdown | .code _ => markdownTextBlock
-
 /-- Beamer's default slides stage, 128×96 mm. -/
 @[expose] public def slidesStage43 : Length × Length := (Dim.mm 128, Dim.mm 96)
 @[expose] public def slidesStage169 : Length × Length := (Dim.mm 160, Dim.mm 90)

@@ -2790,7 +2790,7 @@ def pdfCensusTable :
   ("webnav", (1, 1, 0, 0, 0, 0, 3, none, ["FlateDecode"])),
   ("nav-directory", (1, 1, 0, 0, 0, 0, 300, none, ["FlateDecode"])),
   ("bibliography", (1, 1, 0, 0, 0, 9, 0, none, ["FlateDecode"])),
-  ("md-cite", (1, 1, 0, 0, 0, 8, 1, none, ["FlateDecode"])),
+  ("md-cite", (1, 1, 0, 0, 0, 9, 1, none, ["FlateDecode"])),
   ("md-cite-include", (1, 1, 0, 0, 0, 5, 0, none, ["FlateDecode"])),
   ("resume-data", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("icons", (1, 1, 0, 0, 0, 2, 0, none, ["FlateDecode"])),

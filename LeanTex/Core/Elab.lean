@@ -7263,9 +7263,9 @@ private def komaTrue (v : String) : Bool := v == "true" || v == "on" || v == "ye
 private def bcorValue? (v : String) : Option Length :=
   (Decl.parseLength v).bind fun l => if l.em == 0 && l.ex == 0 then some l.fixed else none
 
-/-- The page a class's text area sets on the tex surface along each axis no declaration claims, its
-furniture's distances with the vertical one; elsewhere an undeclared flow page takes the surface's
-text block, centred. -/
+/-- The page a class's text area sets along each axis no declaration claims, its furniture's
+distances with the vertical one, a Markdown or code surface reading LaTeX's article as its PDF's
+reference; elsewhere an undeclared flow page takes the engine's text block, centred. -/
 private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surface : Ir.Surface)
     (across down : Bool) (page : PageSpec) : PageSpec :=
   let entries := opts.map KeyVal.entry
@@ -7276,6 +7276,7 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
   let rule : Ir.AreaRule := match record.area, (value "layout").bind Ir.AreaRule.ofLayout? with
     | .sizeFile, some r => r
     | r, _ => r
+  let rule := if surface == .tex then rule else Ir.DocClass.article.record.area
   let typearea := rule == .typearea
   let input : Ir.AreaInput :=
     { paperW := page.width, paperH := page.height, option := Ir.sizeOptionOf page.fontSize
@@ -7287,8 +7288,8 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
       bcor := if typearea then ((value "BCOR").bind bcorValue?).getD 0 else 0
       headinclude := typearea && included "headinclude"
       footinclude := typearea && included "footinclude" }
-  match surface, rule.area? input with
-  | .tex, some a =>
+  match rule.area? input with
+  | some a =>
     let page := { page with maxDepth := a.maxDepth }
     let page := if across then page else
       { page with hmargin := (page.width - a.width) / 2
@@ -7297,9 +7298,9 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
     if down then page else
       { page with vmargin := a.top, bmargin := some (page.height - a.top - a.height)
                   classSeps := some (a.headsep, a.footskip) }
-  | _, _ =>
+  | none =>
     if record.model == .flow && !across && !down then
-      { page with hmargin := (page.width - surface.textBlock) / 2 }
+      { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
     else page
 
 /-- Class options leaving a page model's page as it stands, each with why. -/

@@ -119,9 +119,9 @@ its label, then counts them"
     (!cells.isEmpty && !cells.any nowrap
       && (elemNodesList (· == "td") #[] texBody.toList).all nowrap)
   let nums (k : Nat) : String := String.intercalate " | "
-    ((List.range 9).map fun j => s!"{k}.{1000 + 37 * j + k}{j}")
-  let figures := "| label | a | b | c | d | e | f | g | h | i |\n\
-|---|---|---|---|---|---|---|---|---|---|\n" ++
+    ((List.range 7).map fun j => s!"{k}.{1000 + 37 * j + k}{j}")
+  let figures := "| label | a | b | c | d | e | f | g |\n\
+|---|---|---|---|---|---|---|---|\n" ++
     s!"| sorter[a=500,b=0.01] | {nums 1} |\n| sorter[a=50,b=0.01] | {nums 2} |\n"
   let (raws, readDiags) := Md.read "t.md" figures
   let (located, _, _) := Elab.runRawsSpanned "t.md" raws readDiags
@@ -133,7 +133,7 @@ its label, then counts them"
   t s!"a table too wide by its words alone keeps them whole, no cell overlapping ({rowYs.size})"
     (!rowYs.isEmpty && (rowYs.eraseReps).all fun y =>
       let cs := cellsAt y
-      cs.size == 10 && (cs.zip (cs.extract 1 cs.size)).all fun (a, b) => a.x + a.setWidth < b.x)
+      cs.size == 8 && (cs.zip (cs.extract 1 cs.size)).all fun (a, b) => a.x + a.setWidth < b.x)
   let over := fout.diags.filter (·.kind == .W0338)
   t s!"and it fits at a smaller step, so nothing names it ({over.size})"
     (over.isEmpty && (flines.all fun l => l.size < located.page.fontSize))

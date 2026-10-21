@@ -25,6 +25,26 @@ holds its height. -/
 def shownLines (code : String) : Array String :=
   (Ir.verbatimLines ("\n" ++ code)).map fun l => if l.isEmpty then " " else l
 
+/-- A line's characters with no whitespace, as a wrapped line reads the same as its source. -/
+def squeezed (l : String) : String := String.ofList (l.toList.filter fun c => !c.isWhitespace)
+
+/-- A line without its trailing whitespace. -/
+def trimEnd (l : String) : String := String.ofList (l.toList.reverse.dropWhile (·.isWhitespace)).reverse
+
+/-- Whether set lines read back as the source lines in order: each source line its set line as
+written, or a wrapped run of set lines holding its characters, `acc` the run read so far. -/
+def linesRead (set src : List String) (acc : String) : Bool :=
+  match set, src with
+  | [], [] => acc.isEmpty
+  | [], _ :: _ | _ :: _, [] => false
+  | l :: more, s :: rest =>
+    if acc.isEmpty && trimEnd l == trimEnd s then linesRead more rest ""
+    else
+      let acc := acc ++ squeezed l
+      !(squeezed l).isEmpty &&
+        if acc == squeezed s then linesRead more rest ""
+        else (squeezed s).startsWith acc && linesRead more (s :: rest) acc
+
 /-- The text of every `pre` element an emitted body holds, in order. -/
 def preTexts (doc : Ir.Doc) : Array String :=
   (elemNodesList (· == "pre") #[] (docNodesOf doc).toList).map fun n => match n with
@@ -65,8 +85,9 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, ds) := elabCode s!"{n}.{lang.extension}" src
     t s!"code {n}: the file reads with no diagnostic" ds.isEmpty
     let out := layoutOf fonts doc
-    t s!"code {n}: every code line ships as written, in order"
-      (((bodyLines out).filter monoLine).map lineInk == (codePieces lang src).flatMap shownLines)
+    let mono := (bodyLines out).filter monoLine
+    t s!"code {n}: every code line ships as written, in order, a long one wrapping onto lines after it"
+      (linesRead (mono.map lineInk).toList ((codePieces lang src).flatMap shownLines).toList "")
     t s!"code {n}: every listing's HTML is its code's lines"
       (preTexts doc == (codePieces lang src).map fun c =>
         String.intercalate "\n" (Ir.verbatimLines ("\n" ++ c)).toList)

@@ -51,15 +51,16 @@ where the tag says `open`, and the PDF and the printed page set it expanded
 (in a browser that styles a disclosure's content, `::details-content`, as
 current Chromium does; an older one prints a closed disclosure closed);
 any other tag is an error at its position whose help names the Markdown to
-write instead. A Markdown document sets on a wider text block
-than an article, with its code in a monospaced face (see Fonts and themes):
-code blocks at `\footnotesize`, two sizes below the text, with long lines
-wrapped to stay on the page, never inside a name or an operator such as
-`:=` — in the PDF at a space where one fits, in a browser at a space or
-between two such tokens — and inline code free to break after
-punctuation such as `_`, `.`, `/` or `-` where a line needs it. A Markdown
-fragment included in TeX keeps its tables' fit and takes its page, code and
-line breaks from the TeX document around it. Include one with:
+write instead. A Markdown document's PDF sets on LaTeX's article text block,
+its margins article.cls's, with its code in a monospaced face (see Fonts
+and themes): code blocks at `\footnotesize`, two sizes below the text,
+with long lines wrapped to stay on the page, never inside a name or an
+operator such as `:=` — in the PDF at a space where one fits, in a
+browser at a space or between two such tokens — and inline code free to
+break after punctuation such as `_`, `.`, `/` or `-` where a line needs
+it. A Markdown fragment included in TeX keeps its tables' fit and takes
+its page, code and line breaks from the TeX document around it. Include
+one with:
 
 ```tex
 \usepackage{markdown}
