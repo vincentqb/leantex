@@ -2460,7 +2460,7 @@ def reports : List Report := [
     pins := [check% Tests.LeanProseReading.readingChecks, check% Tests.LeanProse.leanProseChecks,
       check% Tests.LeanStatements.leanStatementChecks, thm% LeanProse.parse_render_exact]
     accept := ["main's binary at 1e648c76 on an invented file of three clauses, the second of two: every element, is at most, both … and both, f(…) and Prod.fst(…), the guards failing there; this tree sets typed groups (for all bs : List Barge and cap : ℕ), symbols (b.draft ≤ b.draft + cap), the clauses as a numbered list and the second's as (a) and (b) a level in, each wrapped line under its item's text, variables as italic words and constants upright in the body's face, f x y, field notation and ×, an equivalence a quantifier opens as the following are equivalent: and its two sides, no item opening on a block, in the PDF and on the web page at a wide and a narrow measure",
-      "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF byte-identical but the Lean prose fixture's; every web page's stylesheet gains one rule and every web page is visually the same but that fixture's and the box fixture's, whose lowered url tilde, a formula of one operator, now sets with no space either side, as its PDF does"]
+      "the corpus built by main's binary at 351dd670 and by this tree's: every PDF byte-identical but the Lean prose fixture's; every web page's stylesheet gains one rule and every web page is visually the same but that fixture's and the box fixture's, whose lowered url tilde, a formula of one operator, now sets with no space either side, as its PDF does"]
     state := .guarded "1e648c76" .before .author }
 ]
 
