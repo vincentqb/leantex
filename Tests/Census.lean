@@ -901,7 +901,7 @@ def censusRows4 :
     ("the inline sentence ships around its embedded page",
       hasStr (censusText c) "And extensionless")]),
   ("webpage", fun _ c => [
-    ("one page", c.size == 1),
+    ("two pages at the web CV's measure and grid", c.size == 2),
     ("the name ships", hasStr (censusText c) "Doe"),
     ("the section headings ship",
       hasStr (censusText c) "Work" && hasStr (censusText c) "Training")]),

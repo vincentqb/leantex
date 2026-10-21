@@ -495,8 +495,8 @@ sets two-sided chapters on `book.cls` with a `recipe` environment (`\begin{recip
 four}`); `preset=cv` sets unnumbered headings, unindented paragraphs, a 75-character measure and
 `\entry{dates}{title}{text}`; `preset=resume` is the CV asserted to fit one page with its ink in
 the margins and no type below a 1.4mm x-height; `preset=cvweb` is the CV built as a web page and a
-markdown twin (`llms.txt`). leantex reads `cookbook`, `cv`, `resume` and `webpage` as class names
-for the same presets. Under lualatex `\page`, `\fonts`,
+markdown twin (`llms.txt`). leantex also reads `cookbook`, `cv`, `resume` and `webpage` as class
+names for these presets, with each preset's commands but the faces leantex picks itself. Under lualatex `\page`, `\fonts`,
 `\palette` and `\theme` are defined by `tex/ltkeys.sty`; a key only leantex reads warns once
 there.
 

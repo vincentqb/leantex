@@ -7387,8 +7387,10 @@ private def classSized (record : Ir.ClassRecord) (classOptions : String) (page :
       | ("fontsize", some v) => v
       | (k, _) => k
     if o.endsWith "pt" then ((o.dropEnd 2).toString.toNat?).filter (· > 0) else none
+  -- The flow class sets the size its option's file sets, as article.cls's `11pt` sets 10.95pt.
   let optSize := (Ir.lastProcessed (record.area != .sizeFile) ["10", "11", "12"]
-    (sizes.map toString)).bind (·.toNat?) |>.map fun n => Dim.pt n
+    (sizes.map toString)).bind (·.toNat?) |>.map fun n =>
+      if record.design.isSome then Ir.classOptionSize n else Dim.pt n
   match optSize <|> record.fontSize with
   | some d => { page with fontSize := d }
   | none => page
@@ -7503,7 +7505,7 @@ public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
   | (k, none), m => sized k || (classOptionFlags.lookup m).any (·.contains k)
   | (k, some v), .flow =>
     (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats") ||
-      (k == "preset" && (Ir.FlowPreset.ofName? v.trimAscii.toString).isSome)
+      (k == "preset" && record.design.isSome)
   | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome
   | (_, some _), .face => false
 
@@ -17981,9 +17983,7 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       match Ir.DocClass.ofString? named with
       | some c =>
         -- The flow class's `preset=` option picks its preset; an alias names its own.
-        let c ← match c, items.findSome? (fun o => match KeyVal.entry o with
-            | ("preset", some v) => some v.trimAscii.toString
-            | _ => none) with
+        let c ← match c, Compat.presetOption? items.toList with
           | .flow p0, some v =>
             match Ir.FlowPreset.ofName? v with
             | some p => pure (Ir.DocClass.flow p)
@@ -19386,21 +19386,6 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   let s ← if docIdx.isSome then templates.foldlM applyTemplate s else pure s
   return { state := s, decls, body, trailing }
 
-/-- The body size the class's options or record set where the page declares none. -/
-private def classBodySize (record : Ir.ClassRecord) (classOptions : String) (page : PageSpec) :
-    Length :=
-  if page.fontSize != ({} : PageSpec).fontSize then page.fontSize else
-  let optSize := (KeyVal.items classOptions).findSome? fun o =>
-    let o := match KeyVal.entry o with
-      | ("fontsize", some v) => v
-      | (k, _) => k
-    if o.endsWith "pt" then
-      -- The flow class sets the size its option's file sets, as article.cls's `11pt` sets 10.95pt.
-      ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n =>
-        if record.design.isSome then Ir.classOptionSize n else Dim.pt n
-    else none
-  optSize.getD (record.fontSize.getD page.fontSize)
-
 /-- The flow class's grid as the tokens and heading styles it sets where the document declares
 none: `\topskip` and the footnote gap one leading, and heading spaces whole leadings
 (`tex/ltflow.cls`). -/
@@ -19458,7 +19443,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         | _ => pal
     | _ => pal) basePalette
   let (tokens, styles) := match docClass.record.design with
-    | some _ => flowDesignDecls (classBodySize docClass.record classOptions page) themedDs.tokens
+    | some _ => flowDesignDecls (classSized docClass.record classOptions page).fontSize themedDs.tokens
         themedDs.styles
     | none => (themedDs.tokens, themedDs.styles)
   let chrome := themedDs.chrome

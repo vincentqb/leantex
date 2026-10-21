@@ -32,18 +32,24 @@
 \ltflowsource{cv}{%
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
-\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\par\noindent #3\par}
+\setlength{\parskip}{\baselineskip}
+\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\
+#3\par}
 }
 \ltflowsource{resume}{%
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
-\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\par\noindent #3\par}
+\setlength{\parskip}{\baselineskip}
+\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\
+#3\par}
 \pagestyle{empty}
 }
 \ltflowsource{cvweb}{%
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
-\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\par\noindent #3\par}
+\setlength{\parskip}{\baselineskip}
+\newcommand{\entry}[3]{\par\noindent\textbf{#2}\hfill #1\\
+#3\par}
 \def\@listi{\leftmargin\leftmargini\topsep\z@\partopsep\z@\itemsep\z@\parsep\z@}
 \let\@listI\@listi
 \@listi

@@ -12369,8 +12369,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
   -- Undeclared, a heading stands a rhythm unit above its body and half below.
   let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
   let two := r.parskip.add r.parskip
-  let a := a.addvspace ((st.before.map r.resolve).getD
-    (if two.width > hb.width then two else hb))
+  let before := (st.before.map r.resolve).getD (if two.width > hb.width then two else hb)
+  -- The flow class's heading is a paragraph, its `\parskip` above it past the beforeskip.
+  let a := a.addvspace (if r.geom.classLead.isSome then before.add r.parskip else before)
   let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option Ir.ColorRef) =>
     { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
         (headingRuleWeight r.geom.fontSize)

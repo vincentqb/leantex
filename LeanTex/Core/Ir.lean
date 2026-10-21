@@ -8606,21 +8606,21 @@ public def flowPresetSource : FlowPreset → String
   | .cookbook =>
     "\\newenvironment{recipe}[2]{\\section{#1}\\noindent\\textit{#2}\\par}{}\n"
   | .cv =>
-    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n" ++
-    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\par\\noindent #3\\par}\n"
+    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\n#3\\par}\n"
   -- A one-page CV carries no folio.
   | .resume =>
-    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n" ++
-    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\par\\noindent #3\\par}\n" ++
+    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\n#3\\par}\n" ++
     "\\pagestyle{empty}\n"
   -- A web page's lists stand in the flow with no space of their own, as the web lineage sets them.
   | .cvweb =>
-    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n" ++
-    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\par\\noindent #3\\par}\n" ++
+    "\\setcounter{secnumdepth}{0}\n\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{\\baselineskip}\n" ++
+    "\\newcommand{\\entry}[3]{\\par\\noindent\\textbf{#2}\\hfill #1\\\\\n#3\\par}\n" ++
     "\\def\\@listi{\\leftmargin\\leftmargini\\topsep\\z@" ++
       "\\partopsep\\z@\\itemsep\\z@\\parsep\\z@}\n\\let\\@listI\\@listi\n\\@listi\n"
 
-/-- The flow class's theorem declarations as LaTeX source, the text `tex/ltdefaults.tex` holds. -/
+/-- The flow class's theorem declarations as LaTeX source, part of `tex/ltflowsource.tex`. -/
 public def flowTheoremSource : String := Id.run do
   let mut out := ""
   let mut style := ""
@@ -8632,7 +8632,8 @@ public def flowTheoremSource : String := Id.run do
     out := out ++ s!"\\newtheorem\{{env}}{shared}\{{title}}\n"
   return out
 
-/-- A preset's design: a 66-character measure, LaTeX's ratio 1.2, the grid on. -/
+/-- A preset's design: LaTeX's ratio 1.2 and the grid on; a 66-character measure, Bringhurst's ideal,
+and the CVs' 75, the readable band's widest, for their dated lines. -/
 public def FlowPreset.design : FlowPreset → FlowDesign
   | .article | .cookbook => { ratio := 1200, measure := 66, grid := true }
   | .cv | .resume | .cvweb => { ratio := 1200, measure := 75, grid := true }
@@ -8872,7 +8873,7 @@ calibration reads fluently; declare \
     { model := .flow
       fontSize := some (classOptionSize 11)
       sizeFileSkip := true
-      parskip := if cv then some {} else none
+      parskip := some {}
       numberHeadings := !cv
       measureBand := true
       lists := if p == .cvweb then .web else .grid
@@ -8888,7 +8889,6 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       colorRow := if p == .cvweb then .web else .latex
       formats := if p == .cvweb then #["html", "md"] else #[]
       mdName := if p == .cvweb then some "llms.txt" else none
-      webLayout := if p == .cookbook then .book else .article
       area := .flow
       design := some p.design }
 

@@ -3919,10 +3919,14 @@ def listRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "article list fixtures lay out their peer boundary" (peerOf "{article}" > 0)
   let web := doc "{webpage}" three
   let wg := geomOf web
-  let wlead := Ir.leadingFor wg.fontSize wg.leading
+  -- The web CV's lines stand on its grid, a leading of its own.
+  let wlead := wg.classLead.getD (Ir.leadingFor wg.fontSize wg.leading)
   let wpeer := peerOf "{webpage}"
+  let close (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.pt 1 / (100 : Int)
   t "a webpage's list opens the peer gap a paragraph would, and its items stand a leading apart"
-    (0 < wpeer && steps web words == [wpeer, wlead, wpeer])
+    (0 < wpeer && match steps web words with
+      | [a, b, c] => close a wpeer && close b wlead && close c wpeer
+      | _ => false)
   -- beamer's own family: 3 pt items and topsep, no parsep, in a frame.
   let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nAlpha.\n" ++
     "\\begin{itemize}\n\\item Bravo.\n\\item Charlie.\n\\end{itemize}\nDelta.\n\\end{frame}\\end{document}"

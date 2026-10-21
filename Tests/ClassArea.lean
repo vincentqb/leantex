@@ -119,7 +119,7 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a class's own head and foot distances differ unnamed, declared ones named"
     (!n0021 "" && !n0021 "\\page{ headsep = 10pt }" &&
       n0021 "\\page{ headsep = 10pt, footskip = 20pt }" &&
-      (layoutOf fonts (Elab.run "t.tex" ("\\documentclass{resume}\\tokens{ headsep = 20pt, " ++
+      (layoutOf fonts (Elab.run "t.tex" ("\\documentclass{ltflow}\\tokens{ headsep = 20pt, " ++
         "footskip = 30pt }\\runninghead{N}\\begin{document}x\\end{document}")).1).diags.any
         (·.code == "N0021"))
   let page (src : String) : Ir.PageSpec :=
@@ -154,9 +154,9 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "geometry's default body is its scale 0.7"
     (let p := page "\\documentclass{article}\\usepackage{geometry}"
      near (p.width - 2 * p.hmargin) 430005 300 && near (p.height - p.vmargin - p.bottomMargin) 556477 300)
-  t "a class with no area keeps the engine's text block"
+  t "the flow class's area sets its measure in characters"
     (let p := page "\\documentclass{resume}"
-     p.width - 2 * p.hmargin == Ir.articleTextBlock)
+     p.width - 2 * p.hmargin == Ir.measureWidth p.fontSize 75)
   t "typearea's text height is the least whole baselines reaching its target"
     (Ir.linesReaching (Dim.pt 591) (Dim.pt 11) (Dim.pt 136 / 10) == Dim.pt 11 + 43 * (Dim.pt 136 / 10))
 

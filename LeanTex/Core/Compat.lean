@@ -2113,6 +2113,16 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
     | _ => break
   return (out, j)
 
+/-- The `preset=` value class options name, as written. -/
+public def presetOption? (options : List String) : Option String :=
+  options.findSome? fun o => match KeyVal.entry o with
+    | ("preset", some v) => some v.trimAscii.toString
+    | _ => none
+
+/-- The preset a flow class's options pick: the named one, else the class word's own. -/
+public def flowPresetOf (p0 : Ir.FlowPreset) (options : List String) : Ir.FlowPreset :=
+  ((presetOption? options).bind Ir.FlowPreset.ofName?).getD p0
+
 /-- The flow class's own LaTeX after its `\documentclass`, read as the class file's input
 (`Ir.flowClassSource`): its packages, faces, theorems and its preset's commands. -/
 public def applyClassSource (raws : Array Raw) : Array Raw := Id.run do
@@ -2120,14 +2130,13 @@ public def applyClassSource (raws : Array Raw) : Array Raw := Id.run do
   let some (.ctrl _ pos) := raws[i]? | return raws
   let (opt, j) := takeRawOpt raws (i + 1)
   let (args, k) := takeGroups raws j 1
-  -- The class file is `ltflow`'s; the class words leantex alone reads take the record only.
+  -- `ltflow` takes the class file's whole source; a class word leantex alone reads, its preset's.
   let cls := (rawSrc (args.getD 0 #[])).trimAscii.toString
-  let some (.flow p0) := (if cls == "ltflow" then Ir.DocClass.ofString? cls else none) | return raws
-  let preset := ((KeyVal.items ((opt.map rawSrc).getD "")).toList.findSome? fun o =>
-    match KeyVal.entry o with
-    | ("preset", some v) => Ir.FlowPreset.ofName? v.trimAscii.toString
-    | _ => none).getD p0
-  let source := verbatimRaws "ltflow.cls" (Ir.flowClassSource preset)
+  let some (.flow p0) := Ir.DocClass.ofString? cls | return raws
+  let preset := flowPresetOf p0 (KeyVal.items ((opt.map rawSrc).getD "")).toList
+  let text := if cls == "ltflow" then Ir.flowClassSource preset else Ir.flowPresetSource preset
+  if text.isEmpty then return raws
+  let source := verbatimRaws "ltflow.cls" text
   return raws.extract 0 k ++ #[.env (Parse.inputEnv "ltflow.cls") source pos] ++
     raws.extract k raws.size
 
@@ -11026,18 +11035,18 @@ the option" else "the page is one-sided, as without the option")) pos
       if let some (.flow p0) := Ir.DocClass.ofString? cls then
         -- The class's own LaTeX is spliced after it (`applyClassSource`); a cookbook's base is
         -- book.cls, two-sided with chapters.
-        let preset := ((keptItems.findSome? fun o => match KeyVal.entry o with
-          | ("preset", some v) => Ir.FlowPreset.ofName? v.trimAscii.toString
-          | _ => none)).getD p0
+        let preset := flowPresetOf p0 keptItems
+        let twosided := preset.base == "book" && !keptItems.contains "oneside" &&
+          !keptItems.contains "twoside=false"
         let chapters := if preset.base == "book" && !keptItems.contains "chapters" then ["chapters"]
           else []
         let declaration := Native.Head.documentclass (passed ++ keptItems ++ chapters).toArray cls
-        let twosided : Native.Setting := .page (if preset.base == "book" then
-          #[(.twoside, "on"), (.openright, "on"), (.headings, "on")] else #[])
+        let sides : Native.Setting :=
+          .page #[(.twoside, "on"), (.openright, "on"), (.headings, "on")]
         if preset.base == "book" then
-          write fun st => { st with chapters := true, chaptersRight := true, twoSided := true,
-                                    headingsStyle := some true }
-        let book ← if preset.base == "book" then carry twosided pos else pure #[]
+          write fun st => { st with chapters := true, chaptersRight := twosided, twoSided := twosided,
+                                    headingsStyle := some twosided }
+        let book ← if twosided then carry sides pos else pure #[]
         return some (declaration.raws pos ++ book, k)
       if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty &&
           sides.isEmpty then
