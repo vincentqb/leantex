@@ -598,6 +598,16 @@ def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   Tests.PageOverrun.checks ref oneFace
   Tests.PageTurns.checks ref oneFace
 
+/-- The table blocks: a cell's side, leading, lengths, strut and column widths. -/
+def tableSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  Tests.tableSideChecks ref oneFace
+  Tests.tableRaggedChecks ref oneFace
+  Tests.tableLeadingChecks ref oneFace
+  Tests.tableLengthChecks ref oneFace
+  Tests.tableStrutChecks ref oneFace
+  Tests.tableDimexprChecks ref oneFace
+  Tests.tableFaceOrderChecks ref oneFace
+
 /-- The section blocks: a deck's section pages and both models' tables of contents. -/
 def sectionSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   sectionPageChecks ref oneFace
@@ -740,12 +750,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   recipeColModChecks ref
   tableContextChecks ref oneFace
   tableFlexChecks ref oneFace
-  Tests.tableSideChecks ref oneFace
-  Tests.tableRaggedChecks ref oneFace
-  Tests.tableLeadingChecks ref oneFace
-  Tests.tableLengthChecks ref oneFace
-  Tests.tableStrutChecks ref oneFace
-  Tests.tableFaceOrderChecks ref oneFace
+  tableSuiteChecks ref oneFace
   tableFlexOverflowChecks ref oneFace
   columnFlowChecks ref oneFace
   columnGeometryChecks ref oneFace

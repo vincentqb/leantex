@@ -8483,6 +8483,10 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
 private def noteSetting (ctx : Ctx) (setting : UnusedSetting.Setting) (pos : Pos) : EM Unit :=
   modify fun st => applyEvent ctx st (.setting setting pos pos)
 
+/-- The column lengths under their LaTeX names, fixed in the preamble's font as the class loads them. -/
+private def tableLengthTokens (face : Ir.PreambleFace) : Array (String × Dim.SymGlue) :=
+  (Ir.columnLengths.map fun (n, d) => (n, ({ width := .ofLength (face.resolve d) } : Dim.SymGlue))).toArray
+
 /-- The `\leftmargin⟨n⟩` the class fixes as it loads, which a length may name. -/
 private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlue) :=
   (List.range 6).toArray.map fun k => (Ir.leftMarginName (k + 1), Ir.leftMarginFor l {} (k + 1))
@@ -8538,8 +8542,9 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     -- The body size and `\parskip` may still change in the preamble.
     | "baselineskip" | "parskip" => false
     | _ => false
-  (engineLengthTokensOfPage (settledPage (area (classPageDefaults record opts page))).1).filter
-    (fun kv => offered kv.1) ++ classMarginTokens record.lists
+  let settled := (settledPage (area (classPageDefaults record opts page))).1
+  (engineLengthTokensOfPage settled).filter (fun kv => offered kv.1) ++ classMarginTokens record.lists ++
+    tableLengthTokens (Ir.PreambleFace.ofClass record settled.fontSize)
 
 
 /-- Reads a `\palette` option run as (decorative, seeds, skipBlock); an
@@ -19575,7 +19580,8 @@ the {docClass.name} class's page keeps its own" none
                     page := page, tokens := tokens, surface := surface, lists := record.lists
                     listExtra := if page.listsParskip then .koma else record.listExtra
                     preamble := face
-                    engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists
+                    engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists ++
+                      tableLengthTokens face
                     abstractNests := s.abstractForm.getD
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }
   -- A redefined itemize label is read once the preamble's colours and macros all stand.

@@ -307,6 +307,33 @@ private def tableStrutLualatex : List (String × String × String × String) :=
      "11.28593", "5.37601"),
    ("article", "\\documentclass{article}\n\\usepackage{booktabs}\n", "11.20143", "5.32401")]
 
+/-- A `p` column LaTeX sizes by `\dimexpr` over `\linewidth`, `\tabcolsep` and `\arrayrulewidth`
+is sized as LaTeX sizes it: two half-measure columns less their gaps fill the measure. -/
+def tableDimexprChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let col := "p{\\dimexpr 0.500\\linewidth-2\\tabcolsep}"
+  let table (spec : String) :=
+    s!"\\begin\{tabular}\{{spec}}\nLeftCell & RightCell \\\\\n\\end\{tabular}"
+  let src (pre spec : String) :=
+    s!"\\documentclass\{article}\n{pre}\\begin\{document}\n\\noindent\n{table spec}\n\\end\{document}"
+  let near (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.Length.ofSp 64
+  for (pre, sep) in [("", Dim.pt 6), ("\\setlength{\\tabcolsep}{2pt}\n", Dim.pt 2)] do
+    let (doc, ds) := elabStr (src pre (col ++ col))
+    let c := censusOf #[] (layoutOf oneFace doc)
+    -- article's 10pt text block on letter paper, as lualatex sets it
+    let measure := Dim.pt 345
+    let gap := (lineXOf c 0 "RightCell").bind fun r => (lineXOf c 0 "LeftCell").map (r - ·)
+    t s!"table dimexpr {sep.toSp}: no width is ignored ({ds.filter (·.code == "W0104") |>.map (·.message)})"
+      (ds.all (·.code != "W0104"))
+    t s!"table dimexpr {sep.toSp}: the second column stands half the measure past the first ({gap.map (·.toSp)})"
+      (gap.any (near · (measure / 2)))
+  let rule := "p{\\dimexpr 0.500\\linewidth-2\\tabcolsep-\\arrayrulewidth}"
+  let (doc, ds) := elabStr (src "" (rule ++ rule))
+  let c := censusOf #[] (layoutOf oneFace doc)
+  let gap := (lineXOf c 0 "RightCell").bind fun r => (lineXOf c 0 "LeftCell").map (r - ·)
+  t s!"table dimexpr: \\arrayrulewidth reads LaTeX's 0.4pt ({gap.map (·.toSp)})"
+    (ds.all (·.code != "W0104") && gap.any (near · (Dim.pt 345 / 2 - Dim.pt 2 / 5)))
+
 /-- A table's rows stand on LaTeX's row strut (`Layout.strutBox`, `Layout.tableStrut`). -/
 def tableStrutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref

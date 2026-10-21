@@ -869,6 +869,8 @@ public def tabColSep : Dim.SymLength := { fixed := Dim.pt 6 }
 public def columnSep : Dim.SymLength := { fixed := Dim.pt 10 }
 /-- The gap between two stacked full rules: LaTeX's `\doublerulesep`, 2pt. -/
 public def doubleRuleSep : Dim.SymLength := { fixed := Dim.pt 2 }
+/-- A tabular rule's thickness: LaTeX's `\arrayrulewidth`, 0.4pt. -/
+public def arrayRuleWidth : Dim.SymLength := { fixed := Dim.pt 2 / 5 }
 
 /-- The lengths a formal table reads, under their LaTeX names, each with its undeclared default. -/
 public def tableLengths : List (String × Dim.SymLength) :=
@@ -877,6 +879,10 @@ public def tableLengths : List (String × Dim.SymLength) :=
    ("cmidrulewidth", cmidRuleWidth), ("cmidrulekern", cmidRuleKern),
    ("aboverulesep", aboveRuleSep), ("belowrulesep", belowRuleSep),
    ("abovetopsep", aboveTopSep), ("belowbottomsep", belowBottomSep)]
+
+/-- The class lengths a table's widths may read: the table lengths and `\arrayrulewidth`. -/
+public def columnLengths : List (String × Dim.SymLength) :=
+  tableLengths ++ [("arrayrulewidth", arrayRuleWidth)]
 
 /-- A table length's default; zero for a name `tableLengths` lacks. -/
 public def tableLengthDefault (name : String) : Dim.SymLength :=
