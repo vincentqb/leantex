@@ -1086,10 +1086,8 @@ private def citationKeys : List String :=
 
 /-- The keys metadata reads, each with the role it is read in. -/
 public def metaKeys : List (String × Role) :=
-  [("bibliography", .document), ("biblio-style", .document), ("natbiboptions", .document),
-   ("nocite", .document), ("nocite", .included), ("reference-section-title", .document),
-   ("link-citations", .document), ("link-citations", .included),
-   (Parse.markdownWebKey, .document)]
+  citationKeys.map (·, Role.document) ++
+    [("nocite", .included), ("link-citations", .included), (Parse.markdownWebKey, .document)]
 
 /-- What a metadata block's fields declare for citations, read as Pandoc reads them, and for the
 web layout; every other key is named, as is a key written twice, which takes its last value, and in
@@ -1178,7 +1176,10 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
       | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
     | "web", .scalar v =>
       let v := v.trimAscii.toString
-      if v.isEmpty then out := { out with diags := out.diags.push (unread f "its value is empty") }
+      let help := "write " ++ " or ".intercalate (Ir.WebLayout.names.map fun (n, _) =>
+        s!"'{Parse.markdownWebKey}: {n}'")
+      if v.isEmpty then
+        out := { out with diags := out.diags.push (unread f "its value is empty" (some help)) }
       else out := { out with web := some (v, f.pos) }
     | _, _ => out := { out with diags := out.diags.push (unread f "its value is not one the key takes") }
     if out.diags.size == before && f.key != "nocite" && citationKeys.contains f.key then

@@ -112,8 +112,20 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "web measure: a markdown layout that is no single name is named unread"
     (mdListDs.any fun d => d.kind == .W0307 && hasStr d.message "'web'")
   let (_, mdEmptyDs) := elabMd ("---\nweb:\n---\n\n" ++ guide)
-  t "web measure: an empty markdown layout is named unread"
-    (mdEmptyDs.size == 1 && mdEmptyDs.all fun d => d.kind == .W0307 && hasStr d.message "'web'")
+  t "web measure: an empty markdown layout is named unread, its help naming the layouts"
+    (mdEmptyDs.size == 1 && mdEmptyDs.all fun d => d.kind == .W0307 && hasStr d.message "'web'" &&
+      (d.help.getD "") == "write 'web: book' or 'web: article'")
+  let (mdEnd, mdEndDs) := elabMd (guide ++ "\n---\nweb: article\n---\n")
+  t "web measure: a closing metadata block declares the layout as an opening one does"
+    (mdEndDs.isEmpty && mdEnd.page.web == some .article)
+  let (raws, rds) := Surface.read .markdown "mid.md" ("---\nweb: article\n---\n\n" ++ guide)
+  let k := ((raws.extract 2 raws.size).findIdx? (· matches .par _)).getD 0 + 3
+  let mid := (raws.extract 2 k) ++ (raws.extract 0 2) ++ (raws.extract k raws.size)
+  let (midDoc, midDs) := Elab.runKept "mid.md" mid rds
+  let (headDoc, _) := Elab.runKept "mid.md" raws rds
+  t "web measure: the elaborator reads the layout's control wherever it stands at the top level"
+    (raws[0]? matches some (Parse.Raw.ctrl _ _) && 3 < k && k < raws.size && midDs.isEmpty &&
+      midDoc.page.web == some .article && (HtmlDoc.emit {} midDoc).1 == (HtmlDoc.emit {} headDoc).1)
   t "web measure: TeX names a layout no theme names in the markdown words, its help in its own spelling"
     (badDs.size == 1 && badDs.all fun d => d.kind == .E0323 &&
       d.message == "invalid value 'magazine' for key web" &&
