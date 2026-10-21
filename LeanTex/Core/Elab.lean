@@ -7255,7 +7255,7 @@ private def komaTrue (v : String) : Bool := v == "true" || v == "on" || v == "ye
 
 /-- typearea's `BCOR` value, an absolute length. -/
 private def bcorValue? (v : String) : Option Length :=
-  (Decl.parseLength v).bind fun l => if l.em == 0 && l.ex == 0 then some l.sp else none
+  (Decl.parseLength v).bind fun l => if l.em == 0 && l.ex == 0 then some l.fixed else none
 
 /-- The page a class's text area sets on the tex surface along each axis no declaration claims, its
 furniture's distances with the vertical one; elsewhere an undeclared flow page takes the surface's
@@ -19176,7 +19176,7 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
     else unless classOptionRead record o || key.isEmpty do
       classSay .W0104 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
-  if record.model == .flow && !sawPage then
+  if record.model == .flow && !s.sawAcross then
     page := { page with webMeasure := surface != .tex || page.web.isSome }
   if record.model != .flow && page.web.isSome then
     diag ctx .W0104 "'web' in '\\page' sets nothing: only a flowing document takes a web layout, \

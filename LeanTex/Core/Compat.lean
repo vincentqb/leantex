@@ -235,7 +235,7 @@ private def classNormalSkip (pt : Nat) : Int := classSizeSkip pt "normalsize"
 thousandths of an inch. -/
 private def lengthSpelling (x : Dim.Length) : String :=
   let pt := s!"{x.toPtString}pt"
-  if (Decl.parseLength pt).map (·.sp) == some x then pt
+  if (Decl.parseLength pt).map (·.fixed) == some x then pt
   else
     let milli : Int := (x * (2000 : Int) + Dim.inch 1) / Dim.inch 2
     let frac := toString (milli % 1000)

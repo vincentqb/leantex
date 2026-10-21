@@ -141,7 +141,7 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
      p.width - 2 * p.hmargin == Dim.pt 345 && near p.vmargin 125270 1000)
   let tokensUnder (pre : String) (n : String) : Option Dim.Length :=
     let (doc, _) := Elab.run "t.tex" (pre ++ "\\begin{document}x\\end{document}")
-    (doc.tokens.find? n).map (·.width.sp)
+    (doc.tokens.find? n).map (·.width.fixed)
   t "a page geometry places keeps the class's head and foot distances"
     (let pre := "\\documentclass{scrartcl}\\usepackage[margin=2cm]{geometry}"
      tokensUnder pre "headsep" == some (Dim.pt 204 / 10) &&
