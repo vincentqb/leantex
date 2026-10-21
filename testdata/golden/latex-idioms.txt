@@ -7,6 +7,8 @@ palette deepwater #1F4E5F
 palette driftwood #786954
 palette foam #B8D8CF
 palette oarblade #786954
+token headsep 20.4pt
+token footskip 47.6pt
 token beat 2200/1000ex plus 600/1000ex minus 300/1000ex
 token stroke 1650/1000ex plus 450/1000ex minus 225/1000ex
 runninghead
@@ -107,7 +109,7 @@ info[N0100] 13:1 translated package babel | detail: \pdfmeta{ language = "en" }
 info[N0100] 14:1 translated command \babelfont | detail: \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
 info[N0100] 15:1 translated command \babelfont | detail: \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
 info[N0100] 16:1 translated package geometry | detail: nothing: the paper is the one in force, as without the option
-info[N0100] 16:1 translated package geometry | detail: \page{ headsep = 5mm, hmargin = 17mm, vmargin = 14mm }
+info[N0100] 16:1 translated package geometry | detail: \tokens{ headsep = 20.4pt, footskip = 47.6pt }\page{ headsep = 5mm, hmargin = 17mm, vmargin = 14mm }
 info[N0100] 17:1 translated package microtype | detail: nothing: the engine does this itself
 info[N0100] 19:1 translated command \newlength{\beat} | detail: \tokens{ beat = 0pt }
 info[N0100] 20:1 translated command \setlength{\beat} | detail: \tokens{ beat = 2.2ex plus 0.6ex minus 0.3ex }

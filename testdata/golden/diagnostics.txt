@@ -193,9 +193,7 @@ info: no facts for 'Tide' stand at '/p/.lake/build/leantex/Tide.facts'; its code
   note: run `lake exe leantex-export Tide` in a project that requires leantex-export, or declare `facts = <path>`
 ── N0100 (info) LaTeX idiom translated to its native declaration
 info: translated package geometry [N0100]
-  note: \tokens{ footskip = 30pt }\page{ margin = 1in }
-ℹ [N0100] - \usepackage
-  '\usepackage{geometry}' → \tokens{ headsep = 25pt, footskip = 30pt }\page{ margin = 1in }
+  note: \tokens{ headsep = 25pt, footskip = 30pt }\page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 info: frame option 'shrink' is not modelled; ignored [N0102]
 ── N0103 (info) \paragraph short title unused: nothing consumes it yet
@@ -215,10 +213,7 @@ info: '\@ifpackageloaded': 'booktabs' is loaded here, so the first branch is kep
 info: '\IfPackageLoadedF': no package 'wideframe' is loaded here, so its branch is kept [N0114]
 ── N0200 (info) page set short: its skips gave their shrink
 info: a page set short of its height: its skips gave part of their shrink [N0200]
-  note: page 1: 6pt short, its skips gave 40% of their 16pt of shrink
-ℹ [N0200]
-  a page set short of its height: its skips gave part of their shrink
-  page 1: 3pt short, its skips gave 22% of their 16pt of shrink
+  note: page 1: 3pt short, its skips gave 22% of their 16pt of shrink
 ── N0359 (info) a \note nested inside another note's frame is dropped, as beamer drops it
 info: a '\note' inside this note's frame is dropped: one note carries no other, as in beamer [N0359]
   note: move the inner '\note' out of the enclosing '\note', beside its frame
@@ -430,11 +425,7 @@ warning: '\draw' continues with 'parabola', outside the rendered picture subset;
   note: write it with paths, nodes, trees, \foreach and pgfmath values, which the rendered subset draws, or let a boundary tool draw it
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 warning: the picture is larger than the text area; it may overrun the page [W0335]
-  note: 1138.11pt × 28.453pt against 312pt × 650.97pt
-⚠ [W0335]
-  the picture is larger than the text area; it may overrun the page
-  1138.11pt × 28.453pt against 345pt × 550pt
-  suggestion: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
+  note: 1138.11pt × 28.453pt against 345pt × 550pt
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
 warning: node labels overlap: a relative placement parts node centres, not the text they set [W0336]
   note: 1 pair of labels
@@ -447,11 +438,7 @@ warning: '\multicolumn' opens no tabular cell here: its text stays in place, wit
   note: write \multicolumn first in a tabular cell
 ── W0338 (degraded) table is wider than the measure
 warning: the table is wider than the measure [W0338]
-  note: 211.2pt wider
-⚠ [W0338]
-  the table is wider than the measure
-  231pt wider
-  suggestion: narrow the p{...} column widths, or widen the text block
+  note: 231pt wider
 ── W0340 (config) a declaration in the document body is ignored
 warning: '\page' is a declaration; in the body it is ignored [W0340]
   note: declare it in the preamble, before '\begin{document}'
@@ -507,11 +494,7 @@ warning: '\def' with a delimited parameter text is a TeX scanning program; the d
   note: \define \name(...) {body} declares typed commands
 ── W0358 (degraded) a float or box taller than the text block overruns its page
 warning: a figure or table is taller than the text block; it overruns its page [W0358]
-  note: 287.178pt taller
-⚠ [W0358]
-  a figure or table is taller than the text block; it overruns its page
-  283.972pt taller
-  suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
+  note: 283.972pt taller
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 warning: the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands [W0361]
   note: '\venuetitlebox' at t:2
@@ -554,11 +537,7 @@ warning: a paragraph break inside '\footnote' is set as a space [W0371]
   note: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
 warning: a footnote is taller than the text block; it overruns its page [W0372]
-  note: 63.053pt taller
-⚠ [W0372]
-  a footnote is taller than the text block; it overruns its page
-  60.123pt taller
-  suggestion: shorten the note, or raise the text height (\page{ vmargin = ... })
+  note: 60.123pt taller
 ── W0373 (degraded) \thanks is kept inline in the title block
 warning: '\thanks' content is kept inline in the title block [W0373]
   note: a plain \footnote in the body text renders as a page footnote
