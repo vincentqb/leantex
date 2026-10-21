@@ -2,8 +2,8 @@
 target: chromium
 tools: node v26.11.1  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-21
-src-key: 8892eb211a4d278d
-browser-face-src-key: 879afd8a95989bd1
+src-key: 766d3369f39cfb3a
+browser-face-src-key: d05c2cde9f36212a
 browser-face-key: 9dd56f981f1fe29a
 browser-face: diagram-boundary diagram-boundary/i0-2dae782c27c511f0edfce23b276fb9f54c3624fadc81ea0d83c2a298062bd5e2.svg ok:372:6740ea9321dca7d69f316e91be2fb486e04e0ac8c004e3a10a3f2b326a6253e9
 browser-face: figures figures/i0-60498ec49c2503c83984659ff69a1e2f338dcedd6f206f07bee54dc6af0344b7.svg ok:9883:98980ebde0af5201ba493d41f3445678a81ea88597a47ca9f7782dc86fee926b
@@ -11,7 +11,7 @@ browser-face: figures figures/i1-60498ec49c2503c83984659ff69a1e2f338dcedd6f206f0
 browser-face: svg-figures svg-figures/i0-1ead914945397c7ce6a522020919ac28a4331668d9c5333c477bc1c391698e1c.svg ok:472:5c46997e41fdecd5c564f6699a59063f457fbc594d4699765edc8294af277d02
 browser-face: svg-figures svg-figures/i1-84db39dfee1408d4a02293f4945e160d33b66670a04a1219c53029f3df435a42.svg ok:793:422786e757d84ecc6e43595429ec367aba84ad9e965dc7e1473e83e5b15eb7d7
 browser-face: svg-figures svg-figures/p0-61a825e702e86944485cc6b9c88f285c86a15e5e508c285013bce271f1d7a603.svg ok:4947:6619d01ded4d6a75a6b8d6ed0a7a277bd254fc3c6544c0779c4b8562edc45c89
-fixtures: 120 built
+fixtures: 121 built
 
 [feature]
 # feature         chromium      firefox
@@ -109,6 +109,7 @@ listings          pass          untested      load,fonts,lang,landmarks,color-sc
 lists             pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,web-layout
 lists-deck        pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,stage-focus,deck-links
 lists-styled      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,web-layout
+margin-notes      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,web-layout
 marker-content    pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,web-layout
 marker-styled     pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,web-layout
 math              pass          untested      load,fonts,mathml,mathAlpha,math-line,lang,landmarks,color-scheme,reduced-motion,print,no-script,web-layout
