@@ -1075,10 +1075,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a structural built-in cannot be redefined"
     ((warnCodes ("\\documentclass{article}\\define \\underline(x: content) {\\emph{\\x}}" ++
       "\\begin{document}\\underline{a}\\end{document}")) == ["W0303"])
-  -- Text superscripts are not implemented, and the refusal stays loud.
-  t "textsuperscript refuses loudly while owed"
+  t "textsuperscript is read"
     ((warnCodes ("\\documentclass{article}" ++
-      "\\begin{document}a\\textsuperscript{2}\\end{document}")) == ["W0301"])
+      "\\begin{document}a\\textsuperscript{2}\\end{document}")).isEmpty)
   let (bfDoc, bfDs) := elabStr ("\\documentclass{article}" ++
     "\\define \\textbf(x: content) {\\emph{\\x}}" ++
     "\\begin{document}\\textbf{a}\\end{document}")

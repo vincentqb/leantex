@@ -21,6 +21,7 @@ import LeanTex.Core.EncodingOption
 import LeanTex.Core.PdfObj
 public import LeanTex.Core.TikzCommands
 import LeanTex.Core.UnusedSetting
+public import LeanTex.Core.DateText
 public import LeanTex.Core.Definer
 import LeanTex.Core.TexText
 import LeanTex.Core.ListMark
@@ -49,7 +50,7 @@ public def nativePackages : List String :=
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend",
-   "marginnote", "sidenotes"]
+   "marginnote", "sidenotes", "datetime"]
 
 /-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
 public def optionSpelling (item : String) : String :=
@@ -1056,6 +1057,13 @@ private structure St where
   /-- babel's main language as its options spell it, which biblatex's
   `language=autodetect` reads. -/
   babelMain : Option String := none
+  /-- The dates datetime's `\newdate` declared, by name: day, month and year. -/
+  dates : Array (String × Nat × Nat × Nat) := #[]
+  /-- datetime's date format, whether it names the day of the week, and whether it raises the
+  ordinal suffix. -/
+  dateStyle : DateText.Style := .long
+  dateDow : Bool := true
+  dateRaise : Bool := true
   /-- biblatex is loaded, so a later babel load hands it the main language. -/
   biblatexLoaded : Bool := false
   /-- Inside the document environment, where a preamble declaration is a
@@ -8631,7 +8639,7 @@ public inductive Lowering where
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
-  | texOrPdf | changeFontSizes | addvspace | noIndent
+  | texOrPdf | changeFontSizes | addvspace | noIndent | datetime | textScript
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8789,12 +8797,18 @@ body of \\begin{columns} \
    ⟨"columnratio", [.needed, .opt], .lower .columnRatio {}⟩,
    ⟨"crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩,
    ⟨"crop", [.opt], .lower .crop {}⟩,
+   ⟨"dayofweekname", [.needed, .needed, .needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"ddmmyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"ddmmyyyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"definecolor", [.needed, .needed, .needed],
      .lower .defineColor { paramStands := some "the colour is not defined" }⟩,
    ⟨"definecolorspace", [.star, .needed, .needed, .needed], .lower .defineColorspace {}⟩,
    -- Running Lua is refused by design.
    refusedRow "directlua" [.group] (Diag.say .W0104 .command "\\directlua")
      "\\allow{W0104} accepts the skip",
+   ⟨"displaydate", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"dmyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"dmyyyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"dochome", [.needed],
      .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
    ⟨"doublespacing", [], .native (.page #[(.leading, "1.667")])⟩,
@@ -8810,8 +8824,12 @@ body of \\begin{columns} \
 
 private def ctrlRows4 : List CtrlRow :=
   [⟨"footercontent", [], .tokens [.ctrl "runningfoot" {}] (some "\\runningfoot{...}")⟩,
+   ⟨"formatdate", [.needed, .needed, .needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    nothingRow "frenchspacing" 0 "inter-sentence space is uniform here either way",
    ⟨"geometry", [.needed], .lower .geometry {}⟩,
+   ⟨"getdateday", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"getdatemonth", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"getdateyear", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"github", [.needed],
      .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
    ⟨"graphcolor", [.needed, .needed, .needed],
@@ -8828,19 +8846,26 @@ private def ctrlRows4 : List CtrlRow :=
    ⟨"lhead", [.group], .lower .runningField {}⟩,
    nothingRow "linenomath" 0 "display math lines are numbered like every galley line",
    ⟨"linenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
+   ⟨"longdate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    nothingRow "makeatletter" 0 "@-names are always readable here",
    nothingRow "makeatother" 0 "@-names are always readable here"]
 
 private def ctrlRows5 : List CtrlRow :=
   [⟨"makebox", [.opt, .opt], .lower .box {}⟩,
    ⟨"mbox", [], .lower .box {}⟩,
+   ⟨"mdyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"mdyyyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"medskip", [], .skip "medskipamount"⟩,
    beamerConfigRow "metroset" 1,
    ⟨"microtypesetup", [.needed], .lower .microtypeSetup {}⟩,
+   ⟨"mmddyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"mmddyyyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"modulolinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
    ⟨"molochset", [.needed], .lower .molochSet {}⟩,
+   ⟨"monthname", [.opt], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"newcounter", [.needed, .opt],
      .lower .newCounter { paramStands := some "no counter is allocated" }⟩,
+   ⟨"newdate", [.needed, .needed, .needed, .needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"newdimen", [.group], .lower .newDimen { leaves := [.notCtrl 0] }⟩,
    ⟨"newgeometry", [.needed], .lower .geometry {}⟩,
    ⟨"newlength", [.group], .lower .newLength { leaves := [.notCtrl 0] }⟩,
@@ -8857,6 +8882,7 @@ private def ctrlRows6 : List CtrlRow :=
    ⟨"ofoot", [.group], .lower .runningField {}⟩,
    ⟨"ohead", [.group], .lower .runningField {}⟩,
    ⟨"onehalfspacing", [], .native (.page #[(.leading, "1.25")])⟩,
+   ⟨"ordinaldate", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"overprintstate", [.needed], .refuse .W0104 .each (Diag.say .W0104 .command "\\overprintstate")
      none⟩,
    ⟨"pagebreak", [.opt], .lower .pageBreak {}⟩,
@@ -8891,6 +8917,11 @@ private def ctrlRows7 : List CtrlRow :=
    ⟨"setlist", [.star, .opt, .group], .lower .setList declared⟩,
    oldFontRow "sf" "sffamily",
    nothingRow "shortcites" 1 "citations are set short throughout, which is what it asks",
+   ⟨"shortdate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"shortdayofweekname", [.needed, .needed, .needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"shortmonthname", [.opt], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"showdowfalse", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"showdowtrue", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"singlespacing", [], .native (.page #[(.leading, "1")])⟩,
    oldFontRow "sl" "slshape",
    ⟨"sloppy", [], .refuse .W0104 .ctrl (Diag.say .W0104 .command "\\sloppy") none⟩]
@@ -8909,6 +8940,8 @@ private def ctrlRows8 : List CtrlRow :=
        (Diag.say .W0104 .command "\\textoverprint")
      none⟩,
    ⟨"textperiodcentered", [], .tokens [.ctrl "middot" {}] none⟩,
+   ⟨"textsubscript", [.needed], .lower .textScript {}⟩,
+   ⟨"textsuperscript", [.needed], .lower .textScript {}⟩,
    ⟨"thepage", [], .tokens [.ctrl "pagenumber" {}] none⟩,
    ⟨"thispagestyle", [.group], .lower .thisPageStyle {}⟩,
    ⟨"titlegraphic", [.group], .lower .titleGraphic {}⟩,
@@ -8921,14 +8954,16 @@ should appear; \
    ⟨"unimathsetup", [.needed], .lower .uniMathSetup {}⟩]
 
 private def ctrlRows9 : List CtrlRow :=
-  [beamerConfigRow "usecolortheme" 1,
+  [⟨"usdate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   beamerConfigRow "usecolortheme" 1,
    ⟨"usefonttheme", [.opt, .group], .lower .fontTheme {}⟩,
    beamerConfigRow "useinnertheme" 1,
    beamerConfigRow "useoutertheme" 1,
    packageRow "usepackage",
    ⟨"usetheme", [.opt, .group], .lower .useTheme {}⟩,
    ⟨"vfill", [], .native (.block #[("before", "fill")])⟩,
-   ⟨"vspace", [.star, .opt, .group], .lower .vspace {}⟩]
+   ⟨"vspace", [.star, .opt, .group], .lower .vspace {}⟩,
+   ⟨"yyyymmdddate", [], .lower .datetime { leaves := [.without "datetime"] }⟩]
 
 /-- The controls the dispatcher answers from its table, in byte order of their names. -/
 public def ctrlRows : List CtrlRow :=
@@ -10912,6 +10947,16 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
     else
       out := out ++ (← hyperrefLowered s!"\\usepackage[{opt.getD ""}]\{hyperref}"
         s!"{name}:{p}" r pos)
+  else if p == "datetime" then
+    -- datetime's options choose the date format, the day of the week and the ordinal's raise.
+    for o in given do
+      if let some style := DateText.Style.ofName? o then write fun st => { st with dateStyle := style }
+      else if o == "dayofweek" then write fun st => { st with dateDow := true }
+      else if o == "nodayofweek" then write fun st => { st with dateDow := false }
+      else if o == "raise" then write fun st => { st with dateRaise := true }
+      else if o == "level" then write fun st => { st with dateRaise := false }
+    let read := DateText.styleNames ++ ["dayofweek", "nodayofweek", "raise", "level"]
+    out := out ++ (← packageOptions name p (given.filter (!read.contains ·)) pos)
   else if p == "ulem" then
     if given.contains "normalem" then
       discard s!"\\{name}[normalem]\{{p}}"
@@ -11985,6 +12030,102 @@ private def komaEntries (reader : String) (entries : List String) (pos : Pos) : 
     | (key, none) => unreadParam reader key .entry e (ofWritten s!"\\{reader}") pos
   return out
 
+/-- latex.ltx's `\textsuperscript` (`up`) or `\textsubscript` of `body`: text at the 10pt class's
+script ratio of the size in force, shifted as cmsy10's `\fontdimen14` and `\fontdimen16` shift a
+text-style script. -/
+private def textScriptRaws (up : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
+  #[.ctrl "raisebox" pos, .group #[.word (if up then "0.363em" else "-0.150em") pos] pos,
+    .group (#[.ctrl (Marker.fontSizeName "0.7em" "0.84em") pos] ++ body) pos]
+
+/-- A set date's pieces as raws: words and spaces, an ordinal suffix as `\textsuperscript` sets it,
+the document's own `\dateseparator`. -/
+private def datePieceRaws (ps : Array DateText.Piece) (pos : Pos) : Array Raw :=
+  ps.foldl (init := #[]) fun out p => match p with
+    | .text t =>
+      (t.splitOn " ").zipIdx.foldl (init := out) fun out (w, k) =>
+        let out := if k == 0 then out else out.push .space
+        if w.isEmpty then out else out.push (.word w pos)
+    | .raised t => out ++ textScriptRaws true #[.word t pos] pos
+    | .separator => out.push (.ctrl "dateseparator" pos)
+
+/-- A datetime date field written as a decimal number. -/
+private def dateField (c : CtrlCall) (i : Nat) : Option Nat :=
+  (c.src i).trimAscii.toString.toNat?
+
+/-- datetime's date commands: `\newdate` names a date, `\displaydate` and `\formatdate` give one in
+the format in force, the format switches and `\showdow` choose that format, and the name commands
+give a day or month name; a field that is no number, or the clock's date, gives nothing. -/
+private def datetimeCall (c : CtrlCall) : M (Array Raw) := do
+  let st ← get
+  let sep : DateText.Piece := if st.bound.contains "dateseparator" then .separator else .text "/"
+  let english : M Unit := unless st.mainLang.startsWith "en" do
+    sayOnce ("datetime:language:" ++ st.mainLang) .W0104
+      (Diag.say .W0104 .language st.mainLang (ofPackage "datetime")) c.pos
+      (detail := some "dates set in English")
+      (help := "write the date as text in the document's language")
+  let set (d m y : Nat) : M (Array Raw) := do
+    english
+    return datePieceRaws (DateText.pieces st.dateStyle st.dateDow st.dateRaise sep d m y) c.pos
+  let unread (what : String)
+      (help : String := "write the day, month and year as numbers of a calendar date") :
+      M (Array Raw) := do
+    sayOnce ("datetime:" ++ c.name ++ ":" ++ what) .W0104
+      (Diag.say .W0104 .value (Diag.Name.value what) (ofWritten s!"\\{c.name}")) c.pos
+      (help := help)
+    return #[]
+  let fields (i : Nat) : Option (Nat × Nat × Nat) := do
+    let d ← dateField c i
+    let m ← dateField c (i + 1)
+    let y ← dateField c (i + 2)
+    if DateText.valid d m y then some (d, m, y) else none
+  let named : Option (Nat × Nat × Nat) :=
+    (st.dates.find? (·.1 == (c.src 0).trimAscii.toString)).map (·.2)
+  match c.name with
+  | "newdate" =>
+    match fields 1 with
+    | some date =>
+      let name := (c.src 0).trimAscii.toString
+      write fun st => { st with dates := (st.dates.filter (·.1 != name)).push (name, date) }
+      return #[]
+    | none => unread s!"{c.src 1}/{c.src 2}/{c.src 3}"
+  | "displaydate" | "getdateday" | "getdatemonth" | "getdateyear" =>
+    match named, c.name with
+    | some (d, m, y), "displaydate" => set d m y
+    | some (d, _, _), "getdateday" => return #[.word (toString d) c.pos]
+    | some (_, m, _), "getdatemonth" => return #[.word (toString m) c.pos]
+    | some (_, _, y), _ => return #[.word (toString y) c.pos]
+    | none, _ => unread (c.src 0).trimAscii.toString "declare the date with \\newdate before it"
+  | "formatdate" =>
+    match fields 0 with
+    | some (d, m, y) => set d m y
+    | none => unread s!"{c.src 0}/{c.src 1}/{c.src 2}"
+  | "dayofweekname" | "shortdayofweekname" =>
+    match fields 0 with
+    | some (d, m, y) =>
+      english
+      let names := if c.name == "dayofweekname" then DateText.dayNames else DateText.shortDayNames
+      return #[.word (names.getD (DateText.dayOfWeek d m y) "") c.pos]
+    | none => unread s!"{c.src 0}/{c.src 1}/{c.src 2}"
+  | "monthname" | "shortmonthname" =>
+    match (c.optSrc 0).bind (·.trimAscii.toString.toNat?) with
+    | some m =>
+      if 1 ≤ m && m ≤ 12 then
+        english
+        let names := if c.name == "monthname" then DateText.monthNames else DateText.shortMonthNames
+        return #[.word (names.getD (m - 1) "") c.pos]
+      else unread (toString m)
+    | none => unread ((c.optSrc 0).getD "") "name the month by its number, \\monthname[3]"
+  | "ordinaldate" =>
+    match dateField c 0 with
+    | some n => return #[.word (toString n) c.pos] ++ textScriptRaws true #[.word (DateText.ordinalSuffix n) c.pos] c.pos
+    | none => unread (c.src 0)
+  | "showdowtrue" => write fun st => { st with dateDow := true }; return #[]
+  | "showdowfalse" => write fun st => { st with dateDow := false }; return #[]
+  | name =>
+    if let some style := DateText.Style.ofName? (name.dropEnd 4).toString then
+      write fun st => { st with dateStyle := style }
+    return #[]
+
 /-- A registered control's lowering over its arguments. -/
 private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
   | .packages =>
@@ -12560,6 +12701,9 @@ and 'transparent=<n>' are understood")
     blueprintGraph c.pos (some s!"'\\graphcolor\{{(c.src 0).trimAscii.toString}}' colours \
 that graph")
     return #[]
+  | .datetime => datetimeCall c
+  -- latex.ltx's `\textsuperscript` and `\textsubscript`: a script of text in an `\mbox`.
+  | .textScript => return textScriptRaws (c.name == "textsuperscript") (c.arg 0) c.pos
   | .blueprintSite => do
     -- leanblueprint's `\home` links nothing; `\github` and `\dochome` root the web page's links.
     if c.name == "home" then
@@ -12619,6 +12763,8 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .komaOption => some { args := [some "fontsize", some "12pt"], inDoc := false }
   | .changeFontSizes => some { args := [none, some "12pt"], inDoc := false }
   | .addvspace => some { args := [some "1em"], inDoc := true }
+  | .datetime => some { args := [some "15", some "1", some "2026"], inDoc := true }
+  | .textScript => some { args := [some "x"], inDoc := true }
   | .thisPageStyle => some { args := [some "plain"], inDoc := true }
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .addBibResource | .bibResources | .natbibStyle
@@ -14763,6 +14909,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let savedDefTop := (← get).defTop
     let savedBound := (← get).bound
     let savedCaptures := (← get).beamerCaptures
+    let savedDate := ((← get).dateStyle, (← get).dateDow, (← get).dateRaise)
     let envBody := saved > 0 && (← get).envNext > 0
     let (savedEnvCode, savedEnvNext) := ((← get).envCode, (← get).envNext)
     -- premise: templateCodeChecks — a template macro names its losses at its use
@@ -14790,6 +14937,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
                               envNext := if envBody then savedEnvNext - 1 else savedEnvNext,
                               lens := savedLens, bodySkip := savedSkip, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
+                              dateStyle := savedDate.1, dateDow := savedDate.2.1
+                              dateRaise := savedDate.2.2
                               bound := if saved > 0 then savedBound else st.bound }
     -- premise: beamerTemplateChecks — a consumed local font declaration leaves no preamble content
     if (← get).wholeDoc && !(← get).inDoc && !savedDef && saved == 0 &&

@@ -1,0 +1,37 @@
+# source: installed datetime.sty 2.60 command definitions. \newdate names a
+# date, \displaydate and \formatdate set one in the format in force (\longdate
+# by default, the day of the week first unless \showdowfalse), the format
+# switches choose it and the name commands set one name; \today and a month
+# left to the clock read no date, and the time and custom-format commands are
+# not modelled.
+body impl \newdate{zzd}{15}{1}{2026}\displaydate{zzd}
+body impl \formatdate{15}{1}{2026}
+body impl \dayofweekname{15}{1}{2026}
+body impl \shortdayofweekname{15}{1}{2026}
+body impl \monthname[3]
+body impl \shortmonthname[3]
+body impl \newdate{zzd}{15}{1}{2026}\getdateday{zzd}
+body impl \newdate{zzd}{15}{1}{2026}\getdatemonth{zzd}
+body impl \newdate{zzd}{15}{1}{2026}\getdateyear{zzd}
+body impl \longdate\formatdate{15}{1}{2026}
+body impl \shortdate\formatdate{15}{1}{2026}
+body impl \usdate\formatdate{15}{1}{2026}
+body impl \yyyymmdddate\formatdate{15}{1}{2026}
+body impl \ddmmyyyydate\formatdate{15}{1}{2026}
+body impl \dmyyyydate\formatdate{15}{1}{2026}
+body impl \ddmmyydate\formatdate{15}{1}{2026}
+body impl \dmyydate\formatdate{15}{1}{2026}
+body impl \mmddyyyydate\formatdate{15}{1}{2026}
+body impl \mdyyyydate\formatdate{15}{1}{2026}
+body impl \mmddyydate\formatdate{15}{1}{2026}
+body impl \mdyydate\formatdate{15}{1}{2026}
+body impl \showdowfalse\formatdate{15}{1}{2026}
+body impl \showdowtrue\formatdate{15}{1}{2026}
+body refuse:W0104 \monthname
+body refuse:W0104 \today
+body refuse:W0301 \textdate
+body refuse:W0301 \currenttime
+body refuse:W0301 \settimeformat{xxivtime}
+body refuse:W0301 \newdateformat{zzf}{\THEDAY}
+body impl \ordinaldate{3}
+body refuse:W0301 \dateseparator

@@ -25,7 +25,7 @@ decreasing_by raws_dec
 /-- Control words the compatibility pass leaves as they stand in a field. -/
 public def compatInert : List String :=
   ["emph", "textit", "textbf", "textsc", "texttt", "textsf", "textrm", "textsl", "textup",
-   "textmd", "textnormal", "textsuperscript", "textsubscript", "url", "href",
+   "textmd", "textnormal", "url", "href",
    "'", "`", "^", "\"", "~", "=", ".", "u", "v", "H", "c", "d", "b", "r", "k", "t",
    "&", "%", "$", "#", "_", "{", "}", " ", ",", "-", "/",
    "o", "O", "ss", "aa", "AA", "ae", "AE", "l", "L", "i", "j", "oe", "OE",

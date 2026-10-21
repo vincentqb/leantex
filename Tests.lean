@@ -102,6 +102,7 @@ import Tests.ItemLabels
 import Tests.WebMeasure
 import Tests.MarginNote
 import Tests.TexBodies
+import Tests.TitleNames
 import Tests.LabelLines
 import Tests.ListGaps
 import Tests.ListLabels
@@ -606,6 +607,7 @@ def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   Tests.PageTurns.checks ref oneFace
   listTablePackageChecks ref oneFace
   Tests.TexBodies.checks ref oneFace
+  Tests.TitleNames.checks ref oneFace
 
 /-- The table blocks: a cell's side, leading, lengths, strut and column widths. -/
 def tableSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

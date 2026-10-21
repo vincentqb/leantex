@@ -717,6 +717,8 @@ public structure ESt where
   title : Option (Array Inline) := none
   subtitle : Option (Array Inline) := none
   author : Option (Array Inline) := none
+  /-- The author's names as the metadata reads them, where `\and` parts them. -/
+  authorMeta : Option String := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
   /-- Beamer's optional short forms, read by its `\insertshort...` commands. -/
@@ -8409,22 +8411,41 @@ private def storeTitlePart (name : String) (content : Array Inline)
     | "institute" => { st with institute := some content }
     | _ => { st with date := some content }
 
-/-- The gap `\and` sets between authors: beamer's `\quad`, else latex.ltx's, which sets each author
-in a tabular column with `\hskip 1em` between them beside both columns' `\tabcolsep`. -/
-private def authorGap (slides : Bool) (p : Pos) : Array Raw :=
-  if slides then #[.ctrl "quad" p] else
-    #[.ctrl "hspace" p, .group #[.word "1em" p] p, .ctrl "hspace" p, .group #[.word "12pt" p] p]
-
-/-- An author list with each `\and` the class's gap between authors. -/
-private def authorsApart (slides : Bool) (body : Array Raw) : Array Raw :=
-  body.foldl (init := #[]) fun out r => match r with
-    | .ctrl "and" p => out.append (authorGap slides p)
-    | r => out.push r
-
-/-- A title declaration's text, an author list's `\and` the class's gap unless the document defines
-it. -/
-private def titleBody (ctx : Ctx) (slides : Bool) (name : String) (body : Array Raw) : Array Raw :=
-  if name == "author" && (lookupUser ctx "and").isNone then authorsApart slides body else body
+/-- An author argument's names apart at each `\and` the document leaves latex.ltx's: on a page each
+an unbreakable box a space, 1em and two `\tabcolsep` from the next, names of several lines on lines
+of their own; on a slide, beamer's `\quad`; the metadata reads them apart by commas. -/
+private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : Pos) :
+    EM (Array Inline) := do
+  if (lookupUser ctx "and").isSome then
+    modify fun st => { st with authorMeta := none }
+    return ← elabInlines ctx body
+  let names := body.foldl (init := #[#[]]) fun (acc : Array (Array Raw)) r => match r with
+    | .ctrl "and" _ => acc.push #[]
+    | r => acc.modify (acc.size - 1) (·.push r)
+  if names.size == 1 then
+    modify fun st => { st with authorMeta := none }
+    return ← elabInlines ctx body
+  let sets ← names.mapM fun n => elabInlines ctx (trimRawEdges n)
+  let words := sets.map Ir.metaText |>.filter (!·.isEmpty)
+  modify fun st => { st with authorMeta := some (", ".intercalate words.toList) }
+  let quad : Inline := .hspace (.lit { width := { em := 1000 } }) false
+  let gap : Inline := .hspace (.lit { width := { em := 1000, fixed := 2 * Ir.tabColSep.fixed } }) false
+  let broken := sets.any fun xs => xs.any (· matches .linebreak _)
+  if broken && !slides then
+    warnOnce ctx "ctrl:and:lines" .N0100
+      (Diag.say .N0100 .command "\\and" (some (some .command, "\\author"))) pos
+      (detail := some "names of several lines one after another, where LaTeX sets them side by side")
+  unless slides || broken do
+    warnOnce ctx "ctrl:and:stretch" .N0100
+      (Diag.say .N0100 .command "\\and" (some (some .command, "\\author"))) pos
+      (detail := some "names a space, 1em and two \\tabcolsep apart, without LaTeX's .17fil share of the line")
+  let box : Ir.InlineBox :=
+    { raise := .lit {}, height := none, depth := none, ground := none, frame := none, pad := {}
+      rule := {} }
+  return sets.zipIdx.foldl (init := #[]) fun out (xs, i) =>
+    let sep : Array Inline := if i == 0 then #[] else if slides then #[.text " ", quad]
+      else if broken then #[.linebreak {}] else #[.text " ", gap]
+    out ++ sep ++ (if slides || broken then xs else #[.boxed box xs])
 
 /-- Stores one `\title`-family declaration, returning the index past its
 arguments and the run of an unclosed optional argument. -/
@@ -8434,7 +8455,8 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
   match raws[j]? with
   | some (.group body _) =>
     let short ← (bracketArgRaws? raws start pos).mapM (elabInlines ctx)
-    storeTitlePart name (← elabInlines ctx (titleBody ctx ctx.slides name body)) short
+    storeTitlePart name
+      (← if name == "author" then authorInlines ctx ctx.slides body pos else elabInlines ctx body) short
     return (⟨j + 1, by omega⟩, junk)
   | _ =>
     if recovered then
@@ -18627,8 +18649,9 @@ convert = none refuses both")
     match body with
     | some (b, short) =>
       let short ← short.mapM (elabInlines s.ctx)
-      storeTitlePart name
-        (← elabInlines s.ctx (titleBody s.ctx (s.docClass == .slides || s.ctx.slides) name b)) short
+      storeTitlePart name (← if name == "author" then
+          authorInlines s.ctx (s.docClass == .slides || s.ctx.slides) b pos
+        else elabInlines s.ctx b) short
       return s
     | none =>
       if recovered then
@@ -19901,7 +19924,8 @@ the .bib file"
           if t.isEmpty then none else some t
     info := { info with
       title := fallback info.title st.title
-      author := fallback info.author st.author }
+      author := (fallback info.author none).orElse fun _ =>
+        st.authorMeta.orElse fun _ => fallback none st.author }
     -- A profile l3pdfmeta describes takes its description where the document gives none.
     info := { info with intent := info.intent.map OutputIntent.described }
     let doc : Doc := {
