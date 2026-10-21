@@ -50,6 +50,8 @@ error: unsupported class proseplate [E0309]
 ✖ [E0309] - \documentclass
   unknown document class 'proseplate'
   suggestion: classes: article, slides, card, resume, webpage, poster, scrartcl, ltflow
+error: unknown document class 'proseplate' [E0309]
+  note: classes: article, slides, card, resume, webpage, poster, scrartcl, ltflow
 ── E0310 (dropped) content before the first \item in a list
 error: unexpected text for \item [E0310]
 ── E0311 (dropped) reserved character in text
@@ -169,6 +171,8 @@ info: default class article [N0017]
 ℹ [N0017]
   no '\documentclass'; the article page model is assumed
   suggestion: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl, ltflow) to choose it
+info: no '\documentclass'; the article page model is assumed [N0017]
+  note: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl, ltflow) to choose it
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
 info: missing alphabet calligraphic for font 'Fira Math' [N0018]
   note: write \fonts{ math = "..." } with a face that carries this alphabet
