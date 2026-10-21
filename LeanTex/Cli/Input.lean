@@ -242,9 +242,10 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
           Host.runIO (LeanLinks.placeOf path.toString (Code.linkTemplate l)) else pure {}
       | none => pure {}
     let entry := if ask.division then "the Lean division" else "`\\inputlean`"
-    -- A documentation view cites by the keys of the bibliography the Lean file declares, and the
-    -- document's reference list joins the files it cites from.
-    let (found, bibDiags, named) ← if showing.docs then
+    -- A documentation view, or documentation beside statements, cites by the keys of the
+    -- bibliography the Lean file declares, and the document's reference list joins its files.
+    let (found, bibDiags, named) ← if showing.docs ||
+        (showing.statements && !showing.code && showing.doc != .omit) then
         codeBibs .lean path.toString text (base := some dir.toString) (entry := some entry)
       else pure (#[], #[], none)
     let (found, commaDiags) := listable found ask.site

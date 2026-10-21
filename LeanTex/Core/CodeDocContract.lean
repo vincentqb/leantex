@@ -810,17 +810,29 @@ private theorem withDoc_adm {β : Type} (place : DocPlace) {doc : Array Raw × A
   · exact adm_append hp hd
   · exact hp
 
-private theorem docIf_adm (c : Bool) (file : String) (starts : Array Nat)
-    (known : Option (Std.HashSet String)) (docs : List Seg) (d : LeanFacts.Decl) :
+private theorem adm_ite_fst {β : Type} {c : Prop} [Decidable c] {a e : Array Raw × β}
+    (ha : Adm true a.1) (he : Adm true e.1) : Adm true (if c then a else e).1 := by
+  split
+  · exact ha
+  · exact he
+
+private theorem docRaws_adm (file : String) (starts : Array Nat) (src : Array Char)
+    (known : Option (Std.HashSet String)) (docs : List Seg) (start : Nat × Nat) :
+    Adm true (docRaws file starts src known docs start).1 := by
+  unfold docRaws
+  dsimp only
+  split
+  · rename_i seg _
+    simpa using proseRaws_adm .lean file starts known seg false
+  · intro r hr; simp at hr
+
+private theorem docIf_adm (c : Bool) (file : String) (starts : Array Nat) (src : Array Char)
+    (known : Option (Std.HashSet String)) (docs : List Seg) (start : Nat × Nat) :
     Adm true (if c = true then ((#[], #[]) : Array Raw × Array Diag)
-      else docRaws file starts known docs d).1 := by
+      else docRaws file starts src known docs start).1 := by
   split
   · intro r hr; simp at hr
-  · unfold docRaws
-    split
-    · rename_i seg _
-      simpa using proseRaws_adm .lean file starts known seg false
-    · intro r hr; simp at hr
+  · exact docRaws_adm file starts src known docs start
 
 private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Array Char)
     (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
@@ -843,17 +855,12 @@ private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Ar
       · exact hf p hp
     intro p hp
     simp only [statementsFor, statementsOf, Array.mem_append, Array.mem_map] at hp
-    rcases hp with (⟨_, ⟨d, _, rfl⟩, rfl⟩ | ⟨_, ⟨d, _, rfl⟩, rfl⟩) | ⟨fl, _, rfl⟩
-    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
-    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
-    · have hif : ∀ c : Bool, Adm true (if c = true then codeFor starts src segs folds
-          (Array.replicate (2 * f.decls.size + f.failed.size) #[] ++ foldParas) fl.head fl.stop
-          else #[]) := by
-        intro c
-        cases c
-        · intro r hr; simp at hr
-        · simpa using codeFor_adm starts src segs folds _ h0 fl.head fl.stop
-      exact hif _
+    rcases hp with (⟨_, ⟨d, _, rfl⟩, rfl⟩ | ⟨_, ⟨d, _, rfl⟩, rfl⟩) | ⟨_, ⟨fl, _, rfl⟩, rfl⟩
+    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
+    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
+    · exact adm_ite_fst (withDoc_adm _ (docRaws_adm _ _ _ _ _ _)
+        (show Adm true (codeFor starts src segs folds _ fl.head fl.stop, (#[] : Array Diag), ()).1 from
+          codeFor_adm starts src segs folds _ h0 _ _)) (by intro r hr; simp at hr)
 
 private theorem pieceRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (page : PageSet) (hs : ∀ p ∈ page.stmts, Adm (lang == .lean) p)

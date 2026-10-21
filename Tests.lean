@@ -432,6 +432,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownCite.mdMetadataChecks ref
   Tests.LeanCite.leanCiteChecks ref
   Tests.LeanCite.citeFootnoteChecks ref
+  Tests.LeanCite.leanCiteInclusionChecks ref
   Tests.BibEdges.quoteChecks ref
   Tests.BibEdges.duplicateChecks ref
   Tests.BibEdges.alphaChecks ref

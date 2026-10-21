@@ -2475,7 +2475,8 @@ def reports : List Report := [
   { id := "R286", date := "2026-10-21"
     what := "a Lean statement set without its code dropped its declaration's documentation comment, and an included Lean file could not set at a text size of its own"
     pins := [check% Tests.LeanProse.leanProseChecks, check% Tests.LeanViews.leanViewChecks,
-      check% Tests.LeanStatements.leanStatementChecks]
+      check% Tests.LeanStatements.leanStatementChecks, check% Tests.LeanCite.leanCiteChecks,
+      check% Tests.LeanCite.leanCiteInclusionChecks]
     accept := ["main's binary at b75023de on the invented statements file at show = prose: no documentation comment on the page, and size = small on its inclusion ignored with W0110 as no such key; the guards fail there; this tree sets each declaration's comment just above its statement, after it at doc = below, nowhere at doc = none, and the inclusion's listing at the small size, the text after it at the document's",
       "the corpus built by main's binary at b75023de and by this tree's: every PDF, web page and twin byte-identical"]
     state := .guarded "b75023de" .before .author }

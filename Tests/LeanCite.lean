@@ -197,6 +197,17 @@ def leanCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"lean cite: a statement's documentation set above it cites into the page's bibliography, its list set ({repr (inkText held.body)})"
     (keysOf held == ["ash2001"] && (listsOf held).any (·.2.contains "ash2001") &&
       !heldDs.any (·.kind == .W0449) && hasStr (inkText held.body) "Holds, as")
+  let indentFacts := "{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
+    "{\"name\":\"A.t1\",\"module\":\"F\",\"kind\":\"theorem\",\"range\":[3,2,4,31]," ++
+    "\"head\":[3,2],\"signature\":[4,13,4,19],\"proof\":[4,20,4,31],\"proved\":true," ++
+    "\"prop\":true,\"doc\":null,\"type\":[[\"const\",\"True\"]]}\n" ++
+    "{\"const\":\"True\",\"binders\":\"\"}\n{\"leantex-lean-export-end\":1}\n"
+  let (indented, _) := leanCiteBuild "F.lean"
+    ("-- leantex: show = math\nnamespace A\n  /-- Indented, as [ash2001] shows. -/\n" ++
+      "  theorem t1 : True := trivial\nend A\n")
+    #[("refs.bib", leanBib)] (LeanFacts.decode indentFacts).toOption
+  t s!"lean cite: an indented declaration's documentation, which the code view keeps as code, still sets above its statement ({repr (inkText indented.body)})"
+    (hasStr (inkText indented.body) "Indented, as" && keysOf indented == ["ash2001"])
   let (_, ds) := elabCode "F.lean" "-- leantex: show = docs\n/-! Notes. -/\ndef x := 1\n"
   t "lean cite: a page has no docs view, which it names"
     (ds.any (·.subject == some "code:show:docs"))
@@ -525,5 +536,31 @@ def selfDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       cited := cited ++ ks
   t s!"self docs: every project reference is cited (uncited {keys.filter (!cited.contains ·)})"
     (keys.all cited.contains)
+
+/-- An inclusion setting statements without their code cites its documentation into the document's
+bibliography, which lists what it cites. -/
+def leanCiteInclusionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  IO.FS.withTempDir fun tmp => do
+    let facts := "{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
+      "{\"name\":\"holds\",\"module\":\"F\",\"kind\":\"theorem\",\"range\":[5,0,6,31]," ++
+      "\"head\":[5,0],\"signature\":[6,14,6,20],\"proof\":[6,21,6,31],\"proved\":true," ++
+      "\"prop\":true,\"doc\":null,\"type\":[[\"const\",\"True\"]]}\n" ++
+      "{\"const\":\"True\",\"binders\":\"\"}\n{\"command\":[5,0,6,31],\"text\":" ++
+      "\"/-- Holds, as [ash2001] shows. -/\\ntheorem holds : True := trivial\"}\n" ++
+      "{\"leantex-lean-export-end\":1}\n"
+    IO.FS.writeFile (tmp / "F.lean") ("/-! # Held\n\nBibliography: [refs.bib](refs.bib) -/\n\n" ++
+      "/-- Holds, as [ash2001] shows. -/\ntheorem holds : True := trivial\n")
+    IO.FS.writeFile (tmp / "F.facts") facts
+    IO.FS.writeFile (tmp / "refs.bib") leanBib
+    IO.FS.writeFile (tmp / "other.bib")
+      "@misc{own2020, author = {Own, Ola}, title = {Own Text}, year = {2020}}\n"
+    let doc := tmp / "d.tex"
+    IO.FS.writeFile doc ("\\documentclass{article}\n\\begin{document}\nSee \\cite{own2020}.\n\n" ++
+      "\\inputlean[show = math, facts = F.facts]{F.lean}\n\\bibliography{other}\n\\end{document}\n")
+    let (d, ds) ← driverBuild doc.toString
+    t s!"lean cite: an inclusion's statement documentation cites into its file's bibliography, the document's list holding it ({repr (inkText d.body)})"
+      (hasStr (inkText d.body) "Holds, as" && keysOf d == ["own2020", "ash2001"] &&
+        (listsOf d).any (·.2.contains "ash2001") && !ds.any (·.kind == .W0351))
 
 end Tests.LeanCite

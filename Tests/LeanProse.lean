@@ -282,6 +282,11 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"prose: a doc no place names, a doc beside the code, which holds the documentation, and a page's size are named ({(oddDocDs ++ codeDocDs ++ sizeDs).map (·.subject)})"
     (oddDocDs.any (·.subject == some "code:doc:sideways") && codeDocDs.any (·.subject == some "code:doc") &&
       sizeDs.any (·.subject == some "code:size"))
+  let (_, badSizeDs) := readAs "show = prose, size = huger"
+  let (_, badDocDs) := readAs "show = prose, code, doc = sideways"
+  t s!"prose: a key a page cannot honour is named once, whatever its value ({(badSizeDs ++ badDocDs).map (·.subject)})"
+    ((badSizeDs.filter (·.subject.any (·.startsWith "code:size"))).size == 1 &&
+      (badDocDs.filter (·.subject.any (·.startsWith "code:doc"))).size == 1)
   let (noneDoc, noneDs) := readWith "show = prose" none
   t "prose: a page that shows prose alone shows the file's code when it has no facts"
     ((listings noneDoc).size == (listings (readAs "show = code").1).size &&

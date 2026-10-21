@@ -2429,11 +2429,31 @@ public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Ta
       (if withMath then #[] else displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link,
         #[unsaidNote file d u], #[])
 
+/-- The documentation comment opening at `off`, through its matching close, nested comments inside it
+held, as a prose segment where one opens there. -/
+public def docSegAt (src : Array Char) (off : Nat) : Option Seg := Id.run do
+  unless src[off]? == some '/' && src[off + 1]? == some '-' && src[off + 2]? == some '-' do
+    return none
+  let mut depth := 0
+  let mut i := off
+  for _ in [off:src.size] do
+    if src[i]? == some '/' && src[i + 1]? == some '-' then
+      depth := depth + 1
+      i := i + 2
+    else if src[i]? == some '-' && src[i + 1]? == some '/' then
+      depth := depth - 1
+      i := i + 2
+      if depth == 0 then return some ⟨.prose false .inPlace, off, (src.extract off i).toList⟩
+    else i := i + 1
+  return none
+
 /-- A declaration's documentation comment as the page's prose sets it, citing into `known`, and its
-notes: the comment its range opens on, where it has one. -/
-public def docRaws (file : String) (starts : Array Nat) (known : Option (Std.HashSet String))
-    (docs : List Seg) (d : LeanFacts.Decl) : Array Raw × Array Diag :=
-  match docs.find? fun s => s.isProse && s.start == offsetOf starts d.start with
+notes: the comment its range opens on, found among `docs` or else read from `src`, where it has one. -/
+public def docRaws (file : String) (starts : Array Nat) (src : Array Char)
+    (known : Option (Std.HashSet String)) (docs : List Seg) (start : Nat × Nat) :
+    Array Raw × Array Diag :=
+  let off := offsetOf starts start
+  match (docs.find? fun s => s.isProse && s.start == off).orElse fun _ => docSegAt src off with
   | some seg => proseRaws .lean file starts known seg false
   | none => (#[], #[])
 
@@ -2531,14 +2551,18 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
   let para (views : List View) (d : LeanFacts.Decl) :
       Array Raw × Array Diag × Array LeanProse.Template :=
     withDoc showing.doc
-      (if code || views.isEmpty || !wanted d then (#[], #[]) else docRaws file starts known docs d)
+      (if code || views.isEmpty || !wanted d then (#[], #[]) else docRaws file starts src known docs d.start)
       (declPara file facts tb starts src segs folds paras0 code showing.math (wanted d) views
         (linkOf d) d)
   let befores := ds.map (para before)
   let afters := ds.map (para after)
   let paras := befores.map (·.1) ++ afters.map (·.1)
-  let failedParas := facts.failed.map fun f =>
-    if chosen f.name && !code then codeFor starts src segs folds paras0 f.head f.stop else #[]
+  let failedSet := facts.failed.map fun f =>
+    if chosen f.name && !code then
+      withDoc showing.doc (docRaws file starts src known docs f.start)
+        (codeFor starts src segs folds paras0 f.head f.stop, #[], ())
+    else (#[], #[], ())
+  let failedParas := failedSet.map (·.1)
   let anchors := ds.zipIdx.filterMap fun (d, i) =>
     if wanted d && !before.isEmpty && ((unset? d).isNone || !code) then
       (beforeAnchor starts segs d.head).map fun off => ([off, 1, d.start.1, d.start.2], i)
@@ -2575,7 +2599,8 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
   let links := if set then linkNotes request showing place else #[]
   let all := (anchors ++ afterAnchors ++ failedAnchors).qsort fun a b => decide (a.1 < b.1)
   (paras ++ failedParas, (all.map fun (key, i) => (key.headD 0, i)).toList,
-    unused ++ unnamedNotes showing facts request ++ notes.map (·.2) ++ links)
+    unused ++ unnamedNotes showing facts request ++ notes.map (·.2) ++ links ++
+      failedSet.flatMap (·.2.1))
 
 /-- What a page sets from the file's facts, when it has them. -/
 @[expose] public def statementsFor (file : String) (starts : Array Nat) (src : Array Char)
@@ -2893,7 +2918,9 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     Array Raw × Array Diag :=
   let src := text.toList.toArray
   let starts := lineStarts src
-  let unread := showing.unread.toArray.map fun (k, v) =>
+  let idle := showing.idle .lean request (page := false)
+  let unread := (showing.unread.filter fun (k, _) => !idle.any (·.subject == some s!"code:{k}")).toArray.map
+    fun (k, v) =>
     Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value v) (some (some .key, k)))
       (some request) (help := unreadHelp k)
       (subject := some s!"code:{k}:{v}")
@@ -2908,7 +2935,6 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value n) (some (some .key, "show")))
       (some request) (detail := some "no view of a Lean file") (help := s!"name {namesOr (View.all.map (·.name))}")
       (subject := some s!"code:show:{n}")
-  let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
   let wrap (raws : Array Raw) : Array Raw :=
     #[.env (Parse.keptInputEnv file) (sizedRaws showing.size request.pos raws) request.pos]
@@ -3126,11 +3152,12 @@ the preamble's declarations, the file's name the title where no description open
       (some ⟨file, directivePos lang src⟩) (detail := some "no view of this file")
       (help := s!"name {namesOr ((View.all.filter (·.setBy lang false)).map (·.name))}")
       (subject := some s!"code:show:{n}")
-  let unread := showing.unread.toArray.map fun (k, v) =>
+  let idle := showing.idle lang ⟨file, directivePos lang src⟩
+  let unread := (showing.unread.filter fun (k, _) => !idle.any (·.subject == some s!"code:{k}")).toArray.map
+    fun (k, v) =>
     Diag.of .W0110 (Diag.say .W0110 .value (Diag.Name.value v) (some (some .key, k)))
       (some ⟨file, directivePos lang src⟩) (help := unreadHelp k)
       (subject := some s!"code:{k}:{v}")
-  let idle := showing.idle lang ⟨file, directivePos lang src⟩
   -- premise: Tests.UnusedSettings.metadataChecks — a page citing nothing reads none of these
   let declared := declaredBibs lang text
   let uncited := if acc.cited || (refs.isNone && !declared.isEmpty) then #[] else
