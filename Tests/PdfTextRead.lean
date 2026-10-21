@@ -92,7 +92,7 @@ def paintWords (p : Layout.PageOut) : String :=
           let drawn := glyphs.foldl (fun (s : Int) (_, _, a) => s + a.units) 0 * (1000 + l.expand)
           gap := w.units - drawn / 1000
           last := some sz
-      | .gap w _ | .decoratedGap w _ _ | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ _ =>
+      | .gap w _ | .decoratedGap w .. | .rule w .. | .decoration _ w .. | .image _ w .. =>
         gap := gap + w.units
       | .poly _ _ => pure ()
     return out) ""
