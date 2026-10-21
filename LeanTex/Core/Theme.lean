@@ -236,6 +236,7 @@ public def styleMerge (top base : ElementStyle) : ElementStyle :=
     (top.ruleAboveGap <|> base.ruleAboveGap) (top.ruleBelow <|> base.ruleBelow)
     (top.ruleBelowGap <|> base.ruleBelowGap) (top.ruleBelowSkip <|> base.ruleBelowSkip)
     (top.authorFont <|> base.authorFont) (top.authorStrut <|> base.authorStrut)
+    (top.authorFontFirstLine <|> base.authorFontFirstLine)
     (top.bodySize <|> base.bodySize) (top.hover <|> base.hover) (top.focus <|> base.focus)
     (top.motion <|> base.motion) (top.color <|> base.color)
     (if top.slots.isEmpty then base.slots else top.slots)

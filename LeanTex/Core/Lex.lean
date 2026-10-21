@@ -350,6 +350,23 @@ private def verbEnvs : Array (String × String × Array Char × Array Char) :=
   #["verbatim", "lstlisting", "minted"].map fun n =>
     (n, n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
 
+/-- fancyvrb's environment captured as minted's code block in the `text` lexer, whose keys are
+fancyvrb's. -/
+private def fancyEnv (n : String) : String × String × Array Char × Array Char :=
+  ("minted", n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
+
+/-- A fancyvrb environment's body as minted's: the options its definition gives, then those written
+after `\begin`, and the `text` lexer. -/
+private def fancyBody (defined body : String) : String :=
+  let (written, rest) := match body.toList with
+    | '[' :: tl =>
+      let inner := tl.takeWhile (· != ']')
+      if inner.length < tl.length then (String.ofList inner, String.ofList (tl.drop (inner.length + 1)))
+      else ("", body)
+    | _ => ("", body)
+  let opts := ",".intercalate ([defined, written].filter (!·.isEmpty))
+  (if opts.isEmpty then "" else "[" ++ opts ++ "]") ++ "{text}" ++ rest
+
 /-- The index past spaces and `%` comments from `k`. -/
 private def skipBlank (cs : Array Char) (k : Nat) : Nat := Id.run do
   let mut k := scanWhile cs k isWs
@@ -357,6 +374,23 @@ private def skipBlank (cs : Array Char) (k : Nat) : Nat := Id.run do
     if cs[k]? != some '%' then break
     k := scanWhile cs (scanWhile cs k (· != '\n')) isWs
   return k
+
+/-- The text of the brace group at `k` after blanks, and the index past it. -/
+private def groupText (cs : Array Char) (k : Nat) : Option (String × Nat) := Id.run do
+  let k := skipBlank cs k
+  unless cs[k]? == some '{' do return none
+  let mut depth := 0
+  let mut j := k
+  for _ in [k:cs.size] do
+    match cs[j]? with
+    | some '{' => depth := depth + 1
+    | some '}' =>
+      depth := depth - 1
+      if depth == 0 then return some (strFrom cs (k + 1) j, j + 1)
+    | some '\\' => j := j + 1
+    | _ => pure ()
+    j := j + 1
+  return none
 
 /-- The index past `\\verbatim` or `\\begin{verbatim}` at `k` (the `end` spellings when `close`), and
 whether it was written as the environment, which a definition's text cannot hold under LaTeX. -/
@@ -411,7 +445,9 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
   -- How deep the scan stands in TikZ pictures, whose `\path` is TikZ's own.
   let mut tikz : Nat := 0
   -- The verbatim environments, the document's among them, and where a definition read ends.
-  let mut verbs := verbEnvs
+  let mut verbs := verbEnvs.push (fancyEnv "Verbatim")
+  -- Each fancyvrb environment's options from its `\DefineVerbatimEnvironment`.
+  let mut fancy : Array (String × String) := #[("Verbatim", "")]
   let mut verbDefStop : Nat := 0
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
@@ -453,6 +489,15 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
             let name := strFrom cs (i + 1) j
             if (name == "begin" || name == "end") && matchAt cs j "{tikzpicture}".toList.toArray then
               tikz := if name == "begin" then tikz + 1 else tikz - 1
+            if name == "DefineVerbatimEnvironment" then
+              if let some (env, k) := groupText cs j then
+                if let some (base, k) := groupText cs k then
+                  if let some (opts, _) := groupText cs k then
+                    if let some (_, given) := fancy.find? (·.1 == base.trimAscii.toString) then
+                      let env := env.trimAscii.toString
+                      verbs := (verbs.filter (·.2.1 != env)).push (fancyEnv env)
+                      fancy := (fancy.filter (·.1 != env)).push
+                        (env, ",".intercalate ([given, opts.trimAscii.toString].filter (!·.isEmpty)))
             if (name == "newenvironment" || name == "renewenvironment") then
               match verbEnvDef cs j, envDefName cs j with
               | some (env, spelled, stop), _ =>
@@ -483,7 +528,11 @@ verbatim package spells it"))
               match findSub cs start closer with
               | some k =>
                 let stop := k + closer.size
-                toks := toks.push ⟨.verb env (strFrom cs start k), here⟩
+                let body := strFrom cs start k
+                let body := match (fancy.find? (·.1 == written)).map (·.2) with
+                  | some given => if env == "minted" then fancyBody given body else body
+                  | none => body
+                toks := toks.push ⟨.verb env body, here⟩
                 pos := posOver cs i stop pos
                 i := stop
               | none =>

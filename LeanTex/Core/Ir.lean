@@ -7539,6 +7539,9 @@ public structure ElementStyle where
   authorFont : Option (Array Inline) := none
   /-- The author line's minimum height above its baseline. -/
   authorStrut : Option SymGlue := none
+  /-- Whether `authorFont` sets only the author's first line, as a font switch at a tabular cell's
+  start sets only its row. -/
+  authorFontFirstLine : Option Bool := none
   /-- The size step the element's body sets at, read by the abstract only. -/
   bodySize : Option String := none
   /-- Interaction states, read by the HTML backend only: `hover` and `focus`

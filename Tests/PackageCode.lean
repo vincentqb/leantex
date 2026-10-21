@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import Tests.VenueStyle
 
 public section
 
@@ -115,3 +116,4 @@ def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   let (_, gBody, _) := HtmlDoc.emitTree {} gDoc
   t "a style's hook test sets no text in the web page either"
     (treeShownOccurs gBody "wideframe" == 0 && treeShownOccurs gBody "Body words stay." == 1)
+  venueStyleChecks ref fonts

@@ -324,6 +324,19 @@ private def fontPackages : List (String × Array (String × String)) :=
      ("mono", "Linux Libertine Mono O")]),
    ("carlito", #[("sans", "Carlito")])]
 
+/-- The family defaults whose value names an NFSS family, and the slot each sets. -/
+private def familyDefaults : List (String × String) :=
+  [("rmdefault", "body"), ("sfdefault", "sans"), ("ttdefault", "mono")]
+
+/-- NFSS family names with the faces psnfss2e's Table 1 and fontname map them to, each set from
+the TeX Gyre or Latin Modern OpenType family of the same design. -/
+private def nfssFamilies : List (String × String) :=
+  [("ptm", "TeX Gyre Termes"), ("phv", "TeX Gyre Heros"), ("pcr", "TeX Gyre Cursor"),
+   ("ppl", "TeX Gyre Pagella"), ("pbk", "TeX Gyre Bonum"), ("pnc", "TeX Gyre Schola"),
+   ("pag", "TeX Gyre Adventor"), ("pzc", "TeX Gyre Chorus"), ("cmr", "Latin Modern Roman"),
+   ("lmr", "Latin Modern Roman"), ("cmss", "Latin Modern Sans"), ("lmss", "Latin Modern Sans"),
+   ("cmtt", "Latin Modern Mono"), ("lmtt", "Latin Modern Mono")]
+
 /-- Where a LaTeX length parameter's value goes. -/
 public inductive ParamSite where
   /-- A page property: `\page{ key = ... }`. -/
@@ -999,6 +1012,8 @@ private structure St where
   /-- environ's environments whose code never places
   `\BODY`, with their argument signatures. -/
   discardEnvs : Array (String × String) := #[]
+  /-- The discarding environment each `\let` copy stands for. -/
+  discardAliases : Array (String × String) := #[]
   /-- Where the walk stands with an environment definition's default, whose groups are no body of
   the definition. -/
   defaultAt : DefaultAt := .none
@@ -1399,6 +1414,7 @@ private def closeScope (saved : St) (result : α × St) : α × St :=
     beamerTemplates := saved.beamerTemplates
     beamerTemplateDefs := saved.beamerTemplateDefs
     discardEnvs := saved.discardEnvs
+    discardAliases := saved.discardAliases
     refusedEnvs := saved.refusedEnvs
     definedEnvs := saved.definedEnvs
     defaultAt := saved.defaultAt }) result.2 |>.2)
@@ -8696,6 +8712,11 @@ private def hookRow (name : String) : CtrlRow :=
   ⟨name, [], .refuse .W0340 .ctrl (Diag.say .W0340 .command s!"\\{name}")
     (some "declare the hook before '\\begin{document}'")⟩
 
+/-- A font command classes.dtx declares with `\DeclareOldFontCommand`: in text, the normal
+font, then one axis. -/
+private def oldFontRow (name decl : String) : CtrlRow :=
+  ⟨name, [], .tokens [.ctrl "normalfont" {}, .ctrl decl {}] (some s!"\\normalfont\\{decl}")⟩
+
 private def ctrlRows0 : List CtrlRow :=
   [⟨"@latex@error", List.replicate 2 .group, .inert⟩,
    nothingRow "@latex@info" 1 kernelLog,
@@ -8715,7 +8736,9 @@ private def ctrlRows0 : List CtrlRow :=
    ⟨"Crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩]
 
 private def ctrlRows1 : List CtrlRow :=
-  [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+  [nothingRow "DefineVerbatimEnvironment" 3
+     "the lexer reads it: the environment sets its body as a code block with its options",
+   ⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
    ⟨"GenericError", List.replicate 4 .group, .inert⟩,
    nothingRow "GenericInfo" 2 packageLog,
    nothingRow "GenericWarning" 2 packageLog,
@@ -8740,6 +8763,7 @@ private def ctrlRows2 : List CtrlRow :=
    ⟨"addtocounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    ⟨"addvspace", [.needed], .lower .addvspace {}⟩,
    beamerConfigRow "beamertemplatenavigationsymbolsempty" 0,
+   oldFontRow "bf" "bfseries",
    ⟨"bibliography", [.needed], .lower .bibResources { leaves := [.inBody, .without "biblatex"] }⟩,
    ⟨"bibliographystyle", [.needed], .lower .bibliographyStyle { leaves := [.inBody, .inSeam] }⟩,
    ⟨"bibpunct", [.opt, .needed, .needed, .needed, .needed, .needed, .needed],
@@ -8799,6 +8823,7 @@ private def ctrlRows4 : List CtrlRow :=
    ⟨"ifoot", [.group], .lower .runningField {}⟩,
    ⟨"ihead", [.group], .lower .runningField {}⟩,
    ⟨"inputencoding", [.group], .lower .inputEncoding {}⟩,
+   oldFontRow "it" "itshape",
    ⟨"lfoot", [.group], .lower .runningField {}⟩,
    ⟨"lhead", [.group], .lower .runningField {}⟩,
    nothingRow "linenomath" 0 "display math lines are numbered like every galley line",
@@ -8849,7 +8874,9 @@ private def ctrlRows6 : List CtrlRow :=
 
 private def ctrlRows7 : List CtrlRow :=
   [⟨"rhead", [.group], .lower .runningField {}⟩,
+   oldFontRow "rm" "rmfamily",
    ⟨"runninglinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
+   oldFontRow "sc" "scshape",
    ⟨"sectionlinesformat", [.opt, .group], .lower .sectionLines {}⟩,
    nothingRow "selectfont" 0 "font declarations apply where they stand",
    ⟨"selectlanguage", [.needed],
@@ -8862,8 +8889,10 @@ private def ctrlRows7 : List CtrlRow :=
    ⟨"setcounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    ⟨"setkomafont", [.needed, .needed], .lower .komaFont {}⟩,
    ⟨"setlist", [.star, .opt, .group], .lower .setList declared⟩,
+   oldFontRow "sf" "sffamily",
    nothingRow "shortcites" 1 "citations are set short throughout, which is what it asks",
    ⟨"singlespacing", [], .native (.page #[(.leading, "1")])⟩,
+   oldFontRow "sl" "slshape",
    ⟨"sloppy", [], .refuse .W0104 .ctrl (Diag.say .W0104 .command "\\sloppy") none⟩]
 
 private def ctrlRows8 : List CtrlRow :=
@@ -8887,6 +8916,7 @@ private def ctrlRows8 : List CtrlRow :=
    refusedRow "today" [] (Diag.say .W0104 .command "\\today") "write the date as text where it \
 should appear; \
 \\allow{W0104} accepts the skip",
+   oldFontRow "tt" "ttfamily",
    ⟨"ul", [], .tokens [.ctrl "underline" {}] (some "\\underline")⟩,
    ⟨"unimathsetup", [.needed], .lower .uniMathSetup {}⟩]
 
@@ -9713,7 +9743,8 @@ private def latexEnvArm (name : String) (pos : Pos) (raws : Array Raw) (start : 
     bodyNext := 2, envNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
   unless (← get).inDef do
     write fun st => { st with
-      discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
+      discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString)
+      discardAliases := st.discardAliases.filter (·.1 != envName.trimAscii.toString) }
   return some (native.raws pos, j)
 
 /-- The native `\defineenv`, refused where it redefines a built-in the engine ignores. -/
@@ -9766,7 +9797,8 @@ private def environArm (name : String) (pos : Pos) (raws : Array Raw) (start : N
       unless (← get).inDef || ignored do
         write fun st => { st with
           discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
-            else Ir.redeclare st.discardEnvs env spec }
+            else Ir.redeclare st.discardEnvs env spec
+          discardAliases := st.discardAliases.filter (·.1 != env) }
       let mark := if (← get).inDoc then #[] else #[Raw.ctrl (Marker.name .environBody "") pos]
       return some (native.raws pos ++ mark, j0)
     else
@@ -11179,6 +11211,13 @@ private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (st
     let (_, j) := takeRawOpt raws j
     let (args, k) := takeGroups raws j 1
     return some (← biblatexMacroDef name cmd (args.getD 0 #[]) pos, k)
+  if !xparse then
+    if let some slot := familyDefaults.lookup cmd then
+      let (_, j') := takeRawOpt raws j
+      let (_, j') := takeRawOpt raws j'
+      let (args, k) := takeGroups raws j' 1
+      if let some face := nfssFamilies.lookup (rawSrc (args.getD 0 #[])).trimAscii.toString then
+        return some (← setting s!"\\{name}\{\\{cmd}}" (.fonts #[(slot, Decl.quote face)]) pos, k)
   if !xparse && cmd == "sectionlinesformat" then
     let (_, j) := takeRawOpt raws j
     let (args, k) := takeGroups raws j 1
@@ -11225,6 +11264,27 @@ private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (st
   write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
   return some (native.raws pos, j)
 
+/-- `\let\X\Y` where `Y` begins or ends an environment whose body is discarded: `X` begins or ends
+one too, as environ's own `\let\ack\hide` hides a body. -/
+private def letDiscardEnv (raws : Array Raw) (start : Nat) (pos : Pos) :
+    M (Option (Array Raw × Nat)) := do
+  let j := skipSpaces raws start
+  let k0 := skipSpaces raws (j + 1)
+  let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
+  let (some (.ctrl x _), some (.ctrl y _)) := (raws[j]?, raws[k]?) | return none
+  let discards := (← get).discardEnvs
+  if let some spec := (discards.find? (·.1 == y)).map (·.2) then
+    let base := (((← get).discardAliases.find? (·.1 == y)).map (·.2)).getD y
+    write fun st => { st with discardEnvs := Ir.redeclare st.discardEnvs x spec
+                              discardAliases := Ir.redeclare st.discardAliases x base }
+    became s!"\\let\\{x}\\{y}" s!"the environment {x}, its body discarded as {y}'s" pos
+    return some (#[], k + 1)
+  if x.startsWith "end" && y.startsWith "end" &&
+      discards.any (·.1 == (y.drop 3).toString) && discards.any (·.1 == (x.drop 3).toString) then
+    became s!"\\let\\{x}\\{y}" s!"the end of the environment {(x.drop 3).toString}" pos
+    return some (#[], k + 1)
+  return none
+
 /-- Named arms after the dispatcher's state-dependent guards. -/
 private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
@@ -11240,6 +11300,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     | .environment, .native => return ← nativeEnvArm name pos raws start
     | .environment, .environ => return ← environArm name pos raws start
     | _, _ => pure ()
+  if name == "let" then
+    if let some out ← letDiscardEnv raws start pos then return some out
   match name with
   | "documentclass" =>
     let (opt, j) := takeRawOpt raws start
@@ -14841,7 +14903,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         -- environ's discarding environment keeps only the arguments its signature reads.
         let k := spec.foldl (fun k c =>
           if c == 'o' then (takeRawOpt body k).2 else (takeGroups body k 1).2) 0
-        return .env n (body.extract 0 k) p
+        return .env ((((← get).discardAliases.find? (·.1 == n)).map (·.2)).getD n) (body.extract 0 k) p
       else
         -- An environment is a group, so a length set inside it ends with it.
         let st0 ← get

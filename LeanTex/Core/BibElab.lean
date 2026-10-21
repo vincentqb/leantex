@@ -30,7 +30,7 @@ public def compatInert : List String :=
    "&", "%", "$", "#", "_", "{", "}", " ", ",", "-", "/",
    "o", "O", "ss", "aa", "AA", "ae", "AE", "l", "L", "i", "j", "oe", "OE",
    "dag", "S", "P", "copyright", "ldots", "dots", "TeX", "LaTeX", "textquoteleft",
-   "textquoteright", "ensuremath", "sc", "it", "bf", "em", "tt", "rm", "sf"]
+   "textquoteright", "ensuremath", "em"]
 
 /-- Control words the compatibility pass leaves as they
 stand inside a formula. -/

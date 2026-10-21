@@ -2474,6 +2474,13 @@ private theorem sliceWeight_here (raws : Array Raw) {i : Nat} (h : i < raws.size
     sliceWeight raws i = rawWeight raws[i] + sliceWeight raws (i + 1) := by
   simp only [sliceWeight_eq]; exact sliceMeas_here rawWeight raws h
 
+/-- The index past the `\endcsname` closing the `\csname` at `i`, or past `i` when none
+closes it. -/
+private def csnameStop (raws : Array Raw) (i : Nat) : {k : Nat // i < k} :=
+  match (raws.extract (i + 1) raws.size).findIdx? (· matches .ctrl "endcsname" _) with
+  | some d => ⟨i + 1 + d + 1, by omega⟩
+  | none => ⟨i + 1, by omega⟩
+
 private theorem sliceWeight_lt (raws : Array Raw) {i j : Nat}
     (hi : i < raws.size) (hij : i < j) : sliceWeight raws j < sliceWeight raws i := by
   have h1 := sliceMeas_here rawWeight raws hi
@@ -6811,6 +6818,12 @@ when it is empty — '{}'")
     have _ : sliceWeight raws jr.1 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
+  else if name == "csname" then
+    -- premise: csnameInkChecks — a control name's letters never set as text
+    warnUnknownCmd ctx name false "" pos
+    let ⟨k, hk⟩ := csnameStop raws i
+    have _ : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h hk
+    elabInlinesFrom ctx raws k acc sb
   else if (unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
       Compat.codeInternal name && !ctx.atUse then
     -- premise: packageCodeChecks — a style's spans carry its own file
@@ -6892,7 +6905,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     "nolinkurl", "path", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
     "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
     "centering", "footnote", "marginpar", "marginnote", "sidenote", "reversemarginpar",
-    "normalmarginpar", "thanks", Parse.markdownImageControl].contains name &&
+    "normalmarginpar", "thanks", "csname", Parse.markdownImageControl].contains name &&
     !Ir.boxCommands.contains name &&
   (Compat.boxParamOf? name).isNone &&
   (accentMarkOf name).isNone && (escapeOf name).isNone &&
@@ -8502,7 +8515,12 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       pending := ctx.tokens.findSourced? "separatorgap"
   if let some xs := part st.author then
     let xs := match tps.authorFont with
-      | some tpl => Ir.fillTemplate tpl xs
+      | some tpl =>
+        if tps.authorFontFirstLine == some true then
+          match xs.findIdx? (· matches .linebreak _) with
+          | some k => Ir.fillTemplate tpl (xs.extract 0 k) ++ xs.extract k xs.size
+          | none => Ir.fillTemplate tpl xs
+        else Ir.fillTemplate tpl xs
       | none => xs
     let xs := match tps.authorStrut with
       | some h => #[Ir.Inline.strut h] ++ xs
@@ -9194,7 +9212,7 @@ private inductive BarEvent where
   | title (size : Option String) (bold : Bool) (align : Option Ir.HAlign)
   /-- `\@author`, with the weight in force and whether a zero-width `\rule`
   strut props its line. -/
-  | author (bold : Bool) (strut : Bool)
+  | author (bold : Bool) (strut : Bool) (firstRow : Bool)
   /-- Ink that is not the title. -/
   | content
 
@@ -9204,6 +9222,9 @@ private structure BarSt where
   bold : Bool := false
   align : Option Ir.HAlign := none
   strut : Bool := false
+  /-- Whether the point stands in a tabular cell, and the weight was declared in it. -/
+  cell : Bool := false
+  cellBold : Bool := false
 
 private def barSkipSp : List Raw → List Raw
   | [] => []
@@ -9380,9 +9401,11 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     barScanList user bound st events rest
   | .verb _ _ _ :: rest => barScanList user bound st (events.push .content) rest
   | .math _ _ _ :: rest => barScanList user bound st (events.push .content) rest
-  | .env _ body _ :: rest =>
-    let st := { st with strut := st.strut || authorStrutList false body.toList }
-    let events := barScanList user bound st events body.toList
+  | .env en body _ :: rest =>
+    let tab := en == "tabular" || en == "tabular*"
+    let inner := { st with strut := st.strut || authorStrutList false body.toList
+                           cell := st.cell || tab, cellBold := st.cellBold && !tab }
+    let events := barScanList user bound inner events body.toList
     barScanList user bound st events rest
   | .group body _ :: rest =>
     let events := barScanList user bound st events body.toList
@@ -9399,7 +9422,7 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     else if sizeCtrlNames.contains n then
       barScanList user bound { st with size := some n } events rest
     else if n == "bf" || n == "bfseries" then
-      barScanList user bound { st with bold := true } events rest
+      barScanList user bound { st with bold := true, cellBold := st.cell } events rest
     else if n == "centering" then
       barScanList user bound { st with align := some .center } events rest
     else if let some side := Ir.raggedSideOf? n then
@@ -9407,7 +9430,7 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     else if n == "@title" then
       barScanList user bound st (events.push (.title st.size st.bold st.align)) rest
     else if n == "@author" then
-      barScanList user bound st (events.push (.author st.bold st.strut)) rest
+      barScanList user bound st (events.push (.author st.bold st.strut st.cellBold)) rest
     else if n == "@date" then
       barScanList user bound st (events.push .content) rest
     else
@@ -9462,11 +9485,12 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
       if let .bar (some w) := events[j] then
         st := { st with ruleBelow := some w }
   -- The author's strut and trailing gap are the engine's, not the body's.
-  if let some ai := events.findIdx? (· matches .author _ _) then
+  if let some ai := events.findIdx? (· matches .author _ _ _) then
     if h : ai < events.size then
-      if let .author bold strutDeclared := events[ai] then
+      if let .author bold strutDeclared firstRow := events[ai] then
         if bold then
           st := { st with authorFont := some #[.styled .bold #[]] }
+          if firstRow then st := { st with authorFontFirstLine := some true }
         if strutDeclared then
           st := { st with authorStrut := some Ir.titleAuthorStrut }
         let trailing := Id.run do
@@ -9474,7 +9498,7 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
             if hk : k < events.size then
               match events[k] with
               | .gap => return true
-              | .content | .author _ _ => return false
+              | .content | .author _ _ _ => return false
               | _ => pure ()
           return false
         if trailing then
@@ -11160,10 +11184,16 @@ private def lrBoxList (user : String → Bool) : List Raw → Bool
 
 end
 
+/-- Whether a body sets block content, itself or through a document macro it calls at its top. -/
+private def bodyOrCallIsBlock (ctx : Ctx) (body : Array Raw) : Bool :=
+  bodyIsBlock body || body.any fun
+    | .ctrl c _ => (lookupUser ctx c).any (bodyIsBlock ·.2.body)
+    | _ => false
+
 /-- Whether a document's environment sets block content where it opens or closes. -/
 private def userBlockEnv (ctx : Ctx) (n : String) : Bool :=
   match lookupUserEnv ctx n with
-  | some (_, env) => bodyIsBlock env.beginBody || bodyIsBlock env.endBody
+  | some (_, env) => bodyOrCallIsBlock ctx env.beginBody || bodyOrCallIsBlock ctx env.endBody
   | none => false
 
 /-- Where the box command `n` at `raws[i]` has its content group, past the groups and brackets
@@ -15038,10 +15068,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
             || n == "algorithmic"
             || reservedEnv.contains n
             || thmEnv thmS n
-            || (match lookupUserEnv ctx' n with
-                | some (_, env) =>
-                  bodyIsBlock env.beginBody || bodyIsBlock env.endBody
-                | none => false)
+            || userBlockEnv ctx' n
             || bodyIsBlock body
       if isB then
         pictureInSentence ctx' n cur raws i epos
