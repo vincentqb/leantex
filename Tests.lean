@@ -195,6 +195,7 @@ import Tests.PdfBounds
 import Tests.PdfFontsProof
 import Tests.RasterPages
 import Tests.Diag
+import Tests.DiagDeletion
 import Tests.DiagFold
 import Tests.DiagnosticFormat
 import Tests.RunCost
@@ -1348,6 +1349,7 @@ def main (args : List String) : IO UInt32 := do
   pictureElabChecks ref
   PictureContracts.checks ref
   diagVoiceChecks ref update
+  Tests.DiagDeletion.ignoredDeletionChecks ref
   allowChecks ref
   werrorChecks ref
   declChecks ref

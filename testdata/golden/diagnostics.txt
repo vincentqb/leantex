@@ -513,7 +513,7 @@ warning: undefined style mystery [W0353]
 warning: ignored key labelfont for \captionsetup[table] [W0354]
   note: \tokens{ captionsep = ... } declares the caption gap
 ── W0355 (config) a theme's slides furniture cannot draw under the class in force
-warning: ignored theme moloch for class article [W0355]
+warning: ignored template for theme moloch [W0355]
   note: chrome, frametitle, sectionpage, standout
 ── W0357 (config) a definition is expansion-time TeX; refused by design
 warning: unsupported definition \edef [W0357]

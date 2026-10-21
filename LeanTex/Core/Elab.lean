@@ -18200,8 +18200,7 @@ margins stand{replaced}"
             ["frametitle", "sectionpage", "standout"].filter
               (fun e => (th.styles.find? e).isSome)
           unless inert.isEmpty do
-            diagDetail s.ctx .W0355 (Diag.say .W0355 .theme tname (some
-              (some .class, s.docClass.name)))
+            diagDetail s.ctx .W0355 (Diag.say .W0355 .template (obj := some (some .theme, tname)))
               (some pos) (String.intercalate ", " inert)
               (help := "the palette and tokens apply either way; \
 \\documentclass{slides} draws the furniture")
