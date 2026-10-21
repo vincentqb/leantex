@@ -268,6 +268,19 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let pale := (elabStr grounds).2.filter (·.kind == .W0315)
   t s!"box scope: a pale ink is named where its colour is written, never at a box ground of that colour ({pale.map (·.span.map (·.pos.col))})"
     (pale.size == 1 && pale.all fun d => d.span.any fun sp => sp.pos.line == 5 && sp.pos.col == 19)
+  -- an ink a box's block content declares on its literal ground is a literal ink there
+  for (ground, ink) in [("{black}", "white"), ("[HTML]{223344}", "yellow"), ("{blue}", "white")] do
+    let banner := doc "" s!"\\noindent\\colorbox{ground}\{\\begin\{minipage}\{100pt}\\color\{{ink}} Kqzv words.\\end\{minipage}}"
+    let (_, _, page, _) := sourceArtifacts fonts banner
+    t s!"box scope: a block's declared ink on a dark literal ground keeps every scheme ({said banner})"
+      (!(said banner).contains "W0308" && hasStr page "--ltx-fg: var(--ltx--" &&
+        hasStr page "light-dark(")
+  -- the ink is carried with its ground: white on black stays a light ink on the dark ground, dark on light
+  for body in ["\\color{white} Kqzv words.", "\\begin{itemize}\\item \\color{white} Kqzv.\\item Words.\\end{itemize}"] do
+    let banner := doc "" s!"\\noindent\\colorbox\{black}\{\\begin\{minipage}\{100pt}{body}\\end\{minipage}}"
+    let (_, _, page, _) := sourceArtifacts fonts banner
+    t s!"box scope: a block's declared ink ships carried with the box's literal ground ({said banner})"
+      (!(said banner).contains "W0308" && hasStr page "--ltx-fg: var(--ltx--ffffff-0-161616")
   let envTight := doc "\\newenvironment{tight}{\\setlength{\\fboxsep}{0pt}}{}\n"
     "Foxtrot \\begin{tight}\\colorbox{yellow}{six}\\end{tight} words \\colorbox{yellow}{seven}.\n\n\\colorbox{yellow}{eight}"
   t s!"box scope: an environment's begin code sets its content's boxes and ends with it ({(pads envTight).map (·.fixed.toBpString)})"

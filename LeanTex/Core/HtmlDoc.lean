@@ -7628,13 +7628,16 @@ public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let shareStyle := match cfg.epochShare p with
     | some n => stepShareDecls n
     | none => ""
+  -- On a box's literal ground the declared ink is a literal colour on that ground, carried with it
+  -- into every shipped scheme as the scheme judge reads it.
+  let literalInk := cfg.ground.map fun _ => s!"{roleVar .ink}: {cfg.literal fg}"
   { cfg with pal := p
              views, boxTexts
              listingGround := cfg.bodyGround.or (Ir.Design.declared? p .page)
              listingFg := if home then none else some fg, bodyInk := none
-             epochStyle := compactStyle (joinStyles (joinStyles cfg.epochStyle
-               (cfg.epochStyleFor diff cfg.views views)) shareStyle)
-             epochPaint := if home then "" else s!"color: {roleRef .ink};"
+             epochStyle := compactStyle (joinStyles (joinStyles (joinStyles cfg.epochStyle
+               (cfg.epochStyleFor diff cfg.views views)) shareStyle) (literalInk.getD ""))
+             epochPaint := if home && literalInk.isNone then "" else s!"color: {roleRef .ink};"
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
 public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette) :

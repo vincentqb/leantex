@@ -124,8 +124,10 @@ private structure UseCx where
   outside : Bool := false
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
+  -- premise: boxScopeChecks — an ink declared on a box's literal ground is a literal ink there
+  let literal := cx.literalGround.isSome && cx.literalGround == cx.ground
   let cx := if cx.inkEpoch.any (· != epoch) then
-    { cx with cur := some (some (.role .ink), Design.printInk pal,
+    { cx with cur := some (if literal then none else some (.role .ink), Design.printInk pal,
         (cx.cur.map (·.2.2)).getD 0), inkEpoch := some epoch }
     else cx
   -- premise: listingPaletteAuditChecks — a body declaration replaces the entry ground
@@ -156,7 +158,7 @@ private def UseCx.onBox (cx : UseCx) (acc : UseAcc) (b : InlineBox) (blocks : Bo
       else cx
     { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the box",
               groundRole := role, markUnder := some (cx.ground, cx.groundRole)
-              literalGround := if nm.isNone then some c else none }
+              literalGround := if nm.isNone then some c else none, groundEpoch := none }
 
 /-- Whether a use is large-scale text at the size its medium shows it; slide text always is. -/
 private def UseCx.large (cx : UseCx) : Bool :=

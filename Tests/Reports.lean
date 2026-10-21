@@ -2441,6 +2441,12 @@ def reports : List Report := [
     accept := ["invented probes: a section before a twelve-line framed minipage after 540pt and 560pt of space; main's binary at 1e648c76 sets the heading on page 1 and the box on page 2, this tree both on page 2, and both on page 1 after 480pt as main does; the guard fails there",
       "lualatex 1.24 on the same probe sets the heading with the box it cannot leave",
       "the corpus built by the commit before's binary and by this tree's: every artifact byte-identical"]
+    state := .guarded "1e648c76" .before .author },
+  { id := "R277", date := "2026-10-21"
+    what := "a colour declaration in a box's block content, as a black colorbox holding a minipage that declares a white ink, was judged on the ground the dark schemes carry the box's literal ground to, so the web page dropped its dark and high-contrast schemes, and in a standout frame the ink was judged on the page"
+    pins := [check% Tests.InlineBoxes.boxScopeChecks]
+    accept := ["main's binary at 1e648c76 on invented probes: black, blue and dark literal colorboxes holding a minipage or a list declaring a white or yellow ink drop the dark schemes (W0308), and in a standout frame W0315 names the ink on the page; this tree keeps all five schemes and names nothing, shipping the ink carried with its ground as the textcolor spelling does; the guard fails there",
+      "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact and diagnostic as the commit before"]
     state := .guarded "1e648c76" .before .author }
 ]
 
