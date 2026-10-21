@@ -8,6 +8,8 @@ import all LeanTex.Core.Ir
 import all LeanTex.Core.Elab
 import all LeanTex.Core.Parse
 import all LeanTex.Core.Diag
+import all LeanTex.Core.TextSymData
+import all LeanTex.Core.BibAccent
 
 namespace LeanTex.Core.Text
 
@@ -396,6 +398,25 @@ private theorem escapeOf_space : escapeOf " " = some " " := by
   have hl : escapes.lookup " " = some " " := by decide
   simp only [escapeOf, hl]
 
+private theorem markNames_unspelled :
+    ∀ n ∈ ["markboth", "markright", "leftmark", "rightmark"],
+      escapes.lookup n = none ∧ Bib.charCommands.find? (·.1 == n) = none ∧
+        Lex.textSymbols.lookup n = none ∧ (TextSymData.symbols.map (·.1)).contains n = false := by
+  decide +kernel
+
+private theorem unspelled_not_lineCtrl (name : String)
+    (h : (escapeOf name).isSome ∨ (Lex.textSymbols.lookup name).isSome)
+    (n1 : name ≠ "addcontentsline") (n2 : name ≠ "addtocontents") :
+    (lineCtrl name || name == "leftmark" || name == "rightmark") = false := by
+  rw [Bool.eq_false_iff]
+  intro hb
+  simp only [lineCtrl, markCtrl, Bool.or_eq_true, beq_iff_eq] at hb
+  have hmem : name ∈ ["markboth", "markright", "leftmark", "rightmark"] := by
+    rcases hb with (((h1 | h1) | h1 | h1) | h1) | h1 <;> simp_all
+  obtain ⟨he, hc, ht, hs⟩ := markNames_unspelled name hmem
+  have hsym : textSymbolMap[name]? = none := Std.HashMap.getElem?_ofList_of_contains_eq_false hs
+  simp [escapeOf, he, hc, ht, hsym] at h
+
 private theorem find_args_none (K : String → Prop) (ctx : Ctx) (name : String) (hfit : Fits K ctx)
     (hk : K name) : ctx.args.find? (fun x => x.fst == name) = none := by
   rw [Array.find?_eq_none]
@@ -541,8 +562,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
       simp only [hover]
       by_cases hhf : name = "hfill"
       · subst hhf
-        simp only [show ("hfill" == "addcontentsline" || "hfill" == "addtocontents") = false by
-            decide, show ("hfill" == "hfill") = true by decide, Bool.false_eq_true, ↓reduceIte]
+        simp only [show ("hfill" == "hfill") = true by decide, ↓reduceIte]
         refine accounts_cons ctx.file _ _ _ st st _ _ []
           (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr)
           (by simp) (by simp) ?_
@@ -551,8 +571,7 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
           hover]
       by_cases hpar : name = "par"
       · subst hpar
-        simp only [show ("par" == "addcontentsline" || "par" == "addtocontents") = false by decide,
-          show ("par" == "hfill") = false by decide, show ("par" == "qedhere") = false by decide,
+        simp only [show ("par" == "hfill") = false by decide, show ("par" == "qedhere") = false by decide,
           show ("par" == "ensuremath") = false by decide,
           show ("par" == "\\") = false by decide, beq_self_eq_true, Bool.or_true,
           Bool.false_eq_true, ↓reduceIte]
@@ -576,8 +595,8 @@ private theorem spine_step (K : String → Prop) (hK : ∀ n, K n → PlainCtrl 
         have hm : accentMarkOf name = none :=
           Std.HashMap.getElem?_ofList_of_contains_eq_false hacc
         cases raws[i + 1]? <;> simp [accentCompose, hm]
-      simp only [beq_eq_false_iff_ne.mpr n1, beq_eq_false_iff_ne.mpr n2,
-        beq_eq_false_iff_ne.mpr hhf, beq_eq_false_iff_ne.mpr n3, beq_eq_false_iff_ne.mpr n4,
+      simp only [unspelled_not_lineCtrl name hown n1 n2, beq_eq_false_iff_ne.mpr hhf,
+        beq_eq_false_iff_ne.mpr n3, beq_eq_false_iff_ne.mpr n4,
         beq_eq_false_iff_ne.mpr n5, beq_eq_false_iff_ne.mpr hpar, haccent, Bool.or_false,
         Bool.false_eq_true, ↓reduceIte]
       cases hesc : escapeOf name with

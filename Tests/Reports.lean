@@ -2422,34 +2422,34 @@ def reports : List Report := [
       "main's binary at 1e648c76 on the same probes: a 312pt block 72pt from the top and from the foot under every class; the guards fail there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every deck, card, poster and web page document byte-identical, the A4 resume invisibly moved by its exact paper; every article-class document's PDF and the KOMA-Script one's visibly moved to its class's text block, folio and page breaks, the web pages of those declaring no page wider by the same measure; the parity tier's undeclared article reaching its top level, the rhythm tier's first baseline and footline items met, and the typeset tier's report fixture losing its overfull lines while the stress fixture's page breaks trade a few clubs and widows"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R275", date := "2026-10-21"
+  { id := "R278", date := "2026-10-21"
     what := "the running heads read no hand-written mark: markboth and markright printed their words as text, a fancyhdr field's leftmark and rightmark were unknown commands, the package's default fields and its rule under the head were missing and a cleared foot still printed the folio; a chapter's or a title's page kept a declared head; scrbook set no running head, opened its chapters on any page and left its blank versos furnished; and geometry's twoside, inner, outer, unequal left and right margins and hmarginratio were dropped"
     pins := [check% Tests.Chapters.markChecks, check% Tests.Chapters.twosideChecks]
     accept := ["lualatex 1.24 on invented probes: a book's unnumbered preface marked with markboth heads its verso 2 Preface and its recto Preface 3; markright keeps the left mark; fancyhdr's leftmark and rightmark read CHAPTER 1. ALPHA and 1.1. BRAVO, its defaults head an article's page with 1 ALPHA outside and the folio below, a cleared foot sets no folio, and its 0.4pt rule stands 3.6pt below the head's baseline (lualatex 3.587, this tree 3.586); maketitle's and a chapter's pages carry only the folio; scrbook heads a verso 1 Alpha and a recto 1.2 Gamma, outside, its folio outside in the foot, a one-sided KOMA-Script head centred, its chapters on a recto after an empty verso; geometry's twoside sets a recto 73.4pt and a verso 110.1pt from the left, inner=2cm,outer=4cm 56.6pt and 113.3pt, hmarginratio=1:3 45.9pt; this tree sets the same within its own measure and faces",
       "main's binary at 1e648c76 on the same probes: the marks as text with W0301, no head reading them, no rule, the folio in a cleared foot, scrbook unheaded on consecutive pages, every geometry key above named unhonoured with the page centred; the guards fail there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every PDF and web page byte-identical; one fixture's notes name its cleared fancyhdr foot"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R275", date := "2026-10-20"
+  { id := "R279", date := "2026-10-21"
     what := "a minipage or a parbox declaring no position stood on its first line where LaTeX centres it, so two side by side stood top-aligned; minipages a comment or a space apart stood on lines of their own where LaTeX sets them side by side; and a row of boxes took a line's ordinary pitch where TeX's interline rule spaces it by its height and depth, a tall box's neighbouring lines standing up to 3.8pt off"
     pins := [check% Tests.InlineBoxes.boxBlockChecks]
     accept := ["lualatex 1.24 on invented probes at parskip 0: above and below a lone centred two-line minipage 9.84pt and 8.23pt, below a top-aligned one 8.12pt, above a bottom-aligned one 8.13pt, a one-line minipage beside a four-line one centred on it and the line after 8.13pt below, minipages a comment apart side by side and a space apart 3.33pt apart; this tree sets each within 0.03pt",
       "main's binary at 1e648c76 on the same probes: 11.96pt for each spacing, the undeclared pair top-aligned, the joined and spaced minipages stacked; the guards fail there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: four PDFs move visibly (affine-lengths, alert-mark, boxes, box-sides), toward lualatex where a probe checks it, every web page visually the same and every diagnostic the same"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R276", date := "2026-10-20"
+  { id := "R280", date := "2026-10-21"
     what := "a heading before a framed box the page could not hold stayed alone at the page's foot while the box moved to the next page, where LaTeX keeps the heading with what follows it"
     pins := [check% Tests.InlineBoxes.boxBlockChecks]
     accept := ["invented probes: a section before a twelve-line framed minipage after 540pt and 560pt of space; main's binary at 1e648c76 sets the heading on page 1 and the box on page 2, this tree both on page 2, and both on page 1 after 480pt as main does; the guard fails there",
       "lualatex 1.24 on the same probe sets the heading with the box it cannot leave",
       "the corpus built by the commit before's binary and by this tree's: every artifact byte-identical"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R277", date := "2026-10-21"
+  { id := "R281", date := "2026-10-21"
     what := "a colour declaration in a box's block content, as a black colorbox holding a minipage that declares a white ink, was judged on the ground the dark schemes carry the box's literal ground to, so the web page dropped its dark and high-contrast schemes, and in a standout frame the ink was judged on the page"
     pins := [check% Tests.InlineBoxes.boxScopeChecks]
     accept := ["main's binary at 1e648c76 on invented probes: black, blue and dark literal colorboxes holding a minipage or a list declaring a white or yellow ink drop the dark schemes (W0308), and in a standout frame W0315 names the ink on the page; this tree keeps all five schemes and names nothing, shipping the ink carried with its ground as the textcolor spelling does; the guard fails there",
       "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact and diagnostic as the commit before"]
     state := .guarded "1e648c76" .before .author },
-  { id := "R271", date := "2026-10-20"
+  { id := "R282", date := "2026-10-21"
     what := "a label in an enumerate item named the heading or theorem around the list, not the item: its reference showed the section's number; and enumitem's newlist was unknown, its lists unknown environments"
     pins := [check% Tests.ItemRefs.checks]
     accept := ["lualatex 1.24 on an invented article: references to items show 1, 1a, 1(a)i and 2 through three levels, (a) for an enumitem label and for its ref key, A under a redefined theenumi, and the section's 1 for an itemize item, and a newlist list numbered as the enumerate it copies under its own setlist label; this tree shows the same",

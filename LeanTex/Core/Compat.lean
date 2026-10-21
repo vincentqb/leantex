@@ -7125,9 +7125,9 @@ option") pos
     if l == r then keys := keys.push (.hmargin, l, #[lk, rk].toList.eraseDups.toArray)
     else match Decl.parseLength l, Decl.parseLength r with
       | some ls, some rs =>
-        if ls.em == 0 && ls.ex == 0 && rs.em == 0 && rs.ex == 0 && 0 ≤ ls.sp.units && 0 ≤ rs.sp.units then
-          keys := (keys.push (.hmargin, ((ls.sp + rs.sp) / (2 : Int)).toPtString ++ "pt", #[lk])).push
-            (.hmarginratio, s!"{ls.sp.units}:{rs.sp.units}", #[rk])
+        if ls.em == 0 && ls.ex == 0 && rs.em == 0 && rs.ex == 0 && 0 ≤ ls.fixed.units && 0 ≤ rs.fixed.units then
+          keys := (keys.push (.hmargin, ((ls.fixed + rs.fixed) / (2 : Int)).toPtString ++ "pt", #[lk])).push
+            (.hmarginratio, s!"{ls.fixed.units}:{rs.fixed.units}", #[rk])
         else for k in [lk, rk].eraseDups do dropped := dropped.push k
       | _, _ => for k in [lk, rk].eraseDups do dropped := dropped.push k
   | some (k, _), none | none, some (k, _) => dropped := dropped.push k

@@ -17094,7 +17094,7 @@ private def Spacing.Page.alignRow (b : B) (fs : FontSet) (save : ColSave) : B :=
     -- Beside a line standing by its baseline, a centred box's middle stands on the math axis, its
     -- rows' struts 0.7 and 0.3 of the leading (latex.ltx `\@arstrut`), cmsy10's axis a quarter em.
     | .center =>
-      if save.pos.contains .last && m.lines < lineEnd then
+      if save.pos.contains .last && m.lines < lineEnd k then
         (firstLine + m.y) / 2 - Ir.leadingFor b.geom.fontSize b.geom.leading / 5 + b.geom.fontSize / 4
       else match axis, tops[k]?.join with
         | some ax, some t => (t + m.y + m.boxDepth) / 2 + ax
