@@ -177,7 +177,7 @@ private def isRel (t : Template) : Bool :=
 
 private def isPhrase (t : Template) : Bool :=
   match t.parts with
-  | .word s :: _ => !opens.contains s
+  | .word s :: _ => !opens.contains s && !(equivWords.splitOn " ").isPrefixOf (lead t.parts)
   | _ => false
 
 /-- No list is a prefix of another, equal ones included. -/
@@ -305,11 +305,17 @@ private def wrapWith (k : Nat) (s : Stmt α) (f : List (Tok α) → List (Tok α
     (rest : List (Tok α)) : List (Tok α) :=
   if s.prec ≤ k || (!s.isIff && followsStmt rest) then f rest else blockWith f rest
 
+/-- How loosely an equivalence's left side may bind and stand bare: a conjunction, its "both"
+opening it, else atomic, so "it is not the case that" or "either" never reads as covering it. -/
+public def Stmt.leftK : Stmt α → Nat
+  | .conj .. => 1
+  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .neg _ | .rel .. | .atom _ => 0
+
 /-- An equivalence's right side: a block where its left side is one and it is no atom, the two
 standing alike, else an operand. -/
 private def iffRight (a b : Stmt α) (f : List (Tok α) → List (Tok α)) (rest : List (Tok α)) :
     List (Tok α) :=
-  if 1 < a.prec && 0 < b.prec then blockWith f rest else wrapWith 1 b f rest
+  if a.leftK < a.prec && 0 < b.prec then blockWith f rest else wrapWith 1 b f rest
 
 /-- What follows a hypothesis: the next one of a curried implication, or its conclusion. -/
 private def chainWith (c : Stmt α) (f : List (Tok α) → List (Tok α)) (rest : List (Tok α)) :
@@ -349,7 +355,7 @@ private def mark (p : Place) (t : List (Tok α)) : List (Tok α) := if p = .item
 and only if" never reads as ending the scope. -/
 private def iffTo (p : Place) (a b : Stmt α) (fa fb : List (Tok α) → List (Tok α))
     (rest : List (Tok α)) : List (Tok α) :=
-  let body := fun r => wrapWith 1 a fa (wordsTo ["if", "and", "only", "if"] (iffRight a b fb r))
+  let body := fun r => wrapWith a.leftK a fa (wordsTo ["if", "and", "only", "if"] (iffRight a b fb r))
   if p = .scope ∨ p = .inner then blockWith body rest else body rest
 
 /-- A statement's tokens before `rest`, where it stands at `p`: a conjunction a scope, a lead or an
@@ -376,7 +382,7 @@ private def renderTo : Place → Stmt α → List (Tok α) → List (Tok α)
   | p, .disj a b, rest =>
     mark p (.w "either" :: wrapWith 0 a (renderTo .operand a) (.w "or" :: wrapWith 1 b (renderTo .operand b) rest))
   | p, .iff a b, rest =>
-    if p ≠ .operand ∧ p ≠ .inner ∧ 1 < a.prec then
+    if p ≠ .operand ∧ p ≠ .inner ∧ a.leftK < a.prec then
       mark p (.w equivWords :: .w ":" :: .indent :: .item ::
         renderTo .lead a (.item :: renderTo .lead b (.dedent :: rest)))
     else mark p (iffTo p a b (renderTo .operand a) (renderTo .operand b) rest)
@@ -827,7 +833,9 @@ private theorem isPhrase_parts {t : Template} (h : isPhrase t = true) :
     ∃ s ps, t.parts = .word s :: ps ∧ s ∉ opens := by
   unfold isPhrase at h
   split at h
-  · rename_i s ps heq; exact ⟨s, ps, heq, by simpa using h⟩
+  · rename_i s ps heq
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    exact ⟨s, ps, heq, by simpa using h.1⟩
   · simp at h
 
 private theorem isRel_parts {t : Template} (h : isRel t = true) :
@@ -1244,7 +1252,7 @@ private theorem iffRight_of {lex : Lexicon} (hlex : lex.wf = true) {a s : Stmt �
     (rest : List (Tok α)) (hr : followsOpnd rest = true) :
     forget (parseOperand lex (iffRight a s (renderTo .operand s) rest)) = some (s, rest) := by
   unfold iffRight
-  by_cases hb : (1 < a.prec && 0 < s.prec) = true
+  by_cases hb : (a.leftK < a.prec && 0 < s.prec) = true
   · rw [ite_eq_left hb]; exact block_of hlex hs hS rest
   · rw [ite_eq_right hb]; exact hW 1 rest (by decide) hr
 
@@ -1324,7 +1332,7 @@ private theorem item_eq {s : Stmt α} (hc : ∀ a b, s ≠ .conj a b) (rest : Li
   cases s with
   | conj a b => exact absurd rfl (hc a b)
   | iff a b =>
-    by_cases h : 1 < a.prec
+    by_cases h : a.leftK < a.prec
     · simp [renderTo, mark, h]
     · simp [renderTo, mark, h, iffTo]
   | _ => simp [renderTo, mark, Place.sub]
@@ -1615,10 +1623,12 @@ private theorem reads {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt α)
       let X : List (Tok α) :=
         .w "if" :: .w "and" :: .w "only" :: .w "if" :: iffRight a b (renderTo .operand b) rest
       obtain ⟨h1, e1⟩ :=
-        forget_eq.mp (ra.wrap 1 X (by decide) (by simp [X, followsOpnd, stops]))
-      have ht : renderTo .operand (.iff a b) rest = wrapWith 1 a (renderTo .operand a) X := by
+        forget_eq.mp (ra.wrap a.leftK X
+          (by cases a <;> simp [Stmt.leftK]) (by simp [X, followsOpnd, stops]))
+      have ht : renderTo .operand (.iff a b) rest = wrapWith a.leftK a (renderTo .operand a) X := by
         simp [renderTo, mark, iffTo, wordsTo, X]
-      have hkw := wrap_head hlex hs.1 1 (by decide) X (by simp [X, followsStmt])
+      have hkw := wrap_head hlex hs.1 a.leftK
+        (by cases a <;> simp [Stmt.leftK]) X (by simp [X, followsStmt])
       rw [ht, parseStmt.eq_1, ite_eq_right (by simp [hkw])]
       simp only [e1, X]
       rw [e2]; rfl
@@ -1636,13 +1646,13 @@ private theorem reads {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt α)
     have hS : ∀ p, p = .scope ∨ p = .inner → ∀ rest, followsStmt rest = true →
         forget (parseStmt lex (renderTo p (.iff a b) rest)) = some (.iff a b, rest) := by
       intro p hp rest hr
-      by_cases hl : p = .scope ∧ 1 < a.prec
+      by_cases hl : p = .scope ∧ a.leftK < a.prec
       · have ht : renderTo p (.iff a b) rest = .w equivWords :: .w ":" :: .indent :: .item ::
             renderTo .lead a (.item :: renderTo .lead b (.dedent :: rest)) := by
           obtain ⟨rfl, hl⟩ := hl
           simp [renderTo, mark, hl]
         rw [ht]; exact hList rest hr
-      · have hn : ¬ (p ≠ .operand ∧ p ≠ .inner ∧ 1 < a.prec) := by
+      · have hn : ¬ (p ≠ .operand ∧ p ≠ .inner ∧ a.leftK < a.prec) := by
           rcases hp with rfl | rfl
           · exact fun h => hl ⟨rfl, h.2.2⟩
           · exact fun h => h.2.1 rfl
@@ -1655,7 +1665,7 @@ private theorem reads {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt α)
     have hL : ∀ rest, followsStmt rest = true →
         forget (parseStmt lex (renderTo .lead (.iff a b) rest)) = some (.iff a b, rest) :=
       fun rest hr => by
-        by_cases hl : 1 < a.prec
+        by_cases hl : a.leftK < a.prec
         · rw [show renderTo .lead (.iff a b) rest = .w equivWords :: .w ":" :: .indent :: .item ::
               renderTo .lead a (.item :: renderTo .lead b (.dedent :: rest)) by
             simp [renderTo, mark, hl]]

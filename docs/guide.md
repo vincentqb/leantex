@@ -374,7 +374,7 @@ an existential's or a conditional's scope runs to the end of the block it stands
 in, so one that more of its sentence follows is a block, as a hypothesis or a
 first side is. An equivalence whose first side needs a block, more than a
 formula, a plain relation (one whose words hold none of `and`, `or`, `if`,
-`then`, `both` and `either`), a negation, a conjunction or a disjunction, reads
+`then`, `both` and `either`) or a conjunction, its both opening it, reads
 the following are equivalent: and its two sides as a numbered list where a
 sentence, an item or a scope holds it, so no item opens on a block; any other
 equivalence is a block wherever it stands below the sentence's top or an

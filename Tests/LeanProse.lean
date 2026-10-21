@@ -84,7 +84,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     unless s.ok (phrasedTable ()).lexicon && parse (phrasedTable ()).lexicon (render s) == some s &&
         !opensOnBlock (render s) do
       failed := failed.push (showToks leafWord (render s))
-  t s!"evidence: 600 random statements over the core table and declared phrases read back, no list item opening on a block ({failed.toList.take 2})"
+  t s!"evidence: 600 random statements over the core table and declared phrases read back, no list item opening on a block but a nested list ({failed.toList.take 2})"
     failed.isEmpty
   -- Declared phrases, taken or refused by name.
   let declare (binders : Array (String × Array LeanFacts.Binder)) (declared : List (String × String)) :=
@@ -99,6 +99,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     (declare two [("height", "the height after #3 steps of #1")] == #[.shape] &&
       declare two [("height", "#1 #2")] == #[.shape] &&
       declare two [("height", "if #1 then #2")] == #[.shape] &&
+      declare two [("height", "the following are equivalent for #1 and #2")] == #[.shape] &&
       declare two [("height", "the height after #2 steps, of #1")] == #[.shape] &&
       declare two [("height", "the height after #2 steps . of #1")] == #[.shape] &&
       declare two [("height", "the height of #1")] == #[.arity 1 2] &&

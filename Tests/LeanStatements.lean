@@ -167,7 +167,11 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
         #[#[("lspace", thick), ("rspace", nil)], #[("lspace", nil), ("rspace", thick)]] &&
       relSpaces [(.ord, 'x'), (.rel, '='), (.ord, 'y')] == #[#[]] &&
       relSpaces [(.ord, 'x'), (.rel, '=')] == #[#[("lspace", thick), ("rspace", nil)]] &&
-      relSpaces [(.ord, 'x'), (.rel, '='), (.bin, '-'), (.ord, 'y')] == #[#[], #[]])
+      relSpaces [(.ord, 'x'), (.rel, '='), (.bin, '-'), (.ord, 'y')] == #[#[], #[]] &&
+      relSpaces [(.rel, '='), (.ord, 'y')] == #[#[("lspace", nil), ("rspace", thick)]] &&
+      relSpaces [(.rel, '=')] == #[#[("lspace", nil), ("rspace", nil)]] &&
+      relSpaces [(.ord, 'x'), (.rel, '='), (.opening, '(')] == #[#[], #[]] &&
+      relSpaces [(.ord, 'x'), (.rel, '='), (.punct, ',')] == #[#[("lspace", thick), ("rspace", nil)], #[]])
   t "statements: a word space follows a quantifier's head and a definition's name alone"
     (facts.decls.all fun d => (spacedFormulasOf facts d.name).all fun (f, spaced) =>
       (f.endsWith "," || f.endsWith ":") → spaced)
