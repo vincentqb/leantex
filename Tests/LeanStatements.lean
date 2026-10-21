@@ -39,6 +39,13 @@ def texOf (t : LeanFacts.Term) (ctx : List String)
     { binders := fun c => binders.lookup c, shown := id, collectionFirst := true }
   Parse.rawSrc (LeanStatement.Math.listRaws {} #[] (LeanStatement.render lk ctx t).math.toList)
 
+/-- A term's formulas standing alone, as TeX source. -/
+def piecesOf (t : LeanFacts.Term) (ctx : List String)
+    (binders : List (String × Array LeanFacts.Binder) := []) : List String :=
+  let lk : LeanStatement.Lookup :=
+    { binders := fun c => binders.lookup c, shown := id, collectionFirst := true }
+  (LeanStatement.formulasOf lk ctx t).map fun m => Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList)
+
 /-- A run that wrote `answer` and exited `code`, saying `out`. -/
 def ended (code : Nat) (out : String) (answer : Option ByteArray) : Ended :=
   { ran := .exited code, out, err := "", complete := true, outputs := #[("answer.jsonl", answer)] }
@@ -210,6 +217,10 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
       texOf (app "List.nil" [nat]) [] listBinders == "[]" &&
       texOf (app "List.cons" [nat, var 1, var 0]) ["xs", "x"] listBinders ==
         "\\mathit {x}::\\mathit {xs}")
+  t "statements: a list literal standing alone breaks after each comma, the comma spaced as punctuation"
+    (piecesOf (app "List.cons" [nat, var 0, app "List.cons" [nat, var 1, app "List.nil" [nat]]])
+        ["a", "b"] listBinders == ["[\\mathit {a},{}", "\\mathit {b}]"] &&
+      piecesOf (app "List.nil" [nat]) [] listBinders == ["[]"])
   t "statements: a function's name its body never reads sets as an underscore"
     (texOf (app "g" [.lam "x" .explicit nat (app "Nat.zero" [])]) [] ==
       "\\mathrm {g}\\  (\\_\\mapsto \\mathrm {Nat.zero})")

@@ -230,6 +230,12 @@ public def forallHead (names : Array (Array Math)) (type : Array Math) : Array M
 private def around (left : Array Math) (g : Glyph) (right : Array Math) : Array Math :=
   (left.append (glyphMath g)).append right
 
+/-- Formulas each but the last ending on a comma, spaced as punctuation before what follows. -/
+private def commaEnds : List (Array Math) → List (Array Math)
+  | [] => []
+  | [x] => [x]
+  | x :: rest => opEnd (x.push (.word ",")) :: commaEnds rest
+
 mutual
 
 /-- A term as mathematics under the bound names `ctx`, innermost first. -/
@@ -284,8 +290,7 @@ arguments, a line free to break after each comma. -/
 private def listLit (c : String) (shown : List Rendered) : Option Rendered :=
   let lit (es : List (Array Math)) : Rendered :=
     { math := (commaJoin #[.word "["] es).push (.word "]"), prec := atomPrec, elems := some es
-      chain := bracketed "[" "]" (es.zipIdx.map fun (e, i) =>
-        if i + 1 < es.length then e.push (.word ",") else e) }
+      chain := bracketed "[" "]" (commaEnds es) }
   match c, shown with
   | "List.nil", [] => some (lit [])
   | "List.cons", [x, xs] => xs.elems.map fun es => lit (x.math :: es)

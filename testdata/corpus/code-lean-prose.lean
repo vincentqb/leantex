@@ -26,6 +26,11 @@ theorem neg_all : Not (forall n : Nat, n = 0) :=
 theorem both_all : And (forall n : Nat, 0 <= n) (exists m : Nat, m = m) :=
   And.intro Nat.zero_le (Exists.intro 0 rfl)
 
+/-- List literals and a function ignoring its argument, as Lean writes them. -/
+theorem list_lits :
+    And ([1, 2, 3].length = 3) (List.map (fun _ => 0) [5] = [0]) :=
+  And.intro rfl rfl
+
 theorem chain (a b c : Nat) (h1 : a <= b) (h2 : b <= c) : a <= c :=
   Nat.le_trans h1 h2
 
