@@ -534,6 +534,11 @@ public structure Counters where
   secFmts : Array (Nat × Array SecPart) := #[]
   /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …). -/
   inAppendix : Bool := false
+  /-- Inside `{appendices}`, whose sections the appendix package's `title` option heads. -/
+  inAppendices : Bool := false
+  /-- The appendix package's `title` option: each `{appendices}` section is headed with
+  `\appendixname`. -/
+  appendixTitles : Bool := false
   /-- The class heads chapters, numbering sections, equations and footnotes within each. -/
   chapters : Bool := false
   /-- A chapter's head sets its number before its title on one line, as KOMA-Script's does. -/
@@ -10935,8 +10940,14 @@ private def headingShown (n : String) : String :=
 
 /-- A heading's number: a chapter's head label, or a section's number at its level. -/
 private def headingNumber (ctx : Ctx) (n : String) (level : Nat) (starred : Bool) (pos : Pos) :
-    EM (Option String) :=
-  if n == Parse.chapterControl then chapterHead ctx starred pos else sectionNumber ctx level starred
+    EM (Option String) := do
+  if n == Parse.chapterControl then return ← chapterHead ctx starred pos
+  let some num ← sectionNumber ctx level starred | return none
+  let ctr := (← get).ctr
+  if level == 1 && ctr.inAppendices && ctr.appendixTitles then
+    let word ← definedOr ctx "appendixname" pos (pure #[.text ctx.locale.appendix])
+    return some s!"{Ir.plainText word} {num}"
+  return some num
 
 /-- A heading's block from its title's and short title's raws: numbered, its short title held for
 the contents and bookmarks (`Ir.Doc.shortTitles`), a deck's section set in force. -/
@@ -12184,7 +12195,8 @@ counters and mark it saved (`\@resets@pp`). -/
 private def enterAppendicesIf (b : Bool) : EM (Option ((Nat × Nat × Nat) × Bool)) := do
   if !b then return none
   let st ← get
-  modify fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
+  modify fun st => { st with ctr := { st.ctr with inAppendix := true, inAppendices := true,
+                                                  secNums := (0, 0, 0) } }
   return some (st.ctr.secNums, st.ctr.inAppendix)
 
 /-- Leaves the `{appendices}` scope, restoring what `enterAppendicesIf` saved
@@ -12193,7 +12205,8 @@ private def leaveAppendices (saved : Option ((Nat × Nat × Nat) × Bool)) : EM 
   match saved with
   | none => pure ()
   | some s =>
-    modify fun st => { st with ctr := { st.ctr with inAppendix := s.2, secNums := s.1 } }
+    modify fun st => { st with ctr := { st.ctr with inAppendix := s.2, inAppendices := false,
+                                                    secNums := s.1 } }
 
 /-- The node a block-sequence wrapper environment ships: `{abstract}`'s titled
 block, `{appendices}`'s splice, else a quotation. -/
@@ -12636,6 +12649,24 @@ private def itemLabelSpec (ctx : Ctx) (n : String) (kd : Nat) (body : Array Raw)
     return (some (.raws raws), start, resume)
   | none => return (none, start, resume)
 
+/-- The enumitem series a list's options name: the one it starts (`series=`) and the one it
+continues (`resume=`). -/
+private def itemSeriesSpec (body : Array Raw) (pos : Pos) : Option String × Option String := Id.run do
+  let mut series : Option String := none
+  let mut resumed : Option String := none
+  let j := skipSpaces body 0
+  if body[j]? matches some (.sym '[' _) then
+    if let .took k' := scanOpeningArg body pos fun _ => true then
+      for e in Entries.read .keyval (body.extract (j + 1) (k' - 1)) do
+        match e.key, e.value with
+        | "series", some v => series := some (rawSrc v).trimAscii.toString
+        | "resume", some v => resumed := some (rawSrc v).trimAscii.toString
+        | _, _ => pure ()
+  return (series, resumed)
+
+/-- The key a series' last number is held under, beside the lists' own, named by no list. -/
+private def seriesKey (name : String) : String := "series " ++ name
+
 /-- An enumerate item's `\ref` text template, and whether the class's `\p@enum` prefix of the levels
 around it applies: its `ref` option, else its `label` option or level style's, else the class's
 `\theenum`. -/
@@ -12684,7 +12715,12 @@ private def labelledItems (ctx : Ctx) (n : String) (body : Array Raw) (bodyFrom 
   let kd := ctx.listNest.kindDepth n
   let (template, start, resume) ← itemLabelSpec ctx n kd body pos
   let held := ((← get).ctr.listResume.find? fun (k, l, _) => k == n && l == kd).map (·.2.2)
-  let first := if resume then (held.getD 0) + 1 else start.getD 1
+  let (series, resumed) := itemSeriesSpec body pos
+  let resumes := (← get).ctr.listResume
+  let heldSeries := resumed.bind fun nm =>
+    (resumes.find? fun (k, _, _) => k == seriesKey nm).map (·.2.2)
+  let first := if resumed.isSome then (heldSeries.getD 0) + 1
+    else if resume then (held.getD 0) + 1 else start.getD 1
   -- An enumerate starting past 1 labels its items as its level does at their numbers.
   let byLevel := template.isNone && n == "enumerate" && first != 1
   let (refSrc, prefixed) ← if n == "enumerate" then itemRefSpec ctx kd body pos else pure (none, false)
@@ -12721,6 +12757,10 @@ private def labelledItems (ctx : Ctx) (n : String) (body : Array Raw) (bodyFrom 
   if n == "enumerate" then
     modify fun st => { st with ctr := { st.ctr with listResume :=
       (st.ctr.listResume.filter fun (k, l, _) => !(k == n && l == kd)).push (n, kd, num - 1) } }
+    let named := (series.map (#[·])).getD #[] ++ (resumed.map (#[·])).getD #[]
+    for nm in named do
+      modify fun st => { st with ctr := { st.ctr with listResume :=
+        (st.ctr.listResume.filter fun (k, _, _) => k != seriesKey nm).push (seriesKey nm, kd, num - 1) } }
   return out
 
 /-- Applies each item's overlay selector to the whole item, label included, as beamer's
@@ -13806,8 +13846,8 @@ private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) 
             (detail := some s!"unreadable length '{value.getD ""}'")
             (help := "give a length such as 2pt, 0.5em or a token name")
       else unless key.isEmpty || (key == "label" && n != "description") ||
-          ((key == "start" || key == "resume" || key == "ref") && n == "enumerate" &&
-            !(key == "resume" && value.isSome)) do
+          ((key == "start" || key == "resume" || key == "ref" || key == "series") &&
+            n == "enumerate") do
         warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
           (Diag.say .W0104 .option key (some (some .environment, n))) pos
     bodyFrom := k'
@@ -17311,6 +17351,8 @@ public inductive PDecl where
   | sectionHook (name : String) (starred code : Option (Array Raw)) (pos : Pos)
   /-- A cancel package load's options, as written. -/
   | cancelOpts (src : String) (pos : Pos)
+  /-- The appendix package's `title` option. -/
+  | appendixTitles (pos : Pos)
   /-- A blueprint's site declaration: its package load, `\github`, `\dochome` or `link`. -/
   | blueprintSite (key : Blueprint.SiteKey) (url : String) (pos : Pos)
   /-- Text before `\begin{document}`, as written, where it stands. -/
@@ -17616,6 +17658,8 @@ private def scanDeclStep (preamble : Array Raw) (i : Nat) (h : i < preamble.size
       let (_, k) := takeOptRun preamble (skipSpaces preamble i)
       i := k
       out := out.push (.pictures (some #[.word "tool = lualatex" pos]) pos)
+    else if name == Compat.appendixTitlesMark then
+      out := out.push (.appendixTitles pos)
     else if name == Compat.cancelOptionsMark then
       match preamble[i]? with
       | some (.group body _) =>
@@ -18670,6 +18714,9 @@ convert = none refuses both")
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
   | .blueprintSite key url _ =>
     return { s with ctx := { s.ctx with blueprint := s.ctx.blueprint.declare key url } }
+  | .appendixTitles _ =>
+    modify fun st => { st with ctr := { st.ctr with appendixTitles := true } }
+    return s
   | .unknownCmd name args unclosed pos =>
     -- Set lines the engine or an open boundary reads are not unknown.
     if Compat.nativeReadCtrls.contains name ||

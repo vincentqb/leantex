@@ -15,3 +15,5 @@ body impl \fcolorbox[rgb]{0,0,0}{1,1,0.8}{x}
 pre impl \pagecolor{black}
 body impl \nopagecolor
 body refuse:W0301 \rowcolors{1}{black}{white}
+body refuse:W0104 \begin{tabular}{l}\cellcolor{black}x\end{tabular}
+body refuse:W0104 \begin{tabular}{l}\rowcolor{black}x\end{tabular}

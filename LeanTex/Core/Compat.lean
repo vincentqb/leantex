@@ -23,6 +23,7 @@ public import LeanTex.Core.TikzCommands
 import LeanTex.Core.UnusedSetting
 public import LeanTex.Core.Definer
 import LeanTex.Core.TexText
+import LeanTex.Core.ListMark
 
 namespace LeanTex.Core.Compat
 
@@ -133,7 +134,8 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
      drivers),
    ("xcolor", [("natural", .engineSets "colours ship in the model they are declared in"),
      ("hyperref", .engineSets "link colours are read from hyperref's own keys"),
-     ("usenames", .asWithout "the option has had no effect since xcolor 2.11")] ++
+     ("usenames", .asWithout "the option has had no effect since xcolor 2.11"),
+     ("table", .engineSets "the table colour commands are read, whether or not the option asks")] ++
      drivers),
    ("color", ("usenames", .asWithout "the option has no effect") :: drivers),
    ("amsmath", [("reqno", .asWithout "equation numbers stand on the right, as without the option"),
@@ -167,6 +169,7 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
      ("frozencache", .texRun "the engine keeps no minted cache"),
      ("outputdir=*", .texRun "the engine writes no minted temporaries")]),
    ("nicefrac", [("nice", .asWithout "the fraction is set as without the option")]),
+   ("enumitem", [("inline", .engineSets "the inline lists are read, whether or not the option asks")]),
    ("algorithm2e", [("english", .asWithout "the keywords are English, as without the option")])]
 
 /-- Beamer's colour elements, each mapped onto the palette roles its `fg=` and
@@ -380,6 +383,89 @@ private def nextArgGroup (raws : Array Raw) (start : Nat) : Option (Array Raw) :
   match raws[k]? with
   | some (.group g _) => some g
   | _ => none
+
+/-- A numeral command's style in an enumitem label template, counted by its `*`. -/
+private def starNumeral? : String → Option Ir.NumStyle
+  | "arabic" => some .arabic
+  | "alph" => some .alph
+  | "Alph" => some .uAlph
+  | "roman" => some .roman
+  | "Roman" => some .uRoman
+  | _ => none
+
+-- conserves: none — a label template with its numerals spelled at one number
+/-- An enumitem label template at item number `k`: each `\arabic*` and its kin the numeral it
+counts, inside groups too. -/
+private def starLabelAt (k : Nat) (out : Array Raw) : List Raw → Array Raw
+  | [] => out
+  | .ctrl c p :: .sym '*' q :: more =>
+    match starNumeral? c with
+    | some st => starLabelAt k (out.push (.word (ListMark.numText st k) p)) more
+    | none => starLabelAt k (out.push (.ctrl c p)) (.sym '*' q :: more)
+  | .ctrl c p :: .word w wp :: more =>
+    match starNumeral? c, w.startsWith "*" with
+    | some st, true =>
+      let out := out.push (.word (ListMark.numText st k) p)
+      starLabelAt k (if w.length > 1 then out.push (.word (w.drop 1).toString wp) else out) more
+    | _, _ => starLabelAt k (out.push (.ctrl c p)) (.word w wp :: more)
+  | .group b p :: rest => starLabelAt k (out.push (.group (starLabelAt k #[] b.toList) p)) rest
+  | r :: rest => starLabelAt k (out.push r) rest
+termination_by l => sizeOf l
+decreasing_by all_goals raws_dec
+
+/-- enumitem's inline list (`enumerate*`, `itemize*`, `description*`): its items in the running
+line, each after its label, joined by its `itemjoin`, a space unless declared. -/
+private def starListRaws (n : String) (body : Array Raw) (p : Pos) : Array Raw := Id.run do
+  let k0 := skipSpaces body 0
+  let close := if body[k0]? matches some (.sym '[' _) then
+      (List.range (body.size - k0)).find? fun d => body[k0 + d]? matches some (.sym ']' _)
+    else none
+  let opts := match close with
+    | some d => Entries.read .keyval (body.extract (k0 + 1) (k0 + d))
+    | none => #[]
+  let template := (opts.find? (·.key == "label")).bind (·.value)
+  let join := ((opts.find? (·.key == "itemjoin")).bind (·.value)).getD #[.space]
+  let start := ((opts.find? (·.key == "start")).bind fun e =>
+    (e.value.map rawSrc).bind (·.trimAscii.toString.toNat?)).getD 1
+  let mut items : Array (Option (Array Raw) × Array Raw) := #[]
+  let mut j := match close with
+    | some d => k0 + d + 1
+    | none => 0
+  for _ in [0:body.size] do
+    match (body[j]? : Option Raw) with
+    | some (.ctrl "item" _) =>
+      let k := skipSpaces body (j + 1)
+      let given := if body[k]? matches some (.sym '[' _) then
+          (List.range (body.size - k)).find? fun d => body[k + d]? matches some (.sym ']' _)
+        else none
+      match given with
+      | some d =>
+        items := items.push (some (body.extract (k + 1) (k + d)), #[])
+        j := k + d + 1
+      | none =>
+        items := items.push (none, #[])
+        j := j + 1
+    | some r =>
+      unless items.isEmpty || ((items.back?.map (·.2.isEmpty)).getD true && r matches .space) do
+        items := items.modify (items.size - 1) fun (l, b) => (l, b.push r)
+      j := j + 1
+    | none => break
+  let mut out : Array Raw := #[]
+  let mut num := start
+  for (given, text) in items do
+    let label : Array Raw := match given with
+      | some l => if n == "description*" then #[.ctrl "textbf" p, .group l p] else l
+      | none =>
+        if n == "enumerate*" then
+          match template with
+          | some t => starLabelAt num #[] t.toList
+          | none => #[.word s!"{num}." p]
+        else if n == "itemize*" then #[.ctrl "textbullet" p] else #[]
+    if given.isNone && n == "enumerate*" then num := num + 1
+    let text := (text.toList.reverse.dropWhile (· matches .space)).reverse.toArray
+    unless out.isEmpty do out := out ++ join
+    out := (out ++ label).push .space ++ text
+  return out
 
 /-- A list set in a line: each item on a line of its own after its mark, as a footnote's text sets
 it, the line after the list a line of its own. -/
@@ -10491,6 +10577,9 @@ public def frameRestartMark : String := "appendix restart"
 its option list in the group after it. -/
 public def cancelOptionsMark : String := "cancel options"
 
+/-- The mark the appendix package's `title` option leaves in the preamble. -/
+public def appendixTitlesMark : String := "appendix titles"
+
 /-- babel's language options beyond those whose locale ships, which a class option offers it. -/
 private def babelLanguageNames : List String :=
   Locale.babelNames.map (·.1) ++
@@ -10693,6 +10782,12 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
     out := out ++ (← setting s!"\\usepackage\{{p}}" (.fonts (spec.map fun (k, f) => (k, Decl.quote f))) pos)
   else if p == "lineno" && opt.isSome then
     out := out ++ (← linenoLoad (opt.getD "") pos)
+  else if p == "appendix" && (KeyVal.items (opt.getD "")).contains "title" then
+    -- appendix.sty's `title`: each `{appendices}` section is headed `\appendixname` and its letter.
+    became s!"\\usepackage[title]\{appendix}"
+      "each appendix section headed by the appendix name and its letter" pos
+    out := out ++ (← packageOptions name p ((KeyVal.items (opt.getD "")).toList.filter (· != "title"))
+      pos) |>.push (.ctrl appendixTitlesMark pos)
   else if p == "cancel" then
     -- The package's options are the marks' own settings, carried to the elaborator's preamble.
     let opts := (KeyVal.items (opt.getD "")).toList
@@ -11287,6 +11382,31 @@ the option" else "the page is one-sided, as without the option")) pos
         (native.render ++ (if sides.isEmpty then "" else page.note?.getD "")) pos
       let carried ← if sides.isEmpty then pure #[] else carry page pos
       return some (native.raws pos ++ carried, k)
+  | "cellcolor" | "rowcolor" =>
+    -- colortbl's `\cellcolor[model]{colour}` and `\rowcolor[model]{colour}[left][right]`.
+    let (_, j) := takeRawOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if args.isEmpty then return none
+    let k := if name == "rowcolor" then (takeRawOpt raws (takeRawOpt raws k).2).2 else k
+    sayOnce ("table:" ++ name) .W0104 (Diag.say .W0104 .command s!"\\{name}") pos
+      (detail := some (if name == "cellcolor" then "the cell is set without its background"
+        else "the row is set without its background"))
+      (help := "a table's cells carry no background here; mark the cell with \\textbf or a rule")
+    return some (#[], k)
+  | "multirow" =>
+    -- multirow's `\multirow[vpos]{rows}[bigstruts]{width}[fixup]{text}`: its text in its first row.
+    let (_, j) := takeRawOpt raws start
+    let (rows, j) := takeGroups raws j 1
+    let (_, j) := takeRawOpt raws j
+    let (width, j) := takeGroups raws j 1
+    let (_, j) := takeRawOpt raws j
+    let (text, k) := takeGroups raws j 1
+    let some body := text[0]? | return none
+    if rows.isEmpty || width.isEmpty then return none
+    sayOnce "table:multirow" .W0104 (Diag.say .W0104 .command "\\multirow") pos
+      (detail := some s!"its text is set in its first row, not centred across {rawSrc (rows.getD 0 #[])} rows")
+      (help := "leave the cells below it empty, as the table sets them")
+    return some (#[.group body pos], k)
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont"
   | "newfontfamily" | "setfontfamily" | "renewfontfamily" | "providefontfamily"
   | "newfontface" | "setfontface" | "renewfontface" | "providefontface" =>
@@ -14584,6 +14704,12 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
             (help := Locale.shippedHelp)
         became s!"\\begin\{{n}}\{{lname}}" s!"the '{tag}' language attribute" p
         return .group (#[Raw.ctrl (Marker.name .lang tag) p] ++ body'.extract j body'.size) p
+      else if n == "displayquote" then
+        became "\\begin{displayquote}" "\\begin{quote}" p
+        return .env "quote" (← rewriteList inBody body #[] body.toList 0 0) p
+      else if n == "enumerate*" || n == "itemize*" || n == "description*" then
+        became s!"\\begin\{{n}}" "its items in the line, each after its label" p
+        return .group (starListRaws n (← rewriteList inBody body #[] body.toList 0 0) p) p
       else if n == "document" then
         rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) p
       else if n == "frame" then

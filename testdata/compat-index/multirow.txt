@@ -1,3 +1,3 @@
-# source: multirow manual §1 — vertical spans against the formal-table
-# stance: a design discussion, not an arm.
-body refuse:W0301 \begin{tabular}{ll}\multirow{2}{*}{a} & b\end{tabular}
+# source: multirow manual §1. The span is not drawn: its text sets in its
+# first row, and the span's rows and width are named, never set as text.
+body refuse:W0104 \begin{tabular}{ll}\multirow{2}{*}{a} & b\end{tabular}
