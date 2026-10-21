@@ -81,9 +81,10 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   for _ in [0:600] do
     let (s, next) := randStmt (phrasedTable ()) 4 seed
     seed := next
-    unless s.ok (phrasedTable ()).lexicon && parse (phrasedTable ()).lexicon (render s) == some s do
+    unless s.ok (phrasedTable ()).lexicon && parse (phrasedTable ()).lexicon (render s) == some s &&
+        !opensOnBlock (render s) do
       failed := failed.push (showToks leafWord (render s))
-  t s!"evidence: 600 random statements over the core table and declared phrases read back ({failed.toList.take 2})"
+  t s!"evidence: 600 random statements over the core table and declared phrases read back, no list item opening on a block ({failed.toList.take 2})"
     failed.isEmpty
   -- Declared phrases, taken or refused by name.
   let declare (binders : Array (String × Array LeanFacts.Binder)) (declared : List (String × String)) :=
@@ -292,7 +293,6 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       let ls := codePageLines fonts (readAs v).1
       ["Definition (Tide.height).", "Theorem (Tide.dep_hyp)."].all fun l =>
         (ls.filter (·.2.startsWith l)).size == 1)
-  -- A sentence that opens on a block capitalizes the block's first word.
   let swapType : LeanFacts.Term := .pi "p" .implicit false (.apps (.sort "0") [])
     (.pi "q" .implicit false (.apps (.sort "0") []) (.apps (.const "Iff")
       [.apps (.const "And") [.apps (.bvar 1) [], .apps (.bvar 0) []],
@@ -302,9 +302,8 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     "-- leantex: show = prose\ntheorem tt {p q : Prop} : p ∧ q ↔ q ∧ p := And.comm\n" (some swapFacts)
   let swapLines := codePageLines fonts (Elab.runKept "swap.lean" swapRaws swapDs).1
   let swapInk := swapLines.map (·.2.trimAscii.toString)
-  t s!"prose: a sentence opening on a block capitalizes the block's first word ({swapInk})"
-    ((swapInk.findIdx? (· == "Theorem (tt).")).any (fun i =>
-        (swapInk[i + 1]?).any (·.startsWith "Both")) &&
+  t s!"prose: a sentence opening on an equivalence of conjunctions sets it bare on the head's line, its first word capitalized ({swapInk})"
+    (swapInk.any (·.startsWith "Theorem (tt). Both p and q if and only if") &&
       ((proseOf swapFacts (coreTable true) (theoremAt "tt" 2 swapType) swapType).toOption.map
         fun s => (sentenceWords s).take 1) == some ["Both"])
   -- Phrases on the page.

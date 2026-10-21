@@ -1481,8 +1481,9 @@ def censusCodeRows :
     let hyp := linesFrom c "Theorem (Ebb.none_all). If"
     let swap := linesFrom c "Theorem (Ebb.swap)."
     let both := linesFrom c "Theorem (Ebb.both_all)."
+    let listed := linesFrom c "Theorem (Ebb.all_iff)."
     let bounds := (c.toList.flatMap (·.lines.toList)).dropWhile
-      (!hasStr ·.text "Theorem (Ebb.crate_bounds).")
+      (!hasStr ·.text "Theorem (Ebb.barge_bounds).")
     let opening (w : String) : Option CensusLine := bounds.find? (·.text.startsWith w)
     [("two pages", c.size == 2),
      ("a quantified hypothesis stands a step in under its condition, the conclusion back at its margin",
@@ -1492,9 +1493,14 @@ def censusCodeRows :
        | some a, some b, some d =>
          lead ≤ b.y - a.y && b.y - a.y < lead + lead / 2 && d.y - b.y == lead
        | _, _, _ => false),
-     ("an equivalence a quantifier holds stands a step in, each of its compound sides a step further",
-       linesStepAt step swap 1 "both" 2 && linesStepAt step swap 2 "if and only if" 1 &&
-         linesStepAt step swap 3 "both" 2),
+     ("an equivalence a quantifier holds stands a step in, its sides of conjunctions bare",
+       linesStepAt step swap 1 "both p and q if and only if both q and p." 1),
+     ("an equivalence a quantifier opens says its words, its two sides a numbered list",
+       match listed[0]?, listed[1]?, listed[2]? with
+       | some h, some a, some b =>
+         h.text.endsWith "the following are equivalent:" && a.text.startsWith "1. For every" &&
+           b.text.startsWith "2. True" && a.x == b.x
+       | _, _, _ => false),
      ("a conjunction of quantified statements sets as a numbered list right of the head's margin, each item a sentence",
        match both[0]?, both[1]?, both[2]? with
        | some h, some a, some b =>

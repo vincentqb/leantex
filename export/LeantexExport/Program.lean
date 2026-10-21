@@ -88,9 +88,9 @@ def mask (acc : String) : Expr → String
   | .mdata _ b => mask acc b
   | _ => acc
 
-/-- The leading binder Lean's generalized field notation reads a constant's receiver from: its first
-explicit binder, where that binder's type applies the constant's namespace and no binder before
-it has such a type. -/
+/-- The binder Lean's delaborator prints a constant's receiver of field notation from, as
+`generalizedFieldInfo` chooses it: its first explicit binder, where that binder's type applies the
+constant's namespace and no binder before it has such a type. -/
 def fieldOf (c : Name) (ty : Expr) : MetaM (Option Nat) := do
   let .str base _ := c | return none
   if base.isAnonymous || base == `Function then return none

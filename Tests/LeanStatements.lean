@@ -100,8 +100,8 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   spells "Tide.div_mod" #["\\forall \\mathit {a},{}", "\\mathit {b}:\\mathbb {N},",
     "\\mathit {b}\\cdot {}", "(\\mathit {a}/\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
     "\\mathit {b}={}", "\\mathit {a}"]
-  spells "Tide.total" #["\\mathrm {total}:", "\\mathrm {Add}", "\\mathit {α}\\to {}",
-    "\\mathit {α}\\to {}", "\\mathrm {List}", "\\mathit {α}\\to {}", "\\mathit {α}"]
+  spells "Tide.total" #["\\mathrm {total}:", "\\mathrm {Add}\\  \\mathit {α}\\to {}",
+    "\\mathit {α}\\to {}", "\\mathrm {List}\\  \\mathit {α}\\to {}", "\\mathit {α}"]
   spells "Tide.strict_hyp" #["(\\forall \\mathit {n}:\\mathbb {N},\\mathit {n}=\\mathrm {0})\\to {}",
     "\\mathrm {False}"]
   spells "Tide.imp_iff" #["\\forall \\mathit {p},{}", "\\mathit {q}:\\mathrm {Prop},",
@@ -118,8 +118,8 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\mathit {α}\\to {}", "\\mathit {α}"]
   spells "Tide.pos_ne" #["\\mathit {n}>{}", "\\mathrm {0}\\to {}", "\\mathit {n}\\neq {}",
     "\\mathrm {0}"]
-  spells "Tide.nz" #["\\forall \\mathit {n}:\\mathbb {N},", "\\mathrm {NeZero}",
-    "\\mathit {n}\\to {}", "\\mathit {n}\\neq {}", "\\mathrm {0}"]
+  spells "Tide.nz" #["\\forall \\mathit {n}:\\mathbb {N},",
+    "\\mathrm {NeZero}\\  \\mathit {n}\\to {}", "\\mathit {n}\\neq {}", "\\mathrm {0}"]
   spells "Tide.dep_hyp" #["\\forall \\mathit {n}:\\mathbb {N},",
     "(\\mathit {h}:\\mathrm {0}<\\mathit {n})\\to {}",
     "(\\mathrm {Fin.mk}\\  \\mathrm {0}\\  \\mathit {h}).\\mathrm {val}={}", "\\mathrm {0}"]
@@ -145,7 +145,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: an instance binder at the top is a hypothesis, never hidden"
     (mathOf (.pi "α" .explicit false typeSort (.pi "inst" .inst false (app "Inhabited" [var 0])
         (app "Nonempty" [var 1]))) ==
-      #["\\forall \\mathit {α}:\\mathrm {Type},", "\\mathrm {Inhabited}", "\\mathit {α}\\to {}",
+      #["\\forall \\mathit {α}:\\mathrm {Type},", "\\mathrm {Inhabited}\\  \\mathit {α}\\to {}",
           "\\mathrm {Nonempty}", "\\mathit {α}"])
   t "statements: an implicit binder the rest of the statement never names is shown, not hidden"
     (mathOf (.pi "α" .implicit false typeSort (.pi "a" .implicit false (var 0)
@@ -155,9 +155,27 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: membership sets its element first, a list's cons as Lean writes it"
     ((formulasOf facts "Tide.mem_cons").toList.drop 2 ==
       ["\\mathit {x}\\in {}", "\\mathit {x}::{}", "\\mathit {xs}"])
+  let relSpaces (cs : List (Math.MathClass × Char)) : Array (Array (String × String)) :=
+    let body := cs.foldr (fun (k, c) acc => Math.MList.cons (.atom k (.sym c) .nil .nil false) acc) .nil
+    (MathMl.formulaKids false body).filterMap fun
+      | .elem "mo" attrs _ => some (attrs.filter fun a => a.1 == "lspace" || a.1 == "rspace")
+      | _ => none
+  let thick := MathMl.measuredEm 5 18
+  let nil := MathMl.measuredEm 0 18
+  t "statements: a relation spaces on the web as TeX does beside its neighbours, none between two relations or at a formula's edge"
+    (relSpaces [(.ord, 'x'), (.rel, ':'), (.rel, ':'), (.ord, 'y')] ==
+        #[#[("lspace", thick), ("rspace", nil)], #[("lspace", nil), ("rspace", thick)]] &&
+      relSpaces [(.ord, 'x'), (.rel, '='), (.ord, 'y')] == #[#[]] &&
+      relSpaces [(.ord, 'x'), (.rel, '=')] == #[#[("lspace", thick), ("rspace", nil)]] &&
+      relSpaces [(.ord, 'x'), (.rel, '='), (.bin, '-'), (.ord, 'y')] == #[#[], #[]])
   t "statements: a word space follows a quantifier's head and a definition's name alone"
     (facts.decls.all fun d => (spacedFormulasOf facts d.name).all fun (f, spaced) =>
       (f.endsWith "," || f.endsWith ":") → spaced)
+  t "statements: an application beside an operator stands whole, its word spaces only where it stands alone"
+    (facts.decls.all fun d =>
+      let fs := (spacedFormulasOf facts d.name).toList
+      (fs.zip fs.tail).all fun ((f, spaced), (g, _)) =>
+        spaced && !(f.endsWith "," || f.endsWith ":") → !g.endsWith "{}")
   -- The table, where no core file reaches.
   t "statements: the number sets are blackboard letters"
     (["Nat", "Int", "Rat", "Real", "Complex"].map (fun c => texOf (app c []) []) ==

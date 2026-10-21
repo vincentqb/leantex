@@ -431,13 +431,28 @@ private theorem leafRaws_adm (pos : Pos) (l : LeanProse.Leaf) : Adm true (leafRa
         · exact breakRaws_adm pos
     exact h rest _ (by intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos _)
 
+private theorem wordRaws_adm (pos : Pos) (s : String) : Adm true (wordRaws pos s) := by
+  have h : ∀ (l : List String) (acc : Array Raw), Adm true acc →
+      Adm true (l.foldl (fun acc w =>
+        (if acc.isEmpty then acc else acc.push .space).push (.word w pos)) acc) := by
+    intro l
+    induction l with
+    | nil => intro acc h; exact h
+    | cons w _ ih =>
+      intro acc h
+      refine ih _ (adm_push ?_ rfl)
+      split
+      · exact h
+      · exact adm_push h rfl
+  exact h _ #[] (by intro r hr; simp at hr)
+
 private theorem tokRaws_adm (pos : Pos) (opening : Bool) (t : LeanProse.Tok LeanProse.Leaf) :
     Adm true (tokRaws pos opening t).1 := by
   unfold tokRaws
   split
   · split
     · intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos _
-    · intro r hr; simp at hr; subst hr; rfl
+    · exact wordRaws_adm pos _
   · exact leafRaws_adm pos _
   · exact leafRaws_adm pos _
   all_goals intro r hr; simp at hr
@@ -569,6 +584,32 @@ private theorem relAttach_adm (pos : Pos) (cur : Array Raw) (t : LeanProse.Tok L
     · cases hc
   all_goals cases hc
 
+private theorem closeRel_adm (pos : Pos) (cur : Array Raw) (h : Adm true cur) :
+    Adm true (closeRel pos cur) := by
+  unfold closeRel
+  split
+  · rename_i body p hb
+    have hm := h _ (Array.mem_of_back? hb)
+    simp only [Md.Vocab.admits, Bool.and_eq_true] at hm
+    refine adm_push (adm_pop h) ?_
+    simp only [Md.Vocab.admits, Bool.and_eq_true, Array.toList_append, mathAdmitsList_append]
+    exact ⟨hm.1, hm.2, by simpa using listRaws_adm pos _ #[] (by simp [Md.Vocab.mathAdmitsList])⟩
+  · exact h
+
+private theorem closeRelIf_adm (pos : Pos) (cur : Array Raw) (c : Bool) (h : Adm true cur) :
+    Adm true (if c = true then closeRel pos cur else cur) := by
+  cases c
+  · exact h
+  · exact closeRel_adm pos cur h
+
+private theorem gapRel_adm (pos : Pos) (c d : Bool) :
+    Adm true (if c = true then (#[] : Array Raw) else if d = true then breakRaws pos else #[.space]) := by
+  cases c
+  · cases d
+    · intro r hr; simp at hr; subst hr; rfl
+    · exact breakRaws_adm pos
+  · intro r hr; simp at hr
+
 private theorem pushTok_adm (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf)
     (h : ∀ f ∈ acc.1, FAdm f) : ∀ f ∈ (pushTok pos acc t).1, FAdm f := by
   obtain ⟨stack, o, ls⟩ := acc
@@ -594,13 +635,9 @@ private theorem pushTok_adm (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok L
         · exact h f (Or.inr hf)
       · simp only [List.mem_cons] at hf h
         rcases hf with rfl | hf
-        · refine ⟨(h top (Or.inl rfl)).1, adm_append (adm_append (h top (Or.inl rfl)).2 ?_)
+        · exact ⟨(h top (Or.inl rfl)).1, adm_append (adm_append
+            (closeRelIf_adm pos _ _ (h top (Or.inl rfl)).2) (gapRel_adm pos _ _))
             (tokRaws_adm pos o t)⟩
-          split
-          · intro r hr; simp at hr
-          · split
-            · exact breakRaws_adm pos
-            · intro r hr; simp at hr; subst hr; rfl
         · exact h f (Or.inr hf)
 
 private theorem sentenceStep_adm (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf)

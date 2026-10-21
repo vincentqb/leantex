@@ -2114,12 +2114,16 @@ public def groupLeaf (g : LeanProse.Group LeanProse.Leaf) : LeanProse.Leaf :=
       (if acc.isEmpty then acc else acc.push (.word ",")) ++ whole n) #[]
     [(names.push (.word ":")).append (whole g.bound)]
 
+/-- A word token's words, a word space between two. -/
+public def wordRaws (pos : Pos) (s : String) : Array Raw :=
+  (s.splitOn " ").foldl (fun acc w => (if acc.isEmpty then acc else acc.push .space).push (.word w pos)) #[]
+
 /-- A token's raws, its word capitalized while the sentence still opens, and whether it still
 opens after it: past a block's bounds and a list item's mark it does. -/
 public def tokRaws (pos : Pos) (opening : Bool) : LeanProse.Tok LeanProse.Leaf → Array Raw × Bool
   | .w s => match LeanProse.relGlyph? s with
     | some g => (#[formulaRaw pos g], false)
-    | none => (#[.word (if opening then s.capitalize else s) pos], false)
+    | none => (wordRaws pos (if opening then s.capitalize else s), false)
   | .leaf l => (leafRaws pos l, false)
   | .bind g => (leafRaws pos (groupLeaf g), false)
   | .indent | .dedent | .item => (#[], opening)
@@ -2156,10 +2160,17 @@ public def relAttach? (pos : Pos) (cur : Array Raw) (t : LeanProse.Tok LeanProse
   | .w s =>
     match LeanProse.relGlyph? s, cur.back? with
     | some g, some (.math false body p) =>
-      some (cur.pop.push (.math false (body ++ LeanStatement.Math.listRaws pos #[]
-        (g.push (.arg [])).toList) p))
+      some (cur.pop.push (.math false (body ++ LeanStatement.Math.listRaws pos #[] g.toList) p))
     | _, _ => none
   | .leaf _ | .bind _ | .indent | .dedent | .item => none
+
+/-- Text whose last formula ends on a relation's symbol, an empty operand after it, so the symbol
+spaces as before the formula that follows. -/
+public def closeRel (pos : Pos) (cur : Array Raw) : Array Raw :=
+  match cur.back? with
+  | some (.math false body p) =>
+    cur.pop.push (.math false (body ++ LeanStatement.Math.listRaws pos #[] [.arg []]) p)
+  | _ => cur
 
 /-- A sentence's raws so far: each open frame, innermost first, whether the sentence still opens,
 and whether a line just began. -/
@@ -2228,8 +2239,8 @@ public def openItem (pos : Pos) : List Frame → List Frame
   | [] => []
 
 /-- A word or leaf onto the innermost frame's text, after a word space but at a line's start, where
-it joins, or past a relation's symbol, which ends the formula before it and a bare break follows; a
-closing word just after a list is dropped, the list's items each closing themselves. -/
+it joins, or past a relation's symbol ending the formula before it, a formula after a bare break;
+a closing word just after a list is dropped, the list's items each closing themselves. -/
 public def pushTok (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf) :
     SentenceAcc :=
   let r := tokRaws pos acc.2.1 t
@@ -2239,9 +2250,11 @@ public def pushTok (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.
     else match relAttach? pos f.cur t with
       | some cur => ({ f with cur, afterList := false, afterRel := true } :: rest, false, false)
       | none =>
+        let word := t matches .w _
+        let cur := if f.afterRel && !word then closeRel pos f.cur else f.cur
         let gap : Array Raw := if acc.2.2 || t.joins || f.cur.isEmpty then #[]
-          else if f.afterRel then breakRaws pos else #[.space]
-        ({ f with cur := f.cur ++ gap ++ r.1, afterList := false, afterRel := false } :: rest,
+          else if f.afterRel && !word then breakRaws pos else #[.space]
+        ({ f with cur := cur ++ gap ++ r.1, afterList := false, afterRel := false } :: rest,
           r.2, false)
   | [] => ([{ Frame.empty .top with cur := r.1 }], r.2, false)
 

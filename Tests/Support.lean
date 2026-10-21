@@ -3438,6 +3438,13 @@ def layoutLines {α : Type} (l : List (Tok α)) : Array (Nat × List (Tok α)) :
     | .w _ | .leaf _ | .bind _ => (acc.1, acc.2.1.push t, acc.2.2)
   flush (l.foldl step (0, #[], #[]))
 
+/-- Whether a list item's mark stands right before a block's start, a nested list's aside. -/
+def opensOnBlock {α : Type} : List (Tok α) → Bool
+  | .item :: .indent :: .item :: rest => opensOnBlock (.item :: rest)
+  | .item :: .indent :: _ => true
+  | _ :: rest => opensOnBlock rest
+  | [] => false
+
 /-- A binder group as text: its names, a colon and its bound, or a predicate's relation alone. -/
 def groupText {α : Type} (f : α → String) (g : Group α) : String :=
   if g.pred then f g.bound else ", ".intercalate (g.names.map f) ++ " : " ++ f g.bound
@@ -3466,10 +3473,12 @@ def randTerm (tb : Table) (s : UInt64) : Term Leaf × UInt64 :=
 
 /-- A random binder group: one to three names of a type, or a binder predicate's relation. -/
 def randGroup (i : Nat) (s : UInt64) : Group Leaf × UInt64 :=
-  let (k, s) := rand s 4
+  let (k, s) := rand s 5
   let (more, s) := rand s 3
   let names := (List.range (more + 1)).map fun j => wordLeaf s!"x{i}{j}"
   if k == 0 then (⟨[wordLeaf s!"x{i}"], wordLeaf s!"x{i}∈S", true⟩, s)
+  else if k == 1 then (⟨[wordLeaf s!"x{i}"], wordLeaf s!"x{i}<n", true⟩, s)
+  else if k == 2 then (⟨names, wordLeaf s!"(z:T,F(z,z))", false⟩, s)
   else (⟨names, wordLeaf s!"T{k}", false⟩, s)
 
 /-- A random binder: one to three groups. -/

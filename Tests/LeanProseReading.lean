@@ -130,15 +130,18 @@ def wordSplits (ws : List String) (acc : Array Piece) : List Piece →
       | none => []
     here ++ wordSplits ws (acc.push p) rest
 
-/-- A binder group read off its formula: names before a colon and the type after it, or a binder
-predicate's relation, which holds `∈`, its name before it. -/
+/-- A binder group read off its formula at its first colon or relation: names before a colon and
+the type after it, or a binder predicate's relation, its one name before the symbol. -/
 def groupOf? (s : String) : Option (Group String) :=
-  match s.splitOn ":" with
-  | [names, bound] => some ⟨(names.splitOn ",").map (·.trimAscii.toString), bound.trimAscii.toString, false⟩
-  | _ =>
-    match s.splitOn "∈" with
-    | [name, _] => some ⟨[name.trimAscii.toString], s, true⟩
-    | _ => none
+  let cs := s.toList
+  match cs.findIdx? (fun c => c == ':' || "∈<≤>≥≠".contains c) with
+  | some i =>
+    let before := (String.ofList (cs.take i)).trimAscii.toString
+    if cs[i]? == some ':' then
+      some ⟨(before.splitOn ",").map (·.trimAscii.toString),
+        (String.ofList (cs.drop (i + 1))).trimAscii.toString, false⟩
+    else some ⟨[before], s, true⟩
+  | none => none
 
 /-- Two or more groups, "and" before the last. -/
 def groupList : List Piece → Option (Group String × List (Group String) × List Piece)
@@ -230,6 +233,25 @@ def onlyItems (l : List Piece) : Option (List Item) :=
     | .item i => some i
     | .block _ | .list _ => none
 
+/-- Whether a reading may stand as an operand's pieces: an equivalence only as a block. -/
+def unblocked (l : List Piece) (s : Stmt String) : Bool :=
+  match l with
+  | [.block _] => true
+  | _ => !(s matches .iff ..)
+
+/-- Whether a reading is a lone formula or a relation whose words a sentence's connectives never
+split, which an inline "and" may join. -/
+def plainAtom : Stmt String → Bool
+  | .atom _ => true
+  | .rel t args =>
+    let joins (p : Template) := p.parts.any fun
+      | .word w => ["and", "or", "if", "then", "both", "either"].contains w
+      | .slot _ => false
+    !joins t && args.all fun
+      | .phrase p _ => !joins p
+      | .leaf _ => true
+  | _ => false
+
 def chainOf : List (Stmt String) → Stmt String → Stmt String
   | [], c => c
   | h :: hs, c => .imp h (chainOf hs c)
@@ -267,14 +289,15 @@ def readsN (vc : Vocab) (scope : Bool) (l : List Piece) : List (Stmt String) :=
   let iffs := (wordSplits ["if", "and", "only", "if"] #[] l).flatMap fun (a, b) =>
     if _h1 : seqSize a < seqSize l then
       if _h2 : seqSize b < seqSize l then
-        (readsN vc false a).flatMap fun x => (readsN vc false b).map (.iff x ·)
+        ((readsN vc false a).filter (unblocked a)).flatMap fun x =>
+          ((readsN vc false b).filter (unblocked b)).map (.iff x ·)
       else []
     else []
   let inlines := if !scope then [] else (wordSplits ["and"] #[] l).flatMap fun (a, b) =>
     if _h1 : seqSize a < seqSize l then
       if _h2 : seqSize b < seqSize l then
-        ((readsN vc false a).filter (·.prec == 0)).flatMap fun x =>
-          ((readsN vc false b).filter (·.prec == 0)).map (.conj x ·)
+        ((readsN vc false a).filter plainAtom).flatMap fun x =>
+          ((readsN vc false b).filter plainAtom).map (.conj x ·)
       else []
     else []
   let quants := match quantified l with
@@ -293,19 +316,29 @@ def readsN (vc : Vocab) (scope : Bool) (l : List Piece) : List (Stmt String) :=
       (wordSplits ["and"] #[] rest).flatMap fun (a, b) =>
         if _h1 : seqSize a < seqSize l then
           if _h2 : seqSize b < seqSize l then
-            (readsN vc false a).flatMap fun x => (readsN vc false b).map (.conj x ·)
+            ((readsN vc false a).filter (unblocked a)).flatMap fun x =>
+              ((readsN vc false b).filter (unblocked b)).map (.conj x ·)
           else []
         else []
     | .item (.word "either") :: rest =>
       (wordSplits ["or"] #[] rest).flatMap fun (a, b) =>
         if _h1 : seqSize a < seqSize l then
           if _h2 : seqSize b < seqSize l then
-            (readsN vc false a).flatMap fun x => (readsN vc false b).map (.disj x ·)
+            ((readsN vc false a).filter (unblocked a)).flatMap fun x =>
+              ((readsN vc false b).filter (unblocked b)).map (.disj x ·)
           else []
         else []
     | .item (.word "it") :: .item (.word "is") :: .item (.word "not") :: .item (.word "the") ::
         .item (.word "case") :: .item (.word "that") :: rest =>
-      if _h : seqSize rest < seqSize l then (readsN vc false rest).map .neg else []
+      if _h : seqSize rest < seqSize l then
+        ((readsN vc false rest).filter (unblocked rest)).map .neg else []
+    | [.item (.word "the"), .item (.word "following"), .item (.word "are"),
+        .item (.word "equivalent"), .item (.word ":"), .list [x, y]] =>
+      if _h1 : seqSize x < seqSize l then
+        if _h2 : seqSize y < seqSize l then
+          (readsN vc true x).flatMap fun a => (readsN vc true y).map (.iff a ·)
+        else []
+      else []
     | _ => []
   let atoms := match onlyItems l with
     | some is => (atomsAt vc is).filterMap fun (s, r) => if r.isEmpty then some s else none
@@ -384,6 +417,15 @@ def unitG (vc : Vocab) (l : List Piece) : Option (Stmt String × List Piece) :=
   | .item (.word "it") :: .item (.word "is") :: .item (.word "not") :: .item (.word "the") ::
       .item (.word "case") :: .item (.word "that") :: rest =>
     if _h : seqSize rest < seqSize l then (unitG vc rest).map fun (a, r) => (.neg a, r) else none
+  | .item (.word "the") :: .item (.word "following") :: .item (.word "are") ::
+      .item (.word "equivalent") :: .item (.word ":") :: .list [x, y] :: r =>
+    if _h1 : seqSize x < seqSize l then
+      if _h2 : seqSize y < seqSize l then
+        match stmtG vc true x, stmtG vc true y with
+        | some (a, []), some (b, []) => some (.iff a b, r)
+        | _, _ => none
+      else none
+    else none
   | _ =>
     match quantified l with
     | some (all, bd, body) =>
@@ -412,10 +454,10 @@ def stmtG (vc : Vocab) (scope : Bool) (l : List Piece) : Option (Stmt String × 
       if _h : seqSize r' < seqSize l then (stmtG vc false r').map fun (t, r'') => (.iff s t, r'')
       else none
     | none, some r' =>
-      if scope && s.prec == 0 then
+      if scope && plainAtom s then
         if _h : seqSize r' < seqSize l then
           match stmtG vc false r' with
-          | some (t, []) => if t.prec == 0 then some (.conj s t, []) else none
+          | some (t, []) => if plainAtom t then some (.conj s t, []) else none
           | _ => none
         else none
       else some (s, r)
@@ -966,6 +1008,8 @@ def props (p : String) (qs : List String) : Binder Leaf := ⟨grp (p :: qs) "Pro
 def ty (a : String) : Binder Leaf := ⟨grp [a] "Type", []⟩
 /-- A binder predicate's group, `x ∈ S`. -/
 def mem (x S : String) : Binder Leaf := ⟨⟨[L x], L s!"{x}∈{S}", true⟩, []⟩
+/-- A binder predicate's group bounding its name, `x < n`. -/
+def below (x n : String) : Binder Leaf := ⟨⟨[L x], L s!"{x}<{n}", true⟩, []⟩
 /-- A quantifier over several groups. -/
 def groups (gs : List (List String × String)) : Binder Leaf :=
   match gs.map fun (ns, t) => grp ns t with
@@ -983,6 +1027,9 @@ def corpus : List (String × Stmt Leaf) :=
      .all (nats "x" ["y"]) (.ex (nat "z") (.conj (le "x" "z") (le "y" "z")))),
    ("three quantifiers deep", .all (ty "A") (.all (elt "a" "A") (.ex (elt "b" "A") (eq "a" "b")))),
    ("a binder predicate", .all (mem "x" "S") (.ex (mem "y" "S") (lt "x" "y"))),
+   ("an order binder predicate", .all (nat "n") (.all (below "k" "n") (.ex (below "j" "k") (le "j" "k")))),
+   ("a group whose type holds a colon and a comma",
+     .all (groups [(["f"], "(n:N,F(n))"), (["g"], "(N→N)")]) (eq "f" "g")),
    ("an existential whose body is a conditional",
      .ex (nat "x") (.all (nat "y") (.imp (lt "y" "x") (.ex (nat "z") (lt "y" "z"))))),
    ("a curried implication", .imp (le "x" "y") (.imp (le "y" "z") (le "x" "z"))),
@@ -1005,6 +1052,16 @@ def corpus : List (String × Stmt Leaf) :=
      .imp (.all (nat "x") (.conj (.all (nat "y") (lt "x" "y")) (P "Q"))) (P "R")),
    ("a negated quantifier as a hypothesis", .imp (.neg (.all (nat "x") (le "x" "y"))) (P "Q")),
    ("a disjunction as a conclusion", .imp (P "P") (.disj (P "Q") (P "R"))),
+   ("an equivalence whose left side a quantifier opens lists its two sides",
+     .iff (.all (nat "x") (le "x" "x")) (P "Q")),
+   ("an equivalence whose left side is a conjunction sets it bare",
+     .iff (.conj (P "P") (P "Q")) (P "R")),
+   ("a list item holding an equivalence of a conjunction opens on its words",
+     .conj (.iff (.conj (P "P") (P "Q")) (P "R")) (.all (nat "x") (le "x" "x"))),
+   ("a list item holding an equivalence a quantifier opens lists its sides",
+     .conj (.iff (.all (nat "x") (le "x" "y")) (P "Q")) (.ex (nat "z") (eq "z" "z"))),
+   ("a scope holding an equivalence an existential opens lists its sides",
+     .all (nat "y") (.iff (.ex (nat "x") (lt "x" "y")) (P "Q"))),
    ("a conjunction of quantified statements, a list",
      .conj (.all (nat "x") (le "x" "x")) (.ex (nat "y") (eq "y" "y"))),
    ("a quantifier over a list holding a quantifier",

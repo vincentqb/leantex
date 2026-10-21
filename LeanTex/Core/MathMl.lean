@@ -164,6 +164,8 @@ public structure Marks where
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
     fun _ _ _ _ => none
   style : MathStyle := .text false
+  /-- The class of the atom before in the current list, `none` at its start. -/
+  prev : Option MathClass := none
   /-- `\minalignsep` as a CSS length in the page's print unit; `1em` at the 10 pt base. -/
   alignSep : String := "1em"
   /-- Font MATH percentages; unmeasured, plain TeX's 7/5 pt script sizes at 10 pt. -/
@@ -361,27 +363,25 @@ letter. -/
     | _ => none
   | .text _ | .style _ | .script _ _ => none
 
-/-- The letters of one style at the start of `l`, and the tokens past them. -/
-@[expose] public def spanLetters (attrs : Array (String × String)) : List Html.Node → List Char × List Html.Node
+/-- The letters of one style at the start of `l` after `cs`, and the tokens past them. -/
+@[expose] public def spanLetters (attrs : Array (String × String)) (cs : Array Char) :
+    List Html.Node → Array Char × List Html.Node
   | n :: rest =>
     match letterOf? n with
-    | some (a, c) =>
-      if a == attrs then
-        let r := spanLetters attrs rest
-        (c :: r.1, r.2)
-      else ([], n :: rest)
-    | none => ([], n :: rest)
-  | [] => ([], [])
+    | some (a, c) => if a == attrs then spanLetters attrs (cs.push c) rest else (cs, n :: rest)
+    | none => (cs, n :: rest)
+  | [] => (cs, [])
 
 public theorem spanLetters_len (attrs : Array (String × String)) :
-    ∀ l : List Html.Node, (spanLetters attrs l).2.length ≤ l.length
-  | [] => by simp [spanLetters]
-  | n :: rest => by
-    have ih := spanLetters_len attrs rest
+    ∀ (l : List Html.Node) (cs : Array Char), (spanLetters attrs cs l).2.length ≤ l.length
+  | [], _ => by simp [spanLetters]
+  | n :: rest, cs => by
     unfold spanLetters
     split
-    · split
-      · simp only [List.length_cons]; omega
+    · rename_i c _
+      split
+      · have := spanLetters_len attrs rest (cs.push c)
+        simp only [List.length_cons]; omega
       · simp
     · simp
 
@@ -390,32 +390,80 @@ public theorem spanLetters_len (attrs : Array (String × String)) :
   .elem "mi" (attrs.map fun (k, v) => if k == "style" then (k, v ++ "; " ++ keepLineCss) else (k, v))
     #[.text (String.ofList cs)]
 
-/-- Consecutive text-styled letters of one style as one token, so a word reads as one. -/
-@[expose] public def joinList : List Html.Node → List Html.Node
-  | [] => []
+/-- Consecutive text-styled letters of one style as one token after `out`, so a word reads as
+one. -/
+@[expose] public def joinInto (out : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => out
   | n :: rest =>
     match letterOf? n with
     | some (a, c) =>
-      match h : spanLetters a rest with
-      | ([], _) => n :: joinList rest
-      | (d :: ds, after) =>
-        have : after.length < rest.length + 1 := by
-          have := spanLetters_len a rest
-          rw [h] at this
-          simp only at this; omega
-        wordToken a (c :: d :: ds) :: joinList after
-    | none => n :: joinList rest
+      match h : spanLetters a #[c] rest with
+      | (cs, after) =>
+        if cs.size ≤ 1 then joinInto (out.push n) rest
+        else
+          have : after.length < rest.length + 1 := by
+            have := spanLetters_len a rest #[c]
+            rw [h] at this
+            simp only at this; omega
+          joinInto (out.push (wordToken a cs.toList)) after
+    | none => joinInto (out.push n) rest
 termination_by l => l.length
 
 /-- A list's tokens, a word of text-styled letters as one. -/
 @[expose] public def joinLetters (nodes : Array Html.Node) : Array Html.Node :=
-  (joinList nodes.toList).toArray
+  joinInto #[] nodes.toList
 
-/-- A relation colon's spacing, TeX's thick space each side outside scripts, which MathML's
-operator dictionary spaces as punctuation. -/
-def relColon (cls : MathClass) (c : Char) (st : MathStyle) : Array (String × String) :=
-  if cls == .rel && c == ':' && st.rank ≥ 2 then #[("lspace", "0.277778em"), ("rspace", "0.277778em")]
-  else #[]
+/-- The class of the next atom in a list, past spaces and colour switches. -/
+def nextClass : MList → Option MathClass
+  | .nil => none
+  | .cons (.atom cls ..) _ => some cls
+  | .cons _ rest => nextClass rest
+
+/-- A neighbour's class as a relation's spacing reads it: a binary operator beside a relation
+is an ordinary atom (TeXbook p. 170). -/
+def besideRel : MathClass → MathClass
+  | .bin => .ord
+  | .ord => .ord
+  | .op => .op
+  | .rel => .rel
+  | .opening => .opening
+  | .closing => .closing
+  | .punct => .punct
+  | .inner => .inner
+
+/-- A bare relation's spacing outside scripts, as TeX's table gives it between its neighbours, where
+that differs from MathML's thick space each side or the operator dictionary spaces it otherwise, as
+it does a colon. -/
+def relSpacing (prev : Option MathClass) (cls : MathClass) (nuc : MNucleus) (bare : Bool)
+    (next : Option MathClass) (st : MathStyle) : Array (String × String) :=
+  match nuc with
+  | .sym c =>
+    if cls == .rel && bare && st.rank ≥ 2 then
+      let l := (prev.map fun p => (spacing (besideRel p) .rel st).mu).getD 0
+      let r := (next.map fun n => (spacing .rel (besideRel n) st).mu).getD 0
+      if c == ':' || l != MathSpace.thick.mu || r != MathSpace.thick.mu then
+        #[("lspace", measuredEm l 18), ("rspace", measuredEm r 18)]
+      else #[]
+    else #[]
+  | _ => #[]
+
+/-- An atom's spacing attributes, between the atom before it and the list after it. -/
+def atomSpacing (mk : Marks) (cls : MathClass) (nuc : MNucleus) (sup sub rest : MList) :
+    Array (String × String) :=
+  relSpacing mk.prev cls nuc (sup matches .nil && sub matches .nil) (nextClass rest) mk.style
+
+/-- Marks at a list's start, no atom before. -/
+def Marks.start (mk : Marks) : Marks := { mk with prev := none }
+
+/-- Marks past an atom of class `cls`. -/
+def Marks.after (mk : Marks) (cls : MathClass) : Marks := { mk with prev := some cls }
+
+/-- A node with attributes added to its element. -/
+def spaced (extra : Array (String × String)) : Html.Node → Html.Node
+  | .elem t attrs kids => .elem t (attrs ++ extra) kids
+  | .text s => .text s
+  | .style s => .style s
+  | .script src nonce => .script src nonce
 
 mutual
 
@@ -428,7 +476,8 @@ public def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Arr
   | .cons (.space mu) rest =>
     listNodes mk disp ink (acc.push (paint ink (itemNode mk disp (.space mu)))) rest
   | .cons (.atom cls nuc sup sub lim) rest =>
-    listNodes mk disp ink (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim))))
+    listNodes (mk.after cls) disp ink (acc.push (paint ink (spaced
+      (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim)))))
       rest
 
 /-- One item as one element; a colour switch emits nothing of its own. -/
@@ -449,7 +498,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
     -- A lone scalar never stretches: only `\left`/`\right` grow a delimiter.
     let tag := leafTag cls c
     .elem tag (if tag == "mi" then #[("mathvariant", "normal")]
-        else if tag == "mo" then #[("stretchy", "false")] ++ relColon cls c mk.style else #[])
+        else if tag == "mo" then #[("stretchy", "false")] else #[])
       #[.text (charText c)]
   | .styled style c =>
     -- Chromium honours no non-`normal` `mathvariant`, so a text style's axes ride on CSS.
@@ -566,7 +615,9 @@ end
 @[expose] public def bareOp (ns : Array Html.Node) : Array Html.Node :=
   match ns.toList with
   | [.elem t attrs kids] =>
-    if t == "mo" then #[.elem t (attrs ++ #[("lspace", "0"), ("rspace", "0")]) kids] else ns
+    if t == "mo" && !attrs.any (·.1 == "lspace") then
+      #[.elem t (attrs ++ #[("lspace", "0"), ("rspace", "0")]) kids]
+    else ns
   | _ => ns
 
 /-- One formula's children: its list in the formula's own style. -/
@@ -728,6 +779,10 @@ theorem paint_chars (ink : Option String) (n : Html.Node) (c : Array Char) :
   | style s => rfl
   | script a j => rfl
 
+theorem spaced_chars (extra : Array (String × String)) (n : Html.Node) (c : Array Char) :
+    nodeChars c (spaced extra n) = nodeChars c n := by
+  cases n <;> rfl
+
 theorem cancelPolygons_chars (ink : String) (pad : Int)
     (ps : List (Array (Int × Int))) (c : Array Char) :
     nodeListChars c (ps.map (cancelPolygon ink pad)) = c := by
@@ -766,8 +821,8 @@ theorem listNodes_size (mk : Marks) (disp : Bool) :
       (listNodes_size mk disp ink rest (acc.push (paint ink (itemNode mk disp (.space mu)))))
   | ink, .cons (.atom cls nuc sup sub lim) rest, acc =>
     Nat.le_trans (by simp)
-      (listNodes_size mk disp ink rest
-        (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))))
+      (listNodes_size (mk.after cls) disp ink rest
+        (acc.push (paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim))))))
 
 theorem listChars_of_empty (mk : Marks) (disp : Bool) :
     ∀ (ink : Option String) (ml : MList),
@@ -784,12 +839,13 @@ theorem listChars_of_empty (mk : Marks) (disp : Bool) :
     omega
   | ink, .cons (.atom cls nuc sup sub lim) rest, h, c => by
     exfalso
-    have hs := listNodes_size mk disp ink rest
-      #[paint ink (itemNode mk disp (.atom cls nuc sup sub lim))]
-    have h0 : (listNodes mk disp ink
-        #[paint ink (itemNode mk disp (.atom cls nuc sup sub lim))] rest).size = 0 := by
+    have hs := listNodes_size (mk.after cls) disp ink rest
+      #[paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim)))]
+    have h0 : (listNodes (mk.after cls) disp ink
+        #[paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim)))] rest).size
+        = 0 := by
       simpa [listNodes, Array.isEmpty_iff_size_eq_zero] using h
-    have h1 : (#[paint ink (itemNode mk disp (.atom cls nuc sup sub lim))] :
+    have h1 : (#[paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim)))] :
         Array Html.Node).size = 1 := rfl
     omega
 
@@ -870,54 +926,60 @@ theorem letterOf?_chars {n : Html.Node} {a : Array (String × String)} {c : Char
   obtain ⟨kids, s, rfl, hk, hs, -⟩ := letterOf?_shape h
   simp [nodeChars, hk, nodeListChars, pushChars, hs]
 
+theorem pushChars_append (acc : Array Char) (l : List Char) (c : Char) :
+    pushChars acc (l ++ [c]) = (pushChars acc l).push c := by
+  induction l generalizing acc with
+  | nil => rfl
+  | cons x _ ih => exact ih (acc.push x)
+
 theorem spanLetters_chars (attrs : Array (String × String)) :
-    ∀ (l : List Html.Node) (acc : Array Char),
-      nodeListChars acc l = nodeListChars (pushChars acc (spanLetters attrs l).1)
-        (spanLetters attrs l).2
-  | [], acc => by simp [spanLetters, pushChars, nodeListChars]
-  | n :: rest, acc => by
+    ∀ (l : List Html.Node) (cs : Array Char) (acc : Array Char),
+      nodeListChars (pushChars acc cs.toList) l =
+        nodeListChars (pushChars acc (spanLetters attrs cs l).1.toList) (spanLetters attrs cs l).2
+  | [], cs, acc => by simp [spanLetters]
+  | n :: rest, cs, acc => by
     unfold spanLetters
     split
     · rename_i a c hl
       split
       · simp only [nodeListChars, letterOf?_chars hl]
-        rw [spanLetters_chars attrs rest (acc.push c)]
-        rfl
-      · simp [pushChars]
-    · simp [pushChars]
+        rw [← pushChars_append, ← Array.toList_push, spanLetters_chars attrs rest (cs.push c) acc]
+      · rfl
+    · rfl
 
-theorem joinList_chars (l : List Html.Node) : ∀ (acc : Array Char),
-    nodeListChars acc (joinList l) = nodeListChars acc l := by
-  fun_induction joinList l with
-  | case1 => intro acc; simp [nodeListChars]
-  | case2 _ _ _ _ _ _ _ ih =>
-    intro acc; simp only [nodeListChars]; rw [ih]
-  | case3 n rest a c hl d ds after h _ ih =>
-    intro acc
-    have hs := spanLetters_chars a rest (acc.push c)
+theorem joinInto_chars (out : Array Html.Node) (l : List Html.Node) (acc : Array Char) :
+    nodeListChars acc (joinInto out l).toList = nodeListChars (nodeListChars acc out.toList) l := by
+  fun_induction joinInto out l with
+  | case1 => rfl
+  | case2 out n rest _ _ _ _ _ _ _ ih =>
+    rw [ih, Array.toList_push, nodeListChars_append]; rfl
+  | case3 out n rest a c hl cs after h _ _ ih =>
+    have hs := spanLetters_chars a rest #[c] (nodeListChars acc out.toList)
     rw [h] at hs
+    rw [ih, Array.toList_push, nodeListChars_append]
     simp only [nodeListChars, letterOf?_chars hl]
-    rw [ih, hs]
-    simp [wordToken, nodeChars, pushChars, nodeListChars]
-  | case4 _ _ _ ih =>
-    intro acc; simp only [nodeListChars]; rw [ih]
+    rw [show (nodeListChars acc out.toList).push c = pushChars (nodeListChars acc out.toList) [c] from rfl,
+      show [c] = (#[c] : Array Char).toList from rfl, hs]
+    simp [wordToken, nodeChars, nodeListChars]
+  | case4 out n rest _ ih =>
+    rw [ih, Array.toList_push, nodeListChars_append]; rfl
 
 theorem spanLetters_suffix (attrs : Array (String × String)) :
-    ∀ l : List Html.Node, ∃ pre, l = pre ++ (spanLetters attrs l).2
-  | [] => ⟨[], by simp [spanLetters]⟩
-  | n :: rest => by
-    obtain ⟨pre, hpre⟩ := spanLetters_suffix attrs rest
+    ∀ (l : List Html.Node) (cs : Array Char), ∃ pre, l = pre ++ (spanLetters attrs cs l).2
+  | [], _ => ⟨[], by simp [spanLetters]⟩
+  | n :: rest, cs => by
     unfold spanLetters
     split
-    · split
-      · exact ⟨n :: pre, by simp only [List.cons_append, ← hpre]⟩
+    · rename_i c _
+      split
+      · obtain ⟨pre, hpre⟩ := spanLetters_suffix attrs rest (cs.push c)
+        exact ⟨n :: pre, by rw [List.cons_append, ← hpre]⟩
       · exact ⟨[], rfl⟩
     · exact ⟨[], rfl⟩
 
 theorem joinLetters_chars (ns : Array Html.Node) (c : Array Char) :
     nodeListChars c (joinLetters ns).toList = nodeListChars c ns.toList := by
-  simp only [joinLetters, List.toList_toArray]
-  exact joinList_chars _ c
+  rw [joinLetters, joinInto_chars]; rfl
 
 theorem listNodes_chars (mk : Marks) (disp : Bool) :
     ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node) (c : Array Char),
@@ -936,12 +998,12 @@ theorem listNodes_chars (mk : Marks) (disp : Bool) :
     simp only [nodeListChars]
     rw [paint_chars, itemNode_chars mk disp]
   | ink, .cons (.atom cls nuc sup sub lim) rest, acc, c => by
-    show nodeListChars c (listNodes mk disp ink
-        (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))) rest).toList
+    show nodeListChars c (listNodes (mk.after cls) disp ink
+        (acc.push (paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim))))) rest).toList
       = listChars (itemChars (nodeListChars c acc.toList) (.atom cls nuc sup sub lim)) rest
-    rw [listNodes_chars mk disp ink rest, Array.toList_push, nodeListChars_append]
+    rw [listNodes_chars (mk.after cls) disp ink rest, Array.toList_push, nodeListChars_append]
     simp only [nodeListChars]
-    rw [paint_chars, itemNode_chars mk disp]
+    rw [paint_chars, spaced_chars, itemNode_chars mk.start disp]
 
 theorem itemNode_chars (mk : Marks) (disp : Bool) :
     ∀ (x : MItem) (c : Array Char),
@@ -1196,6 +1258,10 @@ public theorem unnestedList_of_mathFree :
 
 end
 
+theorem tagFree_spaced (p : String → Bool) (extra : Array (String × String)) (n : Html.Node) :
+    tagFree p (spaced extra n) = tagFree p n := by
+  cases n <;> rfl
+
 theorem tagFree_paint (p : String → Bool) (ink : Option String) (n : Html.Node) :
     tagFree p (paint ink n) = tagFree p n := by
   cases n with
@@ -1305,32 +1371,33 @@ theorem cancelWithMetric_tagFree (mk : Marks) (disp : Bool) (mark : CancelMark)
 
 end
 
-theorem joinList_tagFree (p : String → Bool) (l : List Html.Node)
-    (h : tagFreeList p l = true) : tagFreeList p (joinList l) = true := by
-  fun_induction joinList l with
-  | case1 => rfl
-  | case2 _ _ _ _ _ _ _ ih =>
-    simp only [tagFreeList, Bool.and_eq_true] at h ⊢
-    exact ⟨h.1, ih h.2⟩
-  | case3 n rest a c hl d ds after hs _ ih =>
-    simp only [tagFreeList, Bool.and_eq_true] at h ⊢
+theorem joinInto_tagFree (p : String → Bool) (out : Array Html.Node) (l : List Html.Node)
+    (ho : tagFreeList p out.toList = true) (h : tagFreeList p l = true) :
+    tagFreeList p (joinInto out l).toList = true := by
+  fun_induction joinInto out l with
+  | case1 => exact ho
+  | case2 out n _ _ _ _ _ _ _ _ ih =>
+    simp only [tagFreeList, Bool.and_eq_true] at h
+    exact ih (by rw [tagFreeList_push, ho, h.1]; rfl) h.2
+  | case3 out n rest a c hl cs after hs _ _ ih =>
+    simp only [tagFreeList, Bool.and_eq_true] at h
     obtain ⟨kids, w, rfl, -, -, -⟩ := letterOf?_shape hl
-    obtain ⟨pre, hpre⟩ := spanLetters_suffix a rest
+    obtain ⟨pre, hpre⟩ := spanLetters_suffix a rest #[c]
     rw [hs] at hpre
     simp only at hpre
     rw [hpre, tagFreeList_append, Bool.and_eq_true] at h
-    refine ⟨?_, ih h.2.2⟩
+    refine ih ?_ h.2.2
     have h1 := h.1
     simp only [tagFree, Bool.and_eq_true, Bool.not_eq_true'] at h1
+    rw [tagFreeList_push, ho]
     simp [wordToken, tagFree, tagFreeList, h1.1]
-  | case4 _ _ _ ih =>
-    simp only [tagFreeList, Bool.and_eq_true] at h ⊢
-    exact ⟨h.1, ih h.2⟩
+  | case4 out n _ _ ih =>
+    simp only [tagFreeList, Bool.and_eq_true] at h
+    exact ih (by rw [tagFreeList_push, ho, h.1]; rfl) h.2
 
 theorem joinLetters_tagFree (p : String → Bool) (ns : Array Html.Node)
-    (h : tagFreeList p ns.toList = true) : tagFreeList p (joinLetters ns).toList = true := by
-  simp only [joinLetters, List.toList_toArray]
-  exact joinList_tagFree p _ h
+    (h : tagFreeList p ns.toList = true) : tagFreeList p (joinLetters ns).toList = true :=
+  joinInto_tagFree p #[] _ rfl h
 
 private theorem alphaFree_cons {x : MItem} {rest : MList}
     (h : (MList.cons x rest).alphaFree = true) : x.alphaFree = true ∧ rest.alphaFree = true := by
@@ -1360,11 +1427,11 @@ theorem listNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t
       itemNode_tagFree p hp mk disp (.space mu) (fun _ => rfl)]
     rfl
   | ink, .cons (.atom cls nuc sup sub lim) rest, acc, hm, ha => by
-    show tagFreeList p (listNodes mk disp ink
-      (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))) rest).toList = true
-    apply listNodes_tagFree p hp mk disp ink rest _ (fun h => (alphaFree_cons (hm h)).2)
-    rw [tagFreeList_push, tagFree_paint, ha,
-      itemNode_tagFree p hp mk disp _ (fun h => (alphaFree_cons (hm h)).1)]
+    show tagFreeList p (listNodes (mk.after cls) disp ink
+      (acc.push (paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim))))) rest).toList = true
+    apply listNodes_tagFree p hp (mk.after cls) disp ink rest _ (fun h => (alphaFree_cons (hm h)).2)
+    rw [tagFreeList_push, tagFree_paint, tagFree_spaced, ha,
+      itemNode_tagFree p hp mk.start disp _ (fun h => (alphaFree_cons (hm h)).1)]
     rfl
 
 theorem itemNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
@@ -1600,6 +1667,18 @@ theorem keepsLine_modify (attrs : Array (String × String)) (i : Nat)
   · exact ⟨(hf _).1.trans hk, (hf _).2 hs⟩
   · exact ⟨hk, hs⟩
 
+theorem spaced_held (extra : Array (String × String)) (n : Html.Node) (h : linesHeld n = true) :
+    linesHeld (spaced extra n) = true := by
+  cases n with
+  | elem t attrs kids =>
+    simp only [spaced, linesHeld, Bool.or_eq_true, keepsLine, Array.any_append] at h ⊢
+    rcases h with h | h
+    · exact Or.inl (Or.inl h)
+    · exact Or.inr h
+  | text s => exact h
+  | style s => exact h
+  | script a j => exact h
+
 theorem paint_held (ink : Option String) (n : Html.Node) (h : linesHeld n = true) :
     linesHeld (paint ink n) = true := by
   cases n with
@@ -1699,29 +1778,29 @@ theorem wordToken_held (a : Array (String × String)) (cs : List Char)
   simp only [Array.getElem_map, hk, ↓reduceIte, true_and]
   exact keepsValue_tint _ _ (by simp [keepsValue])
 
-theorem joinList_held (l : List Html.Node) (h : linesHeldList l = true) :
-    linesHeldList (joinList l) = true := by
-  fun_induction joinList l with
-  | case1 => rfl
-  | case2 _ _ _ _ _ _ _ ih =>
-    simp only [linesHeldList, Bool.and_eq_true] at h ⊢
-    exact ⟨h.1, ih h.2⟩
-  | case3 n rest a c hl d ds after hs _ ih =>
-    simp only [linesHeldList, Bool.and_eq_true] at h ⊢
+theorem joinInto_held (out : Array Html.Node) (l : List Html.Node)
+    (ho : linesHeldList out.toList = true) (h : linesHeldList l = true) :
+    linesHeldList (joinInto out l).toList = true := by
+  fun_induction joinInto out l with
+  | case1 => exact ho
+  | case2 out n _ _ _ _ _ _ _ _ ih =>
+    simp only [linesHeldList, Bool.and_eq_true] at h
+    exact ih (by rw [linesHeldList_push, ho, h.1]; rfl) h.2
+  | case3 out n rest a c hl cs after hs _ _ ih =>
+    simp only [linesHeldList, Bool.and_eq_true] at h
     obtain ⟨kids, w, rfl, -, -, hany⟩ := letterOf?_shape hl
-    obtain ⟨pre, hpre⟩ := spanLetters_suffix a rest
+    obtain ⟨pre, hpre⟩ := spanLetters_suffix a rest #[c]
     rw [hs] at hpre
     simp only at hpre
     rw [hpre, linesHeldList_append, Bool.and_eq_true] at h
-    exact ⟨wordToken_held a _ hany, ih h.2.2⟩
-  | case4 _ _ _ ih =>
-    simp only [linesHeldList, Bool.and_eq_true] at h ⊢
-    exact ⟨h.1, ih h.2⟩
+    exact ih (by rw [linesHeldList_push, ho, wordToken_held a _ hany]; rfl) h.2.2
+  | case4 out n _ _ ih =>
+    simp only [linesHeldList, Bool.and_eq_true] at h
+    exact ih (by rw [linesHeldList_push, ho, h.1]; rfl) h.2
 
 theorem joinLetters_held (ns : Array Html.Node) (h : linesHeldList ns.toList = true) :
-    linesHeldList (joinLetters ns).toList = true := by
-  simp only [joinLetters, List.toList_toArray]
-  exact joinList_held _ h
+    linesHeldList (joinLetters ns).toList = true :=
+  joinInto_held #[] _ rfl h
 
 mutual
 
@@ -1738,10 +1817,10 @@ theorem listNodes_held (mk : Marks) (disp : Bool) :
     rw [linesHeldList_push, ha, paint_held ink _ (itemNode_held mk disp (.space mu))]
     rfl
   | ink, .cons (.atom cls nuc sup sub lim) rest, acc, ha => by
-    show linesHeldList (listNodes mk disp ink
-      (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))) rest).toList = true
-    apply listNodes_held mk disp ink rest
-    rw [linesHeldList_push, ha, paint_held ink _ (itemNode_held mk disp _)]
+    show linesHeldList (listNodes (mk.after cls) disp ink
+      (acc.push (paint ink (spaced (atomSpacing mk cls nuc sup sub rest) (itemNode mk.start disp (.atom cls nuc sup sub lim))))) rest).toList = true
+    apply listNodes_held (mk.after cls) disp ink rest
+    rw [linesHeldList_push, ha, paint_held ink _ (spaced_held _ _ (itemNode_held mk.start disp _))]
     rfl
 
 theorem itemNode_held (mk : Marks) (disp : Bool) :

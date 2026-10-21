@@ -232,11 +232,11 @@ public def render (lk : Lookup) (ctx : List String) : Term → Rendered
   | .applied f args => applied (paren (render lk ctx f) atomPrec) (renderList lk ctx #[] args).toList
   | .pi n b prop t body =>
     let inner := render lk (n :: ctx) body
-    let after := piecesAt inner 25
+    let after := sidePieces inner 25
     if b == .inst || !body.reads 0 then
       let hyp := render lk ctx t
       { math := around (paren hyp 26) (.ctrl .to) (paren inner 25), prec := 25
-        chain := chainOf (piecesAt hyp 26) #[.ctrl .to] after }
+        chain := chainOf (sidePieces hyp 26) #[.ctrl .to] after }
     else if prop then
       let hyp := named n (render lk ctx t)
       { math := (hyp.push (.ctrl .to)).append (paren inner 25), prec := 25
@@ -330,6 +330,10 @@ end
 public def formulasOf (lk : Lookup) (ctx : List String) (t : Term) : List (Array Math) :=
   piecesAt (render lk ctx t) 0
 
+/-- A binder's type as one formula, parenthesized as a binder sets it. -/
+public def boundOf (lk : Lookup) (ctx : List String) (t : Term) : Array Math :=
+  paren (render lk ctx t) 51
+
 /-- A piece of a statement's top level: one quantified variable and its type, a quantifier's head,
 which a word space follows, or a formula, which a line may break after. -/
 public inductive Chunk where
@@ -350,7 +354,7 @@ public def chunksOf (lk : Lookup) (ctx : List String) (afterArrow spine : Bool) 
       chunksOf lk (n :: ctx) afterArrow spine body
     else if prop || b == .inst || !body.reads 0 then
       let rest := chunksOf lk (n :: ctx) true spine body
-      ((endWith (opEnd #[.ctrl .to]) (piecesAt hyp 26)).map Chunk.formula).append rest
+      ((endWith (opEnd #[.ctrl .to]) (sidePieces hyp 26)).map Chunk.formula).append rest
     else .binder (varMath n) (paren hyp 51) :: chunksOf lk (n :: ctx) false spine body
   | .apps (.const c) [ty, .lam n b dom body] =>
     match shownOf c with

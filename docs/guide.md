@@ -356,8 +356,9 @@ to read it for is named and ignored.
 **Theorem** (`Tide.le_or_gt`). For all a, b : ℕ, either a ≤ b or b < a. A
 quantifier binds typed groups, `x : T`, consecutive binders joining one
 quantifier (for all xs : List ℕ and n : ℕ), a binder predicate its relation
-(`∀ x ∈ S` as for every x ∈ S), and an outermost implicit binder the rest refers
-to hides; a binder whose type is a proposition, or an instance one, reads as a
+(`∀ x ∈ S` as for every x ∈ S, and `∀ k < n` so where its other side names a
+variable, which fixes the type), a type holding a quantifier or an arrow in
+parentheses, and an outermost implicit binder the rest refers to hides; a binder whose type is a proposition, or an instance one, reads as a
 hypothesis, `if …, then …`; `∃` as there is or there are; `∨ ↔ ¬` as either …
 or, if and only if, and it is not the case that. A relation stays a formula. Two
 plain statements a conjunction joins read A and B; any other conjunction sets as
@@ -371,11 +372,14 @@ lines after it back at that block's indent, all at the paragraph's leading, a
 comma or full stop that closes the block ending its last line. A quantifier's,
 an existential's or a conditional's scope runs to the end of the block it stands
 in, so one that more of its sentence follows is a block, as a hypothesis or a
-first side is. An equivalence is a block wherever it stands below the
-sentence's top or an item's; its first side is a block where it is more than a
-formula or a plain relation, one whose words hold none of `and`, `or`, `if`,
-`then`, `both` and `either`, and its second side then too where it is, so the
-two stand alike. A negation, conjunction or disjunction as a conjunction's or a
+first side is. An equivalence whose first side needs a block, more than a
+formula, a plain relation (one whose words hold none of `and`, `or`, `if`,
+`then`, `both` and `either`), a negation, a conjunction or a disjunction, reads
+the following are equivalent: and its two sides as a numbered list where a
+sentence, an item or a scope holds it, so no item opens on a block; any other
+equivalence is a block wherever it stands below the sentence's top or an
+item's, its first side a block where it needs one, and its second side then too
+where it is more than a formula or a plain relation, so the two stand alike. A negation, conjunction or disjunction as a conjunction's or a
 disjunction's first side or as a hypothesis before another, and a relation that
 is not plain where more of its sentence follows it, are blocks too, for the eye:
 
