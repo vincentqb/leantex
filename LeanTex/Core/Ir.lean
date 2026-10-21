@@ -261,6 +261,8 @@ public structure PageSpec where
   measureChars : Option Nat := none
   /-- Whether text lines stand on the body leading's grid (`\page{ grid = on }`). -/
   grid : Option Bool := none
+  /-- The leantex class's body leading, set where its record carries a design. -/
+  classLead : Option Length := none
   /-- Whether a declaration named the side margins, or the top and bottom ones. -/
   hDeclared : Bool := false
   vDeclared : Bool := false

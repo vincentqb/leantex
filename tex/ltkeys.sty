@@ -56,7 +56,14 @@
     ratio .code:n = \fp_set:Nn \l_lt_ratio_fp {#1} ,
     grid .bool_set:N = \l_lt_grid_bool ,
     paper .code:n = \lt_paper:n {#1} ,
+    a4paper .code:n = \lt_paper:n { a4 } ,
+    letterpaper .code:n = \lt_paper:n { letter } ,
+    a5paper .code:n = \lt_paper:n { a5 } ,
+    legalpaper .code:n = \lt_paper:n { legal } ,
+    executivepaper .code:n = \lt_paper:n { executive } ,
+    b5paper .code:n = \lt_paper:n { b5 } ,
     twoside .bool_set:N = \l_lt_twoside_bool ,
+    oneside .code:n = \bool_set_false:N \l_lt_twoside_bool ,
   }
 
 \keys_define:nn { lt / page }

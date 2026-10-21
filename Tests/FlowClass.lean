@@ -83,7 +83,15 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let pageTexts := keepOut.pages.map fun p => p.lines.map lineText
   let split := (List.range 40).filter fun i =>
     pageTexts.any fun ts => (ts.any (hasStr · s!"Para{i}start")) != (ts.any (hasStr · s!"Para{i}end."))
-  t s!"flow class: no paragraph leaves a widow or a club ({split})" split.isEmpty
+  t s!"flow class: no paragraph leaves a widow or a club ({split})"
+    (1 < keepOut.pages.size && split.isEmpty)
+  let freeKeep := keepSrc.replace "\\begin{document}"
+    "\\page{ clubpenalty = 100, widowpenalty = 100 }\n\\begin{document}"
+  let (_, freeKeepOut) := outOf fonts freeKeep
+  let freeTexts := freeKeepOut.pages.map fun p => p.lines.map lineText
+  t "flow class: at LaTeX's own penalties some two-line paragraph splits, so the check can fail"
+    ((List.range 40).any fun i =>
+      freeTexts.any fun ts => (ts.any (hasStr · s!"Para{i}start")) != (ts.any (hasStr · s!"Para{i}end.")))
   let headingLast := keepOut.pages.filter fun p =>
     (p.lines.filter fun l => hasStr (lineText l) "Para" || hasStr (lineText l) "Heading").back?.map
       (fun l => hasStr (lineText l) "Heading") == some true

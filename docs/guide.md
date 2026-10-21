@@ -467,8 +467,8 @@ another view, `decls` or `proofs` sets the documentation view alone, named.
 `tex/` holds LaTeX classes leantex reads as its own and lualatex compiles with `tex/` on its path
 (`TEXINPUTS` and `LUAINPUTS`): `\documentclass{ltflow}` sets an article on rules both engines
 implement. Its body is Latin Modern at 11pt on a 13.6pt leading, and every text line stands on
-that leading's grid: headings, lists, theorems and displays space in whole leadings, and the line
-after a display or a box moves to the nearest grid line. The type scale is LaTeX's ratio of 1.2,
+that leading's grid: headings, lists and theorems space in whole leadings, and the line after a
+display or a box moves to the nearest grid line. The type scale is LaTeX's ratio of 1.2,
 each size's line a whole number of leadings. The measure is 66 characters of the body face
 (memoir's copy-fitting count) to the nearest pica; the text block takes the page's proportions in
 whole lines, centred, with twice as much margin below it as above. A paragraph leaves no widow or

@@ -19332,6 +19332,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                           skips := some (Ir.gridSkips d.ratio page.fontSize lead bodyRow) }
     if page.flushBottom.isNone then page := { page with flushBottom := some false }
     if page.grid.isNone then page := { page with grid := some d.grid }
+    page := { page with classLead := some (Ir.sizeFileLeading page.fontSize 1000 "normalsize") }
     let pens := page.penalties
     let dflt : Ir.PagePenalties := {}
     let keep (v d : Int) : Int := if v == d then 10000 else v
