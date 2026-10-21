@@ -457,7 +457,7 @@ public def paramSites : List (String × ParamSite) :=
    ("jot", .unmodelled "adds space between an alignment's rows, which no site here reads"),
    ("fboxsep", .boxScoped "fboxsep"),
    ("fboxrule", .boxScoped "fboxrule"),
-   ("arrayrulewidth", .unmodelled "sets a table rule's thickness, which no site here reads"),
+   ("arrayrulewidth", .unmodelled "sets a table rule's thickness and the widths reading it, which keep LaTeX's 0.4pt"),
    ("unitlength", .unmodelled "scales a picture environment, which no site here reads")]
 
 /-- Is `n` a parameter `\normalsize` sets again (`ParamSite.sizeReset`)? -/

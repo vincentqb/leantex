@@ -880,7 +880,8 @@ public def tableLengths : List (String × Dim.SymLength) :=
    ("aboverulesep", aboveRuleSep), ("belowrulesep", belowRuleSep),
    ("abovetopsep", aboveTopSep), ("belowbottomsep", belowBottomSep)]
 
-/-- The class lengths a table's widths may read: the table lengths and `\arrayrulewidth`. -/
+/-- The class lengths any length may read beside the declared tokens: the table lengths and
+`\arrayrulewidth`. -/
 public def columnLengths : List (String × Dim.SymLength) :=
   tableLengths ++ [("arrayrulewidth", arrayRuleWidth)]
 

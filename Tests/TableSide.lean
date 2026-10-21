@@ -317,16 +317,31 @@ def tableDimexprChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let src (pre spec : String) :=
     s!"\\documentclass\{article}\n{pre}\\begin\{document}\n\\noindent\n{table spec}\n\\end\{document}"
   let near (a b : Dim.Length) : Bool := (a - b).abs ≤ Dim.Length.ofSp 64
-  for (pre, sep) in [("", Dim.pt 6), ("\\setlength{\\tabcolsep}{2pt}\n", Dim.pt 2)] do
-    let (doc, ds) := elabStr (src pre (col ++ col))
+  let leftOf (pre body : String) : Option Dim.Length × Option Dim.Length × Array Diag :=
+    let (doc, ds) := elabStr (src pre (col ++ col) |>.replace "\\noindent\n" ("\\noindent\n" ++ body))
     let c := censusOf #[] (layoutOf oneFace doc)
+    (lineXOf c 0 "LeftCell", lineXOf c 0 "RightCell", ds)
+  let (base, _, _) := leftOf "" ""
+  -- each case declares a tabcolsep `sep` LaTeX fixes where it is set: 6pt by default, 1em at 10pt
+  for (pre, body, sep) in [("", "", Dim.pt 6), ("\\setlength{\\tabcolsep}{2pt}\n", "", Dim.pt 2),
+      ("", "\\setlength{\\tabcolsep}{2pt}\n", Dim.pt 2), ("", "\\setlength{\\tabcolsep}{1em}\n", Dim.pt 10)] do
+    let (left, right, ds) := leftOf pre body
     -- article's 10pt text block on letter paper, as lualatex sets it
     let measure := Dim.pt 345
-    let gap := (lineXOf c 0 "RightCell").bind fun r => (lineXOf c 0 "LeftCell").map (r - ·)
-    t s!"table dimexpr {sep.toSp}: no width is ignored ({ds.filter (·.code == "W0104") |>.map (·.message)})"
+    let gap := right.bind fun r => left.map (r - ·)
+    t s!"table dimexpr {sep.toSp} {body}: no width is ignored ({ds.filter (·.code == "W0104") |>.map (·.message)})"
       (ds.all (·.code != "W0104"))
-    t s!"table dimexpr {sep.toSp}: the second column stands half the measure past the first ({gap.map (·.toSp)})"
+    t s!"table dimexpr {sep.toSp} {body}: the second column stands half the measure past the first ({gap.map (·.toSp)})"
       (gap.any (near · (measure / 2)))
+    t s!"table dimexpr {sep.toSp} {body}: the first column's text stands its tabcolsep in"
+      (match left, base with
+        | some l, some b => near (l - b) (sep - Dim.pt 6)
+        | _, _ => false)
+  let (doc, ds) := elabStr (src "" "p{5em}p{3cm}")
+  let c := censusOf #[] (layoutOf oneFace doc)
+  let gap := (lineXOf c 0 "RightCell").bind fun r => (lineXOf c 0 "LeftCell").map (r - ·)
+  t s!"table dimexpr: a p\{5em} column is 5em of the class's font wide ({gap.map (·.toSp)})"
+    (ds.all (·.code != "W0104") && gap.any (near · (Dim.pt 50 + Dim.pt 12)))
   let rule := "p{\\dimexpr 0.500\\linewidth-2\\tabcolsep-\\arrayrulewidth}"
   let (doc, ds) := elabStr (src "" (rule ++ rule))
   let c := censusOf #[] (layoutOf oneFace doc)

@@ -2799,9 +2799,22 @@ private def affineLength (ctx : Ctx) (admits : Measure → Bool) (src : String) 
   if e.rigidAbsolute then return e
   throw "rubber and font-relative terms are not available in this length context"
 
-/-- A table measure's length: any affine length but one that reads the text height. -/
-private def tableMeasure (ctx : Ctx) (src : String) : Except String (Affine Measure) :=
-  affineLength ctx (· != .textHeight) src
+/-- An affine length's em and ex terms fixed in `face`. -/
+private def fixFontTerms (face : Ir.PreambleFace) : Affine Measure → Affine Measure
+  | .lit g => .lit { g with width := .ofLength (face.resolve g.width) }
+  | .ref m => .ref m
+  | .scale num den e => .scale num den (fixFontTerms face e)
+  | .add a b => .add (fixFontTerms face a) (fixFontTerms face b)
+  | .sub a b => .sub (fixFontTerms face a) (fixFontTerms face b)
+
+/-- A table measure's length: any affine length but one that reads the text height, its em and ex
+terms fixed in the preamble's font. -/
+private def tableMeasure (ctx : Ctx) (src : String) : Except String (Affine Measure) := do
+  let e ← Decl.parseAffineLengthExprFor (ctx.tokens.entries ++ ctx.engineTokens)
+    (· != .textHeight) src
+  let e := fixFontTerms ctx.preamble e
+  if e.rigidAbsolute then return e
+  throw "rubber is not available in this length context"
 
 /-- One `p{...}` column width, resolved against the table's local measure. -/
 private def colWidth (ctx : Ctx) (src : String) : Except String Ir.ColWidth :=
