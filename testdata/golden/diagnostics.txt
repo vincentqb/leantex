@@ -67,10 +67,8 @@ error: invalid entry oops for \page [E0320]
 error: invalid value 'big' for key scale [E0321]
   note: a number
 ── E0322 (dropped) unknown key in a declaration block
-error: '\page' has no key 'zoom' [E0322]
-  note: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings, web
 error: undefined key zoom for \page [E0322]
-  note: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings
+  note: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings, web
 ── E0323 (dropped) declaration key value has the wrong type
 error: invalid value for key vmargin [E0323]
   note: \page expects a dimension, got a string

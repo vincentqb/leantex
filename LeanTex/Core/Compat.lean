@@ -10224,8 +10224,8 @@ better in the text")
   if name == "footnote" && (nextArgGroup raws start).any (·.any fun r => match r with
       | .ctrl n _ => headingCommands.contains n
       | _ => false) then
-    sayOnce "footnote:heading" .W0371 "a heading inside '\\footnote' is set as a bold line of the \
-note, outside the document's heading numbers" pos
+    sayOnce "footnote:heading" .W0371 (Diag.say .W0371 .heading (obj := some (none, "\\footnote")))
+      pos (detail := some "set as a bold line of the note, outside the heading numbers")
       (help := "a footnote is one paragraph; a heading reads better in the text")
     write fun st => { st with argBlocks := some .inlineLists }
   rewriteCtrlLaterNamed name pos raws start
@@ -12002,7 +12002,8 @@ and 'transparent=<n>' are understood")
     -- scrextend's `\changefontsizes` sets the body size as its fontsize option does; its leading
     -- is the size file's.
     if let some lead := c.optSrc 0 then
-      unreadParam "changefontsizes" "baselineskip" s!"'\\changefontsizes[{lead}]' leading" c.pos
+      unreadParam "changefontsizes" "baselineskip" .value (Diag.Name.value lead)
+        (some (none, Diag.Name.of "\\changefontsizes")) c.pos (detail := some "leading")
     komaEntries "changefontsizes" ["fontsize=" ++ (c.src 1).trimAscii.toString] c.pos
   | .komaOption =>
     let key := (c.src 0).trimAscii.toString

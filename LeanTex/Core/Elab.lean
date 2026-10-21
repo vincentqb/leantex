@@ -19334,8 +19334,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   if record.model == .flow && !s.sawAcross then
     page := { page with webMeasure := surface != .tex || page.web.isSome }
   if record.model != .flow && page.web.isSome then
-    diag ctx .W0104 "'web' in '\\page' sets nothing: only a flowing document takes a web layout, \
-and this class's page is a fixed stage or face" none
+    diagDetail ctx .W0104 (Diag.say .W0104 .key "web" (some (none, "\\page"))) none
+      "only a flowing document takes a web layout"
   if record.runningFurniture && !page.twoside && (headEven.isSome || footEven.isSome) then
     diagDetail ctx .W0104 (Diag.say .W0104 .value (Diag.Name.value "even") (some (some .key,
       "pages")))

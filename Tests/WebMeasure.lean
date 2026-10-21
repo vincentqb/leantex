@@ -110,10 +110,10 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       (d.help.getD "") == "write 'web: book' or 'web: article'")
   let (_, mdListDs) := elabMd ("---\nweb: [book, article]\n---\n\n" ++ guide)
   t "web measure: a markdown layout that is no single name is named unread"
-    (mdListDs.any fun d => d.kind == .W0307 && hasStr d.message "'web'")
+    (mdListDs.any fun d => d.kind == .W0307 && d.message == Diag.say .W0307 .key "web")
   let (_, mdEmptyDs) := elabMd ("---\nweb:\n---\n\n" ++ guide)
   t "web measure: an empty markdown layout is named unread, its help naming the layouts"
-    (mdEmptyDs.size == 1 && mdEmptyDs.all fun d => d.kind == .W0307 && hasStr d.message "'web'" &&
+    (mdEmptyDs.size == 1 && mdEmptyDs.all fun d => d.kind == .W0307 && d.message == Diag.say .W0307 .key "web" &&
       (d.help.getD "") == "write 'web: book' or 'web: article'")
   let (mdEnd, mdEndDs) := elabMd (guide ++ "\n---\nweb: article\n---\n")
   t "web measure: a closing metadata block declares the layout as an opening one does"
@@ -133,16 +133,17 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let (inc, incDs) := includedDoc "host.tex" (neutralHost "a")
     [("a", "a.md", "---\nweb: article\n---\n\nAn included line.\n")]
   t "web measure: an included markdown file's layout is named and the page keeps the host's"
-    (inc.page.web.isNone && incDs.any fun d => d.kind == .W0307 && hasStr d.message "'web'" &&
-      hasStr d.message "including document's layout")
+    (inc.page.web.isNone && incDs.any fun d => d.kind == .W0307 && d.message == Diag.say .W0307 .key "web" &&
+      hasStr (d.detail.getD "") "including document's layout")
   let (_, dimDs) := elabStr ("\\documentclass{article}\\page{ web = 3pt }\\begin{document}" ++
     "x\\end{document}")
   t "web measure: a value of the wrong type names the layouts"
-    (dimDs.any fun d => d.kind == .E0323 && hasStr d.message "'book' or 'article'")
+    (dimDs.any fun d => d.kind == .E0323 && hasStr (d.detail.getD "") "'book' or 'article'")
   let (_, deckDs) := elabStr ("\\documentclass{beamer}\\page{ web = book }\\begin{document}" ++
     "\\begin{frame}{One}x\\end{frame}\\end{document}")
   t "web measure: a layout declared on a page no flow sets is named"
-    (deckDs.any fun d => d.kind == .W0104 && hasStr d.message "'web'")
+    (deckDs.any fun d => d.kind == .W0104 &&
+      d.message == Diag.say .W0104 .key "web" (some (none, "\\page")))
   let topTags := body.filterMap fun n => match n with
     | .elem tag attrs _ => some (tag, (classOf attrs).contains HtmlDoc.outlineClass)
     | _ => none
