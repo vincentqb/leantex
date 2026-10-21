@@ -227,14 +227,14 @@ the table's parts are read. -/
   currentIs ["table", "colgroup", "thead", "tbody", "tfoot", "tr"] stack
 
 /-- A start tag in the table modes that this reading inserts: the table's own parts at their
-places, style and script anywhere (through the head rules). -/
+places, and style and script through the head rules but in a column group, which they close. -/
 @[expose] public def tablePartOk (stack : List Frame) (name : String) : Bool :=
-  if name == "style" || name == "script" then true
-  else if currentIs ["table"] stack then
-    ["caption", "colgroup", "thead", "tbody", "tfoot"].contains name
+  let headRule := name == "style" || name == "script"
+  if currentIs ["table"] stack then
+    headRule || ["caption", "colgroup", "thead", "tbody", "tfoot"].contains name
   else if currentIs ["colgroup"] stack then name == "col"
-  else if currentIs ["thead", "tbody", "tfoot"] stack then name == "tr"
-  else if currentIs ["tr"] stack then name == "td" || name == "th"
+  else if currentIs ["thead", "tbody", "tfoot"] stack then headRule || name == "tr"
+  else if currentIs ["tr"] stack then headRule || name == "td" || name == "th"
   else false
 
 /-- Whether an HTML start tag in the body's modes inserts its element where the standard does,

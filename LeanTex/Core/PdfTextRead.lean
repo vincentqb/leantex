@@ -35,11 +35,32 @@ public inductive Brk where
   | .word, _ | _, .word => .word
   | .none, .none => .none
 
+/-- A text or line matrix's six entries, or a transformation matrix's. -/
+public structure Mat where
+  a : Rat
+  b : Rat
+  c : Rat
+  d : Rat
+  e : Rat
+  f : Rat
+  deriving Inhabited, BEq, Repr
+
+@[expose] public def Mat.id : Mat := ⟨1, 0, 0, 1, 0, 0⟩
+
+/-- The matrix after a translation by `tx`, `ty` in its own space. -/
+@[expose] public def Mat.move (m : Mat) (tx ty : Rat) : Mat :=
+  { m with e := m.e + m.a * tx + m.c * ty, f := m.f + m.b * tx + m.d * ty }
+
+/-- `m` then `n`, as PDF's row vectors compose them (§8.3.4). -/
+@[expose] public def Mat.mul (m n : Mat) : Mat :=
+  ⟨m.a * n.a + m.b * n.c, m.a * n.b + m.b * n.d, m.c * n.a + m.d * n.c, m.c * n.b + m.d * n.d,
+   m.e * n.a + m.f * n.c + n.e, m.e * n.b + m.f * n.d + n.f⟩
+
 /-- One item a content stream yields: a run of text under its mark after its break, or a form
-XObject painted under a mark, read where it stands. -/
+XObject painted under a mark and transformation, read where it stands. -/
 public inductive Item where
   | text (mark : Mark) (brk : Brk) (s : String)
-  | form (mark : Mark) (name : String)
+  | form (mark : Mark) (ctm : Mat) (name : String)
   deriving Repr, Inhabited
 
 /-- What a content stream's names resolve to: its fonts read for text and its named property
@@ -67,34 +88,20 @@ public structure TextState where
   leading : Rat
   deriving Inhabited
 
-/-- A text or line matrix's six entries. -/
-public structure Mat where
-  a : Rat
-  b : Rat
-  c : Rat
-  d : Rat
-  e : Rat
-  f : Rat
-  deriving Inhabited, BEq
-
-@[expose] public def Mat.id : Mat := ⟨1, 0, 0, 1, 0, 0⟩
-
-/-- The matrix after a translation by `tx`, `ty` in its own space. -/
-@[expose] public def Mat.move (m : Mat) (tx ty : Rat) : Mat :=
-  { m with e := m.e + m.a * tx + m.c * ty, f := m.f + m.b * tx + m.d * ty }
-
-/-- The interpreter's state: operands read so far, the open sequences innermost first, the text
-state and its saved copies, the text and line matrices, where the last glyph shown ended and at
-what size, the break pending before the next run, the items read and the losses met. -/
+/-- The interpreter's state: operands, open sequences innermost first, the text state and
+transformation with their saved copies, the text matrices, the last glyph's end and squared size,
+the pending break, whether replaced glyphs were shown since it, the items and the losses. -/
 public structure St where
   args : Array Obj
   opens : List Open
   ts : TextState
-  saved : List TextState
+  ctm : Mat
+  saved : List (TextState × Mat)
   tm : Mat
   tlm : Mat
   pen : Option (Rat × Rat × Rat)
   brk : Brk
+  held : Bool
   items : Array Item
   losses : Array String
   deriving Inhabited
@@ -137,18 +144,19 @@ an identified sequence its identifier, else its parent's mark. -/
   (props.bind (·.get? "ActualText")).bind fun o =>
     (PdfContentLex.strBytes? o).bind textString?
 
-/-- The break before a glyph of `size` whose origin is `(x, y)`, the last glyph shown having ended
-at `pen` at its own size: a line break where the baseline moves by more than half the larger
-size, a word break where the pen jumps forward or back by more than a fifth of the last size. -/
-@[expose] public def breakAt (size : Rat) (pen : Option (Rat × Rat × Rat)) (x y : Rat) : Brk :=
+/-- The break before a glyph of squared size `s2` at `(x, y)` on a baseline along `u`, the last
+glyph having ended at `pen` with its squared size: a line break where the baseline moves by half
+the larger size, a word break where the pen jumps along it by a fifth of the last size. -/
+@[expose] public def breakAt (s2 : Rat) (u : Rat × Rat) (pen : Option (Rat × Rat × Rat))
+    (x y : Rat) : Brk :=
   match pen with
   | none => .none
-  | some (px, py, ps) =>
-    let s := if size < 0 then -size else size
-    let dy := if y < py then py - y else y - py
-    let dx := if x < px then px - x else x - px
-    if 2 * dy > max s ps then .line
-    else if 5 * dx > ps then .word
+  | some (px, py, ps2) =>
+    let uu := u.1 * u.1 + u.2 * u.2
+    let across := u.1 * (y - py) - u.2 * (x - px)
+    let along := u.1 * (x - px) + u.2 * (y - py)
+    if 4 * (across * across) > max s2 ps2 * uu then .line
+    else if 25 * (along * along) > ps2 * uu then .word
     else .none
 
 /-- A run of text under the open sequences after a break, unless an `ActualText` stands for it. -/
@@ -157,20 +165,22 @@ size, a word break where the pen jumps forward or back by more than a fifth of t
   else { st with items := st.items.push (.text (markOf st.opens) brk s) }
 
 /-- A string shown in the current font (§9.4.3): each code's text, a word or line break before a
-code where the pen jumps or the baseline moves, the text matrix advanced by each code's width. -/
+code where the pen jumps or the baseline moves on the page, the text matrix advanced by its width. -/
 public def St.showBytes (st : St) (b : ByteArray) : St :=
   match st.ts.font with
   | none => { st with losses := st.losses.push "a string shown with no font set" }
   | some f => Id.run do
     let ts := st.ts
+    let st0 := st
     let mut st := st
     let mut cur := ""
     let mut curBrk := st.brk
-    let size := (let z := ts.size * st.tm.d; if z < 0 then -z else z)
+    let mut first : Option Brk := none
     for code in f.codes? b do
-      let x := st.tm.e
-      let y := st.tm.f
-      let here := Brk.max (if cur.isEmpty then curBrk else .none) (breakAt size st.pen x y)
+      let m := st.tm.mul st.ctm
+      let s2 := ts.size * ts.size * (m.c * m.c + m.d * m.d)
+      let here := Brk.max (if cur.isEmpty then curBrk else .none) (breakAt s2 (m.a, m.b) st.pen m.e m.f)
+      if first.isNone then first := some here
       if !cur.isEmpty && here != .none then
         st := st.emitText curBrk cur
         cur := ""
@@ -180,7 +190,11 @@ public def St.showBytes (st : St) (b : ByteArray) : St :=
       let ws := if code.bytes == 1 && code.code == 32 then ts.wordSp else 0
       let tx := ((code.width / 1000) * ts.size + ts.charSp + ws) * ts.scale
       st := { st with tm := st.tm.move tx 0 }
-      st := { st with pen := some (st.tm.e, st.tm.f, size) }
+      let e := st.tm.mul st.ctm
+      st := { st with pen := some (e.e, e.f, s2) }
+    if replaced st0.opens then
+      return { st with brk := if st0.held then st0.brk else (first.getD st0.brk),
+                       held := st0.held || first.isSome }
     st := st.emitText curBrk cur
     return { st with brk := if cur.isEmpty then curBrk else .none }
 
@@ -203,10 +217,11 @@ public def St.op (res : Res) (st : St) (name : String) : St :=
   let st := { st with args := #[] }
   let n (i : Nat) : Rat := ((arg a i).bind num?).getD 0
   match name with
-  | "q" => { st with saved := st.ts :: st.saved }
+  | "q" => { st with saved := (st.ts, st.ctm) :: st.saved }
   | "Q" => match st.saved with
-    | t :: rest => { st with ts := t, saved := rest }
+    | (t, m) :: rest => { st with ts := t, ctm := m, saved := rest }
     | [] => st
+  | "cm" => { st with ctm := Mat.mul ⟨n 0, n 1, n 2, n 3, n 4, n 5⟩ st.ctm }
   | "BT" => { st with tm := Mat.id, tlm := Mat.id }
   | "Tf" =>
     match arg a 0 with
@@ -254,14 +269,15 @@ public def St.op (res : Res) (st : St) (name : String) : St :=
       match o.actual with
       | some t =>
         let st' := { st with opens := rest }
-        if replaced rest || t.isEmpty then st'
-        else { st' with items := st'.items.push (.text o.mark st.brk t), brk := .none }
+        if replaced rest then st'
+        else if t.isEmpty then { st' with held := false }
+        else { st' with items := st'.items.push (.text o.mark st.brk t), brk := .none, held := false }
       | none => { st with opens := rest }
     | [] => { st with losses := st.losses.push "EMC with no open sequence" }
   | "Do" => match arg a 0 with
     | some (.name nm) =>
       if replaced st.opens then st
-      else { st with items := st.items.push (.form (markOf st.opens) nm) }
+      else { st with items := st.items.push (.form (markOf st.opens) st.ctm nm) }
     | _ => st
   | _ => st
 
@@ -271,16 +287,17 @@ public def St.tok (res : Res) (st : St) : Tok → St
   | .op name => st.op res name
   | .inline _ _ => { st with args := #[] }
 
-/-- The interpreter's state before a stream, its content under `mark`. -/
-@[expose] public def St.init (mark : Mark) : St :=
+/-- The interpreter's state before a stream, its content under `mark` and transformation `ctm`. -/
+@[expose] public def St.init (mark : Mark) (ctm : Mat) : St :=
   { args := #[], opens := [⟨mark, none⟩],
     ts := { font := none, size := 0, scale := 1, charSp := 0, wordSp := 0, leading := 0 },
-    saved := [], tm := Mat.id, tlm := Mat.id, pen := none, brk := .line, items := #[],
-    losses := #[] }
+    ctm, saved := [], tm := Mat.id, tlm := Mat.id, pen := none, brk := .line, held := false,
+    items := #[], losses := #[] }
 
-/-- A content stream's items, read under `mark`. -/
-public def readToks (res : Res) (mark : Mark) (toks : Array Tok) : Array Item × Array String :=
-  let st := toks.foldl (St.tok res) (St.init mark)
+/-- A content stream's items, read under `mark` and transformation `ctm`. -/
+public def readToks (res : Res) (mark : Mark) (toks : Array Tok) (ctm : Mat := Mat.id) :
+    Array Item × Array String :=
+  let st := toks.foldl (St.tok res) (St.init mark ctm)
   (st.items, st.losses)
 
 /-! ### Documents -/
@@ -321,12 +338,17 @@ public def resOf (d : Doc) (cache : FontCache) (resources : Option Obj) :
   match (d.field r "Properties").toOption.getD none with
   | some (.dict es) =>
     for (k, v) in es do
-      if let .ok po := d.deref v then props := props.insert k po
+      if let .ok (.dict pes) := d.deref v then
+        props := props.insert k (.dict (pes.map fun (pk, pv) => (pk, (d.deref pv).toOption.getD pv)))
   | _ => pure ()
   return ({ fonts, props }, cache, losses)
 
 /-- How deeply forms nested in forms are read; deeper nesting is a loss. -/
 @[expose] public def formDepth : Nat := 12
+
+/-- How many content tokens a file's forms may cost in all, read in place however often they are
+painted: a fixed allowance and four per byte of the file. -/
+@[expose] public def formBudget (d : Doc) : Nat := 65536 + 4 * d.bytes.size
 
 /-- A run of text a page yields, form content read in place: its mark, its break and its
 characters. -/
@@ -341,43 +363,77 @@ anything else is the painting sequence's, since a form's identifiers name its ow
 @[expose] public def relabel (outer inner : Mark) : Mark :=
   if inner == .artifact then .artifact else outer
 
-/-- Items with their forms read in place, `depth` the nesting still allowed. -/
-public def expand (d : Doc) (resources : Option Obj) (cache : FontCache) :
-    Nat → Array Item → Array Run × FontCache × Array String
+/-- What reading forms in place carries along: fonts read, each form's tokens by object number,
+the tokens spent of the budget, and the losses met. -/
+public structure Expansion where
+  fonts : FontCache
+  toks : Std.HashMap Nat (Array Tok)
+  spent : Nat
+  losses : Array String
+  deriving Inhabited
+
+/-- A form's matrix (§8.10.1), the identity where it carries none. -/
+@[expose] public def formMatrix (dict : Obj) : Mat :=
+  match dict.get? "Matrix" with
+  | some (.arr xs) =>
+    let n (i : Nat) : Rat := (xs[i]?.bind num?).getD 0
+    if xs.size == 6 then ⟨n 0, n 1, n 2, n 3, n 4, n 5⟩ else Mat.id
+  | _ => Mat.id
+
+/-- Items with their forms read in place, `depth` the nesting still allowed, `path` the forms
+being read, a form painting itself a loss. -/
+public def expand (d : Doc) (resources : Option Obj) (path : List Nat) (ex : Expansion) :
+    Nat → Array Item → Array Run × Expansion
   | 0, items =>
     (items.filterMap fun
       | .text m b s => some ⟨m, b, s⟩
-      | .form _ _ => none, cache,
+      | .form .. => none,
       if items.any (fun | .form .. => true | .text .. => false) then
-        #["forms nest past the reading's depth"] else #[])
+        { ex with losses := ex.losses.push "forms nest past the reading's depth" } else ex)
   | depth + 1, items => Id.run do
     let mut runs : Array Run := #[]
-    let mut losses : Array String := #[]
-    let mut cache := cache
+    let mut ex := ex
     for it in items do
       match it with
       | .text m b s => runs := runs.push ⟨m, b, s⟩
-      | .form m n =>
+      | .form m ctm n =>
         let xo := (resources.bind (d.deref · |>.toOption)).bind fun r =>
           match (d.field r "XObject").toOption.getD none with
           | some (.dict es) => (es.find? (·.1 == n)).map (·.2)
           | _ => none
+        let num := match xo with
+          | some (.ref k _) => some k
+          | _ => none
+        if num.any path.contains then
+          ex := { ex with losses := ex.losses.push s!"form {n} paints itself" }
+          continue
         match xo.bind fun o => (d.stream o).toOption.getD none with
         | some (dict, raw) =>
           if dict.get? "Subtype" == some (.name "Form") then
-            match PdfFilters.decode dict raw with
-            | .ok (.bytes data) =>
+            let cached := num.bind ex.toks.get?
+            let toks? := match cached with
+              | some ts => some ts
+              | none => match PdfFilters.decode dict raw with
+                | .ok (.bytes data) => some (PdfContentLex.scan data)
+                | _ => none
+            match toks? with
+            | none => ex := { ex with losses := ex.losses.push s!"form {n} does not decode" }
+            | some toks =>
+              if let some k := num then ex := { ex with toks := ex.toks.insert k toks }
+              if ex.spent + toks.size > formBudget d then
+                ex := { ex with losses := ex.losses.push s!"form {n} passes the reading's budget" }
+                continue
+              ex := { ex with spent := ex.spent + toks.size }
               let inner := ((dict.get? "Resources").bind (d.deref · |>.toOption)).orElse fun _ =>
                 resources.bind (d.deref · |>.toOption)
-              let (res, cache1, ls0) := resOf d cache inner
-              let (items', ls) := readToks res m (PdfContentLex.scan data)
-              let (rs, cache2, ls') := expand d inner cache1 depth items'
-              cache := cache2
+              let (res, fonts, ls0) := resOf d ex.fonts inner
+              let (items', ls) := readToks res m toks ((formMatrix dict).mul ctm)
+              let (rs, ex') := expand d inner (num.toList ++ path)
+                { ex with fonts, losses := ex.losses ++ ls0 ++ ls } depth items'
+              ex := ex'
               runs := runs ++ rs.map fun r => { r with mark := relabel m r.mark }
-              losses := losses ++ ls0 ++ ls ++ ls'
-            | _ => losses := losses.push s!"form {n} does not decode"
-        | none => losses := losses.push s!"XObject {n} unresolved"
-    return (runs, cache, losses)
+        | none => ex := { ex with losses := ex.losses.push s!"XObject {n} unresolved" }
+    return (runs, ex)
 
 /-- A file's text: each page's object number, where it has one, with its runs in content order,
 form content read in place, and what the reading could not read. -/
@@ -390,17 +446,16 @@ public structure Extracted where
 public def extractDoc (d : Doc) : Except String Extracted := do
   let pages ← d.pageList
   let mut out : Array (Option Nat × Array Run) := #[]
-  let mut losses : Array String := #[]
-  let mut cache : FontCache := {}
+  let mut ex : Expansion := { fonts := {}, toks := {}, spent := 0, losses := #[] }
   for (num, p) in pages do
     let data ← d.content p
-    let (res, cache1, ls0) := resOf d cache p.resources
+    let (res, fonts, ls0) := resOf d ex.fonts p.resources
     let (items, ls) := readToks res .unmarked (PdfContentLex.scan data)
-    let (runs, cache2, ls') := expand d p.resources cache1 formDepth items
-    cache := cache2
+    let (runs, ex') := expand d p.resources [] { ex with fonts, losses := ex.losses ++ ls0 ++ ls }
+      formDepth items
+    ex := ex'
     out := out.push (num, runs)
-    losses := losses ++ ls0 ++ ls ++ ls'
-  return { pages := out, losses }
+  return { pages := out, losses := ex.losses }
 
 /-- The text a file's pages show, read from its bytes. -/
 public def extract (b : ByteArray) : Except String Extracted := do
@@ -436,8 +491,9 @@ public inductive Leaf where
   | actual (s : String)
   deriving Repr, Inhabited, BEq
 
-/-- The leaves under an open file's structure tree root, depth first, every element visited once;
-a tree the walk cannot finish within the file's bytes is refused. -/
+/-- The leaves under an open file's structure tree root, depth first, every element visited once,
+a negative identifier or a reference into a form's stream naming none; a tree the walk cannot
+finish within the file's bytes is refused. -/
 public def leavesOf (d : Doc) : Except String (Array Leaf) := do
   let (catalog, _) ← d.get d.root
   let some rootRef := catalog.get? "StructTreeRoot" | return #[]
@@ -456,22 +512,25 @@ public def leavesOf (d : Doc) : Except String (Array Leaf) := do
     let some (k, pg) := work.back? | break
     work := work.pop
     match k with
-    | .int n => if let some p := pg then out := out.push (.mcr p n.toNat)
+    | .int n => if let some p := pg then if 0 ≤ n then out := out.push (.mcr p n.toNat)
     | o =>
       if let .ref n _ := o then
         if seen.contains n then continue
         seen := seen.insert n ()
       let e ← d.deref o
-      match e.get? "Type" with
-      | some (.name "MCR") =>
+      let field (key : String) : Option Obj := (e.get? key).map fun v => (d.deref v).toOption.getD v
+      match e, e.get? "Type" with
+      | .arr ks, _ => for c in ks.reverse do work := work.push (c, pg)
+      | .int n, _ => if let some p := pg then if 0 ≤ n then out := out.push (.mcr p n.toNat)
+      | _, some (.name "MCR") =>
         let p := (pageNum (e.get? "Pg")).orElse fun _ => pg
-        match e.get? "MCID", p with
-        | some (.int m), some p => out := out.push (.mcr p m.toNat)
-        | _, _ => pure ()
-      | some (.name "OBJR") => pure ()
-      | _ =>
+        match field "MCID", p, e.get? "Stm" with
+        | some (.int m), some p, none => if 0 ≤ m then out := out.push (.mcr p m.toNat)
+        | _, _, _ => pure ()
+      | _, some (.name "OBJR") => pure ()
+      | _, _ =>
         let pg' := (pageNum (e.get? "Pg")).orElse fun _ => pg
-        match (e.get? "ActualText").bind PdfContentLex.strBytes? |>.bind textString? with
+        match (field "ActualText").bind PdfContentLex.strBytes? |>.bind textString? with
         | some t => out := out.push (.actual t)
         | none =>
           match e.get? "K" with

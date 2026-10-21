@@ -74,7 +74,9 @@ ties its verdicts to this tree's readers; regenerate it with lake env lean --run
     rows := rows.push { item := s!"{c.section_}.{c.tool}.pass", value := Int.ofNat c.pass }
     rows := rows.push { item := s!"{c.section_}.{c.tool}.rows", value := Int.ofNat c.rows }
   return (#[s!"# source: {matrixPath}; {(matrixValue text "tools").getD "tools unrecorded"}",
-    s!"# reader-key: {recorded} — the readers and fixtures the tools judged, compared on every --check"],
+    s!"# reader-key: {recorded} — the readers and fixtures the tools judged, compared on every --check",
+    s!"# artifact-key: {(matrixValue text "artifact-key").getD "absent"} — the artifacts they judged, \
+recorded, not rebuilt"],
     rows)
 
 def selftest : IO UInt32 := tierSelftest "textlayer" fun no => do
@@ -89,6 +91,13 @@ beta   untested\n"
   no "reader-key: absent when the matrix carries none" ((matrixValue "[pdf]\n" "reader-key").isNone)
   no "reader-key: a repeated line is no key"
     ((matrixValue "reader-key: a\nreader-key: b\n" "reader-key").isNone)
+  no "imports: every modifier read, only this tree's modules kept"
+    (treeImports "module\npublic import all LeanTex.Core.A\nimport Std\nmeta import LeanTex.B\n" ==
+      ["LeanTex.Core.A", "LeanTex.B"])
+  let srcs := (← textReaderSources).map (·.toString)
+  no "sources: the readers and what they import"
+    (["LeanTex/Core/HtmlRead.lean", "LeanTex/Core/PdfTextRead.lean", "LeanTex/Core/Hex.lean"].all
+      srcs.contains)
   let k ← textLayerKey
   no "reader-key: 16 hex digits over this tree's readers and fixtures" (k.length == 16)
 

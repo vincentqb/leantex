@@ -1548,12 +1548,40 @@ def hermeticHtmlKeys : IO (Except String Hermetic.CorpusKeys) := do
   try Hermetic.corpusKeys "testdata/corpus"
   catch e => return .error (toString e)
 
-/-- The sources the text readers' verdicts depend on: the readers and the modules they read
-through. -/
-def textReaderSources : List String :=
-  ["LeanTex/Core/HtmlRead.lean", "LeanTex/Core/HtmlEntity.lean", "LeanTex/Core/HtmlEntityData.lean",
-   "LeanTex/Core/PdfTextRead.lean", "LeanTex/Core/PdfFont.lean", "LeanTex/Core/PdfContentLex.lean",
-   "LeanTex/Core/PdfRead.lean", "LeanTex/Core/PdfFilters.lean", "LeanTex/Core/GlyphList.lean"]
+/-- The text readers' modules, whose import closure their verdicts depend on. -/
+def textReaderRoots : List String := ["LeanTex.Core.HtmlRead", "LeanTex.Core.PdfTextRead"]
+
+/-- A module's source path in this tree. -/
+def modulePath (m : String) : System.FilePath :=
+  System.FilePath.mk (m.replace "." "/" ++ ".lean")
+
+/-- The modules a source imports from this tree, whatever its import modifiers. -/
+def treeImports (text : String) : List String :=
+  (text.splitOn "\n").filterMap fun raw =>
+    let toks := (raw.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
+    let toks := toks.filter fun t => t != "public" && t != "meta" && t != "private"
+    match toks with
+    | "import" :: rest =>
+      let rest := rest.filter (· != "all")
+      rest.head?.filter (·.startsWith "LeanTex.")
+    | _ => none
+
+/-- The readers' sources and every module of this tree they import, sorted by path. -/
+def textReaderSources : IO (Array System.FilePath) := do
+  let mut seen : Array String := #[]
+  let mut work := textReaderRoots
+  let mut out : Array System.FilePath := #[]
+  for _ in [0:4096] do
+    let m :: rest := work | break
+    work := rest
+    if seen.contains m then continue
+    seen := seen.push m
+    let path := modulePath m
+    unless ← path.pathExists do continue
+    out := out.push path
+    work := treeImports (← IO.FS.readFile path) ++ work
+  unless work.isEmpty do throw (IO.userError "the text readers' imports pass every module bound")
+  return out.qsort (·.toString < ·.toString)
 
 /-- Every file under a directory, sorted by path. -/
 def filesUnder (dir : System.FilePath) : IO (Array System.FilePath) := do
@@ -1562,12 +1590,12 @@ def filesUnder (dir : System.FilePath) : IO (Array System.FilePath) := do
     unless ← f.isDir do out := out.push f
   return out.qsort (·.toString < ·.toString)
 
-/-- The text-layer matrix's freshness key: the readers' sources and the corpus fixtures they were
-judged on, so a changed reader or fixture needs the tools again. -/
+/-- The text-layer matrix's freshness key: the readers' import closure, the oracle and the corpus
+fixtures it judged, so a changed reader, oracle or fixture needs the tools again. -/
 def textLayerKey : IO String := do
   let mut blobs : Array (String × ByteArray) := #[]
-  for p in textReaderSources do
-    blobs := blobs.push (p, ← IO.FS.readBinFile p)
+  for p in (← textReaderSources).push "scripts/text-oracle.lean" do
+    blobs := blobs.push (p.toString, ← IO.FS.readBinFile p)
   for f in ← filesUnder "testdata/corpus" do
     blobs := blobs.push (f.toString, ← IO.FS.readBinFile f)
   return contentKey blobs

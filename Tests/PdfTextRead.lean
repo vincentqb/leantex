@@ -27,18 +27,47 @@ def readWith (font : PdfFont.Loaded) (src : String) (props : List (String × Pdf
 def itemsView (items : Array PdfTextRead.Item) : List (String × PdfTextRead.Mark) :=
   items.toList.filterMap fun
     | .text m _ s => some (s, m)
-    | .form _ _ => none
+    | .form .. => none
 
 /-- The runs' text and breaks, for comparison. -/
 def breaksView (items : Array PdfTextRead.Item) : List (String × PdfTextRead.Brk) :=
   items.toList.filterMap fun
     | .text _ b s => some (s, b)
-    | .form _ _ => none
+    | .form .. => none
 
 /-- A simple font whose byte `k` reads as the `k`-th string of `text`, each code `w`
 thousandths wide. -/
 def wideFont (text : Array String) (w : Rat) : PdfFont.Loaded :=
   { program := .missing, codes := .simple #[] (text.map fun _ => w) text, losses := #[] }
+
+/-- A file of numbered objects, the first the catalog, with its cross-reference table. -/
+def tinyPdf (objs : Array String) : ByteArray := Id.run do
+  let mut out := "%PDF-1.7\n"
+  let mut offs : Array Nat := #[]
+  for (o, i) in objs.zipIdx do
+    offs := offs.push out.utf8ByteSize
+    out := out ++ s!"{i + 1} 0 obj\n{o}\nendobj\n"
+  let xref := out.utf8ByteSize
+  out := out ++ s!"xref\n0 {objs.size + 1}\n0000000000 65535 f \n"
+  for k in offs do
+    let d := toString k
+    out := out ++ "".pushn '0' (10 - d.length) ++ d ++ " 00000 n \n"
+  out := out ++ s!"trailer\n<< /Size {objs.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+  return out.toUTF8
+
+/-- A stream object holding `data`. -/
+def streamObj (dict data : String) : String :=
+  s!"<< {dict} /Length {data.utf8ByteSize} >>\nstream\n{data}\nendstream"
+
+/-- A one-page file showing `content` in Helvetica as `F1`, its XObjects `xobjects`, its catalog
+carrying `catalog`, and `more` objects numbered from 6. -/
+def onePage (content : String) (xobjects catalog : String) (more : Array String) : ByteArray :=
+  tinyPdf (#[s!"<< /Type /Catalog /Pages 2 0 R {catalog} >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 4 0 R >> \
+/XObject << {xobjects} >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    streamObj "" content] ++ more)
 
 /-- A text with each run of white space one space, none at either end. -/
 def wsNorm (s : String) : String :=
@@ -106,6 +135,44 @@ def pdfTextChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
   t "pdf text: a moved baseline is a line break"
     (breaksView (readWith wide "BT /F1 10 Tf 1 0 0 1 0 0 Tm (\\001) Tj 1 0 0 1 0 -12 Tm (\\002) Tj ET") ==
       [("a", .line), ("b", .line)])
+  t "pdf text: the break before a sequence ActualText replaces stands before its text"
+    (breaksView (readWith wide
+      "BT /F1 10 Tf 1 0 0 1 0 0 Tm (\\001) Tj 1 0 0 1 0 -12 Tm /Span << /ActualText (xy) >> BDC \
+(\\002) Tj 1 0 0 1 40 -12 Tm (\\003) Tj EMC ET") == [("a", .line), ("xy", .line)])
+  t "pdf text: rotated text breaks along its own baseline"
+    (breaksView (readWith wide "BT /F1 10 Tf 0 1 -1 0 100 100 Tm (\\001\\002\\003) Tj ET") ==
+      [("abc", .line)])
+  t "pdf text: text a transformation moves breaks where it lands on the page"
+    (breaksView (readWith wide
+      "BT /F1 10 Tf (\\001) Tj ET q 1 0 0 1 0 -20 cm BT /F1 10 Tf (\\002) Tj ET Q \
+BT /F1 10 Tf 1 0 0 1 5 -20 Tm (\\003) Tj ET") == [("a", .line), ("b", .line), ("c", .none)])
+  let tagged (k : String) (more : Array String) := onePage
+    "/P << /MCID 0 >> BDC BT /F1 10 Tf 1 0 0 1 10 50 Tm (first) Tj ET EMC \
+/P << /MCID 1 >> BDC BT /F1 10 Tf 1 0 0 1 10 30 Tm (second) Tj ET EMC" ""
+    s!"/StructTreeRoot 6 0 R" (#[s!"<< /Type /StructTreeRoot /K {k} >>",
+      "<< /Type /StructElem /S /P /Pg 3 0 R /K 1 >>", "<< /Type /StructElem /S /P /Pg 3 0 R /K 0 >>"] ++ more)
+  t "pdf text: a tagged file reads in its structure's order, not its paint order"
+    (PdfTextRead.structureText (tagged "[7 0 R 8 0 R]" #[]) == .ok "second\nfirst" &&
+      ((PdfTextRead.extract (tagged "[7 0 R 8 0 R]" #[])).map (·.contentText true)) == .ok "first\nsecond")
+  t "pdf text: a structure element's kids may stand in another object"
+    (PdfTextRead.structureText (tagged "9 0 R" #["[8 0 R 7 0 R]"]) == .ok "first\nsecond")
+  let selfForm := onePage "/Fm0 Do" "/Fm0 6 0 R" ""
+    #[streamObj "/Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /XObject << /Fm0 6 0 R >> >>"
+      "/Fm0 Do"]
+  t "pdf text: a form painting itself is a loss, read once"
+    (match PdfTextRead.extract selfForm with
+      | .ok x => x.losses.any (·.endsWith "paints itself")
+      | .error _ => false)
+  let fan (k : Nat) : String :=
+    if k == 11 then streamObj "/Type /XObject /Subtype /Form /BBox [0 0 1 1]"
+      "BT /F1 10 Tf (x) Tj ET"
+    else streamObj s!"/Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /Font << /F1 4 0 R >> \
+/XObject << /Fm {k + 7} 0 R >> >>" "/Fm Do /Fm Do /Fm Do /Fm Do"
+  let fanned := onePage "/Fm Do" "/Fm 6 0 R" "" ((List.range 12).toArray.map fan)
+  t "pdf text: forms that paint forms many times stop at the reading's budget"
+    (match PdfTextRead.extract fanned with
+      | .ok x => x.losses.any (·.endsWith "budget")
+      | .error _ => false)
   t "pdf text: a code with no text is a loss"
     ((PdfTextRead.readToks { fonts := Std.HashMap.ofList [("F1", font)], props := {} } .unmarked
       (PdfContentLex.scan "BT /F1 12 Tf (\\000) Tj ET".toUTF8)).2.size == 1)

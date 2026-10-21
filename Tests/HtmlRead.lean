@@ -48,6 +48,9 @@ def htmlReadChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html read: escaped text and attributes read back as written"
     (HtmlRead.parse (page #[Html.elem "a" #[Html.text "a<b & \"c\""] #[("title", "q\"'<&>")]]) ==
       some (Html.fDoc "en" #[] #[Html.elem "a" #[Html.text "a<b & \"c\""] #[("title", "q\"'<&>")]]))
+  t "html read: a style sheet in a column group, which the standard moves out, is outside the reading"
+    (!reads #[Html.elem "table" #[Html.elem "colgroup" #[Html.Node.style "a{}", Html.elem "col" #[]]]] &&
+      reads #[Html.elem "table" #[Html.Node.style "a{}", Html.elem "tbody" #[Html.elem "tr" #[Html.elem "td" #[]]]]])
   t "html read: a style sheet holding its own end tag is removed whole, the page still read"
     (reads #[Html.Node.style "a{}</style><p>x"])
 
