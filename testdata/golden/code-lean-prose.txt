@@ -478,5 +478,5 @@ verbatim language lean4
   ""
   "end Ebb"
 -- diagnostics
-warning[W0415] 36:1 words cannot say 'Ebb.Moored', which is no proposition; it is set as mathematics
-warning[W0415] 38:1 words cannot say 'Ebb.nameOf', which is no proposition; it is set as mathematics
+warning[W0415] 36:1 unsupported statement Ebb.Moored | detail: it is no proposition
+warning[W0415] 38:1 unsupported statement Ebb.nameOf | detail: it is no proposition

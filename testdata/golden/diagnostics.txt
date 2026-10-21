@@ -46,11 +46,6 @@ error: invalid parameter who for \role [E0305]
 error: undefined parameter \b [E0306]
 ── E0309 (dropped) unknown document class
 error: unsupported class proseplate [E0309]
-  note: classes: article, slides, card, resume, webpage, poster, scrartcl
-✖ [E0309] - \documentclass
-  unknown document class 'proseplate'
-  suggestion: classes: article, slides, card, resume, webpage, poster, scrartcl, ltflow
-error: unknown document class 'proseplate' [E0309]
   note: classes: article, slides, card, resume, webpage, poster, scrartcl, ltflow
 ── E0310 (dropped) content before the first \item in a list
 error: unexpected text for \item [E0310]
@@ -167,11 +162,6 @@ info: default math font 'Fira Math' [N0016]
   note: the first installed face with an OpenType MATH table
 ── N0017 (info) no document class declared; the article page model is assumed
 info: default class article [N0017]
-  note: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl) to choose it
-ℹ [N0017]
-  no '\documentclass'; the article page model is assumed
-  suggestion: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl, ltflow) to choose it
-info: no '\documentclass'; the article page model is assumed [N0017]
   note: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl, ltflow) to choose it
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
 info: missing alphabet calligraphic for font 'Fira Math' [N0018]
