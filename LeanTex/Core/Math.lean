@@ -1032,9 +1032,7 @@ public structure CancelMetric where
   deriving Repr, BEq, Inhabited
 
 /-- TeX's point in base units, the unit cancel.sty states its lengths in. -/
-public def cancelPt : Int := 406400
-
-public theorem cancelPt_exact : cancelPt = (Dim.pt 1).units := by decide
+public def cancelPt : Int := (Dim.pt 1).units
 
 /-- A tenth of a point, for cancel.sty's fractional lengths. -/
 public def cancelTenths (n : Int) : Int := n * cancelPt / 10

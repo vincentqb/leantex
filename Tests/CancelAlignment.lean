@@ -492,7 +492,7 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     tip := (0, 0), tail := some (qp (-4, -1)), ink := qb 2 2 6 5, glyphs := #[glyph] }
   check ref "cancel kern judge: accepts cancel.sty's kern past the tip"
     sample.kernedFromTip
-  for dx in [(-3 : Int), 3, Math.cancelPt] do
+  for dx in [(-3 : Int), 3, Math.cancelTenths 10] do
     check ref "cancel kern judge: rejects a glyph off every kern"
       (!({ sample with glyphs := #[{ glyph with x := glyph.x + q dx }] } : Witness).kernedFromTip)
   check ref "cancel kern judge: a target without glyphs cannot pass"
@@ -504,7 +504,7 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (!({ room with target := qb 2 2 11 5 } : RoomWitness).containsTarget &&
       !({ room with tail := some (q (-2), 0) } : RoomWitness).containsTarget)
   -- An invented arrow at slope 1/4, its head line10's depth and back.
-  let len := Math.cancelPt * 40
+  let len := Math.cancelTenths 400
   let l := Math.cancelLength len (len / 4)
   let tip : Int × Int := (len, len / 4)
   let back : Int × Int := (len - len * Math.cancelHeadDepth false / l, len / 4 - len / 4 * Math.cancelHeadDepth false / l)
@@ -516,16 +516,19 @@ def judgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (back.1, back.2 - 10), (0, -10)].map fun (x, y) => (Dim.Length.ofUnits x, Dim.Length.ofUnits y)
   check ref "cancel head judge: accepts line10's head on its shaft"
     (headHasShape #[shaft, head] false)
-  for (dx, dy) in [((-40000 : Int), (-10000 : Int)), (40000, 10000)] do
+  let along : Int × Int := (Math.cancelTenths 1, Math.cancelTenths 1 / 4)
+  for (dx, dy) in [(-along.1, -along.2), along] do
     let slipped := head.modify 1 (fun (x, y) => (x + q dx, y + q dy))
     check ref "cancel head judge: rejects a wing sliding along the shaft"
       (!headHasShape #[shaft, slipped] false)
-  let widened := head.modify 1 (fun (x, y) => (x - q 9000, y + q 36000))
-    |>.modify 2 (fun (x, y) => (x + q 9000, y - q 36000))
+  let across : Int × Int := (Math.cancelTenths 1 / 4, Math.cancelTenths 1)
+  let widened := head.modify 1 (fun (x, y) => (x - q across.1, y + q across.2))
+    |>.modify 2 (fun (x, y) => (x + q across.1, y - q across.2))
   check ref "cancel head judge: rejects a wider back"
     (!headHasShape #[shaft, widened] false)
   check ref "cancel clearance judge: accepts a separated target and rejects missing marks"
-    (({ sample with ink := ⟨q (len + 1000000), q 0, q (len + 2000000), q 1000000⟩ } : Witness).clearsMarks
+    (({ sample with ink := ⟨q (len + Math.cancelTenths 25), q 0, q (len + Math.cancelTenths 50),
+        q (Math.cancelTenths 25)⟩ } : Witness).clearsMarks
         #[shaft, head] && !sample.clearsMarks #[])
   check ref "cancel clearance judge: rejects a target touching the head's hull"
     (!({ sample with ink := ⟨q (len - 10), q (len / 4 - 10), q (len + 10), q (len / 4 + 10)⟩ } :

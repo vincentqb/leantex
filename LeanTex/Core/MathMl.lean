@@ -52,14 +52,15 @@ def advanceAttrs (em width : Int) : Array (String × String) :=
     #[("width", "0"), ("style", s!"margin-inline-end: {measuredEm margin em}")]
   else #[("width", measuredEm w em)]
 
-/-- The cell padding that sets a stretched array's rows `\arraystretch` baselines apart: half the
-stretch past one, of the PDF's 1.2 em baseline, on MathML Core's 0.5ex; `none` at the default. -/
-def stretchPad (stretch : Nat) : Option String :=
-  if stretch ≤ 1000 then none else
-    let m := (stretch - 1000) * 6 / 10
-    let fs := toString (m % 1000)
-    let em := s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
-    some s!"padding-top: calc(0.5ex + {em}); padding-bottom: calc(0.5ex + {em})"
+/-- An array cell's `\@arstrut`, seven tenths of the rows' `\arraystretch` pitch of 1.2 em above
+the baseline and three below, so its rows stand as the PDF's do. -/
+def gridStrut : GridKind → Array Html.Node
+  | .array _ s =>
+    let pitch : Int := 1200 * (s : Int) / 1000
+    let up := pitch * 7 / 10
+    #[.elem "mspace" #[("width", "0"), ("height", measuredEm up 1000),
+      ("depth", measuredEm (pitch - up) 1000)] #[]]
+  | .small | .align | .aligned _ | .gather => #[]
 
 /-- A `\left`/`\right` delimiter: stretchy and symmetric about the math axis (MathML Core
 §3.2.4.2), held to the size TeX's rule 19 asks of it where layout measured one. -/
@@ -674,19 +675,19 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
       | .gather, .right =>
         #[("style", "text-align: right; text-align: -webkit-right")]
       -- `\arraycolsep` both sides of an inner column edge, none at the grid's outer edges.
-      | .array _ s, a =>
+      | .array _ _, a =>
         let align := match a with
           | .center => none
           | .left => some "text-align: left"
           | .right => some "text-align: right; text-align: -webkit-right"
-        let inline := s!"padding-inline: {if k == 0 then "0" else "0.5em"} \
+        let inline := s!"padding-block: 0; padding-inline: {if k == 0 then "0" else "0.5em"} \
 {if rest matches .nil then "0" else "0.5em"}"
-        #[("style", "; ".intercalate ([align, stretchPad s, some inline].filterMap id))]
+        #[("style", "; ".intercalate ([align, some inline].filterMap id))]
       -- `\thickspace` before later columns, half `1.5\ex@` above and below, in a 70% script em.
       | .small, _ =>
         #[("style", if k == 0 then "padding: 0.107em 0" else "padding: 0.107em 0 0.107em 0.397em")]
     rowNodes mk disp kind (k + 1)
-      (acc.push (.elem "mtd" attrs (listNodes mk disp none #[] cell))) rest
+      (acc.push (.elem "mtd" attrs (listNodes mk disp none (gridStrut kind) cell))) rest
 
 /-- The `mtr` rows of a grid. -/
 def rowsNodes (mk : Marks) (disp : Bool) (kind : GridKind) (acc : Array Html.Node) :
@@ -1247,9 +1248,9 @@ theorem rowNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
       nodeListChars_append]
     simp only [nodeListChars]
     show rowChars (nodeListChars (nodeListChars c acc.toList)
-        (listNodes mk disp none #[] cell).toList) rest = _
-    rw [listNodes_chars mk disp none cell #[]]
-    rfl
+        (listNodes mk disp none (gridStrut kind) cell).toList) rest = _
+    rw [listNodes_chars mk disp none cell (gridStrut kind)]
+    cases kind <;> rfl
 
 theorem rowsNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
     ∀ (rows : MRows) (acc : Array Html.Node) (c : Array Char),
@@ -1690,8 +1691,9 @@ theorem rowNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t 
       (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).2)
     rw [tagFreeList_push, ha]
     simp only [tagFree, hp "mtd" (by simp [contentTags]), Bool.not_false, Bool.true_and]
-    exact listNodes_tagFree p hp mk disp none cell #[]
-      (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).1) rfl
+    exact listNodes_tagFree p hp mk disp none cell (gridStrut kind)
+      (fun h => by simp [MRow.alphaFree] at hf; exact (hf h).1)
+      (by cases kind <;> simp [gridStrut, tagFree, tagFreeList, hp "mspace" (by simp [contentTags])])
 
 theorem rowsNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
     (mk : Marks) (disp : Bool) (kind : GridKind) :
@@ -2082,7 +2084,9 @@ theorem rowNodes_held (mk : Marks) (disp : Bool) (kind : GridKind) :
     apply rowNodes_held mk disp kind rest (k + 1)
     rw [linesHeldList_push, ha]
     simp only [linesHeld]
-    rw [listNodes_held mk disp none cell #[] rfl, Bool.or_true, Bool.true_and]
+    rw [listNodes_held mk disp none cell (gridStrut kind)
+      (by cases kind <;> simp [gridStrut, linesHeld, linesHeldList, keepsLine]),
+      Bool.or_true, Bool.true_and]
 
 theorem rowsNodes_held (mk : Marks) (disp : Bool) (kind : GridKind) :
     ∀ (rows : MRows) (acc : Array Html.Node),

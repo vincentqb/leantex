@@ -102,10 +102,10 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       has "$z^{\\sum x}$" "<mo stretchy=\"false\">∑</mo>")
   t "a matrix's columns stand two \\arraycolsep apart with none at its outer edges"
     (has "\\[ \\begin{pmatrix} a & b \\end{pmatrix} \\]"
-      "<mtd style=\"padding-inline: 0 0.5em\">" &&
+      "<mtd style=\"padding-block: 0; padding-inline: 0 0.5em\">" &&
       has "\\[ \\begin{pmatrix} a & b \\end{pmatrix} \\]"
-        "<mtd style=\"padding-inline: 0.5em 0\">" &&
-      has "\\[ \\begin{pmatrix} a \\end{pmatrix} \\]" "<mtd style=\"padding-inline: 0 0\">")
+        "<mtd style=\"padding-block: 0; padding-inline: 0.5em 0\">" &&
+      has "\\[ \\begin{pmatrix} a \\end{pmatrix} \\]" "<mtd style=\"padding-block: 0; padding-inline: 0 0\"><mspace width=\"0\" height=\"0.840000em\" depth=\"0.360000em\"></mspace>")
   t "a fraction stands \\nulldelimiterspace clear of its neighbours on each side without a delimiter"
     (has "$\\frac{1}{2}$" "<mfrac style=\"padding-inline: 0.12em 0.12em\">" &&
       has "$\\binom{1}{2}$" "padding-inline: 0 0\"")

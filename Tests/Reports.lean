@@ -2455,15 +2455,16 @@ def reports : List Report := [
       "the corpus built by main's binary at 351dd670 and by this tree's: every PDF byte-identical but the Lean prose fixture's; every web page's stylesheet gains one rule and every web page is visually the same but that fixture's and the box fixture's, whose lowered url tilde, a formula of one operator, now sets with no space either side, as its PDF does"]
     state := .guarded "1e648c76" .before .author },
   { id := "R284", date := "2026-10-20"
-    what := "a cancellation arrow ran along its operand's whole ink box from below a display limit to past the top corner, steeper than the cancel package's and starting left of the operand, in both artifacts; the web page drew it as a stretched picture beside the browser's own layout of the operand, a large operator's leading space pushing the operand off it"
+    what := "a cancellation arrow ran along its operand's whole ink box from below a display limit to past the top corner, steeper than the cancel package's and starting left of the operand, in both artifacts; the web page drew it as a stretched picture beside the browser's own layout of the operand, and in Firefox the arrow lost its head, its value stood detached and the operand stood pushed right, since Firefox drops large SVG coordinates and an SVG's own margins inside mtext"
     pins := [check% cancelBoxChecks, check% CancelAlignment.checks, check% cancelHtmlChecks,
+      check% mathmlChecks, check% amsFracChecks,
       thm% Math.cancelSlash_slope_mem, thm% Math.cancelVector_slope_mem,
       thm% Math.cancelGeom_slash_centre_between, thm% Math.cancelto_anchor_exact,
       thm% Math.cancelto_depth_lift_exact]
-    accept := ["the cancel tier, its oracle measuring leantex's PDF and its page in Chromium against lualatex 1.24 on an invented probe of every slope class",
-      "main's binary at 1e648c76 on the cancel probe: 6 of 30 cases within a tenth of an em of lualatex in the PDF and 6 in Chromium; this tree's: 27 and 24, the integral with both limits apart in each (its scripts stand closer in leantex's layout and lower in the browser's)",
-      "a private deck's two cancellation frames re-rendered: each arrow at the cancel package's slope, placed as lualatex places it, in the PDF and the web page",
-      "the corpus built by main's binary at 1e648c76 and by this tree's: every artifact byte-identical but the cancellation fixture, whose strokes and arrows now stand at the cancel package's slopes"]
+    accept := ["the cancel tier, its oracle measuring leantex's PDF and its page in Chromium and Firefox against lualatex 1.24 on an invented probe of every slope class, scripts, fractions, delimiters, matrices, edge operators, deep values and limits",
+      "main's binary at 1e648c76 on the first, ten-case probe: 6 of 30 within a tenth of an em of lualatex in the PDF and 6 in Chromium; this tree's on the 35-case probe in three option sets: the PDF 89 of 105, Chromium 82, Firefox 89, Firefox drawing every head and value where Chromium does",
+      "a private deck's two cancellation frames re-rendered: each arrow at the cancel package's slope, placed as lualatex places it, in the PDF and in both browsers alike",
+      "the corpus built by main's binary at b872b92db and by this tree's: every artifact byte-identical but the math fixtures, whose script operators, fractions, arrays and delimiters now stand as the PDF sets them"]
     state := .guarded "1e648c76" .before .author }
 ]
 

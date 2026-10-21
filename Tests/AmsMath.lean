@@ -189,10 +189,10 @@ after its last pair, got {spMilli (g - base)}"
     (match casesPitch, arrayPitch with
       | some c, some a => a > 0 && c == a * 1200 / 1000
       | _, _ => false)
-  t "amsmath cases: the HTML cells take the stretch as padding"
+  t "amsmath cases: the HTML cells take the stretch in their array struts"
     (hasStr (HtmlDoc.emit {} (elabStr (dvDoc ""
       "$\\begin{cases} a & b \\\\ c & d \\end{cases}$")).1).1
-      "padding-top: calc(0.5ex + 0.120em)")
+      "<mspace width=\"0\" height=\"1.008000em\" depth=\"0.432000em\"></mspace>")
   -- `smallmatrix` against lualatex's `\showbox` (FiraMath, 10pt), in thousandths; ±1 is rounding.
   let small (cells : String) : String :=
     dvDoc "" s!"$\\begin\{smallmatrix}{cells}\\end\{smallmatrix}$"
