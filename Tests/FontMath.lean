@@ -118,6 +118,12 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((FontDb.resolveWeight faces "Alpha Sans" (some "Nope Light") 300 false).map
       (fun r => (subMsg r.2).getD "")).getD "" ==
       "substituted face 'Alpha Sans Light' for 'Alpha Sans weight 300'; 'Nope Light' is not installed")
+  -- A family spelled as a face file names its own upright face, not the family's first member.
+  let five : FontDb.Face := { synthFace "Delta Roman" "/x/delta5-regular.otf" with subfamily := "Regular" }
+  let ten : FontDb.Face := { synthFace "Delta Roman" "/x/delta10-regular.otf" with subfamily := "Regular" }
+  t "a family spelled as a face file resolves its upright face to that file"
+    ((FontDb.resolveVariant #[five, ten] "delta10-regular.otf" none {}).map (·.1.path) ==
+      some "/x/delta10-regular.otf")
   t "the 400 and 700 corners stay resolveVariant's"
     ((FontDb.resolveWeight faces "Alpha Sans" none 700 false).map
         (fun r => (r.1.subfamily, subMsg r.2)) ==

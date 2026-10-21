@@ -1,0 +1,253 @@
+\NeedsTeXFormat{LaTeX2e}[2022-06-01]
+\ProvidesExplPackage{ltkeys}{2026-10-20}{0.1}{leantex's native settings under lualatex}
+\sys_if_engine_luatex:F
+  { \PackageError { ltkeys } { The~leantex~classes~need~lualatex } { } }
+\file_input:n { ltdefaults.tex }
+
+\int_new:N \l_lt_measure_int
+\fp_new:N \l_lt_ratio_fp
+\bool_new:N \l_lt_grid_bool
+\dim_new:N \l_lt_hmargin_dim
+\dim_new:N \l_lt_vmargin_dim
+\bool_new:N \l_lt_hmargin_bool
+\bool_new:N \l_lt_vmargin_bool
+\dim_new:N \l_lt_paperwidth_dim
+\dim_new:N \l_lt_paperheight_dim
+\tl_new:N \l_lt_preset_tl
+\tl_new:N \l_lt_fontsize_tl
+\bool_new:N \l_lt_twoside_bool
+
+\cs_new_protected:Npn \lt_unread:nn #1#2
+  {
+    \msg_warning:nnnn { ltkeys } { leantex-only } {#1} {#2}
+  }
+\msg_new:nnn { ltkeys } { leantex-only }
+  { '\iow_char:N\\#1\iow_char:N\{~#2~\iow_char:N\}'~is~read~by~leantex~alone;~lualatex~sets~the~page~without~it }
+\msg_new:nnn { ltkeys } { paper }
+  { paper~'#1'~is~not~a~named~size~(letter,~legal,~a4,~a5,~b5,~executive);~the~class's~paper~stands }
+
+\cs_new:Npn \lt_unquote:n #1 { \tl_trim_spaces_apply:nN { \__lt_unquote:w #1 " " \q_stop } \use:n }
+\cs_new:Npn \__lt_unquote:w #1 " #2 " #3 \q_stop
+  { \tl_if_blank:nTF {#1} { #2 } { #1 } }
+
+\cs_new_protected:Npn \lt_paper:n #1
+  {
+    \str_case:enF { \tl_trim_spaces:n {#1} }
+      {
+        { letter } { \lt_paper:nn { 612bp } { 792bp } }
+        { legal } { \lt_paper:nn { 612bp } { 1008bp } }
+        { a4 } { \lt_paper:nn { 595bp } { 842bp } }
+        { a5 } { \lt_paper:nn { 420bp } { 595bp } }
+        { b5 } { \lt_paper:nn { 176mm } { 250mm } }
+        { executive } { \lt_paper:nn { 522bp } { 756bp } }
+      }
+      { \msg_warning:nnn { ltkeys } { paper } {#1} }
+  }
+\cs_new_protected:Npn \lt_paper:nn #1#2
+  {
+    \dim_set:Nn \l_lt_paperwidth_dim {#1}
+    \dim_set:Nn \l_lt_paperheight_dim {#2}
+  }
+
+\keys_define:nn { lt / preset }
+  {
+    fontsize .tl_set:N = \l_lt_fontsize_tl ,
+    measure .code:n = \int_set:Nn \l_lt_measure_int {#1} ,
+    ratio .code:n = \fp_set:Nn \l_lt_ratio_fp {#1} ,
+    grid .bool_set:N = \l_lt_grid_bool ,
+    paper .code:n = \lt_paper:n {#1} ,
+    twoside .bool_set:N = \l_lt_twoside_bool ,
+  }
+
+\keys_define:nn { lt / page }
+  {
+    leading .code:n = \lt_unread:nn { page } { leading~=~#1 } ,
+    measure .code:n =
+      {
+        \str_case:nnF {#1} { { free } { } { checked } { } }
+          { \int_set:Nn \l_lt_measure_int {#1} }
+      } ,
+    grid .choices:nn = { on , off }
+      { \bool_set:Nn \l_lt_grid_bool { \int_compare_p:n { \l_keys_choice_int == 1 } } } ,
+    size .code:n = \lt_paper:n {#1} ,
+    width .code:n = \dim_set:Nn \l_lt_paperwidth_dim {#1} ,
+    height .code:n = \dim_set:Nn \l_lt_paperheight_dim {#1} ,
+    margin .code:n =
+      {
+        \dim_set:Nn \l_lt_hmargin_dim {#1} \dim_set:Nn \l_lt_vmargin_dim {#1}
+        \bool_set_true:N \l_lt_hmargin_bool \bool_set_true:N \l_lt_vmargin_bool
+      } ,
+    hmargin .code:n = { \dim_set:Nn \l_lt_hmargin_dim {#1} \bool_set_true:N \l_lt_hmargin_bool } ,
+    vmargin .code:n = { \dim_set:Nn \l_lt_vmargin_dim {#1} \bool_set_true:N \l_lt_vmargin_bool } ,
+    protrusion .choices:nn = { on , off }
+      {
+        \int_compare:nNnTF { \l_keys_choice_int } = { 1 }
+          { \lt_microtype:nn { protrusion } { true } } { \lt_microtype:nn { protrusion } { false } }
+      } ,
+    expansion .choices:nn = { on , off }
+      {
+        \int_compare:nNnTF { \l_keys_choice_int } = { 1 }
+          { \lt_microtype:nn { expansion } { true } } { \lt_microtype:nn { expansion } { false } }
+      } ,
+    unknown .code:n = \lt_unread:nn { page } { \l_keys_key_str~=~#1 } ,
+  }
+
+\keys_define:nn { lt / fonts }
+  {
+    body .code:n = \exp_args:Ne \lt_font:Nn \setmainfont { \lt_unquote:n {#1} } ,
+    sans .code:n = \exp_args:Ne \lt_font:Nn \setsansfont { \lt_unquote:n {#1} } ,
+    mono .code:n = \exp_args:Ne \lt_font:Nn \setmonofont { \lt_unquote:n {#1} } ,
+    math .code:n = \exp_args:Ne \lt_font:Nn \setmathfont { \lt_unquote:n {#1} } ,
+    dir .code:n = { } ,
+    unknown .code:n = \lt_unread:nn { fonts } { \l_keys_key_str~=~#1 } ,
+  }
+\cs_new_protected:Npn \lt_font:Nn #1#2 { #1 {#2} }
+\cs_new_protected:Npn \lt_microtype:nn #1#2 { \microtypesetup { #1 = #2 } }
+
+\str_new:N \l__lt_colour_str
+\keys_define:nn { lt / palette }
+  {
+    unknown .code:n =
+      {
+        \str_set:Ne \l__lt_colour_str { \tl_to_str:n {#1} }
+        \str_if_eq:eeTF { \str_head:N \l__lt_colour_str } { \c_hash_str }
+          {
+            \str_set:Ne \l__lt_colour_str
+              { \str_range:Nnn \l__lt_colour_str { -6 } { -1 } }
+            \definecolor { ltx- \l_keys_key_str } { HTML } { \l__lt_colour_str }
+          }
+          { \lt_unread:nn { palette } { \l_keys_key_str~=~#1 } }
+      } ,
+  }
+
+\NewDocumentCommand \page { m } { \keys_set:nn { lt / page } {#1} }
+\NewDocumentCommand \fonts { m } { \keys_set:nn { lt / fonts } {#1} }
+\NewDocumentCommand \palette { o m }
+  {
+    \IfValueT {#1} { \lt_unread:nn { palette } { [#1] } }
+    \keys_set:nn { lt / palette } {#2}
+  }
+\NewDocumentCommand \theme { m } { \file_input:n { lttheme- #1 .tex } }
+
+\msg_new:nnn { ltkeys } { preset } { unknown~preset~'#2'~of~#1;~its~first~preset~'#3'~stands }
+\cs_new:Npn \__lt_key:w #1 = #2 \q_stop { #1 }
+\cs_new:Npn \__lt_value:w #1 = #2 \q_stop { #2 }
+\cs_new_protected:Npn \lt_preset:nn #1#2
+  {
+    \tl_set:Nn \l_lt_preset_tl {#2}
+    \clist_set:Ne \l_tmpa_clist { \use:c { @raw@opt@ #1 .cls } }
+    \clist_map_inline:Nn \l_tmpa_clist
+      {
+        \str_if_eq:eeT { \tl_trim_spaces:e { \__lt_key:w ##1 = \q_stop } } { preset }
+          { \tl_set:Ne \l_lt_preset_tl { \tl_trim_spaces:e { \__lt_value:w ##1 \q_stop } } }
+      }
+    \cs_if_exist:cF { c_lt_preset_ #1 _ \l_lt_preset_tl _tl }
+      {
+        \msg_warning:nneee { ltkeys } { preset } {#1} { \l_lt_preset_tl } {#2}
+        \tl_set:Nn \l_lt_preset_tl {#2}
+      }
+    \keys_set:nv { lt / preset } { c_lt_preset_ #1 _ \l_lt_preset_tl _tl }
+    \keys_define:nn { lt / preset } { preset .code:n = { } }
+    \ProcessKeyOptions [ lt / preset ]
+  }
+
+\lua_now:n { ltgrid = require('ltgrid') }
+\dim_new:N \l_lt_base_dim
+\dim_new:N \l_lt_L_dim
+\cs_new:Npn \lt_factor:n #1
+  { \fp_eval:n { round ( 1000 * \l_lt_ratio_fp ^ ( (#1) / 2 ) ) } }
+\cs_new:Npn \lt_size:n #1
+  { \dim_eval:n { \l_lt_base_dim * \lt_factor:n {#1} / 1000 } }
+\cs_new:Npn \lt_lines:nn #1#2
+  {
+    \int_div_truncate:nn
+      { #2 * \dim_to_decimal_in_sp:n { \lt_size:n {#1} } + 10 * \dim_to_decimal_in_sp:n { \l_lt_L_dim } - 1 }
+      { 10 * \dim_to_decimal_in_sp:n { \l_lt_L_dim } }
+  }
+\cs_new_protected:Npn \lt_define_size:Nn #1#2
+  {
+    \cs_set_protected:Npe #1
+      {
+        \exp_not:N \@setfontsize \exp_not:N #1 { \lt_size:n {#2} }
+          { \dim_eval:n { \int_max:nn { 1 } { \lt_lines:nn {#2} { \int_compare:nNnTF {#2} > { 0 } { 11 } { 12 } } } \l_lt_L_dim } }
+      }
+  }
+\cs_new_protected:Npn \lt_ladder:
+  {
+    \lt_define_size:Nn \tiny { -6 }
+    \lt_define_size:Nn \scriptsize { -4 }
+    \lt_define_size:Nn \footnotesize { -2 }
+    \lt_define_size:Nn \small { -1 }
+    \lt_define_size:Nn \large { 2 }
+    \lt_define_size:Nn \Large { 4 }
+    \lt_define_size:Nn \LARGE { 6 }
+    \lt_define_size:Nn \huge { 8 }
+    \lt_define_size:Nn \Huge { 10 }
+  }
+\dim_new:N \l_lt_textwidth_dim
+\dim_new:N \l_lt_textheight_dim
+\dim_new:N \l_lt_alphabet_dim
+\dim_new:N \l_lt_left_dim
+\dim_new:N \l_lt_top_dim
+\cs_new_protected:Npn \lt_geometry:
+  {
+    \hbox_set:Nn \l_tmpa_box { \normalfont \normalsize abcdefghijklmnopqrstuvwxyz }
+    \dim_set:Nn \l_lt_alphabet_dim { \box_wd:N \l_tmpa_box }
+    \bool_if:NTF \l_lt_hmargin_bool
+      { \dim_set:Nn \l_lt_textwidth_dim { \l_lt_paperwidth_dim - 2 \l_lt_hmargin_dim } }
+      {
+        \dim_set:Nn \l_lt_textwidth_dim
+          {
+            \fp_eval:n
+              {
+                round ( ( 1.415 * \dim_to_fp:n { \l_lt_alphabet_dim } + 23.03
+                  + ( \l_lt_measure_int - 45 ) / 20
+                    * ( 0.627 * \dim_to_fp:n { \l_lt_alphabet_dim } + 10.38 ) ) / 12 ) * 12
+              } pt
+          }
+      }
+    \dim_set:Nn \l_lt_textheight_dim
+      {
+        \fp_eval:n
+          {
+            floor ( \bool_if:NTF \l_lt_vmargin_bool
+                { \dim_to_fp:n { \l_lt_paperheight_dim - 2 \l_lt_vmargin_dim } }
+                { \dim_to_fp:n { \l_lt_textwidth_dim }
+                  * \dim_to_fp:n { \l_lt_paperheight_dim } / \dim_to_fp:n { \l_lt_paperwidth_dim } }
+              / \dim_to_fp:n { \l_lt_L_dim } ) * \dim_to_fp:n { \l_lt_L_dim }
+          } pt
+      }
+    \dim_set:Nn \l_lt_left_dim
+      {
+        \bool_if:NTF \l_lt_twoside_bool
+          { ( \l_lt_paperwidth_dim - \l_lt_textwidth_dim ) / 3 }
+          { ( \l_lt_paperwidth_dim - \l_lt_textwidth_dim ) / 2 }
+      }
+    \dim_set:Nn \l_lt_top_dim
+      {
+        \bool_if:NTF \l_lt_vmargin_bool
+          { \l_lt_vmargin_dim }
+          { ( \l_lt_paperheight_dim - \l_lt_textheight_dim ) / 3 }
+      }
+    \dim_set_eq:NN \paperwidth \l_lt_paperwidth_dim
+    \dim_set_eq:NN \paperheight \l_lt_paperheight_dim
+    \dim_set_eq:NN \pagewidth \l_lt_paperwidth_dim
+    \dim_set_eq:NN \pageheight \l_lt_paperheight_dim
+    \dim_set_eq:NN \textwidth \l_lt_textwidth_dim
+    \dim_set_eq:NN \textheight \l_lt_textheight_dim
+    \dim_set:Nn \oddsidemargin { \l_lt_left_dim - 1in }
+    \dim_set:Nn \evensidemargin
+      { \l_lt_paperwidth_dim - \l_lt_textwidth_dim - \l_lt_left_dim - 1in }
+    \dim_set:Nn \topmargin { \l_lt_top_dim - 1in - \headheight - \headsep }
+    \dim_set_eq:NN \columnwidth \textwidth
+    \dim_set_eq:NN \linewidth \textwidth
+    \dim_set_eq:NN \hsize \textwidth
+    \dim_set_eq:NN \@colht \textheight
+    \dim_set_eq:NN \@colroom \textheight
+    \dim_set_eq:NN \vsize \textheight
+  }
+\cs_new_protected:Npn \lt_grid_init:
+  {
+    \dim_set:Nn \l_lt_base_dim { \use:c { f@size } pt }
+    \dim_set:Nn \l_lt_L_dim { \baselineskip }
+  }

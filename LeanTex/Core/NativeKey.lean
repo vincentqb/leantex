@@ -13,7 +13,7 @@ public inductive PageKey where
   | bmargin | vmarginratio | clubpenalty | widowpenalty | brokenpenalty | displaywidowpenalty
   | interlinepenalty | predisplaypenalty | hscale | vscale | lists
   | textheightUnder
-  | hmarginratio | twoside | headings | openright | web | headrule | plainpages
+  | hmarginratio | twoside | headings | openright | web | headrule | plainpages | grid
   deriving DecidableEq, Repr, Inhabited
 
 public def PageKey.names : List (String × PageKey) :=
@@ -35,7 +35,7 @@ public def PageKey.names : List (String × PageKey) :=
    ("vscale", .vscale), ("lists", .lists), ("textheight-under", .textheightUnder),
    ("hmarginratio", .hmarginratio), ("twoside", .twoside), ("headings", .headings),
    ("openright", .openright), ("web", .web), ("headrule", .headrule),
-   ("plainpages", .plainpages)]
+   ("plainpages", .plainpages), ("grid", .grid)]
 
 public def PageKey.name (k : PageKey) : String := ((PageKey.names.find? (·.2 == k)).map (·.1)).getD ""
 
@@ -47,7 +47,7 @@ public def PageKey.listed : PageKey → Bool
   | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom | .tmargin
   | .bmargin | .vmarginratio | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty
   | .interlinepenalty | .predisplaypenalty | .hscale | .vscale | .lists | .textheightUnder
-  | .hmarginratio | .openright | .headrule | .plainpages
+  | .hmarginratio | .openright | .headrule | .plainpages | .grid
     => false
   | _ => true
 

@@ -2888,7 +2888,7 @@ private def anySqueezed (doc : Doc) : Bool :=
 private def lineageSkipVars (doc : Doc) (ex : Length) : String :=
   match doc.docClass.record.lists with
   | .beamer => s!"    {lineageSkipDecls doc ex 0}\n"
-  | .sizeFile | .web => ""
+  | .sizeFile | .web | .grid => ""
 
 /-- Each list level's spaces in beamer's lineage. -/
 private def lineageLevelRules (doc : Doc) (ex : Length) : String :=
@@ -2903,7 +2903,7 @@ private def lineageLevelRules (doc : Doc) (ex : Length) : String :=
       s!"{", ".intercalate (sq within)} \{ {lineageSkipDecls doc ex 1 true} }\n" ++
       s!"{", ".intercalate (sq deep)} \{ {lineageSkipDecls doc ex 2 true} }\n"
     else "")
-  | .sizeFile | .web => ""
+  | .sizeFile | .web | .grid => ""
 
 /-- The footline band's box as the stage lengths `footlineCss` reads. -/
 private def footBoxDecls (page : PageSpec) : Option (Length × Length) → List String

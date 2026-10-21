@@ -257,6 +257,13 @@ public structure PageSpec where
   /-- Whether the measure is checked against the readable band;
   `\page{ measure = free }` turns the check off. -/
   measureChecked : Bool := true
+  /-- The measure in characters (`\page{ measure = 66 }`), from which the text block is set. -/
+  measureChars : Option Nat := none
+  /-- Whether text lines stand on the body leading's grid (`\page{ grid = on }`). -/
+  grid : Option Bool := none
+  /-- Whether a declaration named the side margins, or the top and bottom ones. -/
+  hDeclared : Bool := false
+  vDeclared : Bool := false
   /-- How far past the trim edge the PDF page extends on every side, for print finishing. -/
   bleed : Length := 0
   /-- Whether the pages ship printer's cut marks (`\page{ marks = cut }`). -/
@@ -1149,6 +1156,9 @@ public inductive ListLineage where
   | sizeFile
   | beamer
   | web
+  /-- The leantex classes': the size file's lineage, its lists set off by one blank line of the
+  body leading and nothing between items or around a nested list. -/
+  | grid
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- One list level's vertical parameters, LaTeX's `\@list⟨n⟩`; `partopsep` is
@@ -1187,6 +1197,7 @@ private def listSkipsTable : ListLineage → Nat → Nat → ListSkips
   | .beamer, _, 1 => ⟨ptsGlue 300 200 250, ptsGlue 300 200 300, {}, none⟩
   | .beamer, _, _ => ⟨ptsGlue 200 100 200, ptsGlue 0 100 0, ptsGlue 0 100 0, none⟩
   | .web, _, _ => ⟨{}, {}, {}, none⟩
+  | .grid, _, _ => ⟨{}, {}, {}, some {}⟩
 
 /-- The size file a body size reads: `10pt`, `11pt` or `12pt`, the nearest for any other size. -/
 private def sizeFileOf (size : Length) : Nat :=
@@ -1199,6 +1210,13 @@ public def listSkips (l : ListLineage) (size : Length) (level : Nat) : Option Li
   match l with
   | .web => none
   | .beamer => some (listSkipsTable .beamer 0 lv)
+  | .grid =>
+    -- size1x.clo's `\normalsize` `\baselineskip`, scaled from its file's size as the rows are.
+    let f := sizeFileOf size
+    let lead : Length := if f == 10 then Dim.pt 12 else if f == 11 then Dim.pt 136 / 10 else Dim.pt 145 / 10
+    let lead := if size == Dim.pt f then lead else .ofUnits (lead.units * size.units / (Dim.pt f).units)
+    let top : SymGlue := if lv == 1 then { width := SymLength.ofLength lead } else {}
+    some { listSkipsTable .grid 0 lv with topsep := top }
   | .sizeFile =>
     let f := sizeFileOf size
     let s := listSkipsTable .sizeFile f lv
@@ -1249,9 +1267,9 @@ public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Length) (
     let top := (beamerTopsepTable.lookup (beamerOptionOf size)).getD (trivlistSkipDefault size)
     if depth == 0 then (tokens.find? trivlistSkipName).getD top
     else ((listSkips .beamer size depth).map (·.topsep)).getD top
-  | .sizeFile =>
+  | .sizeFile | .grid =>
     let level :=
-      ((listSkips .sizeFile size (max depth 1)).map (·.topsep)).getD (trivlistSkipDefault size)
+      ((listSkips l size (max depth 1)).map (·.topsep)).getD (trivlistSkipDefault size)
     if depth == 0 then (tokens.find? trivlistSkipName).getD level else level
   | .web => trivlistSkip tokens size
 
@@ -1263,6 +1281,7 @@ public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Length) (de
   | some g, _ => (g, false)
   | none, .beamer => (trivlistSkipFor l tokens size depth, true)
   | none, .sizeFile | none, .web => (floatSepDefault size, false)
+  | none, .grid => (((listSkips .grid size 1).map (·.topsep)).getD (floatSepDefault size), false)
 
 /-- The class's `\partopsep` where no list level sets its own. -/
 public def partopsepDefault (l : ListLineage) (size : Length) : SymGlue :=
@@ -1274,7 +1293,7 @@ public def partopsepDefault (l : ListLineage) (size : Length) : SymGlue :=
       | 11 => ptsGlue 300 100 100
       | _ => ptsGlue 300 200 200
     if size == Dim.pt f then g else g.scaleRatio size (Dim.pt f)
-  | .beamer | .web => {}
+  | .beamer | .web | .grid => {}
 
 /-- A list's `\partopsep`, which `\@trivlist` adds to `\topsep` where the list
 opens in vertical mode. -/
@@ -1346,7 +1365,7 @@ defines and `\partopsep` where the level sets its own. -/
 public def ListSet.within (l : ListLineage) (size : Length) (level : Nat) (outer : ListSet) :
     ListSet :=
   let resets : Bool := match l with
-    | .sizeFile => level ≤ 3
+    | .sizeFile | .grid => level ≤ 3
     | .beamer => true
     | .web => false
   let partResets := level ≤ 3 && ((listSkips l size level).bind (·.partopsep)).isSome
@@ -1477,7 +1496,7 @@ public def TrivIn.within (l : ListLineage) (extra : ListExtra) (size : Length) (
 /-- Where a lineage's trivlists take TeX's `\parskip` on their space; beamer's and the web's take
 the page's own, beamer's TeX's in a frame. -/
 public def ListLineage.trivTexParskip : ListLineage → Bool
-  | .sizeFile => true
+  | .sizeFile | .grid => true
   | .beamer | .web => false
 
 public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Length) (level : Nat)
@@ -1709,6 +1728,11 @@ public def leftMarginMilli : ListLineage → Nat → Nat
   | .sizeFile, 3 => 1870
   | .sizeFile, 4 => 1700
   | .sizeFile, _ => 1000
+  | .grid, 1 => 2500
+  | .grid, 2 => 2200
+  | .grid, 3 => 1870
+  | .grid, 4 => 1700
+  | .grid, _ => 1000
   | .beamer, _ => 2000
   | .web, _ => 1500
 
@@ -2851,6 +2875,53 @@ itself. -/
 @[expose] public def scaleStepIn (scale : List (String × Nat)) (base : Length) (name : String) : Length :=
   base * ((scale.lookup name).getD 1000) / 1000
 
+/-- A modular scale's steps for LaTeX's size names, in half steps: `\small` half a step below the
+body and `\tiny` three below; the ladder `tex/ltkeys.sty` defines. -/
+@[expose] public def gridSteps : List (String × Int) :=
+  [("tiny", -6), ("scriptsize", -4), ("footnotesize", -2), ("small", -1), ("normalsize", 0),
+   ("large", 2), ("Large", 4), ("LARGE", 6), ("huge", 8), ("Huge", 10)]
+
+/-- `round(1000 · r^(h/2))` for a ratio `r` per mille, exact in integers: half steps through the
+square root, an odd step its whole part times one half step. -/
+@[expose] public def scaleFactor (ratio : Nat) (half : Int) : Nat :=
+  let r := max ratio 1
+  let w := half.natAbs / 2
+  let num := if half ≥ 0 then 1000 * r ^ w else 1000 ^ (w + 1)
+  let den := if half ≥ 0 then 1000 ^ w else r ^ w
+  if half.natAbs % 2 == 0 then
+    (2 * num + den) / (2 * den)
+  else
+    -- x = num/den · √(p/q); round(x) = n + 1 exactly when 4·num²·p ≥ (2n+1)²·den²·q.
+    let (p, q) := if half ≥ 0 then (r, 1000) else (1000, r)
+    let n := Nat.sqrt (num * num * p / (den * den * q))
+    if 4 * num * num * p ≥ (2 * n + 1) * (2 * n + 1) * den * den * q then n + 1 else n
+
+/-- The size ladder of a modular scale at `ratio` per mille. -/
+@[expose] public def gridLadder (ratio : Nat) : List (String × Nat) :=
+  gridSteps.map fun (name, half) => (name, scaleFactor ratio half)
+
+/-- Grid lines a size's line needs: the fewest whole leadings `lead` at least 1.2 times a text size
+or 1.1 times a display size above the body. -/
+@[expose] public def gridLines (size lead : Length) (display : Bool) : Nat :=
+  let f : Int := if display then 11 else 12
+  let l := max lead.units 1
+  ((f * size.units + 10 * l - 1) / (10 * l)).toNat |> max 1
+
+/-- The skip column of a grid: each step's line height a whole multiple of the body's row. -/
+@[expose] public def gridSkips (ratio : Nat) (body lead : Length) (bodyRow : Nat) :
+    List (String × Nat) :=
+  gridSteps.map fun (name, half) =>
+    let size := body * (scaleFactor ratio half : Int) / (1000 : Int)
+    (name, gridLines size lead (half > 0) * bodyRow)
+
+/-- On a grid every size's line height is a whole number of body leadings. -/
+public theorem gridSkips_whole (ratio : Nat) (body lead : Length) (bodyRow : Nat) :
+    ∀ p ∈ gridSkips ratio body lead bodyRow, bodyRow ∣ p.2 := by
+  intro p hp
+  simp only [gridSkips, List.mem_map] at hp
+  obtain ⟨_, _, rfl⟩ := hp
+  exact Nat.dvd_mul_left _ _
+
 /-- Each named step's `\baselineskip`, per mille of the body size:
 size10.clo's `\@setfontsize` second arguments. -/
 @[expose] public def sizeSkipScale : List (String × Nat) :=
@@ -3018,6 +3089,13 @@ declares one: `\LARGE` on a flow page, `\Large` on a deck, on the document's lad
   | .h2 => scaleStepIn scale base "Large"
   | .h3 => scaleStepIn scale base "large"
   | .h4 | .h5 | .h6 => base
+
+/-- The size step a heading level sets at, the step `headingSize` reads. -/
+@[expose] public def headingStep : HeadingLevel → String
+  | .title | .h1 => "LARGE"
+  | .h2 => "Large"
+  | .h3 => "large"
+  | .h4 | .h5 | .h6 => "normalsize"
 
 /-- The reach below its bar's top of the section-page template's last line,
 the subsection title's strut, at the document's `\large`. -/
@@ -5389,6 +5467,7 @@ public theorem quoteSpacing_own_exact (l : ListLineage) (size : Length) (level :
     cases l with
     | web => exact absurd rfl hl
     | beamer => rfl
+    | grid => rfl
     | sizeFile => unfold listSkips; dsimp only; split <;> rfl
   have hown : q.kind.ownAt l size level = q.kind.own l := by simp [QuoteKind.ownAt, hsome]
   unfold quoteSpacing at h
@@ -6915,7 +6994,7 @@ public def captionPosFor (l : ListLineage) (decl : Array (String × CaptionPos))
   match (decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == "")), l with
   | some (_, p), _ => p
   | none, .beamer => .bottom
-  | none, .sizeFile | none, .web => .auto
+  | none, .sizeFile | none, .web | none, .grid => .auto
 
 /-- LaTeX's two caption skips: `above` is `\abovecaptionskip` (the engine's
 `captionsep`), `below` is `\belowcaptionskip`. -/
@@ -6946,7 +7025,7 @@ beamer sets both to 7 pt. -/
 public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Length) : SymGlue :=
   match l with
   | .beamer => { width := { fixed := Dim.pt 7 } }
-  | .sizeFile | .web => s.default size
+  | .sizeFile | .web | .grid => s.default size
 
 /-- Every token name an engine site reads, the names a document's length reaches the engine by. -/
 public def engineTokenNames : List String :=
@@ -8368,6 +8447,118 @@ public def pageSizes : List (String × (Length × Length)) :=
    ("b5", (Dim.mm 176, Dim.mm 250)),
    ("executive", (Dim.bp 522, Dim.bp 756))]
 
+/-- The leantex flow class's design: a modular type scale, a measure in characters and a leading
+grid (`tex/ltflow.cls`). -/
+public structure FlowDesign where
+  /-- The type scale's ratio, per mille (Bringhurst §3.1.1; LaTeX's own step is 1.2). -/
+  ratio : Nat
+  /-- The measure in characters (Bringhurst §2.1.2), memoir's copy-fitting count. -/
+  measure : Nat
+  /-- Whether every text line of the flow stands on the body leading's grid (Bringhurst §2.2.2). -/
+  grid : Bool
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The presets of the leantex flow class. -/
+public inductive FlowPreset where
+  | article
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+public def FlowPreset.name : FlowPreset → String
+  | .article => "article"
+
+public def FlowPreset.all : List FlowPreset := [.article]
+
+public def FlowPreset.ofName? (n : String) : Option FlowPreset :=
+  FlowPreset.all.find? (·.name == n)
+
+public theorem FlowPreset.ofName?_name (p : FlowPreset) : FlowPreset.ofName? p.name = some p := by
+  match p with
+  | .article => rfl
+
+/-- The theorem-like environments the flow class declares, amsthm's style for each, on one
+counter named by the first: the shared practice of the AMS, ACM, IEEE and NeurIPS classes. -/
+public def flowTheorems : List (String × String × String) :=
+  [("theorem", "Theorem", "plain"), ("lemma", "Lemma", "plain"),
+   ("proposition", "Proposition", "plain"), ("corollary", "Corollary", "plain"),
+   ("definition", "Definition", "definition"), ("example", "Example", "definition"),
+   ("remark", "Remark", "remark")]
+
+/-- The packages the flow class loads after its base class, in order, each with its options. -/
+@[expose] public def flowPackageLoads : List (String × String) :=
+  [("fontspec", ""), ("xcolor", ""), ("amsmath", ""), ("amsthm", ""), ("unicode-math", ""),
+   ("microtype", ""), ("booktabs", ""), ("hyperref", "hidelinks"), ("cleveref", "")]
+
+/-- The packages the flow class loads, by name. -/
+@[expose] public def flowPackages : List String := flowPackageLoads.map (·.1)
+
+/-- The faces the flow class sets, Latin Modern at its 10 pt design: per slot its upright, bold,
+italic and bold italic files, as `lualatex`'s default `lmr`, `lmss` and `lmtt` load them. -/
+public def flowFaces : List (String × String × String × String × String) :=
+  [("body", "lmroman10-regular.otf", "lmroman10-bold.otf", "lmroman10-italic.otf",
+     "lmroman10-bolditalic.otf"),
+   ("sans", "lmsans10-regular.otf", "lmsans10-bold.otf", "lmsans10-oblique.otf",
+     "lmsans10-boldoblique.otf"),
+   ("mono", "lmmono10-regular.otf", "lmmonolt10-bold.otf", "lmmono10-italic.otf",
+     "lmmonolt10-boldoblique.otf")]
+
+/-- The flow class's math face. -/
+public def flowMathFace : String := "latinmodern-math.otf"
+
+/-- The flow class's faces as the native `\fonts` declaration leantex reads. -/
+public def flowFontsSource : String :=
+  let q (v : String) : String := "\"" ++ v ++ "\""
+  let slots := flowFaces.map fun (slot, up, b, i, bi) =>
+    s!"{slot} = {q up}, {slot}.bold = {q b}, {slot}.italic = {q i}, {slot}.bolditalic = {q bi}"
+  "\\fonts{ " ++ ", ".intercalate (slots ++ [s!"math = {q flowMathFace}"]) ++ " }\n" ++
+  -- article.cls's `\footskip` at its 10, 11 and 12pt options.
+  "\\tokens{ footskip = 30pt }\n"
+
+/-- The flow class's theorem declarations as LaTeX source, the text `tex/ltdefaults.tex` holds. -/
+public def flowTheoremSource : String := Id.run do
+  let mut out := ""
+  let mut style := ""
+  for (env, title, st) in flowTheorems do
+    if st != style then
+      out := out ++ s!"\\theoremstyle\{{st}}\n"
+      style := st
+    let shared := if env == "theorem" then "" else "[theorem]"
+    out := out ++ s!"\\newtheorem\{{env}}{shared}\{{title}}\n"
+  return out
+
+/-- A preset's design: a 66-character measure, LaTeX's ratio 1.2, the grid on. -/
+public def FlowPreset.design : FlowPreset → FlowDesign
+  | .article => { ratio := 1200, measure := 66, grid := true }
+
+/-- A preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
+public def FlowPreset.keys (p : FlowPreset) : String :=
+  let d := p.design
+  let ratio := s!"{d.ratio / 1000}.{toString (d.ratio % 1000 + 1000) |>.drop 1}"
+  s!"fontsize = 11pt , measure = {d.measure} , ratio = {ratio} , grid = {d.grid} , " ++
+    "paper = letter , twoside = false"
+
+/-- `tex/ltdefaults.tex`: the presets, packages, faces and theorems of the classes, generated from
+the records leantex reads so the two never differ. -/
+public def ltDefaultsTex : String := Id.run do
+  let mut out := "% Generated by leantex's test suite under --update; never edited by hand.\n" ++
+    "\\ProvidesFile{ltdefaults.tex}[2026/10/20 v0.1 leantex class defaults]\n"
+  for p in FlowPreset.all do
+    out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltflow_{p.name}_tl } \{ {p.keys} }\n"
+  out := out ++ "\\cs_new_protected:Npn \\lt_flow_packages:\n  {\n"
+  for (pkg, opts) in flowPackageLoads do
+    let o := if opts.isEmpty then "" else s!"[{opts}]"
+    out := out ++ s!"    \\RequirePackage {o} \{ {pkg} }\n"
+  out := out ++ "  }\n\\cs_new_protected:Npn \\lt_flow_faces:\n  {\n"
+  for (slot, up, b, i, bi) in flowFaces do
+    let cmd := if slot == "body" then "setmainfont" else if slot == "sans" then "setsansfont"
+      else "setmonofont"
+    out := out ++ s!"    \\{cmd} \{ {up} } [ BoldFont = {b} , ItalicFont = {i} , BoldItalicFont = {bi} ]\n"
+  out := out ++ s!"    \\setmathfont \{ {flowMathFace} }\n  }\n"
+  out := out ++ "\\cs_new_protected:Npn \\lt_flow_theorems:\n  {\n"
+  for line in (flowTheoremSource.splitOn "\n").filter (!·.isEmpty) do
+    out := out ++ "    " ++ line ++ "\n"
+  return out ++ "  }\n"
+
+
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/
 public structure ClassRecord where
@@ -8437,6 +8628,8 @@ public structure ClassRecord where
   webLayout : WebLayout := .book
   /-- Where the class's text area comes from where the document declares none. -/
   area : AreaRule := .engine
+  /-- The leantex flow class's type scale, measure and grid, for its classes alone. -/
+  design : Option FlowDesign := none
   deriving Repr, BEq
 
 /-- The document's class, closed: a class `ofString?` does not answer never enters the IR. -/
@@ -8453,6 +8646,8 @@ public inductive DocClass where
   | poster
   /-- KOMA-Script's article, report and book classes, one record for the three. -/
   | koma
+  /-- The leantex flow class (`tex/ltflow.cls`) at one of its presets. -/
+  | flow (preset : FlowPreset)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The class's one spelling, the `\documentclass` argument. -/
@@ -8464,6 +8659,7 @@ public def DocClass.name : DocClass → String
   | .webpage => "webpage"
   | .poster => "poster"
   | .koma => "scrartcl"
+  | .flow _ => "ltflow"
 
 /-- The class a `\documentclass` argument names, if any: the inverse of `name`, KOMA-Script's
 report and book spelling its article. -/
@@ -8475,17 +8671,22 @@ public def DocClass.ofString? : String → Option DocClass
   | "webpage" => some .webpage
   | "poster" => some .poster
   | "scrartcl" | "scrreprt" | "scrbook" => some .koma
+  | "ltflow" => some (.flow .article)
   | _ => none
 
 public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
-  cases c <;> rfl
+  cases c with
+  | flow p => match p with | .article => rfl
+  | _ => rfl
 
 /-- Every class, in the order a help lists them. -/
 @[expose] public def DocClass.all : List DocClass :=
-  [.article, .slides, .card, .resume, .webpage, .poster, .koma]
+  [.article, .slides, .card, .resume, .webpage, .poster, .koma, .flow .article]
 
 public theorem DocClass.all_complete (c : DocClass) : c ∈ DocClass.all := by
-  cases c <;> simp [DocClass.all]
+  cases c with
+  | flow p => match p with | .article => simp [DocClass.all]
+  | _ => simp [DocClass.all]
 
 public theorem DocClass.all_nodup : DocClass.all.Nodup := by decide
 
@@ -8580,6 +8781,17 @@ calibration reads fluently; declare \
       measureBand := true
       pageNumbers := true
       area := .typearea }
+  -- tex/ltflow.cls loads article.cls at its 11pt option.
+  | .flow p =>
+    { model := .flow
+      fontSize := some (Dim.pt 11)
+      sizeFileSkip := true
+      parskip := some {}
+      numberHeadings := true
+      measureBand := true
+      lists := .grid
+      pageNumbers := true
+      design := some p.design }
 
 /-- A document's class defaults: its class's colour row and ground depth, the
 web's row for a source that is not tex. -/

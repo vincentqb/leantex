@@ -90,6 +90,8 @@ public structure Geom where
   cellStrut : Option (Length × Length) := none
   /-- The baseline distance a scope sets its paragraphs at where their own size names no step. -/
   lead : Option Length := none
+  /-- The leading grid every text line of the flow stands on (`\page{ grid = on }`). -/
+  grid : Option Length := none
   deriving Repr
 
 /-- Ink bounds from four lengths. -/
@@ -782,7 +784,9 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     scale := spec.scale
     skips := spec.skipScale
     raggedFil := spec.raggedFil
-    maxDepth := spec.maxDepth }
+    maxDepth := spec.maxDepth
+    grid := if spec.grid == some true then some (spec.bodySkip.getD (Ir.leadingFor spec.fontSize))
+      else none }
 
 /-- A picture's ink on the page: its figure, its label keys, the isometry from
 picture coordinates (y up) to layout coordinates (y down), and the leaf it paints. -/
@@ -9177,7 +9181,8 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Length) (size : L
       if dj.emptyLine then texBaselineGap bs b.boxDepth 0 + texBaselineGap bs 0 tex.1
       else texBaselineGap bs b.boxDepth tex.1
     | none, _, _ =>
-      if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth tex.1
+      -- On a grid every line takes TeX's interline rule at its own `\baselineskip`.
+      if b.texAfter || display.isSome || b.geom.grid.isSome then texBaselineGap bs b.boxDepth tex.1
       -- Below a frame's opening box the line takes TeX's interline glue at its `\baselineskip`.
       else if b.opening then
         texBaselineGap (if segs.any (· matches .run ..) then box.above + box.below else lead)
@@ -9281,7 +9286,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Length)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hpr : b.prevBand = .text) (hrl : ruleOnly segs = false)
     (hnn : b.notesH = 0) (hid : b.ignoreDepth = false) (htx : b.texAfter = false)
-    (hop : b.opening = false)
+    (hop : b.opening = false) (hgr : b.geom.grid = none)
     (hfit : b.overflowPast (b.y + b.skip.width
         + firstBaseline.getD
           (b.textGap (lineExtent fs b.geom.fontSize b.ascent b.capHeight
@@ -9304,7 +9309,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Length)
   dsimp only
   simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
   simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn, noteFloor,
-    htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
+    htx, hop, hgr, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Length.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, Spacing.Page.commit, attachNotes_empty_id]
   simp [Array.back?_push]
@@ -10132,7 +10137,7 @@ private def Spacing.Pending.openSpace (a : Acc) (r : Rd) (g : Glue) : Acc :=
 private def Spacing.Pending.listOpen (a : Acc) (r : Rd) (g : Glue) : Acc :=
   match r.lists with
   | .beamer => { a.vskip g with trivOwed := true }
-  | .sizeFile | .web => a.openSpace r g
+  | .sizeFile | .web | .grid => a.openSpace r g
 
 private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
     (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
@@ -10424,7 +10429,7 @@ private def collectPara (r : Rd) (a : Acc)
     (rowStrut : Option (Length × Length) := none) (strut : Option Length := none)
     (inserted : Bool := false) (background : Length := 0)
     (urlBreaks : Bool := r.surface != .tex)
-    (texBox : Option TexBox := none) : Acc :=
+    (texBox : Option TexBox := none) (gridLead : Option Length := none) : Acc :=
   let texBox := texBox.orElse fun _ => a.boxOpener
   let afterHead := a.noBreakNext && keepNext ≤ 0
   let a := { a.flushGap r with boxOpener := none, noBreakNext := a.noBreakNext && 0 < keepNext }
@@ -10449,7 +10454,9 @@ private def collectPara (r : Rd) (a : Acc)
       .pen w (if cost ≤ forcedCost then cost else 10000) flag f c gs
     | item => item) else items
   -- LaTeX's ragged settings leave every line's slack free (`kp`'s `fil`); displays stay balanced.
-  let rightFil := !display && !literalLines && ((!r.geom.justify && r.geom.raggedFil) || center)
+  -- On a grid a display line breaks as LaTeX's own: a centred title under `\centering`'s fil.
+  let rightFil := (!display || r.geom.grid.isSome) && !literalLines &&
+    ((!r.geom.justify && r.geom.raggedFil) || center)
   let items :=
     if r.geom.justify || rightFil then items
     else if display then
@@ -10582,7 +10589,8 @@ private def collectPara (r : Rd) (a : Acc)
       itemSources := itemSources, diags := ds
       target := measure
       indent := indent, center := center, size := strutSize
-      lead := (step.bind (Ir.stepLead r.geom.skips · size)).orElse fun _ => r.geom.lead
+      lead := gridLead.orElse fun _ =>
+        (step.bind (Ir.stepLead r.geom.skips · size)).orElse fun _ => r.geom.lead
       firstBaseline := firstBaseline
       paintPadding := paintPadding
       strut := strut
@@ -10652,12 +10660,14 @@ private def collectDisplay (r : Rd) (a : Acc)
     (rule : Option HeadingRule := none)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Length := 0)
     (paintPadding : Option Length := none) (inserted : Bool := false)
-    (strut : Option Length := none) (texBox : Option TexBox := none) : Acc :=
-  collectPara { r with pats := none, geom := { r.geom with justify := false } }
+    (strut : Option Length := none) (texBox : Option TexBox := none)
+    (gridLead : Option Length := none) : Acc :=
+  -- On a grid a heading justifies, as `\@startsection` sets it; elsewhere display lines stay ragged.
+  collectPara { r with pats := none, geom := { r.geom with justify := r.geom.grid.isSome && !center } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
     (display := true) (leaf := leaf) (span := span) (keepNext := keepNext)
     (paintPadding := paintPadding) (inserted := inserted) (strut := strut)
-    (texBox := texBox)
+    (texBox := texBox) (gridLead := gridLead)
 
 /-- The natural width of a set of items, penalties adding nothing. -/
 private def itemsNaturalWidth (items : Array Item) : Length :=
@@ -10715,9 +10725,10 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     collectDisplay r a (Ir.fillTemplate tpl title) indent center r.geom.fontSize
       (leaf := leaf) (span := Struct.leafCountInlines title)
   | none =>
-    collectDisplay r a title indent center
-      (Ir.titleSize r.geom.scale r.geom.fontSize r.slides)
+    let size := Ir.titleSize r.geom.scale r.geom.fontSize r.slides
+    collectDisplay r a title indent center size
       (baseStyle := { weight := .b }) (leaf := leaf) (span := Struct.leafCountInlines title)
+      (gridLead := r.geom.grid.map fun lead => (Ir.gridLines size lead true : Int) * lead)
 
 /-- Whether cell `(i, j)` lies inside a `\multicolumn`, which enters no single column's maximum. -/
 public def inSpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
@@ -12117,9 +12128,13 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
       collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
         (rule := rule) (leaf := leaf) (span := span) (keepNext := keep)
     | none =>
-      collectDisplay r a title indent false (sectionSize r.geom level)
+      -- On a grid a heading's lines take its size's whole leadings (`Ir.gridLines`).
+      let size := sectionSize r.geom level
+      collectDisplay r a title indent false size
         (baseStyle := { weight := .b }) (rule := rule)
         (leaf := leaf) (span := span) (keepNext := keep)
+        (gridLead := r.geom.grid.map fun lead =>
+          (Ir.gridLines size lead (Ir.headingStep level != "normalsize") : Int) * lead)
   { a.vskip after with afterHeading := true, noBreakNext := true, fg := savedFg }
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Length) : Acc :=
@@ -15588,9 +15603,20 @@ private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option
       (j.expand && !shrinks) j.wordOffsets
   if set.overfull then some (-set.delta - (if justify then set.measured.shrink else 0)) else none
 
-/-- One break of a paragraph placed, the fold step `placePara` runs over its breaks. -/
-private def placeParaLine (fs : FontSet) (j : ParaJob)
-    (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
+/-- How far a baseline stands below the grid line above it, zero within a hundredth of a point. -/
+public def gridOffset (origin lead y : Length) : Length :=
+  let l := max lead.units 1
+  let off := Int.emod (y - origin).units l
+  let tol := (Dim.pt 1 / (100 : Int)).units -- tex/ltgrid.lua's tolerance
+  if off ≤ tol || l - off ≤ tol then 0 else .ofUnits off
+
+/-- A builder's pending skip lengthened by `e`, the grid's drop before a line. -/
+private def Spacing.Page.gridSkip (b : B) (e : Length) : B :=
+  { b with skip := { b.skip with width := b.skip.width + e } }
+
+/-- One break of a paragraph placed below its skip lengthened by `extra`. -/
+private def placeParaLineAt (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) (extra : Length) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
   -- premise: reflowAccountChecks — every overrun line is named once, by W0005 or its re-flow.
@@ -15610,13 +15636,44 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   let b1 := b1.openDisplayAt j st.2.2 g.2.1 g.1
   let b1 := b1.withPendingSource (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
   (placeParaTrailer j brk
-    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
+    ((b1.gridSkip extra).placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
       (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
       (display := j.display) (opens := st.2.2)
       (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))
       (paintPadding := if st.2.2 then j.paintPadding else none)
       (stepLead := j.lead) (rowStrut := j.rowStrut) (strut := j.strut)),
     brk, false)
+
+/-- The move a line placed as `b` needs to stand on its grid: a text line of the flow on a gridded
+page, to the nearest grid line (`tex/ltgrid.lua`); else zero. -/
+private def gridExtra (j : ParaJob) (b0 b : B) : Length :=
+  if j.display.isNone && !j.inFloat && j.texBox.isNone && j.rowStrut.isNone then
+    match b0.geom.grid, b.cur.lines.back? with
+    | some lead, some l =>
+      let off := gridOffset (b.geom.bodyTop + b.geom.topskip.getD 0) lead l.y
+      if off == 0 then 0 else if 2 * off ≤ lead then -off else lead - off
+    | _, _ => 0
+  else 0
+
+/-- One break of a paragraph placed, the fold step `placePara` runs over its breaks. -/
+private def placeParaLine (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
+  placeParaLineAt fs j st brk (gridExtra j st.1 (placeParaLineAt fs j st brk 0).1)
+
+private theorem gridSkip_zero (b : B) : b.gridSkip 0 = b := by
+  simp only [Spacing.Page.gridSkip, Length.add_zero]
+
+private theorem placeParaLine_snd (fs : FontSet) (j : ParaJob) (st : B × Nat × Bool) (brk : Nat) :
+    (placeParaLine fs j st brk).2 = (brk, false) := by
+  unfold placeParaLine placeParaLineAt
+  rfl
+
+/-- Off a grid a paragraph line is placed as it stands. -/
+private theorem placeParaLine_gridless (fs : FontSet) (j : ParaJob) (st : B × Nat × Bool)
+    (brk : Nat) (h : st.1.geom.grid = none) :
+    placeParaLine fs j st brk = placeParaLineAt fs j st brk 0 := by
+  simp only [placeParaLine, gridExtra, h]
+  split <;> rfl
 
 /-- Whether item `k` is the end-fill before a forced
 newline, a break that ends the same source segment. -/
@@ -15995,20 +16052,31 @@ private theorem sourceBound_withPendingSource {n : Nat} (b : B) (source : Option
     (hb : b.SourceBound n) : (b.withPendingSource source).SourceBound n :=
   hb.of_eq rfl rfl rfl rfl rfl
 
-private theorem sourceBound_placeParaLine {n : Nat} (fs : FontSet) (j : ParaJob)
-    (st : B × Nat × Bool) (brk : Nat)
+private theorem sourceBound_gridSkip {n : Nat} (b : B) (e : Length)
+    (hb : b.SourceBound n) : (b.gridSkip e).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_placeParaLineAt {n : Nat} (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) (e : Length)
     (hj : j.SourceBound n) (hb : st.1.SourceBound n) :
-    (placeParaLine fs j st brk).1.SourceBound n := by
+    (placeParaLineAt fs j st brk e).1.SourceBound n := by
   have hg := sourceBound_paraLineGeom fs j st.1 st.2.2 st.2.1 brk hj
-  simp only [placeParaLine, hj.notes, Array.isEmpty_empty, ite_true]
+  simp only [placeParaLineAt, hj.notes, Array.isEmpty_empty, ite_true]
   apply sourceBound_placeParaTrailer
   apply sourceBound_placeLine
-  · apply sourceBound_withPendingSource
+  · apply sourceBound_gridSkip
+    apply sourceBound_withPendingSource
     apply sourceBound_openDisplayAt
     split
     · exact hb.of_eq rfl rfl rfl rfl rfl
     · exact hb
   · exact hg
+
+private theorem sourceBound_placeParaLine {n : Nat} (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat)
+    (hj : j.SourceBound n) (hb : st.1.SourceBound n) :
+    (placeParaLine fs j st brk).1.SourceBound n :=
+  sourceBound_placeParaLineAt fs j st brk _ hj hb
 
 private theorem sourceBound_turnAt {n : Nat} (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat)
     (hb : st.1.SourceBound n) : (turnAt turns st brk).1.SourceBound n := by
@@ -16628,22 +16696,35 @@ private theorem census_withPendingSource (pick : Option Nat → Bool → Bool) (
     (source : Option Span) :
     Spacing.Page.census pick (b.withPendingSource source) = Spacing.Page.census pick b := rfl
 
+private theorem census_gridSkip (pick : Option Nat → Bool → Bool) (b : B) (e : Length) :
+    Spacing.Page.census pick (b.gridSkip e) = Spacing.Page.census pick b := rfl
+
+private theorem census_placeParaLineAt {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (j : ParaJob) (st : B × Nat × Bool) (brk : Nat) (e : Length)
+    (hj : j.SourceBound n) (hb : st.1.SourceBound n)
+    (hp : ∀ it ∈ (Spacing.Paragraph.items j), it.UnflaggedEmpty) :
+    Spacing.Page.census pick (placeParaLineAt fs j st brk e).1 = Spacing.Page.census pick st.1 ++
+      (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then itemSpan (Spacing.Paragraph.items j) (j.lineStart st.2.2 st.2.1) brk
+       else []) := by
+  simp only [placeParaLineAt, (Spacing.Paragraph.SourceBound.notes hj), Array.isEmpty_empty, ite_true]
+  rw [census_placeParaTrailer, census_placeLine]
+  · rw [census_gridSkip, census_withPendingSource, census_openDisplayAt]
+    split <;> simp only [census_warnOverfull, paraLineGeom_chars fs j st.1 _ _ _ hj hp]
+  · apply sourceBound_gridSkip
+    apply sourceBound_withPendingSource
+    apply sourceBound_openDisplayAt
+    split
+    · exact hb.of_eq rfl rfl rfl rfl rfl
+    · exact hb
+
 private theorem census_placeParaLine {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (j : ParaJob) (st : B × Nat × Bool) (brk : Nat)
     (hj : j.SourceBound n) (hb : st.1.SourceBound n)
     (hp : ∀ it ∈ (Spacing.Paragraph.items j), it.UnflaggedEmpty) :
     Spacing.Page.census pick (placeParaLine fs j st brk).1 = Spacing.Page.census pick st.1 ++
       (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then itemSpan (Spacing.Paragraph.items j) (j.lineStart st.2.2 st.2.1) brk
-       else []) := by
-  simp only [placeParaLine, (Spacing.Paragraph.SourceBound.notes hj), Array.isEmpty_empty, ite_true]
-  rw [census_placeParaTrailer, census_placeLine]
-  · rw [census_withPendingSource, census_openDisplayAt]
-    split <;> simp only [census_warnOverfull, paraLineGeom_chars fs j st.1 _ _ _ hj hp]
-  · apply sourceBound_withPendingSource
-    apply sourceBound_openDisplayAt
-    split
-    · exact hb.of_eq rfl rfl rfl rfl rfl
-    · exact hb
+       else []) :=
+  census_placeParaLineAt pick fs j st brk _ hj hb hp
 
 private theorem paraStart_cursor (j : ParaJob) (first : Bool) (prev : Nat)
     (hh : (Spacing.Paragraph.hangIndent j) = 0) (hp : first = true ∨ prev < (Spacing.Paragraph.items j).size) :
@@ -16693,7 +16774,7 @@ private theorem census_paraFold {n : Nat} (pick : Option Nat → Bool → Bool)
       paraStart_cursor j _ _ hh hc]
     rw [spanFold_prefix (Spacing.Paragraph.items j) breaks (itemSpan (Spacing.Paragraph.items j) _ brk) brk]
     change _ = _ ++ if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then _ else []
-    dsimp only [placeParaLine]
+    dsimp only [placeParaLine, placeParaLineAt]
     split <;> simp only [Bool.false_eq_true, ite_false, List.append_assoc, List.append_nil]
 
 private theorem census_placeParaWith {n : Nat} (pick : Option Nat → Bool → Bool)
@@ -17783,20 +17864,20 @@ private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     PagesExtend st.1 (placeParaLine fs j st brk).1 := by
-  simp only [placeParaLine, Spacing.Page.withPendingSource]
+  simp only [placeParaLine, placeParaLineAt, Spacing.Page.withPendingSource]
   exact pagesExtend_congr (placeParaTrailer_pages ..)
-    (placeLine_extends' fs st.1 _ (by split <;> simp [Spacing.Page.warnOverfull]) ..)
+    (placeLine_extends' fs st.1 _ (by split <;> simp [Spacing.Page.warnOverfull, Spacing.Page.gridSkip]) ..)
 
 private theorem placeParaLine_noBreak (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) (h : st.1.noBreak = true) :
     (placeParaLine fs j st brk).1.pages = st.1.pages ∧
     (placeParaLine fs j st brk).1.noBreak = true := by
-  simp only [placeParaLine, Spacing.Page.withPendingSource]
+  simp only [placeParaLine, placeParaLineAt, Spacing.Page.withPendingSource]
   constructor
   · rw [placeParaTrailer_pages]
-    split <;> rw [placeLine_pages_noBreak] <;> simp [h, Spacing.Page.warnOverfull]
+    split <;> rw [placeLine_pages_noBreak] <;> simp [h, Spacing.Page.warnOverfull, Spacing.Page.gridSkip]
   · rw [placeParaTrailer_noBreak]
-    split <;> rw [placeLine_keeps_noBreak] <;> simp [h, Spacing.Page.warnOverfull]
+    split <;> rw [placeLine_keeps_noBreak] <;> simp [h, Spacing.Page.warnOverfull, Spacing.Page.gridSkip]
 
 private theorem turnAt_extends (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
     PagesExtend st.1 (turnAt turns st brk).1 := by
@@ -18146,12 +18227,13 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
 private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     BgStep st.1 (placeParaLine fs j st brk).1 := by
-  simp only [placeParaLine, Spacing.Page.withPendingSource]
+  simp only [placeParaLine, placeParaLineAt, Spacing.Page.withPendingSource]
   refine BgStep.trans (BgStep.trans ?_ (bgStep_placeLine ..))
     (BgStep.of_eq (placeParaTrailer_geom ..) (placeParaTrailer_docBg ..)
       (placeParaTrailer_pages ..))
-  split <;> exact BgStep.of_eq (by simp [Spacing.Page.warnOverfull])
-    (by simp [Spacing.Page.warnOverfull]) (by simp [Spacing.Page.warnOverfull])
+  split <;> exact BgStep.of_eq (by simp [Spacing.Page.warnOverfull, Spacing.Page.gridSkip])
+    (by simp [Spacing.Page.warnOverfull, Spacing.Page.gridSkip])
+    (by simp [Spacing.Page.warnOverfull, Spacing.Page.gridSkip])
 
 private theorem bgStep_turnAt (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
     BgStep st.1 (turnAt turns st brk).1 := by
@@ -18904,12 +18986,15 @@ private theorem frameStep_placeParaTrailer (j : ParaJob) (k : Nat) (b : B) :
 private theorem frameStep_withPendingSource (b : B) (source : Option Span) :
     FrameStep b (b.withPendingSource source) := FrameStep.of_eq rfl rfl
 
+private theorem frameStep_gridSkip (b : B) (e : Length) :
+    FrameStep b (b.gridSkip e) := FrameStep.of_eq rfl rfl
+
 private theorem frameStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     FrameStep st.1 (placeParaLine fs j st brk).1 := by
-  simp only [placeParaLine]
-  refine FrameStep.trans (FrameStep.trans (FrameStep.trans (FrameStep.trans ?_
-    (frameStep_openDisplayAt ..)) (frameStep_withPendingSource ..))
+  simp only [placeParaLine, placeParaLineAt]
+  refine FrameStep.trans (FrameStep.trans (FrameStep.trans (FrameStep.trans (FrameStep.trans ?_
+    (frameStep_openDisplayAt ..)) (frameStep_withPendingSource ..)) (frameStep_gridSkip ..))
     (frameStep_placeLine ..)) (frameStep_placeParaTrailer ..)
   split <;> exact FrameStep.of_eq rfl rfl
 
@@ -19357,12 +19442,15 @@ private theorem reflowStep_placeParaTrailer (j : ParaJob) (k : Nat) (b : B) :
 private theorem reflowStep_withPendingSource (b : B) (source : Option Span) :
     ReflowStep b (b.withPendingSource source) := ReflowStep.of_eq rfl rfl
 
+private theorem reflowStep_gridSkip (b : B) (e : Length) :
+    ReflowStep b (b.gridSkip e) := ReflowStep.of_eq rfl rfl
+
 private theorem reflowStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
     ReflowStep st.1 (placeParaLine fs j st brk).1 := by
-  simp only [placeParaLine]
-  refine ReflowStep.trans (ReflowStep.trans (ReflowStep.trans (ReflowStep.trans ?_
-    (reflowStep_openDisplayAt ..)) (reflowStep_withPendingSource ..))
+  simp only [placeParaLine, placeParaLineAt]
+  refine ReflowStep.trans (ReflowStep.trans (ReflowStep.trans (ReflowStep.trans (ReflowStep.trans ?_
+    (reflowStep_openDisplayAt ..)) (reflowStep_withPendingSource ..)) (reflowStep_gridSkip ..))
     (reflowStep_placeLine ..)) (reflowStep_placeParaTrailer ..)
   split
   · exact reflowStep_warnOverfull ..
@@ -21370,6 +21458,51 @@ private theorem bgStep_landTrailing {b0 X : B} (h : BgStep b0 X) (h0 : b0.pages 
     simp at hin
   · exact hf
 
+/-- The body face's lowercase alphabet at a size, with its pair kerns, as `\settowidth` sets it. -/
+public def alphabetWidth (size : Length) (font : Font) : Length := Id.run do
+  let mut units : Int := 0
+  let mut prev : Option Nat := none
+  for k in List.range 26 do
+    let c := Char.ofNat ('a'.toNat + k)
+    units := units + font.advance c
+    match font.gid c with
+    | some g =>
+      if let some p := prev then units := units + font.kernAdv p g
+      prev := some g
+    | none => prev := none
+  return units * max 0 size / font.unitsPerEm
+
+/-- The width `n` characters of a face take by memoir's copy-fitting lines (45 and 65 characters
+from the lowercase alphabet), to the nearest pica, as `tex/ltkeys.sty` computes it. -/
+public def measureWidth (alphabet : Length) (n : Nat) : Length :=
+  let l45 : Length := (1415 : Int) * alphabet / (1000 : Int) + Dim.pt 2303 / (100 : Int) -- memoir
+  let l65 : Length := (2042 : Int) * alphabet / (1000 : Int) + Dim.pt 3341 / (100 : Int) -- memoir
+  let w : Length := l45 + ((n : Int) - 45) * (l65 - l45) / (20 : Int)
+  let pica := Dim.pt 12 -- one pica
+  ((w + pica / (2 : Int)) / pica) * pica
+
+/-- A page whose measure is a count of characters, its text block set from the body face: the width
+`measureWidth` gives, the height the page's proportion gives it in whole leadings, the margins in
+typearea's proportions (sides 1:1, two-sided 1:2; top to bottom 1:2); declared margins stand. -/
+public def settleMeasure (fs : FontSet) (doc : Ir.Doc) : Ir.Doc :=
+  let page := doc.page
+  match page.measureChars <|> doc.docClass.record.design.map (·.measure) with
+  | none => doc
+  | some n =>
+    let lead := page.bodySkip.getD (Ir.leadingFor page.fontSize)
+    let lead := if lead > 0 then lead else Dim.pt 12 -- size10.clo's \baselineskip
+    let tw := if page.hDeclared then page.width - 2 * page.hmargin
+      else measureWidth (alphabetWidth page.fontSize fs.body) n
+    let room := if page.vDeclared then page.height - 2 * page.vmargin
+      else Length.ofUnits (tw.units * page.height.units / max 1 page.width.units)
+    let th := (room / lead) * lead
+    let hm := if page.hDeclared then page.hmargin else (page.width - tw) / 2
+    let top := if page.vDeclared then page.vmargin else (page.height - th) / 3
+    { doc with page := { page with
+        hmargin := hm, vmargin := top, bmargin := some (page.height - th - top)
+        sideRatio := if page.hDeclared then page.sideRatio
+          else some (if page.twoside then (1, 2) else (1, 1)) } }
+
 /-- Each page's ink set by its own side's margins: a two-sided document's verso moved to its
 mirrored text block, a declared side ratio's page off the centre. -/
 public def mirrorSides (geom : Geom) (page : Ir.PageSpec) (pages : Array PageOut) : Array PageOut :=
@@ -22915,7 +23048,7 @@ with nothing pending that changes the next text line's spacing. -/
 public def Ready (b : Page) (segs : Array Seg) : Prop :=
   b.cur.lines.isEmpty = false ∧ b.freshStart = false ∧
   b.prevBand = .text ∧ ruleOnly segs = false ∧ b.notesH = 0 ∧
-  b.ignoreDepth = false ∧ b.texAfter = false ∧ b.opening = false
+  b.ignoreDepth = false ∧ b.texAfter = false ∧ b.opening = false ∧ b.geom.grid = none
 
 public def baselines (b : Page) : Array Length := b.cur.lines.map (·.y)
 public def shipped (b : Page) : Array PageOut := b.pages
@@ -23197,7 +23330,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Length)
 /-- A line the rise certificate covers: an ordinary line spaced by the metric rule. -/
 private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
   let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
-  (j.paintPadding = none ∧ j.texBox = none) ∧ j.rowStrut = none ∧
+  s.1.geom.grid = none ∧ (j.paintPadding = none ∧ j.texBox = none) ∧ j.rowStrut = none ∧
     Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none) j.lead
 
 private theorem reachDepth_rise (j : ParaJob) (brk : Nat) (a b : B) (h : PageRise a b) :
@@ -23231,14 +23364,17 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   have hg : paraLineGeom fs j a first prev brk = paraLineGeom fs j b first prev brk := by
     simp only [paraLineGeom, h.geom, h.xHeight]
   unfold ParaFits at ha hb
+  rw [placeParaLine_gridless fs j _ brk ha.1, placeParaLine_gridless fs j _ brk hb.1]
+  have ha := ha.2
+  have hb := hb.2
   simp only [hg] at ha
   have hp := ha.1
   have hr := ha.2.1
   have ha := ha.2.2
   have hb := hb.2.2
-  unfold placeParaLine
+  unfold placeParaLineAt
   dsimp only
-  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp.1, hp.2, hr, ite_self]
+  simp only [gridSkip_zero, hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp.1, hp.2, hr, ite_self]
   apply trailer_rise
   split
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
@@ -23261,12 +23397,14 @@ private theorem paragraph_step_pages (fs : FontSet) (j : ParaJob) (s : B × Nat 
     (placeParaLine fs j s brk).1.pages = s.1.pages := by
   rcases s with ⟨a, prev, first⟩
   unfold ParaFits at ha
+  rw [placeParaLine_gridless fs j _ brk ha.1]
+  have ha := ha.2
   have hp := ha.1
   have hr := ha.2.1
   have ha := ha.2.2
-  unfold placeParaLine
+  unfold placeParaLineAt
   dsimp only
-  simp only [hn, ite_true, Spacing.Page.openDisplayAt, hj, hp.1, hp.2, hr, ite_self,
+  simp only [gridSkip_zero, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp.1, hp.2, hr, ite_self,
     placeParaTrailer_pages]
   split
   · refine Eq.trans (placeLine_fits_pages fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ ?_ ?_) ?_
@@ -23301,7 +23439,8 @@ private theorem paragraph_fold (fs : FontSet) (j : ParaJob)
       rcases a with ⟨a, prev, first⟩
       rcases b with ⟨b, prev', first'⟩
       cases hm
-      exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb) rfl hrest'
+      exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb)
+        (by rw [placeParaLine_snd, placeParaLine_snd]) hrest'
 
 private theorem paragraph_fold_pages (fs : FontSet) (j : ParaJob)
     (hj : j.display = none) (hn : j.notes.isEmpty = true)

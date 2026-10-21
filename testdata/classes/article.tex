@@ -1,0 +1,58 @@
+% The flow class's article preset on invented prose: a title block, an abstract, numbered
+% headings, a theorem with its proof, a numbered display and a list, over three pages.
+\documentclass{ltflow}
+\title{Invented Lattices}
+\author{Pat Placeholder}
+\date{20 October 2026}
+\begin{document}
+\maketitle
+\begin{abstract}
+We describe an invented family of lattices and the two facts this sample needs.
+The text is placeholder prose, written only to exercise the class.
+\end{abstract}
+\section{Introduction}
+Placeholder prose fills this paragraph so that lines break and the measure shows. A lattice
+here is a finite set with two operations, and nothing in this sample depends on more than that.
+We state one theorem, prove it in a line, and set one display.
+\begin{theorem}
+Every finite lattice has a least element.
+\end{theorem}
+\begin{proof}
+Take the meet of all its elements.
+\end{proof}
+As the theorem shows, the display below is centred and numbered:
+\begin{equation}
+  a \wedge (b \vee c) \ge (a \wedge b) \vee (a \wedge c).
+\end{equation}
+The paragraph continues after the display so that the grid can be judged on the line that
+follows it.
+\subsection{A list}
+\begin{itemize}
+\item a first item;
+\item a second item that runs long enough to wrap onto a second line of the measure, so that
+  the hanging indent shows;
+\item a third item.
+\end{itemize}
+\section{More prose}
+Paragraph one of invented prose. The quick placeholder sentences repeat here to fill the page,
+so that page breaks fall where the rules decide, and widows, clubs and kept headings can be
+judged by eye. Another sentence follows the first, and a third closes the paragraph with enough
+words to wrap several times across the measure of the page.
+
+Paragraph two of invented prose. The quick placeholder sentences repeat here to fill the page,
+so that page breaks fall where the rules decide, and widows, clubs and kept headings can be
+judged by eye. Another sentence follows the first, and a third closes the paragraph with enough
+words to wrap several times across the measure of the page.
+
+Paragraph three of invented prose. The quick placeholder sentences repeat here to fill the
+page, so that page breaks fall where the rules decide, and widows, clubs and kept headings can
+be judged by eye. Another sentence follows the first, and a third closes the paragraph with
+enough words to wrap several times across the measure of the page.
+
+Paragraph four of invented prose. The quick placeholder sentences repeat here to fill the page,
+so that page breaks fall where the rules decide, and widows, clubs and kept headings can be
+judged by eye. Another sentence follows the first, and a third closes the paragraph with enough
+words to wrap several times across the measure of the page.
+\subsection{A closing note}
+The last paragraph ends the sample.
+\end{document}

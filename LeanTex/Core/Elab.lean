@@ -15854,10 +15854,12 @@ private def pageDim : Native.PageKey → Option (Length → PageSpec → PageSpe
   | .height => some fun d s => { s with height := d, heightSized := true }
   -- Declared side margins are equal on both sides, so they split the width 1:1 on either page.
   | .margin => some fun d s =>
-    { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1) }
-  | .vmargin => some fun d s => { s with vmargin := d }
+    { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1)
+             hDeclared := true, vDeclared := true }
+  | .vmargin => some fun d s => { s with vmargin := d, vDeclared := true }
   | .hmargin => some fun d s =>
-    { s with hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1) }
+    { s with hmargin := d, blockWidth := none, widthScale := none, sideRatio := some (1, 1)
+             hDeclared := true }
   | .markGap => some fun d s => { s with markGap := d }
   | .markThickness => some fun d s => { s with markThickness := d }
   -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
@@ -15879,13 +15881,14 @@ private def pageSwitch : Native.PageKey → Option (Bool → PageSpec → PageSp
   | .headings => some fun b s => { s with markHeads := b }
   | .openright => some fun b s => { s with openRight := b }
   | .plainpages => some fun b s => { s with plainPages := b }
+  | .grid => some fun b s => { s with grid := some b }
   | _ => none
 
 /-- What a page key's value must be, as its type error names it. -/
 private def pageExpects (k : Native.PageKey) : String :=
   match k with
   | .size => "a page size name"
-  | .measure => "'checked' or 'free'"
+  | .measure => "'checked', 'free' or a count of characters"
   | .marks => "'cut' or 'none'"
   | .modulo => "a count of at least 1"
   | .bottom => "'flush' or 'ragged'"
@@ -16070,6 +16073,9 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
           spec := { spec with fontSize := d }
         else
           evs := bad evs e "a dimension of at least 1pt"
+      | .measure, .int n =>
+        if 0 < n then spec := { spec with measureChars := some n.toNat }
+        else evs := bad evs e "a count of at least 1"
       | .measure, .ident v =>
         match v with
         | "free" => spec := { spec with measureChecked := false }
@@ -19214,6 +19220,35 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   let s ← if docIdx.isSome then templates.foldlM applyTemplate s else pure s
   return { state := s, decls, body, trailing }
 
+/-- The body size the class's options or record set where the page declares none. -/
+private def classBodySize (record : Ir.ClassRecord) (classOptions : String) (page : PageSpec) :
+    Length :=
+  if page.fontSize != ({} : PageSpec).fontSize then page.fontSize else
+  let optSize := (KeyVal.items classOptions).findSome? fun o =>
+    let o := match KeyVal.entry o with
+      | ("fontsize", some v) => v
+      | (k, _) => k
+    if o.endsWith "pt" then
+      ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
+    else none
+  optSize.getD (record.fontSize.getD page.fontSize)
+
+/-- The flow class's grid as the tokens and heading styles it sets where the document declares
+none: `\topskip` and the footnote gap one leading, and heading spaces whole leadings
+(`tex/ltflow.cls`). -/
+private def flowDesignDecls (body : Length) (tokens : Ir.Tokens) (styles : Ir.Styles) :
+    Ir.Tokens × Ir.Styles :=
+  let lead := Ir.sizeFileLeading body 1000 "normalsize"
+  let g (k : Nat) : SymGlue := { width := Dim.SymLength.ofLength (lead * (k : Int)) }
+  let tok (t : Ir.Tokens) (n : String) (v : SymGlue) : Ir.Tokens :=
+    if (t.find? n).isSome then t else t.declare n v
+  let tokens := tok (tok tokens "topskip" (g 1)) "footins" (g 1)
+  let head (st : Ir.Styles) (name : String) (b : Nat) (a : Option Nat) : Ir.Styles :=
+    let e := (st.find? name).getD {}
+    st.declare name { e with before := e.before <|> some (g b), after := e.after <|> a.map g }
+  (tokens, head (head (head (head styles "section" 2 (some 1)) "subsection" 1 (some 1))
+    "subsubsection" 2 (some 1)) "heading5" 1 none)
+
 private def prepareStyledBody (file : String) (decls : Array PDecl)
     (body trailing : Array Raw) (s : PreState) : EM DocBodyPlan := do
   let mut ctx := s.ctx
@@ -19254,8 +19289,10 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         | .ok (some c) => pal.declare (.role .ink) c
         | _ => pal
     | _ => pal) basePalette
-  let tokens := themedDs.tokens
-  let styles := themedDs.styles
+  let (tokens, styles) := match docClass.record.design with
+    | some _ => flowDesignDecls (classBodySize docClass.record classOptions page) themedDs.tokens
+        themedDs.styles
+    | none => (themedDs.tokens, themedDs.styles)
   let chrome := themedDs.chrome
   ctx := { ctx with palette := palette, basePalette := openingInk, tokens := tokens, styles := styles
                     locale := s.info.locale }
@@ -19286,6 +19323,21 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       page := composeLeading { page with bodySkip := some skip, skips := some ladder }
   -- A declared size is absolute, so its step is read against the body size the class settles.
   page := (← applyRefusedSizeLadder { s with page }).page
+  -- The flow class's modular scale, each size's line a whole number of body leadings.
+  if let some d := record.design then
+    if page.sizes.isNone then
+      let lead := Ir.sizeFileLeading page.fontSize 1000 "normalsize"
+      let bodyRow := (page.skipScale.lookup "normalsize").getD 1200
+      page := { page with sizes := some (Ir.gridLadder d.ratio)
+                          skips := some (Ir.gridSkips d.ratio page.fontSize lead bodyRow) }
+    if page.flushBottom.isNone then page := { page with flushBottom := some false }
+    if page.grid.isNone then page := { page with grid := some d.grid }
+    let pens := page.penalties
+    let dflt : Ir.PagePenalties := {}
+    let keep (v d : Int) : Int := if v == d then 10000 else v
+    page := { page with penalties := { pens with club := keep pens.club dflt.club
+                                                 widow := keep pens.widow dflt.widow
+                                                 displayWidow := keep pens.displayWidow dflt.displayWidow } }
   let classOpts := (KeyVal.items classOptions).toList
   let optionSkip (o : String) : Option SymGlue :=
     match KeyVal.entry o with

@@ -210,6 +210,12 @@ public def resolveVariant (faces : Array Face) (family : String) (declared : Opt
         (resolve faces family v).map fun (face, _) =>
           (face, some (.variant s!"{family} {want}" (some name) face))
   | none =>
+    -- A family spelled as a face file names its upright face (fontspec's `\setmainfont{f.otf}`).
+    let named := if hasFontExtension family && !v.bold && !v.italic then
+      resolveNamed faces family else none
+    match named with
+    | some face => some (face, none)
+    | none =>
     match resolve faces family v with
     | some (face, satisfied) =>
       if satisfied then some (face, none)

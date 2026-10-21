@@ -462,6 +462,21 @@ items; where the document has no list they show as `?`, named. A
 replaces, and a `biblio-style` are named and ignored, and `docs` beside
 another view, `decls` or `proofs` sets the documentation view alone, named.
 
+## The leantex classes
+
+`tex/` holds LaTeX classes leantex reads as its own and lualatex compiles with `tex/` on its path
+(`TEXINPUTS` and `LUAINPUTS`): `\documentclass{ltflow}` sets an article on rules both engines
+implement. Its body is Latin Modern at 11pt on a 13.6pt leading, and every text line stands on
+that leading's grid: headings, lists, theorems and displays space in whole leadings, and the line
+after a display or a box moves to the nearest grid line. The type scale is LaTeX's ratio of 1.2,
+each size's line a whole number of leadings. The measure is 66 characters of the body face
+(memoir's copy-fitting count) to the nearest pica; the text block takes the page's proportions in
+whole lines, centred, with twice as much margin below it as above. A paragraph leaves no widow or
+club and no page ends on a heading. `\page{ measure = 60 }` sets another measure, `\page{ grid = off }` turns the grid
+off, and declared margins replace the derived ones. Under lualatex `\page`, `\fonts`,
+`\palette` and `\theme` are defined by `tex/ltkeys.sty`; a key only leantex reads warns once
+there.
+
 ## Fonts and themes
 
 Use installed `.ttf` or `.otf` fonts, or the faces of a `.ttc` or `.otc`

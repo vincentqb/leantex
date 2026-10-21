@@ -254,7 +254,8 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
       else if v == "12pt" then some (some 12) else if sized v then some none else none
     | _ => none
   let native := Ir.DocClass.ofString? cls
-  if cls != "article" && !articleClasses.contains cls && native != some .koma then none
+  let flowClass := match native with | some (.flow _) => true | _ => false
+  if cls != "article" && !articleClasses.contains cls && native != some .koma && !flowClass then none
   else match sizes with
     | [some n] => some n
     | [] => some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
@@ -496,13 +497,16 @@ options hold the `noamsthm` key. -/
 public def classPackages (cls : String) (options : List String) : List String :=
   let disabled := options.any fun option =>
     String.ofList ((KeyVal.entry option).1.toList.filter (!·.isWhitespace)) == "noamsthm"
-  if cls == "beamer" && !disabled then ["amsmath", "amsthm"] else []
+  if cls == "beamer" && !disabled then ["amsmath", "amsthm"]
+  else if cls == "ltflow" then Ir.flowPackages else []
 
 public theorem classPackages_ams_agree (cls : String) (options : List String) :
     ("amsmath" ∈ classPackages cls options) ↔
       ("amsthm" ∈ classPackages cls options) := by
   dsimp only [classPackages]
-  split <;> simp
+  split
+  · simp
+  · split <;> simp [Ir.flowPackages, Ir.flowPackageLoads]
 
 /-- beamer's theme-loading commands, each with the file
 prefix it asks the input path for. -/
@@ -10995,6 +10999,15 @@ the option" else "the page is one-sided, as without the option")) pos
       -- KOMA-Script's report and book classes head chapters.
       let chapterOpt := if chapterClasses.contains cls && !keptItems.contains "chapters" then
         ["chapters"] else []
+      if cls == "ltflow" then
+        -- tex/ltflow.cls loads its packages after article.cls and declares its theorems.
+        let declaration := Native.Head.documentclass (passed ++ keptItems).toArray cls
+        let mut dependencies : Array Raw := #[]
+        for (pkg, opts) in Ir.flowPackageLoads do
+          dependencies := dependencies ++ (← rewritePackages "RequirePackage" [pkg]
+            (if opts.isEmpty then none else some opts) #[] pos)
+        let theorems := verbatimRaws "ltflow.cls" (Ir.flowFontsSource ++ Ir.flowTheoremSource)
+        return some (declaration.raws pos ++ dependencies ++ theorems, k)
       if offered.isEmpty && passed.isEmpty && !keptItems.any consumed && chapterOpt.isEmpty &&
           sides.isEmpty then
         return none
