@@ -64,6 +64,10 @@
     b5paper .code:n = \lt_paper:n { b5 } ,
     twoside .bool_set:N = \l_lt_twoside_bool ,
     oneside .code:n = \bool_set_false:N \l_lt_twoside_bool ,
+    10pt .code:n = \tl_set:Nn \l_lt_fontsize_tl { 10pt } ,
+    11pt .code:n = \tl_set:Nn \l_lt_fontsize_tl { 11pt } ,
+    12pt .code:n = \tl_set:Nn \l_lt_fontsize_tl { 12pt } ,
+    unknown .code:n = \PassOptionsToClass { \l_keys_key_str } { article } ,
   }
 
 \keys_define:nn { lt / page }

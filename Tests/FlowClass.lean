@@ -96,6 +96,13 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     (p.lines.filter fun l => hasStr (lineText l) "Para" || hasStr (lineText l) "Heading").back?.map
       (fun l => hasStr (lineText l) "Heading") == some true
   t "flow class: no page ends on a heading" headingLast.isEmpty
+  let (_, deckDs) := elabStr ("\\documentclass{beamer}\n\\page{ measure = 60 }\n" ++
+    "\\begin{document}\n\\begin{frame}x\\end{frame}\n\\end{document}\n")
+  t "flow class: a measure in characters on a deck is named, its page kept"
+    (deckDs.any fun d => d.code == "W0104" && hasStr d.message "measure = 60")
+  let (bottomDoc, _) := outOf fonts (sample "Kilo." "\\page{ bmargin = 2in }\n")
+  t "flow class: a declared bottom margin stands"
+    (bottomDoc.page.bottomMargin == Dim.inch 2)
   t "flow class: tex/ltdefaults.tex is generated from the records it mirrors"
     ((← IO.FS.readFile "tex/ltdefaults.tex") == Ir.ltDefaultsTex)
 

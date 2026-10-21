@@ -19350,6 +19350,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   if page.parskip.isNone then
     if let some g := (classOpts.filterMap optionSkip).getLast? <|> record.parskip then
       page := { page with parskip := some g }
+  -- A measure in characters sets a flow page's text block; a frame or a face keeps its own.
+  if record.model != .flow && page.measureChars.isSome then
+    diag ctx .W0104 s!"'\\page\{ measure = {page.measureChars.getD 0} }' sets a flow page's text block; \
+the {docClass.name} class's page keeps its own" none
+    page := { page with measureChars := none }
   page := classAreaPage record classOpts (Ir.Surface.ofPath file) s.sawAcross s.sawDown
     (classPageDefaults record classOpts page)
   let settled := settledPage page

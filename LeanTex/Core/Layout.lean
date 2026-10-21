@@ -788,7 +788,8 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     skips := spec.skipScale
     raggedFil := spec.raggedFil
     maxDepth := spec.maxDepth
-    grid := if spec.grid == some true then spec.classLead else none
+    grid := if spec.grid == some true then
+        some (spec.classLead.getD (spec.bodySkip.getD (Ir.leadingFor spec.fontSize))) else none
     classLead := spec.classLead }
 
 /-- A picture's ink on the page: its figure, its label keys, the isometry from
@@ -21525,16 +21526,20 @@ public def settleMeasure (fs : FontSet) (doc : Ir.Doc) : Ir.Doc :=
   | some n, .flow =>
     let lead := page.bodySkip.getD (Ir.leadingFor page.fontSize)
     let lead := if lead > 0 then lead else Dim.pt 12 -- size10.clo's \baselineskip
-    let tw := if hDeclared then page.width - 2 * page.hmargin
-      else measureWidth (alphabetWidth page.fontSize fs.body) n
-    let room := if vDeclared then page.height - 2 * page.vmargin
+    let tw := match page.blockWidth, page.widthScale with
+      | some w, _ => w
+      | none, some sc => page.width * (sc : Int) / (1000 : Int)
+      | none, none => if hDeclared then page.width - 2 * page.hmargin
+        else measureWidth (alphabetWidth page.fontSize fs.body) n
+    let room := if vDeclared then page.height - page.vmargin - page.bottomMargin
       else Length.ofUnits (tw.units * page.height.units / max 1 page.width.units)
     let th := (room / lead) * lead
-    let hm := if hDeclared then page.hmargin else (page.width - tw) / 2
+    let hm := if page.hDeclared then page.hmargin else (page.width - tw) / 2
     let top := if vDeclared then page.vmargin else (page.height - th) / 3
+    let bottom := if page.bmargin.isSome then page.bmargin else some (page.height - th - top)
     { doc with page := { page with
-        hmargin := hm, vmargin := top, bmargin := some (page.height - th - top)
-        sideRatio := if hDeclared then page.sideRatio
+        hmargin := hm, vmargin := top, bmargin := bottom
+        sideRatio := if page.hDeclared then page.sideRatio
           else some (if page.twoside then (1, 2) else (1, 1)) } }
 
 /-- Each page's ink set by its own side's margins: a two-sided document's verso moved to its
