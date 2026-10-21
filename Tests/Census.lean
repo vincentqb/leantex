@@ -1146,7 +1146,7 @@ def censusRows5 :
     ("the references resolve to the numbers the captions carry",
       hasStr (censusText c) "Figure1 and Table1 are referenced")]),
   ("math", fun _ c => [
-    ("one page", c.size == 1),
+    ("two pages", c.size == 2),
     ("prose around the display ships",
       hasStr (censusText c) "The paragraph continues after the display"),
     ("the display-size sum ships as a glyph", hasStr (censusText c) "∑"),
