@@ -244,8 +244,9 @@ const checks = {
   // computed family must equal that variable's own resolved value (the inline
   // rule beat `math { font-family: var(--font-math) }`), the computed weight
   // must be 700 exactly when the inline style asked for it, the computed
-  // style italic exactly when it did, and the shown scalar must stay the
-  // literal base character (ASCII), never a Mathematical Alphanumeric remap.
+  // style italic exactly when it did, and the shown scalars, one or a word's,
+  // must stay the literal base characters (ASCII), never a Mathematical
+  // Alphanumeric remap.
   mathAlpha: () => {
     const norm = (s) => String(s).replace(/["']/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
     const leaves = [...document.querySelectorAll('math mi[style*="--font-"], math mn[style*="--font-"]')];
@@ -262,7 +263,7 @@ const checks = {
       const ok = m && wantFam.length > 0 && gotFam === wantFam
         && String(cs.fontWeight) === String(wantWeight)
         && cs.fontStyle === wantStyle
-        && [...text].length === 1 && cp < 0x80;
+        && text.length > 0 && [...text].every((c) => c.codePointAt(0) < 0x80);
       if (!ok) bad.push(`${el.tagName.toLowerCase()} '${text}' family ${gotFam} want ${wantFam} weight ${cs.fontWeight} want ${wantWeight} style ${cs.fontStyle} want ${wantStyle} cp ${cp}`);
     }
     return { ok: bad.length === 0, n: leaves.length,
