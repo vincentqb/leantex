@@ -98,14 +98,14 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\mathit {a}^{\\mathit {n}+\\mathrm {1}}={}", "\\mathit {a}^{\\mathit {n}}\\cdot {}",
     "\\mathit {a}"]
   spells "Tide.div_mod" #["\\forall \\mathit {a},{}", "\\mathit {b}:\\mathbb {N},",
-    "\\mathit {b}\\cdot {}", "(\\mathit {a}/\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
+    "\\mathit {b}\\cdot {}", "(\\mathit {a}/{}", "\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
     "\\mathit {b}={}", "\\mathit {a}"]
   spells "Tide.total" #["\\mathrm {total}:", "\\mathrm {Add}\\  \\mathit {α}\\to {}",
     "\\mathit {α}\\to {}", "\\mathrm {List}\\  \\mathit {α}\\to {}", "\\mathit {α}"]
   spells "Tide.strict_hyp" #["(\\forall \\mathit {n}:\\mathbb {N},\\mathit {n}=\\mathrm {0})\\to {}",
     "\\mathrm {False}"]
   spells "Tide.imp_iff" #["\\forall \\mathit {p},{}", "\\mathit {q}:\\mathrm {Prop},",
-    "\\mathit {p}\\to {}", "(\\mathit {q}\\leftrightarrow \\mathit {q})"]
+    "\\mathit {p}\\to {}", "(\\mathit {q}\\leftrightarrow {}", "\\mathit {q})"]
   spells "Tide.depth_val" #["\\mathrm {depth}={}", "\\mathrm {7}"]
   spells "Tide.holds_ex" #["\\mathrm {holds}",
     "(\\exists \\mathit {n}:\\mathbb {N},\\mathit {n}=\\mathrm {0})"]
@@ -113,7 +113,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\mathit {f}\\  \\mathrm {0}={}", "\\mathrm {0}\\to {}",
     "\\mathit {f}\\  (\\mathit {f}\\  \\mathrm {0})={}", "\\mathrm {0}"]
   spells "Tide.iff_nest" #["\\forall \\mathit {p}:\\mathrm {Prop},",
-    "\\mathit {p}\\leftrightarrow {}", "(\\mathit {p}\\leftrightarrow \\mathrm {True})"]
+    "\\mathit {p}\\leftrightarrow {}", "(\\mathit {p}\\leftrightarrow {}", "\\mathrm {True})"]
   spells "Tide.same" #["\\mathrm {same}:", "\\forall \\mathit {α}:\\mathrm {Type}\\  \\mathit {u},",
     "\\mathit {α}\\to {}", "\\mathit {α}"]
   spells "Tide.pos_ne" #["\\mathit {n}>{}", "\\mathrm {0}\\to {}", "\\mathit {n}\\neq {}",
@@ -201,6 +201,18 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: a name mathematics cannot spell sets as text, subscript digits lower, TeX's own characters escaped"
     (texOf (var 0) ["x₁"] == "\\mathit {x}_{1}" && texOf (var 0) ["«odd name»"] == "\\text {«odd name»}" &&
       texOf (.apps (.str "a%b$c") []) [] == "\\text {\"a\\%b\\textdollar c\"}")
+  let listBinders := [("List.cons", #[LeanFacts.Binder.implicit, .explicit, .explicit]),
+    ("List.nil", #[LeanFacts.Binder.implicit])]
+  let nat := app "Nat" []
+  t "statements: a list down to its end sets as a literal, a list with an open tail by its cons"
+    (texOf (app "List.cons" [nat, var 0, app "List.cons" [nat, var 1, app "List.nil" [nat]]])
+        ["a", "b"] listBinders == "[\\mathit {a},\\mathit {b}]" &&
+      texOf (app "List.nil" [nat]) [] listBinders == "[]" &&
+      texOf (app "List.cons" [nat, var 1, var 0]) ["xs", "x"] listBinders ==
+        "\\mathit {x}::\\mathit {xs}")
+  t "statements: a function's name its body never reads sets as an underscore"
+    (texOf (app "g" [.lam "x" .explicit nat (app "Nat.zero" [])]) [] ==
+      "\\mathrm {g}\\  (\\_\\mapsto \\mathrm {Nat.zero})")
   t "statements: a string sets as Lean writes it, its quotes and control characters escaped"
     (texOf (.apps (.str "q\"\n\x01") []) [] ==
       "\\text {\"q\\textbackslash \"\\textbackslash n\\textbackslash x01\"}")

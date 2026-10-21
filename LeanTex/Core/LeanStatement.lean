@@ -29,6 +29,8 @@ public structure Rendered where
   group : Option (Array (Array Math) × Array Math × Array Math) := none
   /-- The formulas, none for a term that sets as one. -/
   chain : List (Array Math) := []
+  /-- Its elements, where it is a list literal. -/
+  elems : Option (List (Array Math)) := none
   deriving Inhabited
 
 /-- The precedence of an atom or anything delimited. -/
@@ -124,16 +126,23 @@ private def paren (r : Rendered) (min : Nat) : Array Math :=
 /-- An operator a formula ends on, spaced as an operator against an empty operand. -/
 private def opEnd (g : Array Math) : Array Math := g.push (.arg [])
 
-/-- The formulas a rendered term sets as where it stands at precedence `min`: its chain where it
-needs no parentheses there, else itself. -/
-private def piecesAt (r : Rendered) (min : Nat) : List (Array Math) :=
-  if r.prec ≥ min && !r.chain.isEmpty then r.chain else [paren r min]
-
 /-- Formulas with `tail` after the last. -/
 private def endWith (tail : Array Math) : List (Array Math) → List (Array Math)
   | [] => [tail]
   | [x] => [x ++ tail]
   | x :: rest => x :: endWith tail rest
+
+/-- Formulas between `opening` and `closing`, the one before the first and the other after the
+last. -/
+private def bracketed (opening closing : String) : List (Array Math) → List (Array Math)
+  | [] => [#[.word opening, .word closing]]
+  | x :: rest => endWith #[.word closing] ((#[.word opening] ++ x) :: rest)
+
+/-- The formulas a rendered term sets as where it stands at precedence `min`: its chain, in
+parentheses where it needs them there, else itself. -/
+private def piecesAt (r : Rendered) (min : Nat) : List (Array Math) :=
+  if r.chain.isEmpty then [paren r min]
+  else if r.prec ≥ min then r.chain else bracketed "(" ")" r.chain
 
 /-- A binary operator's formulas: its left side's, the operator ending the last, then its right
 side's. -/
@@ -255,7 +264,8 @@ public def render (lk : Lookup) (ctx : List String) : Term → Rendered
         else fresh
       | none => fresh
   | .lam n _ _ body =>
-    { math := ((varMath n).push (.ctrl .mapsto)).append (render lk (n :: ctx) body).math, prec := 0 }
+    let bound := if body.reads 0 then varMath n else #[.ctrl .underscore]
+    { math := (bound.push (.ctrl .mapsto)).append (render lk (n :: ctx) body).math, prec := 0 }
   | .letE n _ v body =>
     let value := (render lk ctx v).math
     let rest := (render lk (n :: ctx) body).math
@@ -268,6 +278,18 @@ public def renderList (lk : Lookup) (ctx : List String) (acc : Array Rendered) :
     List Term → Array Rendered
   | [] => acc
   | t :: rest => renderList lk ctx (acc.push (render lk ctx t)) rest
+
+/-- A list literal `[a, b]` of the elements of a list's constructors applied to their explicit
+arguments, a line free to break after each comma. -/
+private def listLit (c : String) (shown : List Rendered) : Option Rendered :=
+  let lit (es : List (Array Math)) : Rendered :=
+    { math := (commaJoin #[.word "["] es).push (.word "]"), prec := atomPrec, elems := some es
+      chain := bracketed "[" "]" (es.zipIdx.map fun (e, i) =>
+        if i + 1 < es.length then e.push (.word ",") else e) }
+  match c, shown with
+  | "List.nil", [] => some (lit [])
+  | "List.cons", [x, xs] => xs.elems.map fun es => lit (x.math :: es)
+  | _, _ => none
 
 /-- A binder notation `⋆ x : T, P` over its last argument, when that is `fun x : T => P`. -/
 public def renderBinder? (lk : Lookup) (ctx : List String) (h : Head) :
@@ -298,6 +320,9 @@ public def renderApps (lk : Lookup) (ctx : List String) (h : Head) (args : List 
   | .other w => applied (opMath w) args
   | .const c =>
     let shown := shownArgs lk c args
+    match listLit c shown with
+    | some r => r
+    | none =>
     match shownOf c, shown with
     | .notation g (.infix p a), [x, y] =>
       let (l, r) := match a with
