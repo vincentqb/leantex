@@ -84,7 +84,7 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 
 | Stage | Proved | Owed |
 |---|---|---|
-| A result | No declaration is marked partial or unsafe, by a line scan: `bannedWord`; no constant the binary's entry reaches through kernel values is partial but the watch mode's repeat and the loops the toolchain-loops premise names, by a scan of those values: `partialReachChecks`; a call resolves to the latest visible command, and a chain of expansions as the knot's call sites build it is bounded by the environments visible where it starts and the commands each opens: `Elab.lookupUser_latest_exact`, `Elab.expandUser_depth_le` | owed (U77): `Elab.knot_calls_nest` |
+| A result | No declaration is marked partial or unsafe, by a line scan: `bannedWord`; no constant the binary's entry reaches through kernel values is partial but the loops the watch-unending and toolchain-loops premises name, by a scan of those values: `partialReachChecks`; a call resolves to the latest visible command, and a chain of expansions as the knot's call sites build it is bounded by the environments visible where it starts and the commands each opens: `Elab.lookupUser_latest_exact`, `Elab.expandUser_depth_le` | owed (U77): `Elab.knot_calls_nest` |
 | Ships unless stopped | tested: `machineLossChecks` | owed (U37): `DiagCode.error_iff_fatal`, its writer-stopping causes widened to the output name's and publication's refusals |
 | Surface: bytes to raws | `writtenRange_source_exact`, `markMacro_source_exact`, `Code.segmentsOf_source_exact`; by unfolding: `read_tex_exact`; supporting, no text step: `Md.desugar_vocabulary_mem` (the vocabulary a desugaring lowers into), `rewriteCtrl_accounts` (an empty rewrite paid by a diagnostic or a state write) | owed (U07): `lex_verbatim_exact`; owed (U44): `MdParse.blocks_accounts`; owed (U111): `Compat.executeInputs_text_accounts` |
 | Elaboration and IR passes | the model: `Parse.rawText`, `Ir.locatedText` (`Ir.locatedText_erased`), `Diag.piece`, `Text.view` (`Text.view_congr`); the inline knot's plain-text arms (words, spaces, paragraph breaks, symbols with E0311's refusals, groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector): `Elab.elabInlines_plain_text`; with them the control words setting their own text (an escape or text symbol no accent shares, `\par`, `\hfill`, under their own names) where no parameter or document command takes their name: `Elab.elabInlines_ctrl_text`; and the text-font and decoration commands (`\textbf`, `\emph`, `\underline`, …) directly before their braced argument, `\emph` before no overlay word, where no parameter or document command takes their name or a plain control's, as that argument: `Elab.elabInlines_modifier_text`; an include standing as its own block sequence: `elabBlocks_input_exact`, `markdownInput_blocks_text`; supporting, no text step of the driver's: `Ir.mapInlines_text` and `Ir.mapBlocks_text` (for a leaf keeping `Ir.plainTextOne`), `Ir.numberFloats_text`, `Ir.markDisplay_text`, `texGroup_scope_id` (declaration scope) | owed (U111): the inline knot's other arms, `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`, `Elab.elabInlines_math_text`, `Elab.elabInlines_env_text`, `Elab.elabInlines_verb_text`, `Elab.elabInlines_call_text`, `Elab.elabInlines_selector_text`; owed (U111): the block knot, `Elab.elabBlocks_text_accounts` over `Ir.locatedBlocks`; owed (U111): `Elab.runPrepared_text_accounts`, `Driver.passes_text_accounts` |
@@ -100,11 +100,12 @@ Three gaps keep the composition open:
 
 - Termination: every function a run calls returns. No constant the binary's entry reaches through
   kernel values is partial, a repeat loop or a nested type's derived equality included
-  (`partialReachChecks`), but the watch mode's repeat, which loops until interrupted, and the
-  toolchain's file-system walks and the iterator loops of its string, path and sort functions,
-  which the toolchain-loops premise holds to end; the runtime runs a definition as its meaning by
-  the lean-runtime premise. A call expands the definition visible where it is used, which X4's use-time lookup moves
-  above a later definition it calls (`Elab.lookupUser_latest_exact`); a command calling itself or
+  (`partialReachChecks`), but the watch mode's repeat, which the watch-unending premise holds to
+  loop until interrupted, each pass a build, and the toolchain's file-system walks and the
+  iterator loops of its string, path and sort functions, which the toolchain-loops premise holds
+  to end; the runtime runs a definition as its meaning by the lean-runtime premise. A call
+  expands the definition visible where it is used, which X4's use-time lookup moves above a later
+  definition it calls (`Elab.lookupUser_latest_exact`); a command calling itself or
   its caller in its own text sees no definition of its name and stops as the named loss W0301,
   through an environment's halves it expands again under fewer environments, and a chain of
   expansions is bounded by the environments visible where it starts and the commands each opens
@@ -207,7 +208,7 @@ Three gaps keep the composition open:
 
 | Area | Guarantee | Proofs |
 |---|---|---|
-| Termination | Every definition the binary's entry reaches through its kernel value is total: none is partial, every loop recurses structurally or on a measure, both knots on lexicographic ones, and a nested type's equality is derived structurally; the loops outside are the watch mode's, rebuilding until interrupted, the toolchain's file-system walks and the iterator loops of its string, path and sort functions, which the toolchain-loops premise holds to end, and the code the runtime runs for a definition is its meaning by the lean-runtime premise. A chain of user expansions as the knot's call sites build it, a command under the commands below it and an environment under the environments below it, is no deeper than those counts allow. | `Elab.expandUser_depth_le`; checked over every constant the entry reaches: `partialReachChecks` |
+| Termination | Every definition the binary's entry reaches through its kernel value is total: none is partial, every loop recurses structurally or on a measure, both knots on lexicographic ones, and a nested type's equality is derived structurally; the loops outside are the watch mode's, rebuilding until interrupted as the watch-unending premise says, the toolchain's file-system walks and the iterator loops of its string, path and sort functions, which the toolchain-loops premise holds to end, and the code the runtime runs for a definition is its meaning by the lean-runtime premise. A chain of user expansions as the knot's call sites build it, a command under the commands below it and an environment under the environments below it, is no deeper than those counts allow. | `Elab.expandUser_depth_le`; checked over every constant the entry reaches: `partialReachChecks` |
 | Macro visibility | A call resolves to the latest command of its name the visible prefix holds, none where the context keeps its raws. | `Elab.lookupUser_latest_exact` |
 | Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
 | Text conservation | Inline content of words, spaces, paragraph breaks and symbols, whatever expansion marks them, through groups, declaration scopes and input wrappers, outside a command's call and a monospace overlay selector, elaborates to text that reads as its source once the reserved characters it refuses are excused, each refusal excusing its character's place; erasing the origins of located text leaves its plain text, and texts that read alike joined read alike; so do the control words setting their own text under their own names, an escape or a text symbol no accent shares, `\par` and `\hfill`, where no parameter or document command takes their name; and a text-font or decoration command directly before its braced argument sets that argument's text, `\emph` before no overlay word, where no parameter or document command takes its name or a plain control's. | `Elab.elabInlines_plain_text`, `Elab.elabInlines_ctrl_text`, `Elab.elabInlines_modifier_text`, `Ir.locatedText_erased`, `Text.view_congr`; owed (U111): `Elab.elabInlines_args_text`, `Elab.elabInlines_bare_text`, `Elab.elabBlocks_text_accounts` |
@@ -331,9 +332,11 @@ Three gaps keep the composition open:
 - Fuzzers and differentials are evidence, not theorems (`scripts/kp-fuzz.lean`,
   `scripts/hyphen-diff.lean`, `scripts/compose-fuzz.lean`); a claim is open until machine-checked
   and says which it has.
-- Change detectors restate a definition's own body or value, so every edit fails the build until
-  restated, and state no property: `document_declares_lang`, `deck_script_constant`,
-  `deck_script_gated`; owed (U72): each restated over a value domain or retired.
+- A change detector restates a definition's own value, so every edit fails the build until
+  restated, and states no property: `deck_script_constant`, which pins the slides pager's text
+  for the reports reverting its fixes; the pager's behaviour is the browsers premise's, so it is
+  owed (U72): restated over a model of the script's key handling. The pager's one emission site
+  emits that script for a deck alone: `deck_script_gated`.
 
 ## Naming
 

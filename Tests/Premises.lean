@@ -117,6 +117,10 @@ def registry : List Premise := [
     statement := "The toolchain's library loops the binary reaches end, IO.FS.createDirAll and IO.FS.removeDirAll walking a path or a tree the host holds finite, IO.FS.Handle.readBinToEndInto reading a regular file to its end, and the string, path and sort functions the reach audit lists looping through WellFounded.extrinsicFix over iterators they build from finite strings and arrays."
     sites := [("scripts/ProofAudit.lean", "worldLoops"), ("scripts/ProofAudit.lean", "iteratorEntries")]
     unchecked := some "It is the toolchain's own code, which the reach audit reads as a leaf and no check written here can falsify short of reproving the library." },
+  { name := "watch-unending", residue := .runtime, reach := .render
+    statement := "The watch mode's repeat in Driver.watch is the one loop the binary reaches that has no end: it rebuilds whenever the source changes until the user interrupts the process, and each pass is a build whose constants the reach audit reads, so every rebuild returns."
+    sites := [("LeanTex/Cli/Driver.lean", "watch"), ("scripts/ProofAudit.lean", "unendingLoops")]
+    scripts := ["scripts/proofcheck.lean"] },
   { name := "host-bounded", residue := .host "process", reach := .render
     statement := s!"Every host call the driver makes returns, because RunBounded.runBounded holds each tool run to a wall-clock budget and then kills its process group{exceptedClause unbudgeted}, because each file the driver reads is a regular file, which Host.answer's read enforces and the reads outside it do not, and because each path it writes in place, an artifact or a cache file, is absent or a regular file, which no write checks."
     transfers := [thm% ConvCache.record?_some_exact, thm% Boundary.withdrawStep_unfinished_exact]

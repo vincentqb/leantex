@@ -886,11 +886,4 @@ public def document (lang : String) (head body : Array Node) : String :=
 where
   inlineRenderTop (n : Node) : String := render n 0
 
-public theorem document_declares_lang (lang : String) (head body : Array Node) :
-    document lang head body =
-      "<!DOCTYPE html>\n" ++
-        render (elem "html" #[elem "head" head, elem "body" body]
-          #[("lang", lang)]) 0 := by
-  rfl
-
 end LeanTex.Core.Html

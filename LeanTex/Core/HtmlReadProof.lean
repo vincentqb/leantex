@@ -2644,7 +2644,7 @@ theorem document_toList (lang : String) (head body : Array Node) :
       (('<' :: "html".toList ++ attrsL [("lang", lang)] ++ ['>']) ++ (['\n'] ++
         (rB (.elem "head" #[] head) 1 ++ (rB (.elem "body" #[] body) 1 ++
           (closeL "html" ++ ['\n'])))))) := by
-  rw [document_declares_lang]
+  simp only [document, document.inlineRenderTop]
   simp only [String.toList_append, render, ← renderInto_toList, String.toList_empty, List.nil_append]
   have hv : Html.voidTags.contains "html" = false := by decide
   have hi : inl "html" #[Node.elem "head" #[] head, Node.elem "body" #[] body] = false := by

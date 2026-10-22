@@ -382,8 +382,8 @@ meta def iteratorEntries : Array Name := #[`String.foldl,
   `System.FilePath.isAbsolute, `System.FilePath.isRelative, `System.FilePath.instDiv,
   `System.FilePath.instHDivString, `IO.FS.DirEntry.path, `Array.mergeSort]
 
-/-- The project constants that may loop until interrupted: the watch mode, which rebuilds on every
-change, each rebuild a call the scan reads. -/
+/-- The project constants that may loop until interrupted, which the `watch-unending` premise
+names: the watch mode, each rebuild a call the scan reads. -/
 meta def unendingLoops : Array Name := #[`LeanTex.Cli.Driver.watch]
 
 /-- Whether a constant is a `partial` definition's opaque stand-in. -/

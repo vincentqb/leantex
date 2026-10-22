@@ -5787,8 +5787,9 @@ public theorem deck_script_constant : deckScript =
 public def deckScriptNodes (deck : Bool) : Array Node :=
   if deck then #[Node.script #[] deckScript] else #[]
 
-public theorem deck_script_gated (b : Bool) :
-    deckScriptNodes b = if b then #[Node.script #[] deckScript] else #[] := by rfl
+public theorem deck_script_gated {b : Bool} {n : Node} (h : n ∈ deckScriptNodes b) :
+    b = true ∧ n = Node.script #[] deckScript := by
+  cases b <;> simp_all [deckScriptNodes]
 
 /-! ## Math renderer -/
 
