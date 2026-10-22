@@ -357,8 +357,7 @@ Pandoc reads one" (listOf d == #["a"] && !hasStr (Ir.blocksText d.body) "bibliog
   t s!"metadata: each key not read is named once, a repeated one at its first spelling, an \
 underscore key ignored ({repr (subjectsOf ds)})"
     ((subjectsOf ds).filter (·.startsWith "md:meta") ==
-      #["md:meta-twice:title", "md:meta:author", "md:meta:csl", "md:meta:keywords",
-        "md:meta:title"])
+      #["md:meta-twice:title", "md:meta:csl", "md:meta:keywords"])
   t "metadata: a CSL style's help names the BibTeX style key"
     (ds.any fun d => d.subject == some "md:meta:csl" && d.help.any (hasStr · "biblio-style"))
   t "metadata: link-citations false is named as the link it does not drop"

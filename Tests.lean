@@ -100,6 +100,7 @@ import Tests.Icc
 import Tests.PrintColour
 import Tests.ItemLabels
 import Tests.WebMeasure
+import Tests.MarkdownFront
 import Tests.MarginNote
 import Tests.TexBodies
 import Tests.TitleNames
@@ -610,6 +611,7 @@ def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   Tests.TexBodies.checks ref oneFace
   Tests.TitleNames.checks ref oneFace
   Tests.MystPackages.checks ref oneFace
+  Tests.MarkdownFront.checks ref oneFace
 
 /-- The table blocks: a cell's side, leading, lengths, strut and column widths. -/
 def tableSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

@@ -78,11 +78,32 @@ public def CiteItem.pre : CiteItem → Array Inl
 public def CiteItem.post : CiteItem → Array Inl
   | .mk _ _ _ post => post
 
-/-- A metadata value as the reader's YAML subset reads it: a scalar, a sequence of scalars, or a
-value outside the subset. -/
+/-- A YAML block node: a scalar, a sequence, or a mapping of keys to nodes in order. -/
+public inductive Yaml where
+  | scalar (s : String)
+  | seq (items : Array Yaml)
+  | map (fields : Array (String × Yaml))
+  deriving Repr, Inhabited
+
+deriving_structural_beq Yaml
+
+/-- The node a mapping holds under `key`, its last where written twice. -/
+public def Yaml.get? (n : Yaml) (key : String) : Option Yaml :=
+  match n with
+  | .map fields => (fields.findRev? (·.1 == key)).map (·.2)
+  | _ => none
+
+/-- A scalar node's text. -/
+public def Yaml.text? : Yaml → Option String
+  | .scalar s => some s
+  | _ => none
+
+/-- A metadata value as the reader's YAML subset reads it: a scalar, a sequence of scalars, a
+nested block of mappings and sequences, or a value outside the subset. -/
 public inductive MetaValue where
   | scalar (s : String)
   | list (items : Array String)
+  | tree (node : Yaml)
   | unread
   deriving Repr, BEq, Inhabited
 
@@ -542,6 +563,159 @@ def yamlKeyAt (cs : Array Char) : Option (String × Nat) := Id.run do
   if key.isEmpty || key.startsWith "-" || key.startsWith "?" then return none
   return some (key, c)
 
+/-- A line's text past `n` characters. -/
+private def yamlFrom (l : String) (n : Nat) : String := (l.drop n).toString
+
+/-- Whether a line holds nothing a block reads: blank, or a comment. -/
+private def yamlSkips (l : String) : Bool :=
+  l.trimAscii.isEmpty || l.trimAscii.startsWith "#"
+
+/-- A line's indentation, a tab or a blank line reading as none. -/
+private def yamlIndentOf (l : String) : Option Nat :=
+  if yamlSkips l then none else yamlIndent l.toList.toArray
+
+/-- Whether a line opens a sequence item at `ind`. -/
+private def yamlItemAt (l : String) (ind : Nat) : Bool :=
+  yamlIndentOf l == some ind && (yamlFrom l ind).startsWith "-" &&
+    ((yamlFrom l (ind + 1)).isEmpty || (yamlFrom l (ind + 1)).startsWith " ")
+
+/-- The first line at or past `k`, before `hi`, a block reads at indentation `ind` or less. -/
+private def yamlUntil (lines : Array String) (k hi ind : Nat) : Nat := Id.run do
+  for j in [k:hi] do
+    if (yamlIndentOf (lines.getD j "")).any (· ≤ ind) then return j
+  return hi
+
+/-- A scalar value written on its key's or item's line: flow scalars and flow sequences. -/
+private def yamlInline (t : String) : Option Yaml :=
+  if t.trimAscii.startsWith "[" then (yamlFlowList? t.trimAscii.toString).map fun xs => .seq (xs.map .scalar)
+  else (yamlScalar? t).map .scalar
+
+/-- A block scalar's text from its lines, `|` keeping line ends and `>` folding them. -/
+private def yamlBlockScalar (literal : Bool) (lines : Array String) : String :=
+  let content := lines.filter (!·.trimAscii.isEmpty)
+  let ind := (content[0]?.bind yamlIndentOf).getD 0
+  let texts := lines.map (yamlFrom · ind)
+  (if literal then "\n".intercalate texts.toList
+    else " ".intercalate (texts.toList.filter (!·.trimAscii.isEmpty))).trimAscii.toString
+
+/-- An open container of a block being read: its indentation, whether it is a sequence, what it
+holds so far, the key whose value it is in its parent (none for a parent sequence's item), and a
+key of its own awaiting a nested value. -/
+private structure YamlFrame where
+  ind : Nat
+  seq : Bool
+  items : Array Yaml := #[]
+  fields : Array (String × Yaml) := #[]
+  under : Option String := none
+  pending : Option String := none
+
+private def YamlFrame.node (f : YamlFrame) : Yaml :=
+  if f.seq then .seq f.items else
+    .map (match f.pending with
+      | some k => f.fields.push (k, .scalar "")
+      | none => f.fields)
+
+/-- A frame's value placed in the frame below it: a field under its key, else an item. -/
+private def YamlFrame.add (parent : YamlFrame) (under : Option String) (v : Yaml) : YamlFrame :=
+  match under with
+  | some k => { parent with fields := parent.fields.push (k, v), pending := none }
+  | none => { parent with items := parent.items.push v }
+
+/-- The frames closed down to those at most `ind` deep, each placed in the one below it. -/
+private def yamlClose (stack : Array YamlFrame) (ind : Nat) : Array YamlFrame := Id.run do
+  let mut st := stack
+  for _ in [0:stack.size] do
+    match st.back? with
+    | some top =>
+      if top.ind ≤ ind || st.size ≤ 1 then break
+      let st' := st.pop
+      st := match st'.back? with
+        | some parent => st'.pop.push (parent.add top.under top.node)
+        | none => st'
+    | none => break
+  return st
+
+/-- A block of YAML lines as a node, read over a subset: block mappings and sequences at any depth,
+a sequence item opening a mapping (`- key: value`), flow scalars and sequences, and `|` and `>` block
+scalars; `none` outside it. -/
+public def yamlTree (lines : Array String) : Option Yaml := Id.run do
+  let mut stack : Array YamlFrame := #[]
+  -- a block scalar being collected: its key, whether literal, its key's indentation, its lines
+  let mut scalar : Option (String × Bool × Nat × Array String) := none
+  for l in lines do
+    if let some (key, lit, kind, body) := scalar then
+      if yamlSkips l || (yamlIndentOf l).any (· > kind) then
+        scalar := some (key, lit, kind, body.push l)
+        continue
+      match stack.back? with
+      | some top => stack := stack.pop.push { top with fields := top.fields.push (key, .scalar (yamlBlockScalar lit body)) }
+      | none => return none
+      scalar := none
+    if yamlSkips l then continue
+    let some c := yamlIndentOf l | return none
+    stack := yamlClose stack c
+    let mut ind := c
+    let mut t := yamlFrom l c
+    -- a sequence item, its content one level in
+    if t == "-" || t.startsWith "- " then
+      match stack.back? with
+      | some top =>
+        if top.ind == c && top.seq then pure ()
+        else if top.ind < c || (top.ind == c && !top.seq && top.pending.isSome) then
+          stack := (stack.pop.push { top with pending := none }).push
+            { ind := c, seq := true, under := top.pending }
+        else return none
+      | none => stack := stack.push { ind := c, seq := true }
+      let rest := (t.drop 1).toString
+      -- an item whose value stands on the lines below
+      if rest.trimAscii.isEmpty then continue
+      ind := c + 1 + (rest.length - rest.trimAsciiStart.toString.length)
+      t := rest.trimAsciiStart.toString
+      match yamlKeyAt t.toList.toArray with
+      | some _ => stack := stack.push { ind := ind, seq := false, under := none }
+      | none =>
+        let some v := yamlInline t | return none
+        match stack.back? with
+        | some top => stack := stack.pop.push { top with items := top.items.push v }
+        | none => return none
+        continue
+    let some (key, k) := yamlKeyAt t.toList.toArray | return none
+    let v := (yamlFrom t (k + 1)).trimAscii.toString
+    match stack.back? with
+    | some top =>
+      if top.ind == ind && !top.seq then pure ()
+      else if top.ind < ind then
+        stack := (stack.pop.push { top with pending := none }).push
+          { ind := ind, seq := false, under := top.pending }
+      else return none
+    | none => stack := stack.push { ind := ind, seq := false }
+    let some top := stack.back? | return none
+    if v.isEmpty then
+      stack := stack.pop.push { top with pending := some key }
+    else if v.startsWith "|" || v.startsWith ">" then
+      scalar := some (key, v.startsWith "|", ind, #[])
+    else
+      let some node := yamlInline v | return none
+      stack := stack.pop.push { top with fields := top.fields.push (key, node) }
+  if let some (key, lit, _, body) := scalar then
+    match stack.back? with
+    | some top => stack := stack.pop.push { top with fields := top.fields.push (key, .scalar (yamlBlockScalar lit body)) }
+    | none => return none
+  stack := yamlClose stack 0
+  return stack[0]?.map (·.node)
+
+/-- A field's value: the flat subset's reading, else a nested block of mappings and sequences. -/
+def metaValueOf (inline : String) (body : Array (Array Char)) : MetaValue :=
+  match yamlValue inline body with
+  | .unread =>
+    if !inline.trimAscii.isEmpty then .unread else
+    match yamlTree (body.map fun cs => sliceStr cs 0 cs.size) with
+    | some n => .tree n
+    | none => .unread
+  | .scalar s => .scalar s
+  | .list items => .list items
+  | .tree n => .tree n
+
 /-- A metadata block's fields, Pandoc's YAML object read over a declared subset: top-level keys,
 each with a scalar, a sequence of scalars or an unread value; `none` where the lines hold no
 mapping, so they stay markdown. -/
@@ -562,10 +736,10 @@ def metaFields (lines : Array Line) : Option (Array MetaField) := Id.run do
     -- A key line: a plain or a quoted key, then `:` and a space or the line's end.
     let some (key, c) := yamlKeyAt cs | return none
     if let some (k, v, p, body) := cur then
-      fields := fields.push { key := k, value := yamlValue v body, pos := p }
+      fields := fields.push { key := k, value := metaValueOf v body, pos := p }
     cur := some (key, sliceStr cs (c + 1) cs.size, { line := ln.no, col := 1 }, #[])
   if let some (k, v, p, body) := cur then
-    fields := fields.push { key := k, value := yamlValue v body, pos := p }
+    fields := fields.push { key := k, value := metaValueOf v body, pos := p }
   return if fields.isEmpty then none else some fields
 
 /-- Whether metadata declares a bibliography: its last `bibliography` key holds a path. -/

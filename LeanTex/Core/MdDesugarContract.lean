@@ -47,14 +47,18 @@ public structure Vocab where
   ["citep", "citet", "citeyearpar", "citeauthor", "citetext", "citealp", "citealt", "citeyear",
    "nocite"]
 
+/-- The title block's declarations a markdown front matter lowers to. -/
+@[expose] public def titleCtrls : List String :=
+  ["title", "subtitle", "author", "and", "institute", "date", "maketitle"]
+
 /-- The vocabulary the elaborator reads markdown in. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
-    "toprule", "midrule", "bottomrule", "footnote", "marginpar"] ++ citeCtrls
+    "toprule", "midrule", "bottomrule", "footnote", "marginpar"] ++ citeCtrls ++ titleCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
     [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl,
       Parse.markdownWebControl]
-  envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
+  envs := ["quote", "itemize", "enumerate", "abstract", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
   formulas := true
@@ -286,7 +290,7 @@ private theorem bibControl_mem (p : Pos) :
 private theorem cite_mem (n : String) (p : Pos) (h : n ∈ citeCtrls) :
     (vocabularyFor d).admits (.ctrl n p) = true := by
   simp only [Vocab.admits, Bool.or_eq_true]
-  exact Or.inl (List.contains_iff_mem.mpr (List.mem_append.mpr (Or.inr h)))
+  exact Or.inl (List.contains_iff_mem.mpr (List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inr h)))))
 
 private theorem heading_mem (level : Ir.HeadingLevel) (p : Pos) :
     (vocabularyFor d).admits (.ctrl (Parse.headingControl level) p) = true := by
@@ -967,14 +971,105 @@ private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
     · exact adm_empty
     · exact adm_append (titleRaws_adm file m) (list_adm m cited)
 
+private theorem frontText_adm (file : String) (q : Pos) (t : String) :
+    Adm d (frontText file d q t).1 := by
+  unfold frontText
+  exact inlListRaws_adm file _ #[] #[] adm_empty
+
+private theorem frontJoin_adm (file : String) (q : Pos) (sep : Array Raw) (hs : Adm d sep)
+    (l : List String) : Adm d (frontJoin file d q sep l) := by
+  unfold frontJoin
+  suffices h : ∀ (xs : List (String × Nat)) (init : Array Raw), Adm d init →
+      Adm d (xs.foldl (fun out (p : String × Nat) =>
+        (if p.2 == 0 then out else out.append sep).append (frontText file d q p.1).1) init) from
+    h _ _ adm_empty
+  intro xs
+  induction xs with
+  | nil => intro init h; exact h
+  | cons x _ ih =>
+    intro init h
+    apply ih
+    dsimp only
+    split
+    · exact adm_append h (frontText_adm file q x.1)
+    · exact adm_append (adm_append h hs) (frontText_adm file q x.1)
+
+private theorem frontDecl_adm (name : String) (rs : Array Raw) (q : Pos) (hn : name ∈ titleCtrls)
+    (h : Adm d rs) : Adm d (frontDecl name rs q) := by
+  unfold frontDecl
+  exact adm_lit (by
+    intro r hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · simp only [Vocab.admits, Bool.or_eq_true]
+      exact Or.inl (List.contains_iff_mem.mpr (by simp [vocabularyFor, vocabulary]; simp_all [titleCtrls]))
+    · exact adm_group _ _ h)
+
+private theorem frontBlock_adm (file : String) (f : FrontMatter) : Adm d (frontBlock file d f) := by
+  unfold frontBlock
+  have hand : Adm d #[Raw.space, .ctrl "and" f.pos, .space] := adm_lit (by
+    intro r hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl <;> simp [Vocab.admits, vocabularyFor, vocabulary, titleCtrls])
+  split
+  · exact adm_empty
+  · refine adm_append (adm_append (adm_append (adm_append (adm_append ?_ ?_) ?_) ?_) ?_) ?_
+    · exact frontDecl_adm _ _ _ (by simp [titleCtrls]) (frontText_adm file _ _)
+    · split
+      · exact frontDecl_adm _ _ _ (by simp [titleCtrls]) (frontText_adm file _ _)
+      · exact adm_empty
+    · split
+      · exact adm_empty
+      · exact frontDecl_adm _ _ _ (by simp [titleCtrls]) (frontJoin_adm file _ _ hand _)
+    · split
+      · exact adm_empty
+      · exact frontDecl_adm _ _ _ (by simp [titleCtrls]) (frontText_adm file _ _)
+    · refine frontDecl_adm _ _ _ (by simp [titleCtrls]) ?_
+      cases f.date with
+      | none => exact adm_empty
+      | some x => exact frontText_adm file _ x
+    · exact adm_lit (by
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        subst hr; simp [Vocab.admits, vocabularyFor, vocabulary, titleCtrls])
+
+private theorem frontAbstract_adm (file : String) (f : FrontMatter) :
+    Adm d (frontAbstract file d f) := by
+  unfold frontAbstract
+  have hpar : Adm d #[Raw.par f.pos] := adm_lit (by
+    intro r hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    subst hr; rfl)
+  split
+  · exact adm_empty
+  · exact adm_lit (by
+      intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      simp only [Vocab.admits, Bool.and_eq_true, Bool.or_eq_true]
+      refine ⟨Or.inl (by simp [vocabularyFor, vocabulary]), admitsList_of_adm _ ?_⟩
+      intro r hr
+      exact frontJoin_adm file _ _ hpar _ r (by simpa using hr))
+
+private theorem frontRaws_adm (file : String) (m : MetaRead) : Adm d (m.frontRaws file d) := by
+  unfold MetaRead.frontRaws
+  have h := adm_append (frontBlock_adm (d := d) file m.front) (frontAbstract_adm file m.front)
+  dsimp only
+  split
+  · exact h
+  · exact adm_push h rfl
+
 public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
     (known : Option (Std.HashSet String) := none) :
     ∀ r ∈ (desugar file input dialect role citing known false).1,
       (vocabularyFor dialect).admits r = true := by
   unfold desugar bodyRaws
-  exact adm_append (adm_append (adm_append (layout_adm _) (prelude_adm _)) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
-    adm_empty)) (tail_adm _ _ _ _)
+  refine adm_append (adm_append (adm_append (adm_append (layout_adm _) (prelude_adm _)) ?_)
+    (blkListRaws_adm file _ (list_adm _ _) _ #[] #[] adm_empty)) (tail_adm _ _ _ _)
+  split
+  · exact frontRaws_adm file _
+  · exact adm_empty
 
 public theorem read_desugar_exact (file input : String) : read file input = desugar file input := by
   unfold read
@@ -1097,6 +1192,14 @@ private theorem prelude_starts (m : MetaRead) : Starts m.prelude := by
   · exact Or.inl rfl
   · exact Or.inr ⟨.par m.bibPos, Array.mem_push_self, Or.inl ⟨_, rfl⟩⟩
 
+private theorem front_starts (file : String) (dialect : Dialect) (m : MetaRead) :
+    Starts (m.frontRaws file dialect) := by
+  unfold MetaRead.frontRaws
+  dsimp only
+  split
+  · next h => exact Or.inl (by simpa using h)
+  · exact Or.inr ⟨.par m.front.pos, Array.mem_push_self, Or.inl ⟨_, rfl⟩⟩
+
 private theorem tail_starts (file : String) (dialect : Dialect) (m : MetaRead) (cited placed : Bool) :
     Starts (m.tail file dialect cited placed) := by
   unfold MetaRead.tail
@@ -1117,9 +1220,12 @@ public theorem desugar_blockStart_contract (file input : String) (dialect : Dial
     (h : (desugar file input dialect role citing known false).1 ≠ #[]) :
     ∃ r ∈ (desugar file input dialect role citing known false).1, BlockStart r := by
   unfold desugar bodyRaws at h ⊢
-  exact (starts_append (starts_append (starts_append (layout_starts _) (prelude_starts _))
-    (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))
+  refine (starts_append (starts_append (starts_append (starts_append (layout_starts _)
+    (prelude_starts _)) ?_) (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))
     (tail_starts _ _ _ _ _)).resolve_left h
+  split
+  · exact front_starts file _ _
+  · exact Or.inl rfl
 
 public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.envs, Parse.inputEnvFile? n = none ∧ n ≠ Parse.scopeEnv ∧
@@ -1133,14 +1239,15 @@ public theorem vocabulary_contract :
   refine ⟨?_, ?_, ?_, ?_⟩
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl | rfl <;>
+    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl <;>
       simp [Parse.inputEnvFile?, Parse.scopeEnv, Parse.splitOpen?, Parse.splitClose?,
         Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
   · intro n hn
-    simp only [vocabulary, citeCtrls, List.cons_append, List.nil_append, List.mem_cons,
+    simp only [vocabulary, citeCtrls, titleCtrls, List.cons_append, List.nil_append, List.mem_cons,
       List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl <;> simp
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn

@@ -620,14 +620,15 @@ public theorem markdownVocabulary_contract :
   refine ⟨?_, ?_⟩
   · intro n hn
     simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl | rfl <;>
+    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl <;>
       simp [builtinEnvNames, blockEnvs, Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
-    · simp only [Md.vocabulary, Md.citeCtrls, List.cons_append, List.nil_append, List.mem_cons,
-        List.not_mem_nil, or_false] at hn
+    · simp only [Md.vocabulary, Md.citeCtrls, Md.titleCtrls, List.cons_append, List.nil_append,
+        List.mem_cons, List.not_mem_nil, or_false] at hn
       rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+        rfl | rfl <;>
         simp [Compat.lengthRestoreKeys?]
     · rcases List.mem_append.mp hn with hn | hn
       · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
@@ -662,7 +663,7 @@ private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> simp [bodyIsBlockOne, verbAlwaysInline, Compat.verbInline, Lex.urlCommands]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl | rfl <;>
+    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl <;>
       simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs, Parse.markdownEnv,
         Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
 

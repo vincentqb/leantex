@@ -6,6 +6,7 @@ import LeanTex.Core.Lex
 public import LeanTex.Core.MathParse
 public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
+import LeanTex.Core.Native
 import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Loop
 import LeanTex.Core.KeyVal
@@ -1077,6 +1078,19 @@ public inductive Role where
   | included
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- A document's front matter as Pandoc's and MyST's frontmatter declare it. -/
+public structure FrontMatter where
+  title : Option String := none
+  subtitle : Option String := none
+  authors : Array String := #[]
+  /-- The affiliations the authors name, in order, and the declared ones by id with their names. -/
+  named : Array String := #[]
+  affiliations : Array (String × String) := #[]
+  date : Option String := none
+  abstract : Option String := none
+  pos : Pos := {}
+  deriving Inhabited
+
 /-- What a markdown file's metadata declares for its citations and its web layout, and the keys it
 names unread. -/
 public structure MetaRead where
@@ -1088,15 +1102,19 @@ public structure MetaRead where
   title : Option (Array Inl × Pos) := none
   /-- The web layout `web` names, as written. -/
   web : Option (String × Pos) := none
+  /-- The front matter's title block: title, subtitle, author names, affiliations, date and
+  abstract, each as its markdown, with where the block opens. -/
+  front : FrontMatter := {}
   /-- Each key the reader took, with its field's site, which only a citation reads. -/
   taken : Array (String × Pos) := #[]
   diags : Array Diag := #[]
+
 
 /-- A metadata value's text, a sequence's items joined by `, `. -/
 private def MetaValue.text : MetaValue → Option String
   | .scalar s => some s
   | .list items => some (", ".intercalate items.toList)
-  | .unread => none
+  | .tree _ | .unread => none
 
 /-- A metadata value read as YAML's booleans, `none` for anything else. -/
 private def MetaValue.bool? : MetaValue → Option Bool
@@ -1106,6 +1124,22 @@ private def MetaValue.bool? : MetaValue → Option Bool
     else none
   | _ => none
 
+/-- The front matter keys: Pandoc's and MyST's title, authors, affiliations, date and abstract. -/
+private def frontKeys : List String :=
+  ["title", "subtitle", "author", "authors", "affiliations", "date", "abstract"]
+
+/-- An author entry's name and the affiliations it names: a name alone, or MyST's mapping. -/
+private def authorOf (n : Yaml) : Option (String × Array String) :=
+  match n with
+  | .scalar s => some (s, #[])
+  | .map _ =>
+    let affs := match n.get? "affiliations" with
+      | some (.seq xs) => xs.filterMap Yaml.text?
+      | some (.scalar s) => #[s]
+      | _ => #[]
+    (n.get? "name" |>.bind Yaml.text?).map (·, affs)
+  | .seq _ => none
+
 /-- The keys only a document's citations read. -/
 private def citationKeys : List String :=
   ["bibliography", "biblio-style", "natbiboptions", "nocite", "reference-section-title",
@@ -1114,7 +1148,8 @@ private def citationKeys : List String :=
 /-- The keys metadata reads, each with the role it is read in. -/
 public def metaKeys : List (String × Role) :=
   citationKeys.map (·, Role.document) ++
-    [("nocite", .included), ("link-citations", .included), (Parse.markdownWebKey, .document)]
+    [("nocite", .included), ("link-citations", .included), (Parse.markdownWebKey, .document)] ++
+    frontKeys.map (·, Role.document)
 
 /-- What a metadata block's fields declare for citations, read as Pandoc reads them, and for the
 web layout; every other key is named, as is a key written twice, which takes its last value, and in
@@ -1157,7 +1192,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
       let paths := match v with
         | .scalar s => #[s]
         | .list items => items
-        | .unread => #[]
+        | .tree _ | .unread => #[]
       if v == .unread then
         let d := unread f "its value is not a path or a list of paths"
         out := { out with diags := out.diags.push d }
@@ -1177,7 +1212,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
       let given := match v with
         | .scalar s => (KeyVal.items s).toList
         | .list items => items.toList.map fun (o : String) => o.trimAscii.toString
-        | .unread => []
+        | .tree _ | .unread => []
       let (decls, unread) := CiteDecl.natbibLoad given
       let ds := unread.toArray.map fun (o : String) =>
         Diag.of .W0104 (Diag.notHonoured .option (Diag.Name.of o)
@@ -1202,6 +1237,35 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         out := { out with diags := out.diags.push d }
       | some true => pure ()
       | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
+    | "title", .scalar t => out := { out with front := { out.front with title := some t, pos := f.pos } }
+    | "subtitle", .scalar t => out := { out with front := { out.front with subtitle := some t } }
+    | "date", .scalar t => out := { out with front := { out.front with date := some t } }
+    | "abstract", .scalar t => out := { out with front := { out.front with abstract := some t } }
+    | "author", v | "authors", v =>
+      let entries : Option (Array (String × Array String)) := match v with
+        | .scalar t => some #[(t, #[])]
+        | .list items => some (items.map (·, #[]))
+        | .tree (.seq xs) => xs.mapM authorOf
+        | .tree n => (authorOf n).map (#[·])
+        | .unread => none
+      match entries with
+      | some es =>
+        let refs := es.foldl (fun acc (_, as) => as.foldl (fun acc a =>
+          if acc.contains a then acc else acc.push a) acc) #[]
+        out := { out with front := { out.front with authors := es.map (·.1), named := refs } }
+      | none => out := { out with diags := out.diags.push (unread f "an author is not a name or a name's mapping") }
+    | "affiliations", v =>
+      -- MyST's affiliations by id, which the authors name; the names the title block sets
+      let named : Array (String × String) := match v with
+        | .list items => items.map fun a => (a, a)
+        | .tree (.seq xs) => xs.filterMap fun x => match x with
+          | .scalar a => some (a, a)
+          | n@(.map _) =>
+            let name := (n.get? "institution" |>.bind Yaml.text?).orElse fun _ => n.get? "name" |>.bind Yaml.text?
+            name.map fun nm => ((n.get? "id" |>.bind Yaml.text?).getD nm, nm)
+          | .seq _ => none
+        | _ => #[]
+      out := { out with front := { out.front with affiliations := named } }
     | "web", .scalar v =>
       let v := v.trimAscii.toString
       let help := "write " ++ " or ".intercalate (Ir.WebLayout.names.map fun (n, _) =>
@@ -1229,6 +1293,70 @@ public def MetaRead.layout (m : MetaRead) : Array Raw :=
   match m.web with
   | some (v, q) => #[.ctrl Parse.markdownWebControl q, .group #[.word v q] q]
   | none => #[]
+
+/-- The affiliations a title block sets: those the authors name, by their declared names, then the
+declared ones none names. -/
+private def FrontMatter.affiliationNames (f : FrontMatter) : Array String :=
+  let byId (a : String) := ((f.affiliations.find? (·.1 == a)).map (·.2)).getD a
+  let named := f.named.map byId
+  f.affiliations.foldl (fun acc (_, nm) => if acc.contains nm then acc else acc.push nm) named
+
+/-- A front matter value's markdown as the raws it lowers to, and what its reading names. -/
+private def frontText (file : String) (dialect : Dialect) (q : Pos) (t : String) :
+    Array Raw × Array Diag :=
+  let (inl, d1) := metaInlines file t.trimAscii.toString q
+  let (rs, d2) := inlListRaws file dialect #[] #[] inl.toList
+  (rs, d1 ++ d2)
+
+/-- Texts lowered and set apart by `sep`. -/
+private def frontJoin (file : String) (dialect : Dialect) (q : Pos) (sep : Array Raw)
+    (texts : List String) : Array Raw :=
+  texts.zipIdx.foldl (init := #[]) fun out (a, k) =>
+    (if k == 0 then out else out.append sep).append (frontText file dialect q a).1
+
+/-- A declaration of the title block with its argument. -/
+private def frontDecl (name : String) (rs : Array Raw) (q : Pos) : Array Raw :=
+  #[.ctrl name q, .group rs q]
+
+/-- The front matter's title block, as LaTeX's `\title`, `\subtitle`, `\author` (names apart by
+`\and`), `\institute`, `\date` (none where the document gives none) and `\maketitle`. -/
+private def frontBlock (file : String) (dialect : Dialect) (f : FrontMatter) : Array Raw :=
+  let q := f.pos
+  let txt := frontText file dialect q
+  match f.title with
+  | none => #[]
+  | some t =>
+    frontDecl "title" (txt t).1 q ++
+    (match f.subtitle with
+      | some st => frontDecl "subtitle" (txt st).1 q
+      | none => #[]) ++
+    (if f.authors.isEmpty then #[] else
+      frontDecl "author" (frontJoin file dialect q #[.space, .ctrl "and" q, .space] f.authors.toList) q) ++
+    (if f.affiliationNames.isEmpty then #[] else
+      frontDecl "institute" (txt (", ".intercalate f.affiliationNames.toList)).1 q) ++
+    frontDecl "date" ((f.date.map fun d => (txt d).1).getD #[]) q ++ #[.ctrl "maketitle" q]
+
+/-- The front matter's abstract as the abstract environment, its paragraphs apart. -/
+private def frontAbstract (file : String) (dialect : Dialect) (f : FrontMatter) : Array Raw :=
+  match f.abstract with
+  | none => #[]
+  | some a => #[.env "abstract" (frontJoin file dialect f.pos #[.par f.pos]
+      ((a.splitOn "\n\n").filter (!·.trimAscii.isEmpty))) f.pos]
+
+/-- The title block the front matter declares and its abstract after it, closed by a paragraph end;
+nothing where it declares neither. -/
+public def MetaRead.frontRaws (file : String) (dialect : Dialect) (m : MetaRead) : Array Raw :=
+  let out := frontBlock file dialect m.front ++ frontAbstract file dialect m.front
+  if out.isEmpty then out else out.push (.par m.front.pos)
+
+/-- What reading the front matter's values names. -/
+public def MetaRead.frontDiags (file : String) (dialect : Dialect) (m : MetaRead) : Array Diag :=
+  let f := m.front
+  let texts := f.title.toList ++ f.subtitle.toList ++ f.authors.toList ++
+    (if f.title.isSome then [", ".intercalate f.affiliationNames.toList] else []) ++ f.date.toList ++
+    ((f.abstract.map fun a => (a.splitOn "\n\n").filter (!·.trimAscii.isEmpty)).getD [])
+  if f.title.isNone && f.abstract.isNone then #[] else
+  texts.foldl (fun ds t => ds ++ (frontText file dialect f.pos t).2) #[]
 
 /-- The raws a file opens with, closed by a paragraph end. -/
 public def MetaRead.prelude (m : MetaRead) : Array Raw :=
@@ -1376,8 +1504,10 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
         #[route file "refs" (Diag.say .W0307 .division "{#refs}") p
           (detail := some "no bibliography is declared")] else #[]
     | none => #[]
-  (m.layout ++ m.prelude ++ body.1 ++ m.tail file dialect cited placed.isSome,
-    read.2 ++ m.diags ++ unused ++ body.2 ++ unplaced)
+  let front := if role == .document then m.frontRaws file dialect else #[]
+  let frontDs := if role == .document then m.frontDiags file dialect else #[]
+  (m.layout ++ m.prelude ++ front ++ body.1 ++ m.tail file dialect cited placed.isSome,
+    read.2 ++ m.diags ++ unused ++ frontDs ++ body.2 ++ unplaced)
 
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/
 public def read (file input : String) : Array Raw × Array Diag := desugar file input
