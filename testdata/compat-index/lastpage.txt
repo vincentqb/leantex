@@ -1,6 +1,6 @@
 # source: installed lastpage.sty 2.1h. \pageref{LastPage} sets the number of the
-# last page, the page count, which running heads and feet resolve; in the body
-# the count is not known where the line is set; lastpage's other labels are not
-# modelled.
+# last page: in the preamble's running heads and feet as the page count, in the
+# body as the page of the label the document's end carries; lastpage's other
+# labels are not modelled.
 body impl \pageref{LastPage}
 body impl \pageref*{LastPage}

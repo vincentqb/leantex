@@ -12109,6 +12109,16 @@ private def dateField (c : CtrlCall) (i : Nat) : Option Nat :=
 /-- The resolver doi.sty's `\doiurl` names. -/
 private def doiUrl : String := "https://doi.org/"
 
+/-- A DOI's text, its escaped specials read as the characters they set. -/
+private def doiText (s : String) : String :=
+  ["_", "#", "%", "&", "{", "}", "$"].foldl (fun t c => t.replace ("\\" ++ c) c) s
+
+/-- A DOI as doi.sty puts it in its URL: `#`, `%`, `<` and `>` percent-encoded. -/
+private def doiEncoded (s : String) : String :=
+  s.foldl (fun out c =>
+    if c == '#' then out.append "%23" else if c == '%' then out.append "%25"
+    else if c == '<' then out.append "%3C" else if c == '>' then out.append "%3E" else out.push c) ""
+
 /-- datetime's date commands: `\newdate` names a date, `\displaydate` and `\formatdate` give one in
 the format in force, the format switches and `\showdow` choose that format, and the name commands
 give a day or month name; a field that is no number, or the clock's date, gives nothing. -/
@@ -12854,19 +12864,19 @@ that graph")
   | .datetime => datetimeCall c
   | .doiLink => do
     -- doi.sty's \doi links the identifier at doi.org behind its \doitext, `doi:`
-    let id := (c.src 0).trimAscii.toString
-    return #[.ctrl "href" c.pos, .group #[.word (doiUrl ++ id) c.pos] c.pos,
+    let id := doiText (c.src 0).trimAscii.toString
+    return #[.ctrl "href" c.pos, .group #[.word (doiUrl ++ doiEncoded id) c.pos] c.pos,
       .group #[.word ("doi:" ++ id) c.pos] c.pos]
   | .orcidLink => do
     let id := (c.src 0).trimAscii.toString
     sayOnce "orcidlink:mark" .N0100 (Diag.translated "\\orcidlink") c.pos
-      (detail := some "the ORCID iD mark set as its letters in ORCID's green, linked as the package links it")
+      (detail := some "the ORCID iD mark set as its letters, linked as the package links it")
     return #[.ctrl "href" c.pos, .group #[.word ("https://orcid.org/" ++ id) c.pos] c.pos,
-      .group #[.ctrl "textcolor" c.pos, .sym '[' c.pos, .word "HTML" c.pos, .sym ']' c.pos,
-        .group #[.word "A6CE39" c.pos] c.pos, .group #[.word "iD" c.pos] c.pos] c.pos]
+      .group #[.word "iD" c.pos] c.pos]
   | .lastPage => do
-    -- lastpage's label stands on the last page, so its page is the page count
-    if (c.src 1).trimAscii.toString == "LastPage" then return #[.ctrl "pagecount" c.pos]
+    -- in the preamble's running heads and feet the last page is the page count; the body reads the
+    -- label the document's end carries
+    if (c.src 1).trimAscii.toString == "LastPage" && !(← get).inDoc then return #[.ctrl "pagecount" c.pos]
     return #[.ctrl c.name c.pos] ++ c.raws.extract c.start c.stop
   -- latex.ltx's `\textsuperscript` and `\textsubscript`: a script of text in an `\mbox`.
   | .textScript => return textScriptRaws (c.name == "textsuperscript") (c.arg 0) c.pos
@@ -16360,33 +16370,95 @@ private def bracketAt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat :
     | none => break
   return (none, i)
 
-/-- authblk's `\author` its authors so far set: each name with its mark raised, `and` between two
-and `, and` before the last of more, then 1em below each affiliation with its mark on a line. -/
-private def authblkAuthor (authors affils : Array (Array Raw × Array Raw)) (pos : Pos) : Array Raw :=
-  Id.run do
-  let mark (m : Array Raw) : Array Raw :=
-    if m.all (· matches .space) then #[] else #[.ctrl "textsuperscript" pos, .group m pos]
+/-- One authblk call: an author or an affiliation, its mark, and its text. -/
+private structure AuthblkCall where
+  affil : Bool
+  mark : Option (Array Raw)
+  text : Array Raw
+
+/-- authblk's separators: between two names, before the last of more, and between others, as the
+document renews them. -/
+private structure AuthblkSeps where
+  and2 : Array Raw := #[.space, .word "and" {}, .space]
+  ands : Array Raw := #[.word "," {}, .space, .word "and" {}, .space]
+  sep : Array Raw := #[.word "," {}, .space]
+
+/-- Names apart by authblk's separators: `and2` between two, `sep` between others and `ands` before
+the last of more. -/
+private def authblkNames (seps : AuthblkSeps) (names : Array (Array Raw)) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
-  for ((m, name), i) in authors.zipIdx do
+  for (n, i) in names.zipIdx do
     if i > 0 then
-      out := out ++ (if authors.size == 2 then #[.space, .word "and" pos, .space]
-        else if i + 1 == authors.size then #[.word "," pos, .space, .word "and" pos, .space]
-        else #[.word "," pos, .space])
-    out := (out.append name).append (mark m)
-  for ((m, a), i) in affils.zipIdx do
-    out := out.push (.ctrl "\\" pos)
-    if i == 0 then out := out ++ #[.sym '[' pos, .word "1em" pos, .sym ']' pos]
-    out := (out.append (mark m)).append a
+      out := out.append (if names.size == 2 then seps.and2
+        else if i + 1 == names.size then seps.ands else seps.sep)
+    out := out.append n
   return out
 
-/-- authblk's `\author[mark]{name}` and `\affil[mark]{text}` in `raws`, each setting `\author` to the
-whole list so far, as authblk's `\maketitle` reads it, with the lists after them. -/
-private def authblkRun (lists : Array (Array Raw × Array Raw) × Array (Array Raw × Array Raw))
-    (raws : Array Raw) : Array Raw × Array (Array Raw × Array Raw) × Array (Array Raw × Array Raw) :=
+/-- A mark as authblk raises it, nothing for an empty one. -/
+private def authblkMark (m : Array Raw) (pos : Pos) : Array Raw :=
+  if m.all (· matches .space) then #[] else #[.ctrl "textsuperscript" pos, .group m pos]
+
+/-- The `\author` authblk's `\maketitle` sets from its calls, as authblk.sty builds it: marked names
+over marked affiliations where a mark is written or affiliations are more than two, else each
+block of names over its affiliation, the blocks apart by `\and`. -/
+private def authblkAuthor (seps : AuthblkSeps) (calls : Array AuthblkCall) (pos : Pos) : Array Raw :=
   Id.run do
+  let mut count := 0
+  let mut newAffil := true
+  let mut note := ""
+  let mut marked := false
+  let mut authors : Array (Array Raw) := #[]
+  let mut affils : Array (Array Raw) := #[]
+  -- block mode's blocks: the names since the last affiliation, and that affiliation
+  let mut blocks : Array (Array (Array Raw) × Array Raw) := #[]
+  let mut pending : Array (Array Raw) := #[]
+  for c in calls do
+    if !c.affil then
+      if newAffil then
+        count := count + 1
+        note := toString count
+      if c.mark.isSome then marked := true
+      let m := c.mark.getD #[.word note pos]
+      authors := authors.push (c.text.append (authblkMark m pos))
+      pending := pending.push c.text
+      newAffil := false
+    else
+      if c.mark.isSome then marked := true
+      let m := c.mark.getD #[.word note pos]
+      let text := c.text.foldl (init := #[]) fun out r =>
+        if r matches .ctrl "\\" _ then out.append #[.word "," pos, .space] else out.push r
+      affils := affils.push ((authblkMark m pos).append text)
+      blocks := blocks.push (pending, c.text)
+      pending := #[]
+      newAffil := true
+  if affils.isEmpty then return authblkNames seps authors
+  if marked || affils.size > 2 then
+    let mut out := authblkNames seps authors
+    for (a, i) in affils.zipIdx do
+      out := out.push (.ctrl "\\" pos)
+      if i == 0 then out := out.append #[.sym '[' pos, .word "1em" pos, .sym ']' pos]
+      out := out.append a
+    return out
   let mut out : Array Raw := #[]
-  let mut authors := lists.1
-  let mut affils := lists.2
+  for ((names, a), i) in blocks.zipIdx do
+    if i > 0 then out := out.append #[.space, .ctrl "and" pos, .space]
+    out := (out.append (authblkNames seps names)).append #[.ctrl "\\" pos, .sym '[' pos, .word "1em" pos,
+      .sym ']' pos]
+    out := out.append a
+  return out.append (authblkNames seps pending)
+
+/-- A document environment with `b` as its body, any other raw as it stands. -/
+private def withBody (b : Array Raw) (r : Raw) : Raw :=
+  if let .env n _ p := r then (if n == "document" then .env n b p else r) else r
+
+/-- authblk's calls in `raws` taken out, with the separators the document renews after the last of
+`seps`, and where the last call stood in what is left. -/
+private def authblkTake (seps : AuthblkSeps) (raws : Array Raw) :
+    Array Raw × Array AuthblkCall × AuthblkSeps × Option (Nat × Pos) := Id.run do
+  let mut out : Array Raw := #[]
+  let mut calls : Array AuthblkCall := #[]
+  let mut seps := seps
+  let mut last : Option (Nat × Pos) := none
   let mut i := 0
   for _ in [0:raws.size] do
     if i ≥ raws.size then break
@@ -16395,35 +16467,77 @@ private def authblkRun (lists : Array (Array Raw × Array Raw) × Array (Array R
       if n == "author" || n == "affil" then
         let (m, j) := bracketAt raws (i + 1)
         let k := pastSpaces raws j
-        match raws[k]? with
-        | some (.group g _) =>
-          if n == "author" then authors := authors.push (m.getD #[], g)
-          else affils := affils.push (m.getD #[], g)
-          out := out ++ #[.ctrl "author" p, .group (authblkAuthor authors affils p) p]
+        if let some (.group g _) := raws[k]? then
+          calls := calls.push { affil := n == "affil", mark := m, text := g }
+          last := some (out.size, p)
           i := k + 1
-        | _ => out := out.push (.ctrl n p); i := i + 1
-      else out := out.push (.ctrl n p); i := i + 1
+          continue
+      -- `\renewcommand\Authands{…}` and its kin set the separators
+      if n == "renewcommand" then
+        let k := pastSpaces raws (i + 1)
+        let name := match raws[k]? with
+          | some (.ctrl m _) => some m
+          | some (.group #[.ctrl m _] _) => some m
+          | _ => none
+        let v := pastSpaces raws (k + 1)
+        if let (some m, some (.group g _)) := (name, raws[v]?) then
+          if ["Authand", "Authands", "Authsep"].contains m then
+            seps := if m == "Authand" then { seps with and2 := g }
+              else if m == "Authands" then { seps with ands := g } else { seps with sep := g }
+            i := v + 1
+            continue
+      out := out.push (.ctrl n p); i := i + 1
     | some r => out := out.push r; i := i + 1
     | none => break
-  return (out, authors, affils)
+  return (out, calls, seps, last)
 
-/-- A source's authblk author list set as `\author`, in its preamble and its document's body, where it
-loads authblk and calls `\affil`. -/
+/-- A source's authblk calls set as one `\author` where the last of them stood, in its preamble or
+its document's body, where it loads authblk and calls `\affil`. -/
 private def authblkLowered (pkgs : List String) (raws : Array Raw) : Array Raw := Id.run do
   unless pkgs.contains "authblk" && raws.any (fun r => r matches .ctrl "affil" _ ||
       (match r with | .env "document" b _ => b.any (· matches .ctrl "affil" _) | _ => false)) do
     return raws
-  let (top, authors, affils) := authblkRun (#[], #[]) raws
-  return top.map fun r =>
-    if let .env "document" b p := r then .env "document" (authblkRun (authors, affils) b).1 p else r
+  let (top, topCalls, seps, topLast) := authblkTake {} raws
+  let docAt := top.findIdx? fun r => r matches .env "document" _ _
+  let (body, bodyCalls, seps, bodyLast) := match docAt.bind (top[·]?) with
+    | some (.env "document" b _) => authblkTake seps b
+    | _ => (#[], #[], seps, none)
+  let calls := topCalls ++ bodyCalls
+  let place (rs : Array Raw) (at_ : Nat × Pos) : Array Raw :=
+    ((rs.extract 0 at_.1).append #[.ctrl "author" at_.2, .group (authblkAuthor seps calls at_.2) at_.2]).append
+      (rs.extract at_.1 rs.size)
+  match bodyLast, docAt with
+  | some b, some d => return top.modify d (withBody (place body b))
+  | _, _ => match topLast with
+    | some t =>
+      let d := docAt.getD top.size
+      return (place top t).modify (if t.1 ≤ d then d + 2 else d) (withBody body)
+    | none => return raws
+
+/-- lastpage's label at the document's end, which a `\pageref{LastPage}` in the body reads. -/
+private def lastpageLowered (pkgs : List String) (raws : Array Raw) : Array Raw :=
+  if !pkgs.contains "lastpage" then raws else raws.map fun r =>
+    if let .env n b p := r then
+      (if n == "document" then .env n (b.append #[.ctrl "label" p, .group #[.word "LastPage" p] p]) p else r)
+    else r
 
 /-- A source with framed.sty's and longtable's environments set as their templates set them, and
 authblk's authors as its `\author`, where it loads their package. -/
 public def packageEnvsLowered (raws : Array Raw) : Array Raw :=
   let found := loadsAndSize raws
-  authblkLowered found.1 (if found.1.any (["framed", "longtable"].contains ·) then
+  lastpageLowered found.1 <| authblkLowered found.1 (if found.1.any (["framed", "longtable"].contains ·) then
     PackageEnvs.lower (verbatimRaws "framed.sty") found.1 found.2.1 found.2.2 #[] raws.toList
   else raws)
+
+/-- A package call holds no document, so lastpage's pass leaves it as it stands. -/
+private theorem lastpageLowered_package_exact (pkgs : List String) (command names : String)
+    (pos groupPos namePos : Pos) :
+    lastpageLowered pkgs (packageCall command names pos groupPos namePos) =
+      packageCall command names pos groupPos namePos := by
+  unfold lastpageLowered
+  split
+  · rfl
+  · simp [packageCall_exact]
 
 /-- A package call calls no `\affil`, so authblk's pass leaves it as it stands. -/
 private theorem authblkLowered_package_exact (pkgs : List String) (command names : String)
@@ -16447,8 +16561,10 @@ public theorem packageEnvsLowered_package_exact (command names : String) (pos gr
       (loadsAndSize (packageCall command names pos groupPos namePos)).2.2 command names pos namePos groupPos
     rw [packageCall_exact] at h ⊢
     rw [h, ← packageCall_exact]
-    exact authblkLowered_package_exact _ command names pos groupPos namePos hc
-  · exact authblkLowered_package_exact _ command names pos groupPos namePos hc
+    rw [authblkLowered_package_exact _ command names pos groupPos namePos hc]
+    exact lastpageLowered_package_exact _ command names pos groupPos namePos
+  · rw [authblkLowered_package_exact _ command names pos groupPos namePos hc]
+    exact lastpageLowered_package_exact _ command names pos groupPos namePos
 
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)

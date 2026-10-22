@@ -76,6 +76,19 @@ def titleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (ds.all (·.code != "W0103") && pageHas c 0 "Ada Example" && pageHas c 0 "Cy Third" && pageHas c 0 ", and" &&
       (lineYOf c 0 "Ada Example").any fun y => (lineYOf c 0 "Example Institute").any fun a =>
         (lineYOf c 0 "Sample University").any fun b => y < a && a < b)
+  let (c, _) := page (article "\\usepackage{authblk}\n"
+    ("\\author{Ada Example}\n\\author{Bo Sample}\n\\affil{Example Institute}\n\\author{Cy Third}\n" ++
+      "\\affil{Sample University}\n\\title{T}\n\\maketitle\nBody."))
+  -- lualatex sets "Ada Example and Bo Sample" above "Example Institute", then "Cy Third" above "Sample University"
+  t s!"authblk: unmarked authors stand in blocks above their affiliation, as two affiliations or fewer set ({censusText c})"
+    (pageHas c 0 "Ada Example and Bo Sample" &&
+      (lineYOf c 0 "Ada Example").any fun y => (lineYOf c 0 "Example Institute").any fun a =>
+        (lineYOf c 0 "Cy Third").any fun z => (lineYOf c 0 "Sample University").any fun b => y < a && z < b)
+  let (c, _) := page (article "\\usepackage{doi}\\usepackage{lastpage}\n"
+    "\\doi{10.1000/a\\_b} of \\pageref{LastPage}.\\newpage Two.")
+  -- the binary resolves the forward reference to the last page's number, as lualatex sets "of 2"
+  t s!"doi and lastpage: an escaped special reads as its character, and the body refers to the last page ({censusText c})"
+    (pageHas c 0 "doi:10.1000/a_b of" && !pageHas c 0 "LastPage" && !pageHas c 0 "\\_")
   let (c, ds) := page (article ("\\usepackage{doi}\\usepackage{orcidlink}\\usepackage{lastpage}" ++
       "\\usepackage{fancyhdr}\\pagestyle{fancy}\\fancyhf{}\\cfoot{\\thepage\\ of \\pageref{LastPage}}\n")
     "Read \\doi{10.1000/zz} by \\orcidlink{0000-0000-0000-0000}.\\newpage Second.")
