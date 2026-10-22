@@ -54,7 +54,8 @@ public structure Vocab where
 /-- The vocabulary the elaborator reads markdown in. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
-    "toprule", "midrule", "bottomrule", "footnote", "marginpar"] ++ citeCtrls ++ titleCtrls
+    "toprule", "midrule", "bottomrule", "footnote", "marginpar", "label", "ref", "eqref"] ++ citeCtrls ++
+    titleCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
     [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl,
       Parse.markdownWebControl]
@@ -557,6 +558,14 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
   | .link dest title body p => by
     simp only [inlRaws]
     have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
+    split
+    · unfold mystRefRaws
+      exact adm_lit (by
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl
+        · exact ctrl_mem _ _ (by split <;> simp [vocabulary])
+        · exact adm_group _ _ (adm_lit (by simp [Vocab.admits])))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -734,16 +743,16 @@ private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
     exact ⟨by simp [vocabularyFor, vocabulary],
       admitsList_of_adm _ fun x hx => hfull x (Array.mem_toList_iff.mp hx)⟩)
 
-private theorem division_adm (q : LeanDivision) (p : Pos) :
-    (vocabularyFor .document).admits (q.raw p) = true := by
-  have hattrs : Adm .document (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
+private theorem division_adm (dl : Dialect) (hd : dl.divisions = true) (q : LeanDivision) (p : Pos) :
+    (vocabularyFor dl).admits (q.raw p) = true := by
+  have hattrs : Adm dl (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
     intro r hr
     obtain ⟨⟨k, v⟩, _, rfl⟩ := Array.mem_map.mp hr
     exact adm_group _ _ (adm_lit (by
       intro x hx
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
       rcases hx with rfl | rfl <;> rfl))
-  have hbody : Adm .document #[Raw.group #[.word q.file p] p,
+  have hbody : Adm dl #[Raw.group #[.word q.file p] p,
       .group (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) p] := adm_lit (by
     intro r hr
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -751,7 +760,7 @@ private theorem division_adm (q : LeanDivision) (p : Pos) :
     · exact adm_group _ _ (adm_lit (by intro x hx; simp at hx; subst hx; rfl))
     · exact adm_group _ _ hattrs)
   simp only [LeanDivision.raw, Vocab.admits, Bool.and_eq_true, Bool.or_eq_true]
-  exact ⟨Or.inr (by simp [vocabularyFor, Dialect.divisions]),
+  exact ⟨Or.inr (by simp [vocabularyFor, hd]),
     admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
 
 private theorem asideLines_adm (file : String) (p : Pos) : (l : List (Array Inl)) →
@@ -859,12 +868,12 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d re
     cases d with
     | docstring => exact adm_empty
     | lean => exact adm_empty
-    | document => exact adm_lit (by
+    | document | myst => exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       rcases hr with rfl | rfl
       · rfl
-      · exact division_adm _ p)
+      · exact division_adm _ rfl _ p)
   | .metadata _ _ => by
     simp only [blkRaws]
     exact adm_empty
@@ -1071,7 +1080,8 @@ public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect :
   · exact frontRaws_adm file _
   · exact adm_empty
 
-public theorem read_desugar_exact (file input : String) : read file input = desugar file input := by
+public theorem read_desugar_exact (file input : String) :
+    read file input = desugar file input (dialectOf input) := by
   unfold read
   rfl
 
@@ -1151,7 +1161,7 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
     cases d with
     | docstring => exact Or.inl rfl
     | lean => exact Or.inl rfl
-    | document => exact Or.inr ⟨.par p, by simp [Dialect.divisions], Or.inl ⟨p, rfl⟩⟩
+    | document | myst => exact Or.inr ⟨.par p, by simp [Dialect.divisions], Or.inl ⟨p, rfl⟩⟩
   | metadata fields p =>
     simp only [blkRaws]
     exact Or.inl rfl
@@ -1247,7 +1257,7 @@ public theorem vocabulary_contract :
       List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
       rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl <;> simp
+      rfl | rfl | rfl | rfl <;> simp
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn

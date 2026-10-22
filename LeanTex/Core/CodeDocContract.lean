@@ -251,10 +251,11 @@ private theorem retitle_adm : (l : List Raw) → (∀ r ∈ l, (voc b).admits r 
     · exact hl
 
 private theorem desugar_adm (file text : String) (k : Option (Std.HashSet String)) :
-    (d : Md.Dialect) → d ≠ .document →
+    (d : Md.Dialect) → d.divisions = false →
       ∀ r ∈ (Md.desugar file text d .document false k).1,
         { Md.vocabulary with formulas := d.formulas }.admits r = true
-  | .document, h => absurd rfl h
+  | .document, h => absurd h (by decide)
+  | .myst, h => absurd h (by decide)
   | .docstring, _ => Md.desugar_vocabulary_mem file text .docstring .document false k
   | .lean, _ => Md.desugar_vocabulary_mem file text .lean .document false k
 
@@ -263,8 +264,8 @@ private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
     Adm (lang == .lean) (proseRaws lang file starts known seg opens).1 := by
   let k := known
   let dl : Md.Dialect := if lang == .lean then .lean else .docstring
-  have hdl : dl ≠ .document := by
-    show (if lang == .lean then Md.Dialect.lean else .docstring) ≠ .document
+  have hdl : dl.divisions = false := by
+    show (if lang == .lean then Md.Dialect.lean else .docstring).divisions = false
     split <;> decide
   have hf : dl.formulas = (lang == .lean) := by
     show (if lang == .lean then Md.Dialect.lean else .docstring).formulas = (lang == .lean)

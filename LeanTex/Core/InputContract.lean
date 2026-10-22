@@ -628,7 +628,7 @@ public theorem markdownVocabulary_contract :
         List.mem_cons, List.not_mem_nil, or_false] at hn
       rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
         rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-        rfl | rfl <;>
+        rfl | rfl | rfl | rfl | rfl <;>
         simp [Compat.lengthRestoreKeys?]
     · rcases List.mem_append.mp hn with hn | hn
       · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn

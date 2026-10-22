@@ -158,16 +158,23 @@ public inductive Dialect where
   | document
   | docstring
   | lean
+  /-- MyST's markdown: a document's, with formulas between dollars, roles and cross-references. -/
+  | myst
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- Whether a dialect reads a whole document: metadata, citations, notes and HTML. -/
+@[expose] public def Dialect.isDocument : Dialect → Bool
+  | .document | .myst => true
+  | .docstring | .lean => false
 
 /-- Whether a dialect reads a formula between dollars, as doc-gen4 reads a Lean file's documentation. -/
 @[expose] public def Dialect.formulas : Dialect → Bool
-  | .lean => true
+  | .lean | .myst => true
   | .document | .docstring => false
 
 /-- Whether a dialect reads a Lean division, as a document does. -/
 @[expose] public def Dialect.divisions : Dialect → Bool
-  | .document => true
+  | .document | .myst => true
   | .docstring | .lean => false
 
 def isSpaceOrTab (c : Char) : Bool := c == ' ' || c == '\t'
@@ -1423,6 +1430,8 @@ inductive ITok where
   | noteRef (label : String) (pos : Pos)
   /-- An inline note, its content the characters from `start` to `stop`. -/
   | inote (start stop : Nat) (pos : Pos)
+  /-- MyST's role: `{name}` before a code span, and the span's text. -/
+  | role (name : String) (body : String) (pos : Pos)
   deriving Repr
 
 instance : Inhabited ITok := ⟨.soft {}⟩
@@ -1430,7 +1439,7 @@ instance : Inhabited ITok := ⟨.soft {}⟩
 def ITok.pos : ITok → Pos
   | .txt _ p | .code _ p | .soft p | .hard p | .auto _ _ p
   | .anchor _ p | .run _ _ _ _ p | .bopen _ p | .bclose p | .ckey p | .dollar _ _ _ _ p
-  | .noteRef _ p | .inote _ _ p => p
+  | .noteRef _ p | .inote _ _ p | .role _ _ p => p
 
 /-- A resolved link or image: its bracket token indices, whether it is an image,
 and its destination and title. -/
@@ -1785,7 +1794,7 @@ def md4cLabel (s : String) : String := Id.run do
 
 /-- A label's matching form in a dialect: CommonMark's in a document, md4c's in documentation. -/
 def Dialect.labelKey : Dialect → String → String
-  | .document => normLabel
+  | .document | .myst => normLabel
   | .docstring | .lean => md4cLabel
 
 /-- A link label at `i` (§4.7): its source between the brackets, at most 999 characters, not
@@ -2530,6 +2539,39 @@ def taintedWord (c : Chars) (t : Option Nat) (s : Nat) : Option Nat := Id.run do
     unless (c.at? k).any fun d => CiteKey.isAlnum d || d == '.' do return none
   return some t
 
+/-- A MyST role's name the text ends with, `{name}`, and the text before it. -/
+def roleBefore (pending : String) : Option (String × String) :=
+  if !pending.endsWith "}" then none else
+  let cs := pending.toList.toArray
+  ((List.range cs.size).reverse.find? fun k => cs[k]? == some '{').bind fun k =>
+    let name := String.ofList (cs.extract (k + 1) (cs.size - 1)).toList
+    if !name.isEmpty && (name.front.isAlpha) && name.all (fun c => c.isAlphanum || c == ':' || c == '-' || c == '_')
+    then some (name, String.ofList (cs.extract 0 k).toList) else none
+
+/-- The MyST roles the reader models. -/
+def knownRoles : List String := ["math", "cite", "cite:p", "cite:ps", "cite:t", "cite:ts", "ref", "numref", "eq"]
+
+/-- A MyST role's inlines: `{math}` a formula, `{cite}` and its `:p` and `:t` kin a citation of
+its keys, `{ref}`, `{numref}` and `{eq}` a reference to the target its text names (a title before
+`<label>` its text), any other its text as code. -/
+def roleInls (name body : String) (p : Pos) : Array Inl :=
+  let keys := (body.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  let target : String × String :=
+    if body.endsWith ">" && (body.splitOn "<").length > 1 then
+      ((body.splitOn "<").dropLast |> "<".intercalate |>.trimAscii.toString,
+        (((body.splitOn "<").getLast?.getD "").dropEnd 1).toString.trimAscii.toString)
+    else ("", body.trimAscii.toString)
+  match name with
+  | "math" => #[.math false body p]
+  | "cite" | "cite:p" | "cite:ps" =>
+    #[.cite (keys.toArray.map fun k => CiteItem.mk k .normal #[] #[]) p]
+  | "cite:t" | "cite:ts" =>
+    #[.cite (keys.toArray.map fun k => CiteItem.mk k .authorInText #[] #[]) p]
+  | "ref" | "numref" | "eq" =>
+    #[.link ("#" ++ target.2) (if name == "eq" then "myst:eq" else "myst:ref")
+      (if target.1.isEmpty then #[] else #[.text target.1 p]) p]
+  | _ => #[.code body p]
+
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
 def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
@@ -2623,7 +2665,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             toks := toks.push (.hard p)
             i := i + 2
           -- A citation's note is Pandoc's syntax, where an escaped space is a non-breaking one.
-          else if note && !tex && dialect == .document && c.at? (i + 1) == some ' ' then
+          else if note && !tex && dialect.isDocument && c.at? (i + 1) == some ' ' then
             pending := pending.push '\u00a0'
             i := i + 2
           else
@@ -2633,9 +2675,21 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         let n := tickRun c i
         match codeSpanAt c ticks i n with
         | some (body, next) =>
-          toks := flush toks pending pendingPos
-          pending := ""
-          toks := toks.push (.code body p)
+          -- MyST's role: the `{name}` the text before the span ends with names it
+          match (if dialect == .myst then roleBefore pending else none) with
+          | some (name, rest) =>
+            toks := flush toks rest pendingPos
+            pending := ""
+            toks := toks.push (.role name body p)
+            unless knownRoles.contains name do
+              diags := diags.push (Diag.of .W0392
+                (Diag.say .W0392 .command (some (Diag.Name.of ("{" ++ name ++ "}")))) (some ⟨file, p⟩)
+                (detail := some "a role the reader does not model; its text set as code")
+                (subject := some ("md:role:" ++ name)))
+          | none =>
+            toks := flush toks pending pendingPos
+            pending := ""
+            toks := toks.push (.code body p)
           i := next
         | none =>
           for _ in [0:n] do pending := pending.push '`'
@@ -2663,7 +2717,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
-          if dialect != .document then
+          if !dialect.isDocument then
             pending := pending.push '<'
             i := i + 1
             continue
@@ -2835,7 +2889,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
                 -- md4c shows a defined label as written, so documentation cites in no such text.
                 let selfLabel := collapsed || !(after == some '[' && !noteNext &&
                   (labelAt c (i + 1)).isSome)
-                if dialect != .document && selfLabel then
+                if !dialect.isDocument && selfLabel then
                   for j in [0:cpairs.size] do
                     let k := cpairs.size - 1 - j
                     let some cp := cpairs[k]? | break
@@ -3121,6 +3175,7 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (cites : Array (Nat 
     | .dollar n _ _ _ _ => acc := acc.push (.text (String.ofList (List.replicate n '$')) p)
     | .noteRef label _ => acc := acc.push (.note label #[] p)
     | .inote .. => pure ()
+    | .role name body _ => acc := acc ++ roleInls name body p
     | .bclose _ =>
       if (bcloseAt[i]?).getD false then
         if let some f := frames.back? then
@@ -3700,7 +3755,7 @@ inline content. -/
 private def blocksPass (dialect : Dialect) (file : String) (input : String) (included : Bool)
     (known : Option (Std.HashSet String)) (tex : Bool) (refs : Defs)
     (collect : Bool) (notes : Bool) : Array Blk × Array Diag × Defs := Id.run do
-  let doc := dialect == .document
+  let doc := dialect.isDocument
   let readsNotes := doc && notes
   let lines := splitLines input
   let mut frames : Array Frame := #[]
@@ -3717,7 +3772,7 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
   if let some fields := meta? then acc := acc.push (.metadata fields { line := 1, col := 1 })
   -- premise: mdCiteChecks — citations are read only where a bibliography takes them
   let cites := match known with
-    | some keys => if dialect != .document then docGenRead input keys else {}
+    | some keys => if !dialect.isDocument then docGenRead input keys else {}
     | none => { on := doc && (included || meta?.any bibDeclared) }
   let mut leaf : Leaf := .none
   let mut defs : Std.HashMap String LinkDef := {}
@@ -4493,7 +4548,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
   let refs := if holdsRefColon input then
       (blocksPass dialect file input included known tex {} true notes).2.2
     else {}
-  let refs := { refs with own := notes && dialect == .document }
+  let refs := { refs with own := notes && dialect.isDocument }
   let (blocks, diags, _) := blocksPass dialect file input included known tex refs false notes
   if refs.notes.isEmpty && !refs.own then (blocks, diags) else
   let (blocks, noteDs) := resolveNotes file blocks

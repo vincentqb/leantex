@@ -157,7 +157,12 @@ template an `exports` entry of format `pdf` or `tex` names by `template:` (a pat
 inside the document's tree, a bare name under `templates/`, never a URL, which is
 never fetched) sets the document instead: its `template.tex` rendered over the
 front matter, its options and parts, the body standing at `[-CONTENT-]`; a
-template absent or unreadable is named and the document sets as itself. Every other
+template absent or unreadable is named and the document sets as itself. A
+front matter holding a key only MyST reads (an export, its parts, a kernel) reads
+the document as MyST's markdown: formulas between `$` and `$$`, the `{math}`,
+`{cite}`, `{ref}`, `{numref}` and `{eq}` roles, `(label)=` targets, and
+`[](#label)` references, a heading's set as its text; any other role is named
+and set as code. Every other
 metadata key but `web` (under Output and diagnostics) is named as not read, `csl` among
 them, since no CSL processor runs; an included file's `web` is named, its page
 taking the including document's layout. A

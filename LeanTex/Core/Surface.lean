@@ -30,7 +30,7 @@ namespace Surface
 /-- A markdown document's text as the surface AST without its title block, for a template that sets
 the front matter itself. -/
 @[expose] public def readBody (file text : String) : Array Parse.Raw × Array Diag :=
-  Md.desugar file text (titled := false)
+  Md.desugar file text (Md.dialectOf text) (titled := false)
 
 /-- A code file's text as the surface AST, each statement its facts give set beside its
 declaration's code as the file's directive orders its views. -/

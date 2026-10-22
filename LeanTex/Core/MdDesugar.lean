@@ -217,6 +217,10 @@ public def anchorRaws? (key : String) (p : Pos) : Option (Array Raw) :=
     some #[.ctrl "hypertarget" p, .group #[.word key p] p, .group #[] p]
   else none
 
+/-- MyST's reference to a target as `\ref` or `\eqref`. -/
+public def mystRefRaws (cmd label : String) (p : Pos) : Array Raw :=
+  #[.ctrl cmd p, .group #[.word label p] p]
+
 public theorem anchorRaws_fixed_point (key : String) (p : Pos) (rs : Array Raw)
     (h : anchorRaws? key p = some rs) : Ir.labelAnchor key = key := by
   unfold anchorRaws? at h
@@ -492,7 +496,11 @@ private def inlRaws (file : String) (dialect : Dialect) : Inl → Array Raw × A
     (#[.ctrl "textbf" p, .group rs p], ds)
   | .link dest title body p =>
     let (rs, ds) := inlListRaws file dialect #[] #[] body.toList
-    let ds := if title.isEmpty then ds else
+    -- MyST's cross-reference: a link to a target with no text of its own, or a role's
+    if dialect == .myst && dest.startsWith "#" && body.isEmpty then
+      (mystRefRaws (if title == "myst:eq" then "eqref" else "ref") (dest.drop 1).toString p, ds)
+    else
+    let ds := if title.isEmpty || title.startsWith "myst:" then ds else
       ds.push (routeDegraded file "link-title" (Diag.say .W0392 .title) p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest title alt p =>
@@ -1516,6 +1524,95 @@ private def abbrevItemBlks : List (Array Blk) → List (Array Blk)
 
 end
 
+mutual
+
+/-- Inline content with each MyST reference to a heading's target given that heading's text, as
+MyST sets a reference to an unnumbered heading. -/
+private def refInls (titles : List (String × Array Inl)) : List Inl → List Inl
+  | [] => []
+  | x :: rest => refInl titles x :: refInls titles rest
+
+private def refInl (titles : List (String × Array Inl)) : Inl → Inl
+  | .link dest title body p =>
+    if dest.startsWith "#" && body.isEmpty && title != "myst:eq" then
+      match titles.find? (·.1 == (dest.drop 1).toString) with
+      | some (_, t) => .link dest "" t p
+      | none => .link dest title body p
+    else .link dest title (refInls titles body.toList).toArray p
+  | .emph body p => .emph (refInls titles body.toList).toArray p
+  | .strong body p => .strong (refInls titles body.toList).toArray p
+  | .image dest title alt p => .image dest title (refInls titles alt.toList).toArray p
+  | .cite items p => .cite items p
+  | .citeText key body p => .citeText key (refInls titles body.toList).toArray p
+  | .note label body p => .note label (refInls titles body.toList).toArray p
+  | .text t p => .text t p
+  | .code t p => .code t p
+  | .anchor k p => .anchor k p
+  | .soft p => .soft p
+  | .hard p => .hard p
+  | .math d src p => .math d src p
+
+end
+
+mutual
+
+/-- A block with its MyST references to headings given their text. -/
+private def refBlk (titles : List (String × Array Inl)) : Blk → Blk
+  | .para body p => .para (refInls titles body.toList).toArray p
+  | .heading l body p => .heading l (refInls titles body.toList).toArray p
+  | .quote body p => .quote (refBlks titles body.toList).toArray p
+  | .aside body p => .aside (refBlks titles body.toList).toArray p
+  | .disclosure summary e body p =>
+    .disclosure (refInls titles summary.toList).toArray e (refBlks titles body.toList).toArray p
+  | .list o st t items p => .list o st t (refItemBlks titles items.toList).toArray p
+  | .table a header rows p =>
+    .table a (header.map fun c => (refInls titles c.toList).toArray)
+      (rows.map fun r => r.map fun c => (refInls titles c.toList).toArray) p
+  | .note l body p => .note l (refBlks titles body.toList).toArray p
+  | .code info text p => .code info text p
+  | .rule p => .rule p
+  | .lean attrs p => .lean attrs p
+  | .metadata fields p => .metadata fields p
+  | .refs p => .refs p
+
+private def refBlks (titles : List (String × Array Inl)) : List Blk → List Blk
+  | [] => []
+  | b :: rest => refBlk titles b :: refBlks titles rest
+
+private def refItemBlks (titles : List (String × Array Inl)) : List (Array Blk) → List (Array Blk)
+  | [] => []
+  | item :: rest => (refBlks titles item.toList).toArray :: refItemBlks titles rest
+
+end
+
+/-- The headings' targets and their text, which a reference with none of its own sets. -/
+private def targetTitles (blocks : Array Blk) : List (String × Array Inl) :=
+  blocks.toList.filterMap fun b => match b with
+    | .heading _ body _ => match body.back? with
+      | some (.anchor l _) => some (l, body.pop)
+      | _ => none
+    | _ => none
+
+/-- A MyST target's label, where a paragraph is `(label)=` alone. -/
+private def targetOf? : Blk → Option (String × Pos)
+  | .para #[.text t _] p =>
+    let t := t.trimAscii.toString
+    if t.startsWith "(" && t.endsWith ")=" && t.length > 3 then
+      some (((t.drop 1).dropEnd 2).toString, p) else none
+  | _ => none
+
+/-- Blocks with each MyST target set as a label: in the heading it stands before, else alone. -/
+private def mystTargets : List Blk → Array Blk → Array Blk
+  | [], out => out
+  | b :: rest, out =>
+    match targetOf? b, rest.head? with
+    | some (l, p), some (.heading lv body q) =>
+      mystTargets rest.tail (out.push (.heading lv (body.push (.anchor l p)) q))
+    | some (l, p), _ => mystTargets rest (out.push (.para #[.anchor l p] p))
+    | none, _ => mystTargets rest (out.push b)
+termination_by l => l.length
+decreasing_by all_goals simp_wf <;> (try cases rest) <;> simp <;> omega
+
 /-- The whole document: markdown source to the surface AST, with the reader's
 own diagnostics carrying `.md` spans; its metadata opens it, and its reference list stands in
 its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
@@ -1529,10 +1626,13 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
   let split := splitMetadata read.1
   let m := metaRead file role split.1
   -- Pandoc's smart punctuation reads a markdown document's text and metadata, not an included file's.
-  let smart := dialect == .document && role == .document && !tex
+  let smart := dialect.isDocument && role == .document && !tex
   let m := if smart then { m with title := m.title.map fun (t, q) => ((abbrevInls t.toList).toArray, q) }
     else m
   let blocks := if smart then abbrevBlks split.2.toList else split.2.toList
+  let blocks := if dialect != .myst then blocks else
+    let targeted := mystTargets blocks #[]
+    refBlks (targetTitles targeted) targeted.toList
   let cited := citesBlks citesInls blocks
   let placed := refsAt blocks
   -- The heading the metadata sets over the list at the file's end, which the list drops where it
@@ -1555,8 +1655,20 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
   (m.layout ++ m.prelude ++ front ++ body.1 ++ m.tail file dialect cited placed.isSome,
     read.2 ++ m.diags ++ unused ++ frontDs ++ body.2 ++ unplaced)
 
+/-- The markdown a document is written in: MyST's where its front matter holds a key only MyST
+reads (an export, its parts, a notebook's kernel), else the document dialect. -/
+public def dialectOf (input : String) : Dialect :=
+  let lines := (input.splitOn "\n").map (·.trimAsciiEnd.toString)
+  match lines with
+  | first :: rest =>
+    if first.trimAscii.toString != "---" then .document else
+    let block := rest.takeWhile fun l => l != "---" && l != "..."
+    let keys := templateKeys ++ ["kernelspec", "jupytext"]
+    if block.any (fun l => keys.any (fun k => l.startsWith (k ++ ":"))) then .myst else .document
+  | [] => .document
+
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/
-public def read (file input : String) : Array Raw × Array Diag := desugar file input
+public def read (file input : String) : Array Raw × Array Diag := desugar file input (dialectOf input)
 
 /-- A markdown file another document includes: its citations, where `cites` says the including
 document reads them, join the including document's, and its text is TeX where `hybrid` says the
