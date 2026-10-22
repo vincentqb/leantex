@@ -9,6 +9,10 @@ namespace LeanTex.Core.PackageEnvs
 
 open Parse
 
+/-- framed.sty's hooks a document may redefine, which the template reads none of. -/
+def framedHooks : List String :=
+  ["FrameCommand", "FirstFrameCommand", "MidFrameCommand", "LastFrameCommand", "FrameRestore"]
+
 /-- The framed.sty environments this module sets: the ruled frames and the shaded grounds. -/
 def envs : List String := ["framed", "oframed", "shaded", "shaded*", "snugshade", "snugshade*"]
 
@@ -23,7 +27,7 @@ minus {s.topsep.shrink.fixed.toPtString}pt"
 /-- What framed.sty's `\MakeFramed` sets for environment `n`: a box of `\fbox` (a 0.4pt rule
 `\FrameSep` 9pt out) or `\colorbox{shadecolor}`, `snugshade`'s on the default `\fboxsep`, around a
 minipage of the measure less the box's sides, `\OuterFrameSep` above and below. -/
-def template (n : String) (pt : Nat) : String :=
+def template (n : String) (pt : Nat) (bodySep : String) : String :=
   let outer := outerSep pt
   let framedLike := n == "framed" || n == "oframed"
   let box := if framedLike then "\\fbox" else "\\colorbox{shadecolor}"
@@ -32,7 +36,7 @@ def template (n : String) (pt : Nat) : String :=
   -- ground, which framed.sty bleeds into the margins around text at the measure, does not bleed
   let width := if framedLike then "18.8pt" else if sep == "3pt" then "6pt" else "18pt"
   s!"\\par\\vspace\{{outer}}\\noindent\{\\setlength\{\\fboxsep}\{{sep}}{box}\{\\begin\{minipage}\{\\dimexpr\\linewidth-{width}\\relax}\
-\\setlength\{\\fboxsep}\{3pt}\\zzframedbody\\end\{minipage}}}\\par\\vspace\{{outer}}"
+\\setlength\{\\fboxsep}\{{bodySep}}\\zzframedbody\\end\{minipage}}}\\par\\vspace\{{outer}}"
 
 private theorem toList_sizeOf_lt (b : Array Raw) : sizeOf b.toList < sizeOf b := by
   cases b; simp
@@ -55,9 +59,9 @@ decreasing_by
   all_goals first | omega | (have := toList_sizeOf_lt b; omega)
 
 /-- The template for `n` at `pt` points around `body`, its source read by `read`. -/
-def raws (read : String → Array Raw) (n : String) (pt : Nat) (body : Array Raw) (site : Pos) :
-    Array Raw :=
-  fill site body #[] (read (template n pt)).toList
+def raws (read : String → Array Raw) (n : String) (pt : Nat) (bodySep : String) (body : Array Raw)
+    (site : Pos) : Array Raw :=
+  fill site body #[] (read (template n pt bodySep)).toList
 
 /-- The longtable markers that close a head or foot part: the first head, the head, the foot and the
 last foot. -/
@@ -101,29 +105,31 @@ def longtableRaws (body : Array Raw) (p : Pos) : Array Raw :=
   #[.env env #[.env "tabular" (spec ++ longtableRows (body.extract (k + 1) body.size)) p] p]
 
 /-- A document's framed.sty and longtable environments as their templates set them, at every depth,
-where `pkgs` loads their package, its class at `pt` points, templates read by `read`. -/
-def lower (read : String → Array Raw) (pkgs : List String) (pt : Nat) (out : Array Raw) :
-    List Raw → Array Raw
+where `pkgs` loads their package: its class at `pt` points, a frame's body at `\fboxsep` `bodySep`,
+templates read by `read`. -/
+def lower (read : String → Array Raw) (pkgs : List String) (pt : Nat) (bodySep : String)
+    (out : Array Raw) : List Raw → Array Raw
   | [] => out
   | .env n b p :: rest =>
-    let inner := lower read pkgs pt #[] b.toList
+    let inner := lower read pkgs pt bodySep #[] b.toList
     if envs.contains n && pkgs.contains "framed" then
-      lower read pkgs pt (out ++ raws read n pt inner p) rest
+      lower read pkgs pt bodySep (out ++ raws read n pt bodySep inner p) rest
     else if n == "longtable" && pkgs.contains "longtable" then
-      lower read pkgs pt (out ++ longtableRaws inner p) rest
-    else lower read pkgs pt (out.push (.env n inner p)) rest
+      lower read pkgs pt bodySep (out ++ longtableRaws inner p) rest
+    else lower read pkgs pt bodySep (out.push (.env n inner p)) rest
   | .group b p :: rest =>
-    lower read pkgs pt (out.push (.group (lower read pkgs pt #[] b.toList) p)) rest
-  | r :: rest => lower read pkgs pt (out.push r) rest
+    lower read pkgs pt bodySep (out.push (.group (lower read pkgs pt bodySep #[] b.toList) p)) rest
+  | r :: rest => lower read pkgs pt bodySep (out.push r) rest
 termination_by l => sizeOf l
 decreasing_by
   all_goals simp_wf
   all_goals first | omega | (have := toList_sizeOf_lt b; omega)
 
 /-- A command and a one-word group, as a package load stands, hold no environment to lower. -/
-theorem lower_command_word (read : String → Array Raw) (pkgs : List String) (pt : Nat) (c w : String)
-    (p q g : Pos) :
-    lower read pkgs pt #[] [.ctrl c p, .group #[.word w q] g] = #[.ctrl c p, .group #[.word w q] g] := by
+theorem lower_command_word (read : String → Array Raw) (pkgs : List String) (pt : Nat)
+    (bodySep c w : String) (p q g : Pos) :
+    lower read pkgs pt bodySep #[] [.ctrl c p, .group #[.word w q] g] =
+      #[.ctrl c p, .group #[.word w q] g] := by
   simp [lower]
 
 end LeanTex.Core.PackageEnvs

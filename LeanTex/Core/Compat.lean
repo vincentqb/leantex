@@ -11295,6 +11295,10 @@ private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (st
       let (_, k) := takeGroups raws j 1
       nameParam cmd why pos
       return some (#[], k)
+  -- framed.sty's hooks shape every frame its template sets, which reads none of them.
+  if PackageEnvs.framedHooks.contains cmd && st.loads.pkgs.any (·.1 == "framed") then
+    sayOnce ("framed:" ++ cmd) .W0104 (Diag.say .W0104 .definition s!"\\{cmd}" (ofPackage "framed")) pos
+      (detail := some "a frame sets framed.sty's default rule and seps")
   -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets
   if !xparse && st.biblatexLoaded && biblatexMacros.contains cmd then
     let (_, j) := takeRawOpt raws j
@@ -16287,9 +16291,10 @@ private def executionState (reading : Bool) (file : String) (raws : Array Raw)
 
 /-- The packages a source's top-level `\usepackage` and `\RequirePackage` load, and its class's
 point size, 10 where its options name none. -/
-private def loadsAndSize (raws : Array Raw) : List String × Nat := Id.run do
+private def loadsAndSize (raws : Array Raw) : List String × Nat × String := Id.run do
   let mut pkgs : List String := []
   let mut pt := 10
+  let mut sep := "3pt"
   for h : i in [:raws.size] do
     match raws[i] with
     | .ctrl "usepackage" _ | .ctrl "RequirePackage" _ =>
@@ -16303,14 +16308,19 @@ private def loadsAndSize (raws : Array Raw) : List String × Nat := Id.run do
         | "11pt" => pt := 11
         | "12pt" => pt := 12
         | _ => pure ()
+    | .ctrl "setlength" _ =>
+      let (args, _) := takeGroups raws (i + 1) 2
+      if (args[0]?.bind (·[0]?)) matches some (Raw.ctrl "fboxsep" _) then
+        sep := (rawSrc (args.getD 1 #[])).trimAscii.toString
     | _ => pure ()
-  return (pkgs, pt)
+  return (pkgs, pt, sep)
 
 /-- A source with framed.sty's and longtable's environments set as their templates set them, where
 it loads their package. -/
 public def packageEnvsLowered (raws : Array Raw) : Array Raw :=
-  if (loadsAndSize raws).1.any (["framed", "longtable"].contains ·) then
-    PackageEnvs.lower (verbatimRaws "framed.sty") (loadsAndSize raws).1 (loadsAndSize raws).2 #[] raws.toList
+  let found := loadsAndSize raws
+  if found.1.any (["framed", "longtable"].contains ·) then
+    PackageEnvs.lower (verbatimRaws "framed.sty") found.1 found.2.1 found.2.2 #[] raws.toList
   else raws
 
 /-- A package call holds no environment, so the lowering leaves it as it stands. -/
@@ -16318,9 +16328,10 @@ public theorem packageEnvsLowered_package_exact (command names : String) (pos gr
     packageEnvsLowered (packageCall command names pos groupPos namePos) =
       packageCall command names pos groupPos namePos := by
   unfold packageEnvsLowered
+  dsimp only
   split
   · rw [packageCall_exact]
-    exact PackageEnvs.lower_command_word _ _ _ command names pos namePos groupPos
+    exact PackageEnvs.lower_command_word _ _ _ _ command names pos namePos groupPos
   · rfl
 
 private def executeBy [Monad m] (reader : Option (InputReader m))

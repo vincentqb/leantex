@@ -7481,7 +7481,7 @@ private def RegionSpan.boxExtent (s : RegionSpan) (lines : Array LineOut) (fills
     let (x0, x1) := match spec.w with
       | some w => (spec.x, spec.x + w)
       | none => (spec.x, b.x1 + b.x0 - spec.x)
-    (x0, b.y0 - (if s.first then spec.inset else 0), x1, b.y1 + s.tail + spec.inset)
+    (x0, b.y0 - spec.inset, x1, b.y1 + s.tail + spec.inset)
 
 /-- What a region's fill paints: a box command's ground inside its rule and its four sides, any
 other region its fill. -/
@@ -14643,7 +14643,8 @@ private def collectBlock (r : Rd) (a : Acc)
     let spec := boxed.map fun (w, b, _) => boxSpecOf r a b (r.geom.hmargin + indent + off)
       ((w.resolve total).or natural) w.pos total
     let saved := a.ground
-    -- A box command's box is one unbreakable box, placed whole or moved to the next page.
+    -- A box command's box is one unbreakable box, placed whole or moved to the next page, a box no
+    -- page holds breaking.
     let a := match spec with
       | some k => { (a.pushOp .floatOpen).pushOp (.regionOpen (.box k)) with
           ground := k.ground.or a.ground }
@@ -17937,15 +17938,15 @@ private def oversizeWords (group : Array Op) : String × String :=
     ("a box holding a minipage or a table", "the box's content")
   else ("a figure or table", "the float's content")
 
-/-- A group set whole on the page `b` opens, or, a box no page holds, broken as its lines break, as
-framed.sty breaks a frame, so no ink leaves the page. -/
+/-- A group set whole on the page `b` opens, or, a box no page holds, broken from where it stands as
+its lines break, as framed.sty breaks a frame, so no ink leaves the page. -/
 private def wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
     (group : Array Op) : StepSt :=
   let whole := group.foldl (stepStaged fs imgs) { st with b := { b with noBreak := true } }
   let over := whole.b.y + whole.b.depthPast whole.b.prevDepth whole.b.geom.maxDepth -
     whole.b.bottom - whole.b.pageShrink
   if (group[0]? : Option Op) matches some (.regionOpen (.box _)) then
-    if 0 < over then group.foldl (stepStaged fs imgs) { st with b := b } else whole
+    if 0 < over then group.foldl (stepStaged fs imgs) st else whole
   else whole
 
 /-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
@@ -18619,11 +18620,11 @@ private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
       (bgStep_stepStaged fs imgs acc group[i] (hg _ (Array.getElem_mem i.2))))
 
 private theorem bgStep_wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
-    (group : Array Op) (hg : ∀ op ∈ group, op.preservesGround = true) :
-    BgStep b (wholeOrBroken fs imgs st b group).b := by
-  have hw := (BgStep.of_eq rfl rfl rfl).trans
-    (bgStep_foldSteps fs imgs group { st with b := { b with noBreak := true } } hg)
-  have hf := bgStep_foldSteps fs imgs group { st with b := b } hg
+    (group : Array Op) (hg : ∀ op ∈ group, op.preservesGround = true) (h1 : BgStep st.b b) :
+    BgStep st.b (wholeOrBroken fs imgs st b group).b := by
+  have hw := h1.trans ((BgStep.of_eq rfl rfl rfl).trans
+    (bgStep_foldSteps fs imgs group { st with b := { b with noBreak := true } } hg))
+  have hf := bgStep_foldSteps fs imgs group st hg
   dsimp only [wholeOrBroken]
   repeat' split
   all_goals first | exact hw | exact hf
@@ -18641,8 +18642,8 @@ private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
       · exact BgStep.refl _
       · exact bgStep_finishPage _
     have h2 := bgStep_wholeOrBroken fs imgs st
-      (if st.b.holdsNothing then st.b else st.b.finishPage) group hg
-    refine h1.trans (h2.trans (BgStep.of_eq ?_ ?_ ?_))
+      (if st.b.holdsNothing then st.b else st.b.finishPage) group hg h1
+    refine h2.trans (BgStep.of_eq ?_ ?_ ?_)
     all_goals repeat' split
     all_goals simp
 
@@ -18717,7 +18718,7 @@ private def keepExt (b : B) (fs : FontSet) (imgs : Image.Store)
       if !(group[0]? matches some (Op.regionOpen (.box _))) then 0 else
       let trial := (group.foldl (stepStaged fs imgs) { b := { b with noBreak := true, skip := {} } }).b
       let height := max 0 (trial.y + trial.prevDepth - b.y)
-      -- A box no page holds goes on whatever page it opens; the heading keeps no reserve for it.
+      -- A box no page holds breaks from where it opens; the heading keeps no reserve for it.
       if b.bottom - b.geom.bodyTop < height then 0 else glue + height
     | .para j t =>
       if 0 < j.keepNext then
@@ -19446,12 +19447,12 @@ private theorem foldSteps_frames (fs : FontSet) (imgs : Image.Store)
       (ho _ (Array.getElem_mem i.2)))
 
 private theorem frames_wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
-    (group : Array Op) (openings : Array FrameOpening) (hb : FramesFooted openings b)
-    (ho : ∀ op ∈ group, ∀ f ∈ op.frameOpening?, f ∈ openings) :
+    (group : Array Op) (openings : Array FrameOpening) (hst : FramesFooted openings st.b)
+    (hb : FramesFooted openings b) (ho : ∀ op ∈ group, ∀ f ∈ op.frameOpening?, f ∈ openings) :
     FramesFooted openings (wholeOrBroken fs imgs st b group).b := by
   have hw := foldSteps_frames fs imgs group { st with b := { b with noBreak := true } } openings
     (hb.step (FrameStep.of_eq rfl rfl)) ho
-  have hf := foldSteps_frames fs imgs group { st with b := b } openings hb ho
+  have hf := foldSteps_frames fs imgs group st openings hst ho
   dsimp only [wholeOrBroken]
   repeat' split
   all_goals first | exact hw | exact hf
@@ -19475,7 +19476,7 @@ private theorem runFloat_frames (fs : FontSet) (imgs : Image.Store)
       · exact hb
       · exact hb.step (frameStep_finishPage ..)
     have hr := frames_wholeOrBroken fs imgs st
-      (if st.b.holdsNothing then st.b else st.b.finishPage) group openings hc ho
+      (if st.b.holdsNothing then st.b else st.b.finishPage) group openings hb hc ho
     exact finish _ _ hr
 
 private theorem frameStep_restartColumn (start latest : B) (inked : Nat) :
@@ -19914,11 +19915,11 @@ private theorem foldSteps_reflows (fs : FontSet) (imgs : Image.Store)
     hb (fun _ _ h => stepStaged_reflows _ _ _ _ h)
 
 private theorem reflows_wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
-    (group : Array Op) (hb : b.ReflowsNamed) :
+    (group : Array Op) (hst : st.b.ReflowsNamed) (hb : b.ReflowsNamed) :
     (wholeOrBroken fs imgs st b group).b.ReflowsNamed := by
   have hw := foldSteps_reflows fs imgs group { st with b := { b with noBreak := true } }
     (hb.step (ReflowStep.of_eq rfl rfl))
-  have hf := foldSteps_reflows fs imgs group { st with b := b } hb
+  have hf := foldSteps_reflows fs imgs group st hst
   dsimp only [wholeOrBroken]
   repeat' split
   all_goals first | exact hw | exact hf
@@ -19941,7 +19942,7 @@ private theorem runFloat_reflows (fs : FontSet) (imgs : Image.Store)
       · exact hb
       · exact hb.step (reflowStep_finishPage ..)
     have hr := reflows_wholeOrBroken fs imgs st
-      (if st.b.holdsNothing then st.b else st.b.finishPage) group hc
+      (if st.b.holdsNothing then st.b else st.b.finishPage) group hb hc
     exact finish _ _ hr
 
 private theorem reflowStep_restartColumn (start latest : B) (inked : Nat) :
