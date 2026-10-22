@@ -4115,7 +4115,8 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
   let level : Int := if name == "paragraph" then 4 else 5
   -- premise: counterChecks — numbered only within secnumdepth
   let shaped (head : Inline) : Inline :=
-    if ctx.listNest.shaped.isSome || (ctx.tokens.find? "parindent").isSome then
+    -- article.cls indents `\subparagraph`'s head by `\parindent`, `\paragraph`'s by none.
+    if ctx.listNest.shaped.isSome || ((ctx.tokens.find? "parindent").isSome && level == 4) then
       .role Ir.runInHeadRole #[head]
     else head
   -- hyperref's `\@currentlabelname`: a label after the head names it.
@@ -13619,7 +13620,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
     || n == Ir.trivItemRole || n == Ir.captionAtRole
-    || (n == Ir.parContinuesRole && cur.all (· matches .space))
+    || n == Ir.parContinuesRole
     || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || ((n == Ir.plainPageRole || n == Ir.styledPageRole) && cur.isEmpty)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)

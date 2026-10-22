@@ -14265,7 +14265,7 @@ private def indentStep (w : SymGlue) (cont : Bool) (b : Block) : Block × Bool :
   match b with
   | .para c =>
     if anchorsOnly c then (b, cont)
-    else if cont || opensRunIn c then (b, false)
+    else if cont || opensRunIn (c.toList.dropWhile anchorInline).toArray then (b, false)
     else (.para (#[.hspace (.lit w) true] ++ c), false)
   | .setPalette _ | .setTokens _ => (b, cont)
   | b => (b, if b.continuesPar then true else if pageMarkerBlock b || b.isSkip then cont else false)

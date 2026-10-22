@@ -1633,23 +1633,33 @@ private def became (what native : String) (pos : Pos)
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
 
-/-- The controls after which TeX stands in vertical mode: the headings and skips. -/
+/-- The controls that end a paragraph, after which TeX stands in vertical mode. -/
 private def verticalCtrls : List String :=
   ["part", "chapter", "section", "subsection", "subsubsection", "par", "smallskip", "medskip",
-   "bigskip", "vspace", "newpage", "clearpage", "pagebreak", "maketitle"]
+   "bigskip", "vspace", "vfill", "newpage", "clearpage", "cleardoublepage", "pagebreak",
+   "maketitle", "tableofcontents"]
 
-/-- Whether a control at `i` stands where TeX is in vertical mode: past only spaces since the start,
-a paragraph end, an environment, or a heading or skip with its arguments. -/
-private def opensParagraph (raws : Array Raw) (i : Nat) : Bool :=
-  let before := (raws.extract 0 i).toList.reverse.dropWhile (· matches .space)
-  match before with
-  | [] | .par _ :: _ | .env .. :: _ => true
-  | .ctrl n _ :: _ => verticalCtrls.contains n
-  | .group .. :: rest =>
-    match rest.dropWhile (fun r => r matches .group .. | .sym '*' _ | .space) with
-    | .ctrl n _ :: _ => verticalCtrls.contains n
-    | _ => false
+/-- The controls that leave TeX's mode as it stands: declarations, labels and group openers. -/
+private def neutralCtrls : List String :=
+  ["label", "setlength", "addtolength", "thispagestyle", "pagestyle", "phantomsection", "relax",
+   "begingroup", "nopagebreak", "tiny", "scriptsize", "footnotesize", "small", "normalsize",
+   "large", "Large", "LARGE", "huge", "Huge", "normalfont", "rmfamily", "sffamily", "ttfamily",
+   "bfseries", "mdseries", "itshape", "upshape", "slshape", "scshape", "centering", "raggedright",
+   "raggedleft", "selectlanguage", "color", "noindent"]
+
+/-- Whether TeX stands in vertical mode before the raws `before` (nearest first): past spaces,
+neutral controls and their arguments and environments, at the start, a paragraph end or a control
+ending a paragraph. -/
+private def verticalBefore : List Raw → Bool
+  | [] => true
+  | .space :: rest | .group .. :: rest | .sym '*' _ :: rest | .env .. :: rest => verticalBefore rest
+  | .par _ :: _ => true
+  | .ctrl n _ :: rest => verticalCtrls.contains n || (neutralCtrls.contains n && verticalBefore rest)
   | _ => false
+
+/-- Whether a control at `i` stands where TeX is in vertical mode (`verticalBefore`). -/
+private def opensParagraph (raws : Array Raw) (i : Nat) : Bool :=
+  verticalBefore (raws.extract 0 i).toList.reverse
 
 /-- The census subject of a declared setting: its reader and its name. -/
 public def paramSubject (reader name : String) : String := s!"param:{reader}:{name}"
@@ -10747,6 +10757,13 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
     out := out ++ (← parskipLists (match skip, read with
       | some _, some src => src
       | _, _ => "0.6em plus 2pt") pos)
+    -- Under an indenting class its paragraphs go flush, unless `indent` keeps or sets one.
+    if (← get).indents then
+      match (own.map KeyVal.entry).lookup "indent" with
+      | none => out := out ++ (← setting "\\usepackage{parskip}" (.tokens #[("parindent", "0pt")]) pos)
+      | some (some v) => out := out ++ (← setting s!"\\usepackage[indent={v}]\{parskip}"
+          (.tokens #[("parindent", v)]) pos)
+      | some none => pure ()
     out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
@@ -12222,12 +12239,12 @@ declare the furniture directly")
   | .noIndent => do
     -- premise: firstIndentChecks — an indenting class sets the paragraph after the mark flush
     let st ← get
-    if st.indents && st.topLevel && (!st.inGroup || st.defTop) && opensParagraph c.raws (c.start - 1)
-    then
+    if st.indents && st.topLevel && !st.inGroup && opensParagraph c.raws (c.start - 1) then
       became "\\noindent" "the paragraph it opens is set flush" c.pos
       return #[.ctrl Ir.parContinuesRole c.pos]
-    discard "\\noindent" (if st.indents then "TeX ignores it inside a paragraph or a box"
-      else "no paragraph carries a first-line indent here") "noindent" c.pos
+    discard "\\noindent" (if !st.indents then "no paragraph carries a first-line indent here"
+      else if st.inDef then "a definition's paragraph keeps the class's indent"
+      else "TeX ignores it inside a paragraph, a box or a list") "noindent" c.pos
     return #[]
   | .pageBreak => do
     -- Every `\pagebreak` is taken whole; the demand level is not weighed.

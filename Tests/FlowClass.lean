@@ -193,6 +193,20 @@ def firstIndentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     "\\setlength{\\parindent}{0pt}\nAlpha.\n\\end{document}\n")
   t "flow class: a body \\parindent is named, the preamble's indent standing"
     (bodyDs.any fun d => hasStr d.message "parindent")
+  -- lualatex: article.cls indents `\subparagraph` by `\parindent`; parskip.sty drops the indent.
+  let runIns := "Alpha.\n\n\\label{q}\\paragraph{Papa head} Papa text.\n\n" ++
+    "\\subparagraph{Sierra head} Sierra text.\n\nTango."
+  let firstX (src : String) (word : String) : Option Dim.Length :=
+    let (d, out) := outOf fonts src
+    ((out.pages.flatMap (·.lines)).find? fun l => (lineText l).trimAscii.toString.startsWith word).map
+      fun l => firstInk l - d.page.hmargin
+  let runSrc := "\\documentclass{ltflow}\n\\begin{document}\n" ++ runIns ++ "\n\\end{document}\n"
+  t "flow class: a paragraph head runs in flush past its label, a subparagraph head on the indent"
+    ((firstX runSrc "Papa").any (near · 0) && (firstX runSrc "Sierra").any (near · w))
+  let skipSrc := "\\documentclass{ltflow}\n\\usepackage{parskip}\n\\begin{document}\n" ++
+    "Alpha one.\n\nBravo two.\n\\end{document}\n"
+  t "flow class: parskip.sty sets the paragraphs flush"
+    ((firstX skipSrc "Bravo").any (near · 0))
   let html := (HtmlDoc.emit {} (elabStr ("\\documentclass{ltflow}\n\\begin{document}\n" ++ indentBody ++
     "\n\\end{document}\n")).1).1
   t "flow class: the web page opens the same paragraphs on the indent"

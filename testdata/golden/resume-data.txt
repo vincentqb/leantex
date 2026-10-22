@@ -36,6 +36,7 @@ role in-paragraph
     item
       para
         text "Pruned more than was planted, on purpose."
+role par continues
 para
   styled bold
     italicCorr maybe
@@ -48,6 +49,7 @@ role in-paragraph
     item
       para
         text "Measured the bulbs; planted better bulbs."
+role par continues
 para
   styled bold
     italicCorr maybe
@@ -65,9 +67,9 @@ role in-paragraph
           text "carefully"
         text "."
 -- diagnostics
-info[N0100] 2:1 translated command \setlength{\parindent} | detail: nothing: paragraphs here are set flush, as declared
+info[N0100] 2:1 translated command \setlength{\parindent} | detail: \tokens{ parindent = 0pt }
 info[N0100] 3:1 translated command \setlength{\parskip} | detail: \page{ parskip = 891290sp }
 info[N0100] 4:1 translated command \newcommand{\entry} | detail: \define \entry(a1: content, a2: content, a3: content) {...}
-info[N0100] 4:28 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
+info[N0100] 4:28 translated command \noindent | detail: nothing: a definition's paragraph keeps the class's indent
 info[N0100] 4:59 translated command \relax | detail: nothing: it means do nothing
 info[N0100] 6:1 translated command \pagestyle{empty} | detail: \page{ numbers = off }, and no running fields
