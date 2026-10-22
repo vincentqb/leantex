@@ -227,6 +227,46 @@ def leadItems : List Piece → List Item
   | .item i :: rest => i :: leadItems rest
   | _ => []
 
+/-- Every relative clause opening `is` about the name `n`: a relation whose first slot `#1` the
+name takes, its further arguments, with what follows. -/
+def thatClause (vc : Vocab) (n : String) (is : List Item) :
+    List (Template × List (Term String) × List Item) :=
+  vc.rels.flatMap fun t => match t.parts with
+    | .slot 1 :: ps => (prefixParts vc ps is).filterMap fun (pairs, r) =>
+        (ordered t ((1, Term.leaf n) :: pairs)).map fun args => (t, args.tail, r)
+    | _ => []
+
+/-- Every reading of a quantifier or an existential over one name and a relative clause: whether it
+is a quantifier, the name's group, the clause, and the body after it. -/
+def quantThat (vc : Vocab) (l : List Piece) :
+    List (Bool × Group String × Template × List (Term String) × List Piece) :=
+  let after (g : Group String) (rest : List Piece) (tail : List Piece → Option (List Piece))
+      (all : Bool) :=
+    match g.names with
+    | [n] =>
+      let is := leadItems rest
+      (thatClause vc n is).filterMap fun (t, a, r) =>
+        (tail (rest.drop (is.length - r.length))).map fun body => (all, g, t, a, body)
+    | _ => []
+  match l with
+  | .item (.word "for") :: .item (.word "every") :: .item (.leaf x) :: .item (.word "that") :: rest =>
+    match groupOf? x with
+    | some g => after g rest (fun
+        | .item (.word s) :: body => if s == "," || s == ":" then some body else none
+        | _ => none) true
+    | none => []
+  | .item (.word "there") :: .item (.word "is") :: .item (.leaf x) :: .item (.word "that") :: rest =>
+    match groupOf? x with
+    | some g => after g rest (fun
+        | .item (.word "such") :: .item (.word "that") :: body => some body
+        | _ => none) false
+    | none => []
+  | _ => []
+
+def thatOf (all : Bool) (g : Group String) (t : Template) (a : List (Term String))
+    (s : Stmt String) : Stmt String :=
+  if all then .allThat g t a s else .exThat g t a s
+
 /-- The items of a list of items alone. -/
 def onlyItems (l : List Piece) : Option (List Item) :=
   l.mapM fun
@@ -304,6 +344,8 @@ def readsN (vc : Vocab) (scope : Bool) (l : List Piece) : List (Stmt String) :=
     | some (all, bd, body) =>
       if _h : seqSize body < seqSize l then (readsN vc true body).map (quantOf all bd) else []
     | none => []
+  let thats := (quantThat vc l).flatMap fun (all, g, t, a, body) =>
+    if _h : seqSize body < seqSize l then (readsN vc true body).map (thatOf all g t a) else []
   let opened : List (Stmt String) := match _hl : l with
     | .item (.word "if") :: rest =>
       (wordSplits [",", "then"] #[] rest).flatMap fun (hyps, concl) =>
@@ -344,7 +386,7 @@ def readsN (vc : Vocab) (scope : Bool) (l : List Piece) : List (Stmt String) :=
   let atoms := match onlyItems l with
     | some is => (atomsAt vc is).filterMap fun (s, r) => if r.isEmpty then some s else none
     | none => []
-  (lone ++ iffs ++ inlines ++ quants ++ opened ++ atoms).take 2
+  (lone ++ iffs ++ inlines ++ quants ++ thats ++ opened ++ atoms).take 2
 termination_by (seqSize l, 0)
 decreasing_by all_goals (subst_vars; apply Prod.Lex.left; assumption)
 
@@ -431,14 +473,20 @@ def unitG (vc : Vocab) (l : List Piece) : Option (Stmt String × List Piece) :=
     | some (x :: y :: ys) => some (.tfae (conjChain x (y :: ys)), r)
     | _ => none
   | _ =>
-    match quantified l with
-    | some (all, bd, body) =>
+    match quantified l, quantThat vc l with
+    | some (all, bd, body), _ =>
       if _h : seqSize body < seqSize l then
         match stmtG vc true body with
         | some (s, []) => some (quantOf all bd s, [])
         | _ => none
       else none
-    | none =>
+    | none, (all, g, t, a, body) :: _ =>
+      if _h : seqSize body < seqSize l then
+        match stmtG vc true body with
+        | some (s, []) => some (thatOf all g t a s, [])
+        | _ => none
+      else none
+    | none, [] =>
       let is := leadItems l
       let found := atomsAt vc is
       match (found.map (·.2.length)).min? with
@@ -1058,6 +1106,14 @@ def corpus : List (String × Stmt Leaf) :=
    ("a disjunction as a conclusion", .imp (P "P") (.disj (P "Q") (P "R"))),
    ("an equivalence whose left side a quantifier opens lists its two sides",
      .iff (.all (nat "x") (le "x" "x")) (P "Q")),
+   ("a relative clause under a quantifier",
+     .allThat (grp ["x"] "N") (relT "Tide.Calm") [] (le "x" "x")),
+   ("a relative clause under an existential, its body a quantifier",
+     .exThat (grp ["y"] "N") (relT "Tide.Calm") [] (.all (nat "z") (lt "y" "z"))),
+   ("a relative clause of three slots holding a connective's word",
+     .allThat (grp ["x"] "N") (relT "Tide.Between") [.leaf (L "a"), .leaf (L "b")] (P "Q")),
+   ("a relative clause in a hypothesis",
+     .imp (.allThat (grp ["x"] "N") (relT "Tide.Calm") [] (P "P")) (P "Q")),
    ("three equivalent statements, listed",
      .tfae (.conj (lt "x" "y") (.conj (.all (nat "z") (le "z" "z")) (P "Q")))),
    ("a quantifier over three equivalent statements",
@@ -1153,6 +1209,8 @@ def binderMap {α β : Type} (f : α → β) (b : Binder α) : Binder β :=
 def stmtMap {α β : Type} (f : α → β) : Stmt α → Stmt β
   | .all b s => .all (binderMap f b) (stmtMap f s)
   | .ex b s => .ex (binderMap f b) (stmtMap f s)
+  | .allThat g t a s => .allThat (groupMap f g) t (a.map (termMap f)) (stmtMap f s)
+  | .exThat g t a s => .exThat (groupMap f g) t (a.map (termMap f)) (stmtMap f s)
   | .imp a b => .imp (stmtMap f a) (stmtMap f b)
   | .conj a b => .conj (stmtMap f a) (stmtMap f b)
   | .disj a b => .disj (stmtMap f a) (stmtMap f b)

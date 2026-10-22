@@ -390,7 +390,10 @@ to read it for is named and ignored.
 quantifier binds typed groups, `x : T`, consecutive binders joining one
 quantifier (for all xs : List ℕ and n : ℕ), a binder predicate its relation
 (`∀ x ∈ S` as for every x ∈ S, and `∀ k < n` so where its other side names a
-variable, which fixes the type), a type holding a quantifier or an arrow in
+variable, which fixes the type), a hypothesis about one bound name whose
+relation's words open after its first slot as a relative clause (`∀ b : Barge,
+Moored b → P` as for every b : Barge that is moored, P, and `∃ b, Moored b ∧ P`
+as there is b : Barge that is moored such that P), a type holding a quantifier or an arrow in
 parentheses, and an outermost implicit binder the rest refers to hides; a binder whose type is a proposition, or an instance one, reads as a
 hypothesis, `if …, then …`; `∃` as there is or there are; `∨ ↔ ¬` as either …
 or, if and only if, and it is not the case that. A relation stays a formula. Two

@@ -67,6 +67,14 @@ theorem barge_bounds (bs : List Barge) (cap : Nat) :
     (And.intro (fun _ _ => And.intro (fun _ hk => hk) (Exists.intro _ rfl))
       (Nat.le_add_right _ _))
 
+/-- A hypothesis about the bound name alone reads as a relative clause. -/
+theorem moored_draft : forall b : Barge, Moored b -> 0 < b.draft :=
+  fun _ h => h
+
+/-- An existential's first statement about its name reads as one too. -/
+theorem some_moored : exists b : Barge, And (Moored b) (b.hull = 0) :=
+  Exists.intro (Barge.mk 0 1) (And.intro (by unfold Moored; decide) rfl)
+
 /-- Three equivalent statements, one a quantifier's, listed. -/
 theorem parity (n : Nat) :
     List.TFAE [n % 2 = 0, (n + 2) % 2 = 0,

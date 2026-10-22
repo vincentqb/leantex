@@ -119,6 +119,31 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       (match sayTy (tfaeOver [truth, truth, .apps (.const "And") [truth, truth]]) with
         | .ok (.atom _) => true
         | _ => false))
+  let nat : LeanFacts.Term := .apps (.const "Nat") []
+  let calmOf (k : Nat) : LeanFacts.Term := .apps (.const "Tide.Calm") [.apps (.bvar k) []]
+  let calmFacts := factsWith #[("Tide.height", #[.explicit, .explicit]), ("Tide.Calm", #[.explicit])]
+  let sayCalm (ty : LeanFacts.Term) := proseOf calmFacts (phrasedTable ()) (theoremAt "tt" 2 ty) ty
+  let calmT := ((phrasedTable ()).rels.lookup "Tide.Calm").getD ⟨[]⟩
+  t "prose: a hypothesis about the bound name alone, through a relation of words, reads as a relative clause, under a quantifier and an existential, and one about another term, a symbolic one or one whose name joins the binder before as a conditional"
+    ((match sayCalm (.pi "x" .explicit false nat (.pi "h" .explicit true (calmOf 0) truth)) with
+        | .ok (.allThat g r [] (.atom _)) => r == calmT && g.names.length == 1
+        | _ => false) &&
+      (match sayCalm (.apps (.const "Exists") [nat,
+          .lam "x" .explicit nat (.apps (.const "And") [calmOf 0, truth])]) with
+        | .ok (.exThat g r [] (.atom _)) => r == calmT && g.names.length == 1
+        | _ => false) &&
+      (match sayCalm (.pi "y" .explicit false nat (.pi "x" .explicit false nat
+          (.pi "h" .explicit true (calmOf 0) truth))) with
+        | .ok (.all b (.imp (.rel r _) _)) => r == calmT && b.first.names.length == 2
+        | _ => false) &&
+      (match sayCalm (.pi "x" .explicit false nat (.pi "h" .explicit true
+          (.apps (.const "Eq") [nat, .apps (.bvar 0) [], .apps (.bvar 0) []]) truth)) with
+        | .ok (.all _ (.imp _ _)) => true
+        | _ => false) &&
+      (match sayCalm (.pi "x" .explicit false nat (.pi "h" .explicit true
+          (.apps (.const "Tide.Calm") [.apps (.const "Nat.zero") []]) truth)) with
+        | .ok (.all ..) => true
+        | _ => false))
   -- Declared phrases, taken or refused by name.
   let declare (binders : Array (String × Array LeanFacts.Binder)) (declared : List (String × String)) :=
     (tableFor (factsWith binders) declared).refused.map (·.2)

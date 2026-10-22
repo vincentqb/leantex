@@ -55,6 +55,10 @@ public structure Binder (α : Type) where
 public inductive Stmt (α : Type) where
   | all (b : Binder α) (body : Stmt α)
   | ex (b : Binder α) (body : Stmt α)
+  /-- `∀ x, R x args → body`, its relation said as a relative clause. -/
+  | allThat (g : Group α) (t : Template) (args : List (Term α)) (body : Stmt α)
+  /-- `∃ x, R x args ∧ body`, its relation said as a relative clause. -/
+  | exThat (g : Group α) (t : Template) (args : List (Term α)) (body : Stmt α)
   | imp (hyp concl : Stmt α)
   | conj (a b : Stmt α)
   | disj (a b : Stmt α)
@@ -204,10 +208,17 @@ public def Term.ok (lex : Lexicon) : Term α → Bool
   | .leaf _ => true
   | .phrase p args => lex.phrases.contains p && args.length == p.arity
 
+/-- Whether a relative clause holds: one bound name, which its relation's first slot, `#1`, takes,
+through the lexicon's relation, with as many further arguments as its further slots. -/
+public def clauseOk (lex : Lexicon) (g : Group α) (t : Template) (args : List (Term α)) : Bool :=
+  g.names.length == 1 && (t.parts matches .slot 1 :: _) && lex.rels.contains t &&
+    args.length + 1 == t.arity && args.all (·.ok lex)
+
 /-- Every template used is the lexicon's, with as many arguments as slots, and a list of equivalent
 statements three or more. -/
 public def Stmt.ok (lex : Lexicon) : Stmt α → Bool
   | .all _ s | .ex _ s | .neg s => s.ok lex
+  | .allThat g t args s | .exThat g t args s => s.ok lex && clauseOk lex g t args
   | .imp a b | .conj a b | .disj a b | .iff a b => a.ok lex && b.ok lex
   | .tfae s => s.ok lex && (s matches .conj _ (.conj ..))
   | .rel t args => lex.rels.contains t && args.length == t.arity && args.all (·.ok lex)
@@ -267,15 +278,17 @@ public def Stmt.prec : Stmt α → Nat
   | .rel t args => if t.splits || args.any Term.splits then 2 else 0
   | .atom _ => 0
   | .neg _ | .conj .. | .disj .. => 1
-  | .all .. | .ex .. | .imp .. | .iff .. | .tfae _ => 2
+  | .all .. | .ex .. | .allThat .. | .exThat .. | .imp .. | .iff .. | .tfae _ => 2
 
 private def Stmt.isImp : Stmt α → Bool
   | .imp .. => true
-  | .all .. | .ex .. | .conj .. | .disj .. | .iff .. | .tfae _ | .neg _ | .rel .. | .atom _ => false
+  | .all .. | .ex .. | .allThat .. | .exThat .. | .conj .. | .disj .. | .iff .. | .tfae _ | .neg _
+  | .rel .. | .atom _ => false
 
 private def Stmt.isIff : Stmt α → Bool
   | .iff .. => true
-  | .all .. | .ex .. | .imp .. | .conj .. | .disj .. | .tfae _ | .neg _ | .rel .. | .atom _ => false
+  | .all .. | .ex .. | .allThat .. | .exThat .. | .imp .. | .conj .. | .disj .. | .tfae _ | .neg _
+  | .rel .. | .atom _ => false
 
 /-- Whether a conjunction a scope holds sets inline, "A and B": both its sides are atomic. -/
 public def inline (a b : Stmt α) : Bool := a.prec == 0 && b.prec == 0
@@ -283,7 +296,8 @@ public def inline (a b : Stmt α) : Bool := a.prec == 0 && b.prec == 0
 /-- Whether a statement a scope holds sets as a list of items: a conjunction not set inline. -/
 public def Stmt.isList : Stmt α → Bool
   | .conj a b => !inline a b
-  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .tfae _ | .neg _ | .rel .. | .atom _ => false
+  | .all .. | .ex .. | .allThat .. | .exThat .. | .imp .. | .disj .. | .iff .. | .tfae _ | .neg _
+  | .rel .. | .atom _ => false
 
 /-- What may follow a statement, ending its extent: the end, a block's end, a list item's start, the
 closing word a block sets inside it, or the full stop. -/
@@ -318,7 +332,8 @@ private def wrapWith (k : Nat) (s : Stmt α) (f : List (Tok α) → List (Tok α
 opening it, else atomic, so "it is not the case that" or "either" never reads as covering it. -/
 public def Stmt.leftK : Stmt α → Nat
   | .conj .. => 1
-  | .all .. | .ex .. | .imp .. | .disj .. | .iff .. | .tfae _ | .neg _ | .rel .. | .atom _ => 0
+  | .all .. | .ex .. | .allThat .. | .exThat .. | .imp .. | .disj .. | .iff .. | .tfae _ | .neg _
+  | .rel .. | .atom _ => 0
 
 /-- An equivalence's right side: a block where its left side is one and it is no atom, the two
 standing alike, else an operand. -/
@@ -367,6 +382,14 @@ private def iffTo (p : Place) (a b : Stmt α) (fa fb : List (Tok α) → List (T
   let body := fun r => wrapWith a.leftK a fa (wordsTo ["if", "and", "only", "if"] (iffRight a b fb r))
   if p = .scope ∨ p = .inner then blockWith body rest else body rest
 
+/-- A relative clause's tokens before `rest`: its relation's words and further arguments, the bound
+name taking its first slot. -/
+private def clauseTo (g : Group α) (t : Template) (args : List (Term α)) (rest : List (Tok α)) :
+    List (Tok α) :=
+  match g.names, t.parts with
+  | [n], .slot _ :: ps => fillTo Term.renderTo (.leaf n :: args) ps rest
+  | _, _ => rest
+
 /-- A statement's tokens before `rest`, where it stands at `p`: a conjunction a scope, a lead or an
 inner scope holds inline where both sides are atomic, else as a list where no operand holds it, its
 items each a lead, and by "both … and" where one does. -/
@@ -375,6 +398,12 @@ private def renderTo : Place → Stmt α → List (Tok α) → List (Tok α)
     mark p (wordsTo (allWords b) (b.renderTo (.w (sepWord p.sub s) :: renderTo p.sub s rest)))
   | p, .ex b s, rest =>
     mark p (wordsTo (exWords b) (b.renderTo (.w "such" :: .w "that" :: renderTo p.sub s rest)))
+  | p, .allThat g t args s, rest =>
+    mark p (.w "for" :: .w "every" :: .bind g :: .w "that" ::
+      clauseTo g t args (.w (sepWord p.sub s) :: renderTo p.sub s rest))
+  | p, .exThat g t args s, rest =>
+    mark p (.w "there" :: .w "is" :: .bind g :: .w "that" ::
+      clauseTo g t args (.w "such" :: .w "that" :: renderTo p.sub s rest))
   | p, .imp h c, rest =>
     mark p (.w "if" :: wrapWith (if c.isImp then 0 else 1) h (renderTo .operand h)
       (chainWith c (renderTo p.sub c) rest))
@@ -576,6 +605,44 @@ private theorem parseAtomic_len {lex : Lexicon} {t r : List (Tok α)} {s : Stmt 
       simp only [Option.some.injEq, Prod.mk.injEq] at h2; obtain ⟨-, rfl⟩ := h2; exact this
     | phrase _ _ => simp at h2
 
+/-- A relative clause after a binder group `g` binding one name alone: the relation its words
+select, its first slot `#1` the name, and its further arguments, with what follows. -/
+private def parseClause (lex : Lexicon) (g : Group α) (r : List (Tok α)) :
+    Option (Template × List (Term α) × List (Tok α)) :=
+  match g.names with
+  | [n] =>
+    match lex.rels.find? (fun tp => startsWith tp.relLead r) with
+    | some tp =>
+      if tp.parts matches .slot 1 :: _ then
+        (relTail lex tp (.leaf n) r).bind fun (st, r') => match st with
+          | .rel t args => some (t, args.tail, r')
+          | _ => none
+      else none
+    | _ => none
+  | _ => none
+
+private theorem parseClause_len {lex : Lexicon} {g : Group α} {r r' : List (Tok α)}
+    {t : Template} {args : List (Term α)} (h : parseClause lex g r = some (t, args, r')) :
+    r'.length ≤ r.length := by
+  unfold parseClause at h
+  split at h
+  · split at h
+    · split at h
+      · obtain ⟨⟨st, r''⟩, h1, h2⟩ := Option.bind_eq_some_iff.mp h
+        have := relTail_len h1
+        cases st <;> simp_all
+      · cases h
+    · cases h
+  · cases h
+
+private theorem clause_lt {t r r' : List (Tok α)} {b : Binder α} {w w' : Tok α} {lex : Lexicon}
+    {ct : Template} {ca : List (Term α)} (h : parseBinder t = some (b, w :: r))
+    (hc : parseClause lex b.first r = some (ct, ca, w' :: r')) : r'.length + 2 < t.length := by
+  have h1 := parseBinder_len h
+  have h2 := parseClause_len hc
+  simp only [List.length_cons] at h1 h2
+  omega
+
 /-- Whether tokens open with a word that opens a statement: a quantifier's, an existential's, "if"
 or a listed equivalence's. -/
 private def opensStmt : List (Tok α) → Bool
@@ -598,6 +665,15 @@ private def parseOpened (lex : Lexicon) (t : List (Tok α)) : Parsed α (Stmt α
           (.all b s, ⟨r'.1, by
             have h1 := parseBinder_len h; have h2 := r'.2
             simp only [List.length_cons] at h1 h2 ⊢; omega⟩)
+        else if s = "that" ∧ b.more = [] then
+          match hc : parseClause lex b.first r with
+          | some (ct, cargs, .w s' :: r') =>
+            if s' = "," ∨ s' = ":" then (parseStmt lex r').map fun (body, r'') =>
+              (.allThat b.first ct cargs body, ⟨r''.1, by
+                have h1 := parseBinder_len h; have h2 := r''.2; have h3 := parseClause_len hc
+                simp only [List.length_cons] at h1 h2 h3 ⊢; omega⟩)
+            else none
+          | _ => none
         else none
       | _ => none
     else none
@@ -608,6 +684,15 @@ private def parseOpened (lex : Lexicon) (t : List (Tok α)) : Parsed α (Stmt α
         (.ex b s, ⟨r'.1, by
           have h1 := parseBinder_len h; have h2 := r'.2
           simp only [List.length_cons] at h1 h2 ⊢; omega⟩)
+      | some (b, .w "that" :: r) =>
+        if b.more = [] then
+          match hc : parseClause lex b.first r with
+          | some (ct, cargs, .w "such" :: .w "that" :: r') => (parseStmt lex r').map fun (body, r'') =>
+            (.exThat b.first ct cargs body, ⟨r''.1, by
+              have h1 := parseBinder_len h; have h2 := r''.2; have h3 := parseClause_len hc
+              simp only [List.length_cons] at h1 h2 h3 ⊢; omega⟩)
+          | _ => none
+        else none
       | _ => none
     else none
   | .w "if" :: t => (parseHyps lex t).map fun (s, r) =>
@@ -633,6 +718,7 @@ decreasing_by
   all_goals first
     | omega
     | (have := parseBinder_len h; simp only [List.length_cons] at this; omega)
+    | (have := clause_lt h hc; (try simp only [List.length_cons] at this); omega)
 
 /-- A statement: one an opening word opens, else an operand, then an equivalence's right side or
 an inline conjunction's rest. -/
@@ -990,6 +1076,8 @@ private theorem renderTo_head {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt �
   induction s with
   | all b body _ => intro p rest hp; simp [renderTo, mark_of hp, wordsTo, allWords, plainHead]
   | ex b body _ => intro p rest hp; simp [renderTo, mark_of hp, wordsTo, exWords, plainHead]
+  | allThat _ _ _ _ _ => intro p rest hp; simp [renderTo, mark_of hp, plainHead]
+  | exThat _ _ _ _ _ => intro p rest hp; simp [renderTo, mark_of hp, plainHead]
   | imp h c _ _ => intro p rest hp; simp [renderTo, mark_of hp, plainHead]
   | conj a b iha _ =>
     simp only [Stmt.ok, Bool.and_eq_true] at hs
@@ -1342,7 +1430,138 @@ private theorem quant_ex {lex : Lexicon} (b : Binder α) {body : Stmt α} {rest 
     simp only [Option.some.injEq, Prod.mk.injEq, List.cons.injEq] at heq
     obtain ⟨rfl, -, -, rfl⟩ := heq
     rw [e1]; rfl
-  · rename_i hne; exact (hne b _ hb).elim
+  · rename_i heq
+    rw [hb] at heq
+    simp at heq
+  · rename_i hne _; exact (hne b _ hb).elim
+
+/-- A relative clause that holds names its one bound name, its relation opening on `#1`. -/
+private theorem clause_facts {lex : Lexicon} {g : Group α} {t : Template} {args : List (Term α)}
+    (hc : clauseOk lex g t args = true) :
+    ∃ n ps, g.names = [n] ∧ t.parts = .slot 1 :: ps ∧ (Stmt.rel t (.leaf n :: args)).ok lex = true := by
+  simp only [clauseOk, Bool.and_eq_true, beq_iff_eq] at hc
+  obtain ⟨⟨⟨⟨hn, hp⟩, ht⟩, hl⟩, hargs⟩ := hc
+  obtain ⟨n, hn⟩ := List.length_eq_one_iff.mp hn
+  obtain ⟨ps, hps⟩ : ∃ ps, t.parts = .slot 1 :: ps := by
+    revert hp
+    cases h : t.parts with
+    | nil => simp
+    | cons x xs =>
+      cases x with
+      | word _ => simp
+      | slot k =>
+        intro hk
+        cases k with
+        | zero => simp at hk
+        | succ k => cases k with
+          | zero => exact ⟨xs, rfl⟩
+          | succ _ => simp at hk
+  refine ⟨n, ps, hn, hps, ?_⟩
+  simp only [List.contains_iff_mem, List.all_eq_true] at ht hargs
+  simp only [Stmt.ok, Bool.and_eq_true, List.contains_iff_mem, List.all_cons,
+    List.length_cons, List.all_eq_true, beq_iff_eq]
+  exact ⟨⟨ht, hl⟩, ⟨rfl, hargs⟩⟩
+
+/-- A relative clause's tokens open on its relation's first word. -/
+private theorem clause_head {lex : Lexicon} (hlex : lex.wf = true) {g : Group α} {t : Template}
+    {args : List (Term α)} (hc : clauseOk lex g t args = true) (rest : List (Tok α)) :
+    ∃ w r, clauseTo g t args rest = .w w :: r := by
+  obtain ⟨hrels, -, -, -⟩ := wf_parts hlex
+  obtain ⟨n, ps, hn, hps, hrel⟩ := clause_facts hc
+  simp only [Stmt.ok, Bool.and_eq_true, List.contains_iff_mem] at hrel
+  obtain ⟨k, s, l, ps', hps', hlead, -⟩ := isRel_parts (hrels t hrel.1.1).2
+  rw [hps] at hps'
+  simp only [List.cons.injEq, Part.slot.injEq] at hps'
+  obtain ⟨-, rfl⟩ := hps'
+  cases ps with
+  | nil => simp [lead] at hlead
+  | cons q qs =>
+    cases q with
+    | slot _ => simp [lead] at hlead
+    | word w => exact ⟨w, _, by simp only [clauseTo, hn, hps, fillTo]; rfl⟩
+
+/-- A relative clause's tokens read back as its relation and further arguments, where it holds. -/
+private theorem parseClause_render {lex : Lexicon} (hlex : lex.wf = true) {g : Group α}
+    {t : Template} {args : List (Term α)} (hc : clauseOk lex g t args = true)
+    (rest : List (Tok α)) : parseClause lex g (clauseTo g t args rest) = some (t, args, rest) := by
+  obtain ⟨-, -, hpf, -⟩ := wf_parts hlex
+  obtain ⟨n, ps, hn, hps, hrel⟩ := clause_facts hc
+  have ht : t ∈ lex.rels := by
+    simp only [Stmt.ok, Bool.and_eq_true, List.contains_iff_mem] at hrel; exact hrel.1.1
+  have h0 := parseAtomic_rel hlex hrel rest
+  simp only [hps, fillTo, arg?, List.getElem?_cons_zero] at h0
+  have hfind := find_unique (key := Template.relLead) hpf ht
+    (t := fillTo Term.renderTo (.leaf n :: args) ps rest)
+    (by simp [Template.relLead, hps, startsWith_fillTo])
+  simp only [parseAtomic, Term.renderTo, Term.parse, Option.bind_some, hfind] at h0
+  simp only [clauseTo, hn, hps, parseClause, hfind, ite_true, h0, Option.bind_some, List.tail_cons]
+
+private theorem quant_allThat {lex : Lexicon} (hlex : lex.wf = true) {g : Group α} {t : Template}
+    {args : List (Term α)} {body : Stmt α} {rest : List (Tok α)} (p : Place) (hp : p ≠ .item)
+    (hc : clauseOk lex g t args = true)
+    (e1 : ∃ h, parseStmt lex (renderTo p.sub body rest) = some (body, ⟨rest, h⟩)) :
+    forget (parseOpened lex (renderTo p (.allThat g t args body) rest)) =
+      some (.allThat g t args body, rest) := by
+  obtain ⟨h1, e1⟩ := e1
+  have hsep : ∀ s, s = sepWord p.sub body → s = "," ∨ s = ":" := by
+    intro s hs; subst hs; unfold sepWord; split <;> simp
+  let X : List (Tok α) := .w (sepWord p.sub body) :: renderTo p.sub body rest
+  have ht : renderTo p (.allThat g t args body) rest =
+      .w "for" :: .w "every" :: Binder.renderTo ⟨g, []⟩ (.w "that" :: clauseTo g t args X) := by
+    simp [renderTo, mark, hp, Binder.renderTo, groupToks, X]
+  obtain ⟨w, r0, hw⟩ := clause_head hlex hc X
+  have hb := parseBinder_render ⟨g, []⟩ "that" (clauseTo g t args X) (by decide)
+    (fun _ _ h => by rw [hw] at h; simp at h)
+  rw [ht, parseOpened.eq_1, ite_eq_left (Or.inl rfl)]
+  split
+  · rename_i b' s r heq
+    rw [hb] at heq
+    simp only [Option.some.injEq, Prod.mk.injEq, List.cons.injEq, Tok.w.injEq] at heq
+    obtain ⟨rfl, rfl, rfl⟩ := heq
+    rw [ite_eq_right (by decide), ite_eq_left ⟨rfl, rfl⟩]
+    split
+    · rename_i ct cargs s' r' hc2
+      rw [parseClause_render hlex hc X] at hc2
+      simp only [Option.some.injEq, Prod.mk.injEq, List.cons.injEq, Tok.w.injEq, X] at hc2
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := hc2
+      rw [ite_eq_left (hsep _ rfl), e1]; rfl
+    · rename_i hne
+      exact (hne t args _ _ (parseClause_render hlex hc X)).elim
+  · rename_i hne; exact (hne _ _ _ hb).elim
+
+private theorem quant_exThat {lex : Lexicon} (hlex : lex.wf = true) {g : Group α} {t : Template}
+    {args : List (Term α)} {body : Stmt α} {rest : List (Tok α)} (p : Place) (hp : p ≠ .item)
+    (hc : clauseOk lex g t args = true)
+    (e1 : ∃ h, parseStmt lex (renderTo p.sub body rest) = some (body, ⟨rest, h⟩)) :
+    forget (parseOpened lex (renderTo p (.exThat g t args body) rest)) =
+      some (.exThat g t args body, rest) := by
+  obtain ⟨h1, e1⟩ := e1
+  let X : List (Tok α) := .w "such" :: .w "that" :: renderTo p.sub body rest
+  have ht : renderTo p (.exThat g t args body) rest =
+      .w "there" :: .w "is" :: Binder.renderTo ⟨g, []⟩ (.w "that" :: clauseTo g t args X) := by
+    simp [renderTo, mark, hp, Binder.renderTo, groupToks, X]
+  obtain ⟨w, r0, hw⟩ := clause_head hlex hc X
+  have hb := parseBinder_render ⟨g, []⟩ "that" (clauseTo g t args X) (by decide)
+    (fun _ _ h => by rw [hw] at h; simp at h)
+  rw [ht, parseOpened.eq_2, ite_eq_left (Or.inl rfl)]
+  split
+  · rename_i heq
+    rw [hb] at heq
+    simp at heq
+  · rename_i b' r heq
+    rw [hb] at heq
+    simp only [Option.some.injEq, Prod.mk.injEq, List.cons.injEq] at heq
+    obtain ⟨rfl, -, rfl⟩ := heq
+    rw [ite_eq_left rfl]
+    split
+    · rename_i ct cargs r' hc2
+      rw [parseClause_render hlex hc X] at hc2
+      simp only [Option.some.injEq, Prod.mk.injEq, List.cons.injEq, X] at hc2
+      obtain ⟨rfl, rfl, -, -, rfl⟩ := hc2
+      rw [e1]; rfl
+    · rename_i hne
+      exact (hne t args _ (parseClause_render hlex hc X)).elim
+  · rename_i _ hne; exact (hne _ _ hb).elim
 
 /-- A statement's tokens among a list's items where it is no conjunction: its mark, then its
 tokens at a lead. -/
@@ -1462,6 +1681,64 @@ private theorem reads {lex : Lexicon} (hlex : lex.wf = true) (s : Stmt α)
             scope := hP .scope (by decide) rb.scope
             item := item_of (fun _ _ h => by cases h) hL
             wrap := wrap_of hlex hs hO (fun h => by simp [Stmt.prec] at h) (fun _ => hOp) }
+  | allThat g t args body ih =>
+    have hs' := hs
+    simp only [Stmt.ok, Bool.and_eq_true] at hs
+    have rb := ih hs.1
+    have hop : ∀ p rest, p ≠ .item → opensStmt (renderTo p (.allThat g t args body) rest) = true :=
+      fun p rest hp => by simp [renderTo, mark, hp, opensStmt]
+    have hP : ∀ p, p ≠ .item →
+        (∀ rest, followsStmt rest = true →
+          forget (parseStmt lex (renderTo p.sub body rest)) = some (body, rest)) →
+        ∀ rest, followsStmt rest = true →
+          forget (parseStmt lex (renderTo p (.allThat g t args body) rest)) =
+            some (.allThat g t args body, rest) :=
+      fun p hp hb rest hr => by
+        rw [parseStmt_opened (hop p rest hp)]
+        exact quant_allThat hlex p hp hs.2 (forget_eq.mp (hb rest hr))
+    have hO := hP .operand (by decide) rb.inner
+    have hL := hP .lead (by decide) rb.scope
+    have hOp : ∀ rest, followsStmt rest = true →
+        forget (parseOperand lex (renderTo .operand (.allThat g t args body) rest)) =
+          some (.allThat g t args body, rest) :=
+      fun rest hr => by
+        have := hO rest hr
+        rw [parseStmt_opened (hop .operand rest (by decide))] at this
+        rw [parseOperand_opened (hop .operand rest (by decide))]
+        exact this
+    exact { operand := hO, inner := hP .inner (by decide) rb.inner, lead := hL
+            scope := hP .scope (by decide) rb.scope
+            item := item_of (fun _ _ h => by cases h) hL
+            wrap := wrap_of hlex hs' hO (fun h => by simp [Stmt.prec] at h) (fun _ => hOp) }
+  | exThat g t args body ih =>
+    have hs' := hs
+    simp only [Stmt.ok, Bool.and_eq_true] at hs
+    have rb := ih hs.1
+    have hop : ∀ p rest, p ≠ .item → opensStmt (renderTo p (.exThat g t args body) rest) = true :=
+      fun p rest hp => by simp [renderTo, mark, hp, opensStmt]
+    have hP : ∀ p, p ≠ .item →
+        (∀ rest, followsStmt rest = true →
+          forget (parseStmt lex (renderTo p.sub body rest)) = some (body, rest)) →
+        ∀ rest, followsStmt rest = true →
+          forget (parseStmt lex (renderTo p (.exThat g t args body) rest)) =
+            some (.exThat g t args body, rest) :=
+      fun p hp hb rest hr => by
+        rw [parseStmt_opened (hop p rest hp)]
+        exact quant_exThat hlex p hp hs.2 (forget_eq.mp (hb rest hr))
+    have hO := hP .operand (by decide) rb.inner
+    have hL := hP .lead (by decide) rb.scope
+    have hOp : ∀ rest, followsStmt rest = true →
+        forget (parseOperand lex (renderTo .operand (.exThat g t args body) rest)) =
+          some (.exThat g t args body, rest) :=
+      fun rest hr => by
+        have := hO rest hr
+        rw [parseStmt_opened (hop .operand rest (by decide))] at this
+        rw [parseOperand_opened (hop .operand rest (by decide))]
+        exact this
+    exact { operand := hO, inner := hP .inner (by decide) rb.inner, lead := hL
+            scope := hP .scope (by decide) rb.scope
+            item := item_of (fun _ _ h => by cases h) hL
+            wrap := wrap_of hlex hs' hO (fun h => by simp [Stmt.prec] at h) (fun _ => hOp) }
   | imp h c ihh ihc =>
     have hs' := hs
     simp only [Stmt.ok, Bool.and_eq_true] at hs
@@ -1898,6 +2175,28 @@ public def termOf (ctx : List String) (t : LeanFacts.Term) : Term Leaf :=
     | none => .leaf (leafOf lk ctx t)
   | _ => .leaf (leafOf lk ctx t)
 
+/-- Whether a relation of words whose first slot is `#1` relates the name just bound, alone there,
+to further arguments naming it nowhere. -/
+public def clauseFits (t : Template) (x : LeanFacts.Term) (rest : List LeanFacts.Term) : Bool :=
+  !t.symbolic && (t.parts matches .slot 1 :: _) && x == .apps (.bvar 0) [] &&
+    rest.length + 1 == t.arity && !rest.any (·.reads 0)
+
+/-- A hypothesis about the name just bound said as a relative clause, under `ctx` naming it first: a
+relation of words whose first slot `#1` takes the name alone, its further arguments naming it
+nowhere. -/
+public def clauseOf? (ctx : List String) (hyp : LeanFacts.Term) :
+    Option (Template × List (Term Leaf)) :=
+  match hyp with
+  | .apps (.const c) args =>
+    match tb.rels.lookup c with
+    | some t =>
+      match LeanStatement.shownArgs lk c args with
+      | x :: rest =>
+        if clauseFits t x rest then some (t, rest.map (termOf lk tb ctx)) else none
+      | [] => none
+    | _ => none
+  | _ => none
+
 /-- Whether a term is a phrase's. -/
 public def Term.isPhrase {β : Type} : Term β → Bool
   | .phrase .. => true
@@ -1930,16 +2229,33 @@ public def Group.before (g : Group Leaf) (b : Binder Leaf) : Binder Leaf :=
     ⟨{ g with names := g.names ++ b.first.names }, b.more⟩
   else ⟨g, b.first :: b.more⟩
 
+/-- Whether group `h` would join `g` as one, so a relative clause on `h` yields to the joined
+binder. -/
+public def joins (g h : Group Leaf) : Bool :=
+  !g.clashes ⟨h, []⟩ && !g.pred && !h.pred && g.bound == h.bound
+
 /-- `∀ g, body`, a quantifier just inside it joining its groups after `g` unless it binds a name
 `g` does. -/
 public def forAll (g : Group Leaf) : Stmt Leaf → Stmt Leaf
   | .all b rest => if g.clashes b then .all ⟨g, []⟩ (.all b rest) else .all (g.before b) rest
+  | .allThat h t args rest =>
+    match h.names with
+    | [n] =>
+      if joins g h then .all (g.before ⟨h, []⟩) (.imp (.rel t (.leaf n :: args)) rest)
+      else .all ⟨g, []⟩ (.allThat h t args rest)
+    | _ => .all ⟨g, []⟩ (.allThat h t args rest)
   | s => .all ⟨g, []⟩ s
 
 /-- `∃ g, body`, an existential just inside it joining its groups after `g` unless it binds a name
 `g` does. -/
 public def thereIs (g : Group Leaf) : Stmt Leaf → Stmt Leaf
   | .ex b rest => if g.clashes b then .ex ⟨g, []⟩ (.ex b rest) else .ex (g.before b) rest
+  | .exThat h t args rest =>
+    match h.names with
+    | [n] =>
+      if joins g h then .ex (g.before ⟨h, []⟩) (.conj (.rel t (.leaf n :: args)) rest)
+      else .ex ⟨g, []⟩ (.exThat h t args rest)
+    | _ => .ex ⟨g, []⟩ (.exThat h t args rest)
   | s => .ex ⟨g, []⟩ s
 
 /-- Two results joined, or the first reason either gives. -/
@@ -1999,6 +2315,11 @@ public def stmtOf (lk : LeanStatement.Lookup) (tb : Table) (top : Bool) (ctx : L
       | .pi h _ true hyp rest =>
         match predGroup? lk ctx n hyp, rest.reads 0 with
         | some g, false => (stmtOf lk tb top (h :: n :: ctx) rest).map (forAll g)
+        | none, false =>
+          match clauseOf? lk tb (n :: ctx) hyp with
+          | some (t, args) =>
+            (stmtOf lk tb top (h :: n :: ctx) rest).map (.allThat (typedGroup lk ctx n ty) t args)
+          | none => (stmtOf lk tb top (n :: ctx) body).map (forAll (typedGroup lk ctx n ty))
         | _, _ => (stmtOf lk tb top (n :: ctx) body).map (forAll (typedGroup lk ctx n ty))
       | _ => (stmtOf lk tb top (n :: ctx) body).map (forAll (typedGroup lk ctx n ty))
   | .apps (.const "Exists") [_, .lam n _ dom body] =>
@@ -2006,7 +2327,11 @@ public def stmtOf (lk : LeanStatement.Lookup) (tb : Table) (top : Bool) (ctx : L
     | .apps (.const "And") [hyp, rest] =>
       match predGroup? lk ctx n hyp with
       | some g => (stmtOf lk tb false (n :: ctx) rest).map (thereIs g)
-      | none => (stmtOf lk tb false (n :: ctx) body).map (thereIs (typedGroup lk ctx n dom))
+      | none =>
+        match clauseOf? lk tb (n :: ctx) hyp with
+        | some (t, args) =>
+          (stmtOf lk tb false (n :: ctx) rest).map (.exThat (typedGroup lk ctx n dom) t args)
+        | none => (stmtOf lk tb false (n :: ctx) body).map (thereIs (typedGroup lk ctx n dom))
     | _ => (stmtOf lk tb false (n :: ctx) body).map (thereIs (typedGroup lk ctx n dom))
   | .apps (.const "And") [a, b] => both (stmtOf lk tb false ctx a) (stmtOf lk tb false ctx b) .conj
   | .apps (.const "Or") [a, b] => both (stmtOf lk tb false ctx a) (stmtOf lk tb false ctx b) .disj
@@ -2027,6 +2352,9 @@ termination_by t => sizeOf t
 /-- The templates a statement says, after `acc`. -/
 public def Stmt.templates (acc : Array Template) : Stmt α → Array Template
   | .all _ s | .ex _ s | .neg s => s.templates acc
+  | .allThat _ t args s | .exThat _ t args s => s.templates (args.foldl (fun acc x => match x with
+      | .phrase p _ => acc.push p
+      | .leaf _ => acc) (acc.push t))
   | .imp a b | .conj a b | .disj a b | .iff a b => b.templates (a.templates acc)
   | .tfae s => s.templates acc
   | .rel t args => args.foldl (fun acc x => match x with
@@ -2141,19 +2469,49 @@ private theorem atomOf_ok (lk : LeanStatement.Lookup) (tb : Table) (ctx : List S
     · rfl
   · rfl
 
-private theorem forAll_ok (lex : Lexicon) (g : Group Leaf) (s : Stmt Leaf) :
-    (forAll g s).ok lex = s.ok lex := by
+/-- A relative clause's relation, its name in its first slot, holds where the clause does. -/
+private theorem clause_rel_ok {lex : Lexicon} {h : Group Leaf} {t : Template}
+    {args : List (Term Leaf)} {n : Leaf} (hn : h.names = [n]) (hc : clauseOk lex h t args = true) :
+    (Stmt.rel t (.leaf n :: args)).ok lex = true := by
+  obtain ⟨n', ps, hn', -, hr⟩ := clause_facts hc
+  rw [hn] at hn'
+  simp only [List.cons.injEq, and_true] at hn'
+  subst hn'
+  exact hr
+
+private theorem forAll_ok (lex : Lexicon) (g : Group Leaf) (s : Stmt Leaf) (hs : s.ok lex = true) :
+    (forAll g s).ok lex = true := by
   unfold forAll
   split
-  · split <;> rfl
-  · rfl
+  · split <;> exact hs
+  · rename_i h t args rest
+    simp only [Stmt.ok, Bool.and_eq_true] at hs
+    split
+    · rename_i n hn
+      split
+      · have hr := clause_rel_ok hn hs.2
+        simp only [Stmt.ok, Bool.and_eq_true] at hr ⊢
+        exact ⟨hr, hs.1⟩
+      · simp only [Stmt.ok, Bool.and_eq_true]; exact hs
+    · simp only [Stmt.ok, Bool.and_eq_true]; exact hs
+  · exact hs
 
-private theorem thereIs_ok (lex : Lexicon) (g : Group Leaf) (s : Stmt Leaf) :
-    (thereIs g s).ok lex = s.ok lex := by
+private theorem thereIs_ok (lex : Lexicon) (g : Group Leaf) (s : Stmt Leaf) (hs : s.ok lex = true) :
+    (thereIs g s).ok lex = true := by
   unfold thereIs
   split
-  · split <;> rfl
-  · rfl
+  · split <;> exact hs
+  · rename_i h t args rest
+    simp only [Stmt.ok, Bool.and_eq_true] at hs
+    split
+    · rename_i n hn
+      split
+      · have hr := clause_rel_ok hn hs.2
+        simp only [Stmt.ok, Bool.and_eq_true] at hr ⊢
+        exact ⟨hr, hs.1⟩
+      · simp only [Stmt.ok, Bool.and_eq_true]; exact hs
+    · simp only [Stmt.ok, Bool.and_eq_true]; exact hs
+  · exact hs
 
 private theorem both_ok {β γ δ : Type} {a : Except Unsaid β} {b : Except Unsaid γ}
     {f : β → γ → δ} {s : δ} (h : both a b f = .ok s) :
@@ -2217,6 +2575,32 @@ private theorem listed_ok (lex : Lexicon) {sp : Stmt Leaf} (h : sp.ok lex = true
     | none => exact hd
     | some r => exact tfaeOf_ok lex hi hr
 
+private theorem clauseOf_ok (lk : LeanStatement.Lookup) (tb : Table) {ctx : List String}
+    {hyp : LeanFacts.Term} {t : Template} {args : List (Term Leaf)}
+    (h : clauseOf? lk tb ctx hyp = some (t, args)) {g : Group Leaf} (hg : g.names.length = 1) :
+    clauseOk tb.lexicon g t args = true := by
+  unfold clauseOf? at h
+  split at h
+  · split at h
+    · rename_i t' ht
+      split at h
+      · rename_i x rest _
+        split at h
+        · rename_i hc
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          simp only [clauseFits, Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true'] at hc
+          simp only [clauseOk, Bool.and_eq_true, beq_iff_eq, hg, List.contains_iff_mem, List.length_map,
+            List.all_eq_true, true_and]
+          refine ⟨⟨⟨hc.1.1.1.2, lookup_mem ht⟩, hc.1.2⟩, ?_⟩
+          intro x hx
+          obtain ⟨a, -, rfl⟩ := List.mem_map.mp hx
+          exact termOf_ok lk tb _ a
+        · cases h
+      · cases h
+    · cases h
+  · cases h
+
 /-- Every template a statement said in words uses is its table's, with as many arguments as
 slots. -/
 public theorem stmtOf_mem (lk : LeanStatement.Lookup) (tb : Table) (top : Bool)
@@ -2232,8 +2616,10 @@ public theorem stmtOf_mem (lk : LeanStatement.Lookup) (tb : Table) (top : Bool)
     | (rename_i ih1
        obtain ⟨x, hx, rfl⟩ := map_ok h
        first
-         | (rw [forAll_ok]; exact ih1 hx)
-         | (rw [thereIs_ok]; exact ih1 hx)
+         | exact forAll_ok _ _ _ (ih1 hx)
+         | (simp only [Stmt.ok, Bool.and_eq_true]
+            exact ⟨ih1 hx, clauseOf_ok lk tb (by assumption) rfl⟩)
+         | exact thereIs_ok _ _ _ (ih1 hx)
          | (simp only [Stmt.ok]; exact ih1 hx))
     | (rename_i ih1; exact ih1 h)
     | (rename_i ih1

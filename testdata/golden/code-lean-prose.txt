@@ -534,6 +534,62 @@ verbatim language lean4
   "    (And.intro (fun _ _ => And.intro (fun _ hk => hk) (Exists.intro _ rfl))"
   "      (Nat.le_add_right _ _))"
 para
+  text "A hypothesis about the bound name alone reads as a relative clause."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.moored_draft"
+        italicCorr maybe
+        text "). For every "
+        formula inline "\\mathit {b}:\\mathrm {Barge}"
+          ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
+        text " that is moored, "
+        formula inline "\\mathrm {0}<{}"
+          ord:alpha:rm{ord:0} rel:< ord:{}
+        hspace 0pt
+        formula inline "\\mathit {b}.\\mathrm {draft}"
+          ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:𝑑 ord:𝑟 ord:𝑎 ord:𝑓 ord:𝑡}
+        text "."
+verbatim language lean4
+  "theorem moored_draft : forall b : Barge, Moored b -> 0 < b.draft :="
+  "  fun _ h => h"
+para
+  text "An existential’s first statement about its name reads as one too."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.some_moored"
+        italicCorr maybe
+        text "). There is "
+        formula inline "\\mathit {b}:\\mathrm {Barge}"
+          ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
+        text " that is moored such that "
+        formula inline "\\mathit {b}.\\mathrm {hull}={}"
+          ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:ℎ ord:𝑢 ord:𝑙 ord:𝑙} rel:= ord:{}
+        hspace 0pt
+        formula inline "\\mathrm {0}"
+          ord:alpha:rm{ord:0}
+        text "."
+verbatim language lean4
+  "theorem some_moored : exists b : Barge, And (Moored b) (b.hull = 0) :="
+  "  Exists.intro (Barge.mk 0 1) (And.intro (by unfold Moored; decide) rfl)"
+para
   text "Three equivalent statements, one a quantifier’s, listed."
 role trivlist-env
   ragged left

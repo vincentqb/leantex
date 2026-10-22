@@ -1523,6 +1523,9 @@ def censusCodeRows :
          a.text.startsWith "1." &&
            b.text.startsWith "2." && d.text.startsWith "3. For every" && a.x == b.x && b.x == d.x
        | _, _ => false),
+     ("a hypothesis about the bound name alone reads as a relative clause, under a quantifier and an existential",
+       let said := " ".intercalate ((c.toList.flatMap (·.lines.toList)).map (·.text))
+       hasStr said "that is moored," && hasStr said "that is moored such that"),
      ("a conjunction of quantified statements sets as a numbered list right of the head's margin, each item a sentence",
        match both[0]?, both[1]?, both[2]? with
        | some h, some a, some b =>

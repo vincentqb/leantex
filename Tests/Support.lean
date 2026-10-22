@@ -3515,6 +3515,17 @@ def randStmt (tb : Table) : Nat → UInt64 → Stmt Leaf × UInt64
     | 4 => (.disj a b, s)
     | 5 => (.iff a b, s)
     | 6 => (.neg a, s)
+    | 7 | 8 =>
+      let clauses := tb.rels.filter fun (_, r) => (r.parts matches .slot 1 :: _) && !r.symbolic
+      let (j, s) := rand s (clauses.length + 1)
+      match clauses[j]? with
+      | some (_, r) =>
+        let (args, s) := (List.range (r.arity - 1)).foldl (fun (acc : List (Term Leaf) × UInt64) _ =>
+          let (x, s) := randTerm tb acc.2
+          (acc.1 ++ [x], s)) ([], s)
+        let g : Group Leaf := ⟨[wordLeaf "c0"], wordLeaf "T", false⟩
+        (if k == 7 then .allThat g r args a else .exThat g r args a, s)
+      | none => (a, s)
     | _ => (a, s)
 
 /-- A theorem of an invented file: its name, the line it stands on, and its type. -/
