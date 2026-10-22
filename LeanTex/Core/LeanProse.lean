@@ -438,7 +438,7 @@ means, a semicolon between two entries, closed by a full stop. -/
 public def glossaryToks (es : List (List (Binder α) × Stmt α × Stmt α)) : List (Tok α) :=
   let one (e : List (Binder α) × Stmt α × Stmt α) (rest : List (Tok α)) :=
     e.1.foldr (fun b r => wordsTo (allWords b) (b.renderTo (.w "," :: r)))
-      (renderTo .operand e.2.1 (.w "means" :: renderTo .scope e.2.2 rest))
+      (renderTo .operand e.2.1 (.w "means" :: renderTo .operand e.2.2 rest))
   match es.reverse with
   | [] => [.w "."]
   | last :: before => before.foldl (fun acc e => one e (.w ";" :: acc)) (one last [.w "."])
@@ -2396,11 +2396,12 @@ public def compiledName (c : String) : Bool :=
       "_mutual"].contains last ||
     last.startsWith "match_" || ["WellFounded.fix", "ite", "dite"].contains c
 
-/-- A predicate definition as the statement it makes: over its parameters, the predicate applied to
-them holds exactly when its value's body does, `k` parameters in. -/
+/-- A predicate definition as the statement it makes: over its parameters, none a proof, the
+predicate applied to them holds exactly when its value's body does, `k` parameters in. -/
 public def defining (c : String) : LeanFacts.Term → LeanFacts.Term → (k : Nat := 0) →
     Option LeanFacts.Term
-  | .pi n b p t rest, .lam _ _ _ body, k => (defining c rest body (k + 1)).map (.pi n b p t ·)
+  | .pi n b p t rest, .lam _ _ _ body, k =>
+    if p then none else (defining c rest body (k + 1)).map (.pi n b p t ·)
   | .apps (.sort "0") [], body, k =>
     if (body.consts #[]).any compiledName then none
     else some (.apps (.const "Iff")

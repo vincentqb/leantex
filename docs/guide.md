@@ -442,8 +442,9 @@ implicit arguments hidden as in the math view. A predicate's definition, `def
 Moored (b : Barge) : Prop := 0 < b.draft`, says its defining equivalence, for
 every b : Barge, b is moored if and only if 0 < b.draft, the exporter writing
 the value of each definition whose type ends in `Prop`; with `glossary = where`
-each statement in words is followed by what the predicates it uses mean, where b
-is moored means 0 < b.draft. Any other declaration whose type is no proposition,
+each statement in words is followed by what each predicate it says through a
+phrase means where the facts give its definition, where b is moored means 0 <
+b.draft, keeping the definition's quantifier where the statement binds its name. Any other declaration whose type is no proposition,
 or a statement the words cannot say (a hypothesis the rest names, a `let`), is
 set as mathematics, once on a page that also shows the math view, and the run
 says so.

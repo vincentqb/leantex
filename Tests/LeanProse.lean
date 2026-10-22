@@ -158,18 +158,33 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
           (.apps (.const "Tide.Calm.match_1") [.apps (.bvar 0) []])) } calmTy with
         | .error .notProp => true
         | _ => false))
+  let proofTy : LeanFacts.Term := .pi "x" .explicit false nat (.pi "h" .explicit true (calmOf 0) prop)
+  let implicitTy : LeanFacts.Term := .pi "x" .implicit false nat prop
+  t "prose: a predicate's definition taking a proof is not said, one taking an implicit argument is"
+    ((match proseOf calmFacts (phrasedTable ()) { calmDef with value := some (.lam "x" .explicit nat
+          (.lam "h" .explicit (calmOf 0) truth)) } proofTy with
+        | .error .notProp => true
+        | _ => false) &&
+      (match proseOf calmFacts (phrasedTable ()) { calmDef with value := some (.lam "x" .implicit nat
+          truth) } implicitTy with
+        | .ok _ => true
+        | _ => false))
   let glossFacts := { calmFacts with decls := #[calmDef] }
   let xLeaf := LeanProse.nameLeaf "x"
   let calmOn (n : Leaf) : Stmt Leaf := .rel calmT [.leaf n]
   let glossText (s : Stmt Leaf) : String :=
     Parse.rawSrc (Code.glossaryRaws glossFacts (phrasedTable ()) s {})
-  t "prose: a glossary says what a predicate a statement's words use means, keeping its quantifier where the statement binds its name, entries apart by semicolons"
+  let glossBoth := LeanProse.glossaryToks [([], (.atom "p" : Stmt String),
+    .conj (.all ⟨⟨["n"], "N", false⟩, []⟩ (.atom "q")) (.ex ⟨⟨["m"], "N", false⟩, []⟩ (.atom "r"))),
+    ([], .atom "s", .atom "u")]
+  t "prose: a glossary says what a predicate a statement's words use means, keeping its quantifier where the statement binds its name, entries apart by semicolons, a meaning never a list"
     (hasStr (glossText (calmOn (LeanProse.nameLeaf "y"))) "means" &&
       !hasStr (glossText (calmOn (LeanProse.nameLeaf "y"))) "every" &&
       hasStr (glossText (.all ⟨⟨[xLeaf], [LeanStatement.opMath "N"], false⟩, []⟩ (calmOn xLeaf))) "for every" &&
       !hasStr (glossText (.all ⟨⟨[xLeaf], [LeanStatement.opMath "N"], false⟩, []⟩ (calmOn xLeaf))) "For" &&
       (glossText (.atom xLeaf)).isEmpty &&
-      (LeanProse.glossaryToks [([], (.atom "p" : Stmt String), .atom "q"), ([], .atom "r", .atom "s")]).contains (.w ";"))
+      (LeanProse.glossaryToks [([], (.atom "p" : Stmt String), .atom "q"), ([], .atom "r", .atom "s")]).contains (.w ";") &&
+      glossBoth.contains (.w ";") && !glossBoth.contains .item)
   t "prose: the glossary key reads where or none, any other value unread"
     ((Code.showingOfValues .lean [("glossary", "where")]).glossary &&
       !(Code.showingOfValues .lean [("glossary", "none")]).glossary &&
