@@ -10,7 +10,7 @@ namespace Tests.MystRender
 
 /-- A fixture of the template corpus read and elaborated as the driver builds it. -/
 private def build (name : String) : IO (Ir.Doc × Array Diag) := do
-  let path := s!"testdata/corpus/myst-template/{name}.md"
+  let path := s!"testdata/myst-template/{name}.md"
   let src ← Input.readDocument path (← IO.FS.readBinFile path)
   let (doc, ds) := Elab.runExecuted path src.executed
   return (doc, src.diags ++ ds)
