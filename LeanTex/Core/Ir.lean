@@ -5441,6 +5441,8 @@ public structure ListingSpec where
   wrapAt : ListingWrap := .units
   /-- How the environment spaces the code from its neighbours. -/
   frame : ListingFrame := .none
+  /-- fancyvrb's, minted's and listings' `xleftmargin`: how far the code stands in from the measure's left. -/
+  margin : Length := 0
   deriving Repr, BEq, Inhabited
 
 /-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt: the `\vspace` it takes
@@ -16722,12 +16724,21 @@ public def slideShims (doc : Doc) (roots : String) : String :=
   alert ++ ([("fg", d.fg), ("bg", d.bg)].filter fun (n, _) =>
     named.contains n && (doc.palette.find? n).isNone).foldl (fun s c => s ++ colorDeclLine c) ""
 
+/-- The measures a standalone sets where its picture reads one: the document's text width, as
+`\linewidth` reads it in the flow. -/
+public def measureLines (page : PageSpec) (roots : String) : String :=
+  if (ctrlNames roots).any (["linewidth", "textwidth", "columnwidth", "hsize"].contains ·) then
+    let w := (page.width - 2 * page.hmargin).toPtString ++ "pt"
+    s!"\\setlength\{\\textwidth}\{{w}}\\setlength\{\\columnwidth}\{{w}}\\setlength\{\\linewidth}\{{w}}\n"
+  else ""
+
 /-- The request one picture body states, formed from the finished document. -/
 public def pictureRequest (doc : Doc) (src : PicSrc) (faces : FontSpec := doc.fonts) : String :=
   let roots := doc.picturePreamble ++ src.body
   let macros := macroDecls doc.pictureMacros roots
   wrapStandalone (standaloneHead doc.page.fontSize) doc.picturePreamble (fontLines faces)
-    (paletteDecls doc.palette (macroDeclLines macros ++ roots)) (slideShims doc roots) macros
+    (paletteDecls doc.palette (macroDeclLines macros ++ roots))
+    (slideShims doc roots ++ measureLines doc.page (macroDeclLines macros ++ roots)) macros
     (pictureSwitch doc.page src.size) src
 
 /-- The document with boundary pictures `more` added to its request, each id once, its own first. -/
@@ -16889,7 +16900,9 @@ public theorem pictureRefs_design_projects (doc : Doc) (faces : FontSpec)
         (paletteDecls doc.palette
           (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) ++
             (doc.picturePreamble ++ src.body)))
-        (slideShims doc (doc.picturePreamble ++ src.body))
+        (slideShims doc (doc.picturePreamble ++ src.body) ++ measureLines doc.page
+          (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) ++
+            (doc.picturePreamble ++ src.body)))
         (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body))
         (pictureSwitch doc.page src.size) src := by
   unfold pictureRefs at h

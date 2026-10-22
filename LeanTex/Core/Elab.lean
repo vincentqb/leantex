@@ -1576,6 +1576,31 @@ private theorem latestNamed_lt {α : Type} {nameOf : α → String} {xs : Array 
   | case3 m _ _ ih => exact Nat.lt_succ_of_lt (ih h)
   | case4 m _ ih => exact Nat.lt_succ_of_lt (ih h)
 
+/-- Whether `p` holds of a body or of a document macro defined before `bound` that it calls, through
+any chain of such calls, each macro read once, with the macros read so far. -/
+private def callsReachGo (p : Array Raw → Bool) (user : Array UserCmd) (bound : Nat)
+    (seen : Std.HashSet Nat) (body : Array Raw) : Bool × Std.HashSet Nat :=
+  if p body then (true, seen) else
+  body.foldl (init := (false, seen)) fun (found, seen) r =>
+    if found then (found, seen) else
+    match r with
+    | .ctrl c _ =>
+      match h : latestNamed (·.name) user c bound with
+      | some (k, cmd) =>
+        if seen.contains k then (false, seen)
+        else
+          have : k < bound := latestNamed_lt h
+          callsReachGo p user k (seen.insert k) cmd.body
+      | none => (false, seen)
+    | _ => (false, seen)
+termination_by bound
+
+/-- Whether `p` holds of a body or of a document macro defined before `bound` that it calls, through
+any chain of such calls. -/
+private def callsReach (p : Array Raw → Bool) (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
+    Bool :=
+  (callsReachGo p user bound {} body).1
+
 private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) :=
   if ctx.kept then none else latestNamed (·.name) ctx.user name ctx.limit
 
@@ -10943,6 +10968,7 @@ private def listingBody (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : P
   let mut language : Option Ir.ListingLang := none
   let mut style : Option Ir.ListingStyle := none
   let mut fontSize := inherited
+  let mut margin : Option Dim.SymLength := none
   let mut tabSize := base.tabSize
   let mut breakLines := base.breakLines
   let mut ground := base.ground
@@ -11039,6 +11065,10 @@ private def listingBody (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : P
         if v == "true" then breakLines := true
         else if v == "false" then breakLines := false
         else unhonoured bare key "not true or false" none
+      | some ("xleftmargin", v) =>
+        match Decl.parseLength (listingVal v) with
+        | some l => margin := some l
+        | none => unhonoured bare key "not a length" none
       | some ("basicstyle", v) =>
         let v := listingVal v
         let names := v.splitOn "\\"
@@ -11081,6 +11111,12 @@ private def listingBody (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : P
     wrapAt := base.wrapAt
     frame := if env == "minted" then Ir.ListingFrame.onPage ctx.surface ctx.lists .list
       else .none
+    -- fancyvrb and minted read `xleftmargin`'s em in the ambient font, listings in its code font.
+    margin := (margin.map fun l =>
+      let em := match (if env == "lstlisting" then fontSize else inherited) with
+        | .size n => Ir.scaleStepIn ctx.page.scale ctx.page.fontSize n
+        | _ => ctx.page.fontSize
+      l.resolve em (em / 2)).getD 0
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -11506,13 +11542,13 @@ private def lrBoxList (user : String → Bool) : List Raw → Bool
 
 end
 
-/-- Whether a body sets block content itself, or a heading through a document macro it calls. -/
+/-- Whether a body sets block content itself, or a heading through the document macros it calls. -/
 private def bodyOrCallIsBlock (ctx : Ctx) (body : Array Raw) : Bool :=
   let heading (b : Array Raw) : Bool := b.any fun
     | .ctrl n _ => (blockHeading? n).isSome
     | _ => false
   bodyIsBlock body || body.any fun
-    | .ctrl c _ => (lookupUser ctx c).any (heading ·.2.body)
+    | .ctrl c _ => (lookupUser ctx c).any fun (k, cmd) => callsReach heading ctx.user k cmd.body
     | _ => false
 
 /-- Whether a document's environment sets block content where it opens or closes. -/
@@ -14022,7 +14058,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
         || n == "define"
         || counterCtrl n
         || (match lookupUser ctx' sourceName with
-            | some (_, cmd) => bodyIsBlock cmd.body
+            | some (k, cmd) => callsReach bodyIsBlock ctx'.user k cmd.body
             | none =>
               ((overlayCtrls.contains n || n == "alt") &&
                 overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||

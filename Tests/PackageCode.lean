@@ -2,6 +2,7 @@ module
 
 public import Tests.Support
 import Tests.VenueStyle
+import Tests.VenueResidual
 
 public section
 
@@ -117,3 +118,4 @@ def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   t "a style's hook test sets no text in the web page either"
     (treeShownOccurs gBody "wideframe" == 0 && treeShownOccurs gBody "Body words stay." == 1)
   venueStyleChecks ref fonts
+  venueResidualChecks ref fonts

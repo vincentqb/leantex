@@ -514,7 +514,8 @@ private def fontStyleDecls (scale : List (String × Nat)) (st : Style)
   | .series w => some #[s!"font-weight: {w.css};"]
   | .upright => some #["font-style: normal;", "font-variant-caps: normal;"]
   | .family s => some #[s!"font-family: var(--font-{s});"]
-  | .normal => some #[]
+  | .normal => some #["font-family: var(--font-body);", "font-weight: 400;", "font-style: normal;",
+      "font-variant-caps: normal;"]
   | .size name => (scale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
   | .fontSize size leading => some #[
@@ -7073,7 +7074,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     | .italic => acc.push (Html.elem "em" kids)
     | .emph => acc.push (Html.elem "em" kids)
     | .mono => acc.push (Html.elem "code" kids)
-    | .normal => acc ++ kids
+    -- `\normalfont` resets family, weight, shape and case, each axis's class as the page resets it
+    | .normal => if kids.isEmpty then acc else acc.push (Html.elem "span" kids #[("class", "rm md up")])
     -- a series is the run's numeric weight, matched against the shipped faces
     | .series w =>
       acc.push (Html.elem "span" kids #[("style", s!"font-weight: {w.css}")])
@@ -9659,6 +9661,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         | .size n => s!" line-height: {listingLineHeight cfg.page spec n};"
         | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
+      (if spec.margin == 0 then "" else
+        let m := cssLength (.ofLength spec.margin)
+        s!" margin-inline-start: {m}; min-inline-size: calc(100% - {m});") ++
       (if spec.breakLines then " white-space: pre-wrap; overflow-wrap: break-word;" else "") ++
       -- a wrapped line's continuation hangs `breakIndent` in (`hanging each-line`)
       (match spec.breakIndent with

@@ -1,0 +1,5 @@
+# source: newunicodechar manual (v1.2, 2018/04/08): its one command \newunicodechar{char}{code},
+# which makes the character set its code wherever it stands after the declaration, in text and
+# in math. Verbatim text keeps the character as written.
+pre impl \newunicodechar{¶}{Q}\AtBeginDocument{a¶b}
+body impl \newunicodechar{¶}{Q}a¶b

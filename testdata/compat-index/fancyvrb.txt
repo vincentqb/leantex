@@ -1,0 +1,13 @@
+# source: fancyvrb manual (v4.5c, 2024/01/20): the Verbatim environment with its options,
+# \DefineVerbatimEnvironment deriving one from it, the variants BVerbatim and LVerbatim, \fvset
+# for defaults, \VerbatimInput and \Verb. Verbatim and a derived environment set their body as
+# minted's text block with fontsize, tabsize, numbers and xleftmargin read; another key is named.
+# The variants, the defaults, file input and inline \Verb are named as unread.
+body impl \begin{Verbatim} x = 1 \end{Verbatim}
+body impl \begin{Verbatim}[xleftmargin=2em] x = 1 \end{Verbatim}
+pre impl \DefineVerbatimEnvironment{Code}{Verbatim}{fontsize=\small}\AtBeginDocument{\begin{Code} x \end{Code}}
+body refuse:W0302 \begin{BVerbatim} x \end{BVerbatim}
+body refuse:W0302 \begin{LVerbatim} x \end{LVerbatim}
+pre refuse:W0301 \fvset{fontsize=\small}
+body refuse:W0301 \VerbatimInput{fixtures/example.py}
+body refuse:W0301 \Verb|x|

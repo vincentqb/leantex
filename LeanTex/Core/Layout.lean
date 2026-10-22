@@ -13119,7 +13119,8 @@ private def collectCaption (r rf : Rd) (a : Acc) (caption : Array Inline) (cmarg
 
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Length) : Acc :=
   let a0 := a
-  -- Code never hyphenates; a declared caption sets above it (listings.sty `captionpos`).
+  -- Code never hyphenates; a declared caption sets above it (listings.sty `captionpos`), at the
+  -- measure's left as listings builds it before `xleftmargin` applies.
   let a := match spec.caption with
     | some (n, cap) =>
       let (a, leaf) := a.leafRange 1
@@ -13127,6 +13128,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
       a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
         (Ir.captionSepDefault r.geom.fontSize)))
     | none => a
+  let indent := indent + spec.margin
   -- A listing's own ground and its package's space after each line (`Ir.ListingSpec.lineOverlap`).
   let own := spec.groundIn a.pal .print
   let ground := (own.map (·.1)).or a.ground

@@ -2018,10 +2018,15 @@ public theorem remapSources_projects {α : Type} (doc : Ir.Doc)
   refine ⟨(i, source), hs, ?_⟩
   simp [hb, hk, resolveDoc, Ir.mapDoc, hsize]
 
+/-- A label's ties read as the spaces they print, the `\~` accent kept. -/
+private def untie (label : String) : String :=
+  String.ofList ((label.toList.foldl (fun (acc : List Char × Bool) c =>
+    (((if c == '~' && !acc.2 then ' ' else c) :: acc.1), c == '\\' && !acc.2)) ([], false)).1.reverse)
+
 /-- natbib's author-year label in a `\bibitem`'s optional
-argument: the names and the year. -/
+argument: the names, a tie read as the space it prints, and the year. -/
 private def natbibLabel? (label : String) : Option (String × String) :=
-  match label.splitOn "(" with
+  match (untie label).splitOn "(" with
   | names :: rest =>
     match ("(".intercalate rest).splitOn ")" with
     | year :: _ :: _ =>

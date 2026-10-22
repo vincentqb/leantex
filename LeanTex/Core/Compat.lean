@@ -52,7 +52,7 @@ public def nativePackages : List String :=
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend",
    "marginnote", "sidenotes", "datetime", "framed", "longtable", "glossaries", "imakeidx",
-   "doi", "orcidlink", "lastpage", "authblk"]
+   "doi", "orcidlink", "lastpage", "authblk", "placeins", "newunicodechar", "fancyvrb"]
 
 /-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
 public def optionSpelling (item : String) : String :=
@@ -132,6 +132,8 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
      ("german=quotes", .engineSets "German quotes are set as „…“, the style the option names"),
      ("english=american", .asWithout "English quotes take their American form, as without the option")]),
    ("babel", [("shorthands=off", .engineSets "the engine reads no shorthand characters, as the option asks")]),
+   ("placeins", ["section", "above", "below"].map fun o =>
+      (o, .engineSets "a float is set where it stands or on the page it opens, never past the text after it")),
    ("graphicx", ("final", .asWithout "images are drawn, as without the option") ::
      drivers),
    ("xcolor", [("natural", .engineSets "colours ship in the model they are declared in"),
@@ -8791,6 +8793,8 @@ private def ctrlRows0 : List CtrlRow :=
 
 private def ctrlRows1 : List CtrlRow :=
   [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+   -- premise: floatBarrierChecks — no float the layout defers stands past the text after it
+   nothingRow "FloatBarrier" 0 "a float is set where it stands, never past the text after it",
    ⟨"GLS", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"GLSpl", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"GenericError", List.replicate 4 .group, .inert⟩,
@@ -8939,6 +8943,8 @@ private def ctrlRows5 : List CtrlRow :=
    ⟨"newglossaryentry", [.needed, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"newlength", [.group], .lower .newLength { leaves := [.notCtrl 0] }⟩,
    ⟨"newpage", [], .tokens [.ctrl "pagebreak" {}] (some "\\pagebreak")⟩,
+   ⟨"newunicodechar", [.needed, .needed],
+     .tokens [] (some "its character set as its code wherever it stands after it")⟩,
    ⟨"noindent", [], .lower .noIndent {}⟩,
    ⟨"nolinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
    nothingRow "nonfrenchspacing" 0 "inter-sentence space is uniform here either way",
@@ -17381,10 +17387,61 @@ private def nameDefinedListings (raws : Array Raw) : M Unit := do
     if ctrlCountList n raws.toList ≥ 2 || (texts.filter (· == text)).size ≥ 2 then
       say .W0411 (scannedListingMessage env) p (help := scannedListingHelp)
 
+/-- The character and code a `\newunicodechar` call's two groups declare, past any spaces. -/
+private def uniCharDecl (rest : List Raw) : Option (Char × Array Raw) :=
+  match rest.dropWhile (· matches .space) with
+  | .group cg _ :: more =>
+    match more.dropWhile (· matches .space) with
+    | .group code _ :: _ =>
+      match cg.toList.filter (!· matches .space) with
+      | [.word w _] => match w.toList with
+        | [c] => some (c, code)
+        | _ => none
+      | [.sym c _] => some (c, code)
+      | _ => none
+    | _ => none
+  | _ => none
+
+/-- A word with each declared character replaced by its code, the letters between kept as words. -/
+private def uniCharsWord (m : List (Char × Array Raw)) (w : String) (p : Pos) : Array Raw :=
+  let (out, cur) := w.foldl (init := ((#[] : Array Raw), "")) fun (out, cur) c =>
+    match m.lookup c with
+    | some code => ((if cur.isEmpty then out else out.push (.word cur p)) ++ code, "")
+    | none => (out, cur.push c)
+  if cur.isEmpty then out else out.push (.word cur p)
+
+mutual
+
+/-- The raws after each `\newunicodechar` with its character set as its code, verbatim text aside. -/
+private def uniCharsList (m : List (Char × Array Raw)) (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest =>
+    let m := if r matches .ctrl "newunicodechar" _ then
+        match uniCharDecl rest with
+        | some d => d :: m
+        | none => m
+      else m
+    uniCharsList m (acc ++ uniCharsOne m r) rest
+
+private def uniCharsOne (m : List (Char × Array Raw)) : Raw → Array Raw
+  | .word w p => if m.isEmpty then #[.word w p] else uniCharsWord m w p
+  | .sym c p => (m.lookup c).getD #[.sym c p]
+  | .group b p => #[.group (uniCharsList m #[] b.toList) p]
+  | .env n b p => #[.env n (uniCharsList m #[] b.toList) p]
+  | .math d b p => #[.math d (uniCharsList m #[] b.toList) p]
+  | r => #[r]
+
+end
+
+/-- newunicodechar's declarations applied: each declared character, where it stands after its
+declaration, sets its code. -/
+private def unicodeCharsLowered (raws : Array Raw) : Array Raw :=
+  if ctrlCountList "newunicodechar" raws.toList > 0 then uniCharsList [] #[] raws.toList else raws
+
 /-- The passes before the compatibility walk: overlay inputs, live groups,
 delimiters, columns, overprints and `\only`'s alternations. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
-  let raws := overlayInputs executed.raws
+  let raws := unicodeCharsLowered (overlayInputs executed.raws)
   let cx := readCxOf raws
   let go : M (Array Raw) := do
     -- After the conditionals only a live pair is a group.
@@ -17421,7 +17478,10 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       { inBody := false
         raws := packageCall command names pos gp np
         state := packageRewriteState st command names pos gp np } := by
-  simp only [beginRewrite, overlayInputs_package_exact _ _ _ _ _ hc,
+  have hu : unicodeCharsLowered (packageCall command names pos gp np) =
+      packageCall command names pos gp np := by
+    rcases hc with rfl | rfl <;> simp [unicodeCharsLowered, packageCall, ctrlCountList, ctrlCountRaw]
+  simp only [beginRewrite, overlayInputs_package_exact _ _ _ _ _ hc, hu,
     readCxOf_package_exact _ _ _ _ _ hc]
   have hw : (packageCall command names pos gp np).any
       (· matches .env "document" _ _) = false := by simp [packageCall]

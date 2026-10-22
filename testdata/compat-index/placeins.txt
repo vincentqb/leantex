@@ -1,0 +1,6 @@
+# source: placeins manual (v2.2, 2005/04/18): \FloatBarrier, which holds every float written
+# before it ahead of the text after it, and the options section, above, below and verbose, which
+# make \section issue it. A float here is set where it stands or on the page it opens, never past
+# the text after it, so the barrier and the options move no ink (inert:noop).
+body inert:noop \FloatBarrier
+pre inert:noop \usepackage[section]{placeins}
