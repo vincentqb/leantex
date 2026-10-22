@@ -11287,7 +11287,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let flow := ((Ir.DocClass.ofString? (classModelName cls)).map (·.record.model == .flow)).getD true
     write fun st => { st with
       flowPage := flow,
-      indents := ((Ir.DocClass.ofString? native).bind (·.record.design)).isSome,
+      indents := ((Ir.DocClass.ofString? (classModelName cls)).bind (·.record.design)).isSome,
       -- KOMA-Script's titlepage environment never resets the page counter (scrbook.cls), and memoir
       -- has none.
       titlepageReset := !twoside && !koma && cls != "memoir" }

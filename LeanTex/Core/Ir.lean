@@ -8646,6 +8646,11 @@ public def FlowPreset.design : FlowPreset → FlowDesign
   | .article | .cookbook => { ratio := 1200, measure := 66, grid := true }
   | .cv | .resume | .cvweb => { ratio := 1200, measure := 75, grid := true }
 
+/-- Whether a preset opens its paragraphs on its base class's `\parindent`; the CVs set them flush. -/
+public def FlowPreset.indents : FlowPreset → Bool
+  | .article | .cookbook => true
+  | .cv | .resume | .cvweb => false
+
 /-- A preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
 public def FlowPreset.keys (p : FlowPreset) : String :=
   let d := p.design

@@ -19481,16 +19481,18 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   return { state := s, decls, body, trailing }
 
 /-- The flow class's grid as the tokens and heading styles it sets where the document declares
-none: `\topskip` and the footnote gap one leading, the size file's `\parindent`, and heading
-spaces whole leadings (`tex/ltflow.cls`). -/
-private def flowDesignDecls (body : Length) (tokens : Ir.Tokens) (styles : Ir.Styles) :
-    Ir.Tokens × Ir.Styles :=
+none: `\topskip` and the footnote gap one leading, an indenting preset's size-file `\parindent`,
+and heading spaces whole leadings (`tex/ltflow.cls`). -/
+private def flowDesignDecls (body : Length) (indents : Bool) (tokens : Ir.Tokens)
+    (styles : Ir.Styles) : Ir.Tokens × Ir.Styles :=
   let lead := Ir.sizeFileLeading body 1000 "normalsize"
   let g (k : Nat) : SymGlue := { width := Dim.SymLength.ofLength (lead * (k : Int)) }
   let tok (t : Ir.Tokens) (n : String) (v : SymGlue) : Ir.Tokens :=
     if (t.find? n).isSome then t else t.declare n v
-  let tokens := tok (tok (tok tokens "topskip" (g 1)) "footins" (g 1)) "parindent"
-    { width := Dim.SymLength.ofLength (Ir.sizeFileParindent body) }
+  let tokens := tok (tok tokens "topskip" (g 1)) "footins" (g 1)
+  let tokens := if indents then
+      tok tokens "parindent" { width := Dim.SymLength.ofLength (Ir.sizeFileParindent body) }
+    else tokens
   let head (st : Ir.Styles) (name : String) (b : Nat) (a : Option Nat) : Ir.Styles :=
     let e := (st.find? name).getD {}
     st.declare name { e with before := e.before <|> some (g b), after := e.after <|> a.map g }
@@ -19538,8 +19540,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         | _ => pal
     | _ => pal) basePalette
   let (tokens, styles) := match docClass.record.design with
-    | some _ => flowDesignDecls (classSized docClass.record classOptions page).fontSize themedDs.tokens
-        themedDs.styles
+    | some _ => flowDesignDecls (classSized docClass.record classOptions page).fontSize
+        (match docClass with | .flow p => p.indents | _ => true) themedDs.tokens themedDs.styles
     | none => (themedDs.tokens, themedDs.styles)
   let chrome := themedDs.chrome
   ctx := { ctx with palette := palette, basePalette := openingInk, tokens := tokens, styles := styles
