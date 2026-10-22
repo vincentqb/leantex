@@ -166,7 +166,8 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "prose: a glossary says what a predicate a statement's words use means, keeping its quantifier where the statement binds its name, entries apart by semicolons"
     (hasStr (glossText (calmOn (LeanProse.nameLeaf "y"))) "means" &&
       !hasStr (glossText (calmOn (LeanProse.nameLeaf "y"))) "every" &&
-      hasStr (glossText (.all ⟨⟨[xLeaf], [LeanStatement.opMath "N"], false⟩, []⟩ (calmOn xLeaf))) "every" &&
+      hasStr (glossText (.all ⟨⟨[xLeaf], [LeanStatement.opMath "N"], false⟩, []⟩ (calmOn xLeaf))) "for every" &&
+      !hasStr (glossText (.all ⟨⟨[xLeaf], [LeanStatement.opMath "N"], false⟩, []⟩ (calmOn xLeaf))) "For" &&
       (glossText (.atom xLeaf)).isEmpty &&
       (LeanProse.glossaryToks [([], (.atom "p" : Stmt String), .atom "q"), ([], .atom "r", .atom "s")]).contains (.w ";"))
   t "prose: the glossary key reads where or none, any other value unread"

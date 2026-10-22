@@ -2316,10 +2316,10 @@ termination_by l => l.length
 
 /-- A sentence's tokens as text after `head`, each formula inline mathematics, each block a lines
 environment and each list a numbered list of capitalized sentences. -/
-public def sentenceRaws (pos : Pos) (head : Array Raw) (toks : List (LeanProse.Tok LeanProse.Leaf)) :
-    Array Raw :=
+public def sentenceRaws (pos : Pos) (head : Array Raw) (toks : List (LeanProse.Tok LeanProse.Leaf))
+    (opening : Bool := true) : Array Raw :=
   closeAll pos (toks.foldl (sentenceStep pos)
-    ([{ Frame.empty .top with cur := head }], true, head.isEmpty)).1
+    ([{ Frame.empty .top with cur := head }], opening, head.isEmpty)).1
 
 /-- The paragraph a declaration's statement sets as in words, ragged right: its head, then its
 sentence, each block a lines environment indented a step and each list a numbered list, a line free
@@ -2343,7 +2343,7 @@ public def glossaryRaws (facts : LeanFacts.Facts) (tb : LeanProse.Table) (s : Le
               then bs else [], m)
         | .error _ => none
   if es.isEmpty then #[]
-  else #[.env "flushleft" (sentenceRaws pos #[.word "where" pos] (LeanProse.glossaryToks es)) pos]
+  else #[.env "flushleft" (sentenceRaws pos #[.word "where" pos] (LeanProse.glossaryToks es) false) pos]
 
 /-- Why a declaration's statement is not set, when it is not. -/
 private def unset? (d : LeanFacts.Decl) : Option String :=

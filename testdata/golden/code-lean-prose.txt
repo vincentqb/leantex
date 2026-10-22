@@ -450,7 +450,7 @@ role trivlist-env
   ragged left
     lines
       line 0
-        text "where For every "
+        text "where for every "
         formula inline "\\mathit {b}:\\mathrm {Barge}"
           ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
         text ", "
@@ -598,7 +598,7 @@ role trivlist-env
   ragged left
     lines
       line 0
-        text "where For every "
+        text "where for every "
         formula inline "\\mathit {b}:\\mathrm {Barge}"
           ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
         text ", "
@@ -643,7 +643,7 @@ role trivlist-env
   ragged left
     lines
       line 0
-        text "where For every "
+        text "where for every "
         formula inline "\\mathit {b}:\\mathrm {Barge}"
           ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
         text ", "

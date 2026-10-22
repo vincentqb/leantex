@@ -2510,7 +2510,7 @@ def reports : List Report := [
     what := "a Lean predicate's definition said in words set as its type alone, Moored : Barge → Prop, its meaning unread, and nothing could say what a predicate a theorem's words use means"
     pins := [check% censusChecks, check% Tests.LeanProse.leanProseChecks,
       thm% LeanProse.proseOf_parse_exact]
-    accept := ["main's binary at a90d1669 on the Lean prose fixture: Definition (Ebb.Moored). Moored : Barge → Prop, the guards failing there; this tree says For every b : Barge, b is moored if and only if 0 < b.draft, and with glossary = where follows each theorem using it with where b is moored means 0 < b.draft, in the PDF, on the web page and in the twin"]
+    accept := ["main's binary at a90d1669 on the Lean prose fixture: Definition (Ebb.Moored). Moored : Barge → Prop, the guards failing there; this tree says For every b : Barge, b is moored if and only if 0 < b.draft, and with glossary = where follows each theorem using it with where for every b : Barge, b is moored means 0 < b.draft, the quantifier kept where the theorem binds b too, in the PDF, on the web page and in the twin"]
     state := .guarded "a90d1669" .before .author }
 ]
 

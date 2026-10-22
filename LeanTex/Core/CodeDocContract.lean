@@ -673,7 +673,8 @@ private theorem closeAll_adm (pos : Pos) :
 termination_by l => l.length
 
 private theorem sentenceRaws_adm (pos : Pos) (head : Array Raw) (hh : Adm true head)
-    (toks : List (LeanProse.Tok LeanProse.Leaf)) : Adm true (sentenceRaws pos head toks) := by
+    (toks : List (LeanProse.Tok LeanProse.Leaf)) (opening : Bool) :
+    Adm true (sentenceRaws pos head toks opening) := by
   unfold sentenceRaws
   refine closeAll_adm pos _ ?_
   have hfold : ∀ (l : List (LeanProse.Tok LeanProse.Leaf)) (acc : SentenceAcc),
@@ -690,7 +691,7 @@ private theorem sentenceRaws_adm (pos : Pos) (head : Array Raw) (hh : Adm true h
 
 private theorem wordsRaws_adm (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf)
     (pos : Pos) (link : Option String) : Adm true (wordsRaws d s pos link) := by
-  have hbody := sentenceRaws_adm pos _ (headRaws_adm d pos link) (LeanProse.render s)
+  have hbody := sentenceRaws_adm pos _ (headRaws_adm d pos link) (LeanProse.render s) true
   intro r hr
   simp only [wordsRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
   subst hr
@@ -704,7 +705,7 @@ private theorem glossaryRaws_adm (facts : LeanFacts.Facts) (tb : LeanProse.Table
   split
   · intro r hr; simp at hr
   · have hbody := fun toks =>
-      sentenceRaws_adm pos #[.word "where" pos] (by intro r hr; simp at hr; subst hr; rfl) toks
+      sentenceRaws_adm pos #[.word "where" pos] (by intro r hr; simp at hr; subst hr; rfl) toks false
     intro r hr
     simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
     subst hr
