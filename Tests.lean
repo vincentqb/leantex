@@ -127,6 +127,7 @@ import Tests.NestedLedgers
 import Tests.DeclaredLadder
 import Tests.FlowClass
 import Tests.PageOverrun
+import Tests.Jtex
 import Tests.PageTurns
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
@@ -369,6 +370,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlLayoutChecks ref
   htmlRhythmChecks ref
   Tests.LineRhythm.htmlStepChecks ref
+  Tests.Jtex.checks ref
   Tests.LineRhythm.htmlGapChecks ref
   htmlListGapChecks ref
   htmlListSpacingChecks ref
