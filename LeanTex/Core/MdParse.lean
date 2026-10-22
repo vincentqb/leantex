@@ -650,7 +650,7 @@ public def yamlTree (lines : Array String) : Option Yaml := Id.run do
       match stack.back? with
       | some top =>
         if top.ind == c && top.seq then pure ()
-        else if top.ind < c || (top.ind == c && !top.seq && top.pending.isSome) then
+        else if (top.ind < c && (top.seq || top.pending.isSome)) || (top.ind == c && !top.seq && top.pending.isSome) then
           stack := (stack.pop.push { top with pending := none }).push
             { ind := c, seq := true, under := top.pending }
         else return none
@@ -688,7 +688,7 @@ public def yamlTree (lines : Array String) : Option Yaml := Id.run do
     match stack.back? with
     | some top =>
       if top.ind == ind && !top.seq then pure ()
-      else if top.ind < ind then
+      else if top.ind < ind && (top.seq || top.pending.isSome) then
         stack := (stack.pop.push { top with pending := none }).push
           { ind := ind, seq := false, under := top.pending }
       else return none

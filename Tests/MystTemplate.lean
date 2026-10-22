@@ -12,7 +12,7 @@ namespace Tests.MystTemplate
 /-- An invented template declaration in jtex v1's spelling. -/
 private def yml : Array String :=
   #["jtex: v1", "title: Invented Template", "options:", "  - id: style", "    type: choice",
-    "    choices: [one, two]", "    default: one", "  - id: venue", "    type: string",
+    "    choices: [one, two]", "    default: one", "  - id: journal", "    type: string",
     "    required: true", "    max_chars: 8", "  - id: count", "    type: number", "    min: 5",
     "    max: 1", "  - id: draft", "    type: boolean", "    condition:", "      id: style",
     "      value: two", "parts:", "  - id: abstract", "    required: true", "    max_words: 3",
@@ -24,7 +24,7 @@ private def yml : Array String :=
 private def front : List (String × Value) :=
   [("title", .str "Kilo Lima"),
    ("authors", .arr [.obj [("name", .str "Ada Example"), ("affiliations", .arr [.str "zza"]),
-      ("corresponding", .bool true)], .obj [("name", .str "Bo Van Sample"),
+      ("corresponding", .bool true), ("email", .str "ada@example.org")], .obj [("name", .str "Bo Van Sample"),
       ("affiliations", .str "Mike Institute")]]),
    ("affiliations", .arr [.obj [("id", .str "zza"), ("name", .str "Oscar College")]]),
    ("date", .str "2026-01-15"), ("bibliography", .str "refs.bib")]
@@ -49,14 +49,14 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, bi) := read bad
   t s!"template.yml: a reserved id, an unknown type, choices missing, an unknown doc key and no jtex version are named ({repr bi})"
     (bi.size == 5 && bi.all (· matches .malformed _ _))
-  let (opts, oi) := options tpl [("venue", .str "Long venue name"), ("colour", .str "red")]
+  let (opts, oi) := options tpl [("journal", .str "Long journal name"), ("colour", .str "red")]
   t s!"options: the default fills, a long string and an unknown key are named, the condition's option hidden ({repr oi})"
     (opts == [("style", .str "one")] && oi.contains (.optionUnknown "colour") &&
-      oi.any (· matches .optionInvalid "venue" _) && !oi.contains (.optionUnknown "draft"))
+      oi.any (· matches .optionInvalid "journal" _) && !oi.contains (.optionUnknown "draft"))
   let (_, oi) := options tpl [("style", .str "three")]
   t "options: a required option missing and a choice outside its choices are named"
-    (oi.contains (.optionMissing "venue") && oi.any (· matches .optionInvalid "style" _))
-  let (opts, _) := options tpl [("style", .str "two"), ("venue", .str "V"), ("draft", .bool true)]
+    (oi.contains (.optionMissing "journal") && oi.any (· matches .optionInvalid "style" _))
+  let (opts, _) := options tpl [("style", .str "two"), ("journal", .str "J"), ("draft", .bool true)]
   t "options: an option whose condition holds is read" (opts.contains ("draft", .bool true))
   let (ps, pi) := parts tpl [("abstract", .one "four words are here"), ("keypoints", .one "only one"),
     ("summary", .one "x")] opts
@@ -87,7 +87,25 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       doc.get "bibtex" == .str "refs.bib")
   let (undated, ui) := extend [("title", .str "Kilo")]
   t "extend: an undated document gets no date, never the clock's, and is named"
-    (undated.get "date" == .null && ui == #[.undated])
+    (undated.get "date" == .undef && ui == #[.undated])
+  let inline (dept : String) : Value := .obj [("name", .str "Mike Institute"), ("department", .str dept)]
+  let (doc2, di2) := extend [("authors", .arr [.obj [("name", .str "Ada"), ("affiliations", .arr [inline "Physics"]),
+      ("corresponding", .bool true)], .obj [("name", .str "Bo"), ("affiliation", inline "Mathematics")]]),
+    ("keywords", .str "alpha, bravo; charlie"), ("date", .str "2024-02-31")]
+  let affs2 := match doc2.get "affiliations" with
+    | .arr xs => xs
+    | _ => []
+  t s!"extend: two affiliations of one institution stay two, as myst stashes them by content ({repr affs2})"
+    (affs2.map (·.get "department") == [.str "Physics", .str "Mathematics"])
+  t "extend: a corresponding author without an email is named and not corresponding"
+    (di2.contains (.frontInvalid "authors.0.corresponding" "an email beside it") &&
+      ((match doc2.get "authors" with | .arr xs => xs | _ => []).head?.any fun (a : Value) =>
+        (a.get "corresponding").get "value" == Value.bool false))
+  t "extend: keywords given as text split at commas and semicolons, a date that does not exist named"
+    (doc2.get "keywords" == .arr [.str "alpha", .str "bravo", .str "charlie"] &&
+      di2.contains (.dateUnread "2024-02-31"))
+  t "yaml: a key indented under a key with a value, or an item under one, is outside the subset"
+    (Md.yamlTree #["a: one", "  b: two"] == none && Md.yamlTree #["a: one", "  - two"] == none)
   t "letters: the twentieth is T, a departure from myst's table, and the twenty-seventh AA"
     (letter 19 == "T" && letter 26 == "AA")
 

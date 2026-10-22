@@ -109,22 +109,51 @@ inductive Issue where
   | partUnknown (id : String)
   | partTooLong (id : String) (limit : Nat) (words : Bool)
   | docMissing (id : String)
+  | frontInvalid (path : String) (what : String)
   | undated
   | dateUnread (spelling : String)
   deriving Repr, BEq, Inhabited
 
-/-- The export keys myst reserves beside a template's options. -/
-def reservedKeys : List String :=
-  ["id", "format", "template", "output", "zip", "toc", "articles", "sub_articles", "renderer"]
+/-- myst-frontmatter's site keys, the parts it knows among them. -/
+def siteKeys : List String :=
+  ["title", "subtitle", "short_title", "description", "thumbnail", "thumbnailOptimized", "banner",
+   "bannerOptimized", "tags", "authors", "reviewers", "editors", "contributors", "venue", "github",
+   "keywords", "affiliations", "funding", "copyright", "options", "parts", "social", "abstract",
+   "summary", "keypoints", "dedication", "epigraph", "data_availability", "acknowledgments"]
 
-/-- The page front matter keys a doc field may name. -/
+/-- myst-frontmatter's keys a project and a page both take. -/
+def projectAndPageKeys : List String :=
+  ["date", "doi", "identifiers", "open_access", "license", "binder", "source", "subject", "volume",
+   "issue", "first_page", "last_page", "oxa", "numbering", "bibliography", "math", "abbreviations",
+   "exports", "downloads", "settings", "edit_url", "source_url", "arxiv", "pmid", "pmcid", "zenodo"] ++
+    siteKeys
+
+/-- The page front matter keys a doc field may name, myst-frontmatter's PAGE_FRONTMATTER_KEYS. -/
 def frontmatterKeys : List String :=
-  ["title", "subtitle", "short_title", "description", "authors", "contributors", "affiliations",
-   "date", "doi", "arxiv", "open_access", "license", "github", "binder", "source", "subject",
-   "venue", "volume", "issue", "keywords", "first_page", "last_page", "bibliography", "math",
-   "abbreviations", "numbering", "funding", "copyright", "references", "thumbnail", "banner",
-   "tags", "parts", "label", "site", "exports", "downloads", "settings", "enumerator", "kernelspec",
-   "jupytext", "options", "id", "identifiers", "edit_url", "requirements", "resources", "keypoints"]
+  projectAndPageKeys ++ ["label", "kernelspec", "jupytext", "tags", "site", "enumerator",
+    "content_includes_title", "skip_execution", "execute"]
+
+/-- myst-frontmatter's aliases, each spelling with the key it stands for. -/
+def aliases : List (String × String) :=
+  [("author", "authors"), ("reviewer", "reviewers"), ("editor", "editors"),
+   ("contributor", "contributors"), ("affiliation", "affiliations"), ("export", "exports"),
+   ("download", "downloads"), ("jupyter", "thebe"), ("part", "parts"), ("ack", "acknowledgments"),
+   ("acknowledgements", "acknowledgments"), ("acknowledgment", "acknowledgments"),
+   ("acknowledgement", "acknowledgments"), ("availability", "data_availability"),
+   ("dataAvailability", "data_availability"), ("data-availability", "data_availability"),
+   ("quote", "epigraph"), ("plain_language_summary", "summary"),
+   ("plain-language-summary", "summary"), ("plainLanguageSummary", "summary"),
+   ("lay_summary", "summary"), ("lay-summary", "summary"), ("keyPoints", "keypoints"),
+   ("key_points", "keypoints"), ("key-points", "keypoints"), ("image", "thumbnail"),
+   ("identifier", "identifiers"), ("socials", "social")]
+
+/-- The keys myst reserves beside a template's options: an export's own and its aliases, and every
+project front matter key and alias. -/
+def reservedKeys : List String :=
+  ["format", "template", "output", "zip", "id", "name", "renderer", "articles", "top_level",
+   "sub_articles", "article", "sub_article"] ++ projectAndPageKeys ++
+    ["id", "references", "requirements", "resources", "static_files", "thebe", "toc"] ++
+    aliases.map (·.1)
 
 private def boolAt (path : String) (y : Option Yaml) (out : Array Issue) : Bool × Array Issue :=
   match y.map valueOf with
@@ -171,8 +200,9 @@ def checkValue (d : OptionDef) (v : Value) : Except String Value :=
   | .boolean, _ => .error "a boolean"
   | .string, .str s =>
     match d.maxChars with
-    | some m => if s.length ≤ m then .ok (.str s) else .error s!"at most {m} characters"
+    | some m => if m == 0 || Jtex.utf16Len s ≤ m then .ok (.str s) else .error s!"at most {m} characters"
     | none => .ok (.str s)
+  -- the YAML reader loses a scalar's quotes, so an unquoted number stands for a string too
   | .string, .num n => .ok (.str (toString n))
   | .string, _ => .error "a string"
   | .number, .num n =>
@@ -186,11 +216,12 @@ def checkValue (d : OptionDef) (v : Value) : Except String Value :=
   | .file, .str s => .ok (.str s)
   | .file, _ => .error "a file path"
 
-/-- A value as `d` takes it, a list item by item where it takes several, a lone value a list of one. -/
+/-- A value as `d` takes it, a list item by item where it takes several, its invalid items dropped,
+a lone value a list of one. -/
 def checkOption (d : OptionDef) (v : Value) : Except String Value :=
   if !d.multiple then checkValue d v else
   match v with
-  | .arr xs => (xs.mapM (checkValue d)).map .arr
+  | .arr xs => .ok (.arr (xs.filterMap fun x => (checkValue d x).toOption))
   | v => (checkValue d v).map fun x => .arr [x]
 
 private def optionDef (y : Yaml) (k : Nat) (out : Array Issue) : Option OptionDef × Array Issue :=
@@ -223,7 +254,7 @@ private def optionDef (y : Yaml) (k : Nat) (out : Array Issue) : Option OptionDe
         { id := id, kind := type, required := required, choices := (texts (y.get? "choices")).toList,
           maxChars := maxChars, min := lo, max := hi, integer := integer, multiple := multiple,
           condition := condition }
-      match (y.get? "default").map valueOf with
+      match ((y.get? "default").map valueOf).filter defined with
       | none => (some d, out)
       | some v => match checkOption d v with
         | .ok v => (some { d with default := some v }, out)
@@ -255,8 +286,9 @@ private def docDef (y : Yaml) (k : Nat) (out : Array Issue) : Option DocDef × A
 /-- A `template.yml` read: its definitions, and each fault in it, a faulty definition dropped. -/
 def read (y : Yaml) : TemplateYml × Array Issue := Id.run do
   let mut out : Array Issue := #[]
-  if (y.get? "myst").isNone && (y.get? "jtex").isNone then
-    out := out.push (.malformed "myst" "the jtex version the template declares")
+  match ((y.get? "myst").orElse fun _ => y.get? "jtex").bind (·.text?) with
+  | some "v1" => pure ()
+  | _ => out := out.push (.malformed "myst" "the jtex version v1")
   let mut t : TemplateYml := {}
   for (o, k) in (items (y.get? "options")).zipIdx do
     let (d, o') := optionDef o k out
@@ -272,7 +304,8 @@ def read (y : Yaml) : TemplateYml × Array Issue := Id.run do
     if let some d := d then t := { t with doc := t.doc.push d }
   t := { t with
     packages := texts (y.get? "packages"), files := texts (y.get? "files"),
-    bibliography := ((y.get? "style").bind (·.get? "bibliography")).bind (·.text?) }
+    bibliography := (((y.get? "style").bind (·.get? "bibliography")).bind (·.text?)).filter
+      fun b => b == "natbib" || b == "biblatex" }
   -- every condition names a declared option, and a value that option takes
   let conds := (t.options.map (fun d => (d.id, d.condition))) ++ (t.parts.map (fun d => (d.id, d.condition))) ++
     (t.doc.map (fun d => (d.id, d.condition)))
@@ -311,16 +344,16 @@ def options (t : TemplateYml) (given : List (String × Value)) : List (String ×
       out := out.push (.optionMissing d.id)
   for (k, _) in given do
     unless live.any (·.id == k) || reservedKeys.contains k do out := out.push (.optionUnknown k)
-  let mut res : List (String × Value) := []
+  let mut res : Array (String × Value) := #[]
   for d in live do
     let v := (given.find? (·.1 == d.id)).map (·.2) |>.filter defined
     -- myst-templates fills a default only where it is truthy, so a false or empty default stays unset
     match v.orElse fun _ => d.default.filter (·.truthy) with
     | none => pure ()
     | some v => match checkOption d v with
-      | .ok v => res := res ++ [(d.id, v)]
+      | .ok v => res := res.push (d.id, v)
       | .error e => out := out.push (.optionInvalid d.id e)
-  return (res, out)
+  return (res.toList, out)
 
 /-- A part's given text: one block, or a list of them where the part is read as a list. -/
 inductive PartText where
@@ -328,14 +361,16 @@ inductive PartText where
   | many (items : Array String)
   deriving Repr, BEq, Inhabited
 
-/-- Whether one text of part `d` exceeds its declared length, in UTF-16 units as JavaScript counts
-or in words split at single spaces as myst-templates splits them. -/
-def tooLong (d : PartDef) (s : String) : Option Issue :=
-  match d.maxChars, d.maxWords with
-  | some m, _ => if Jtex.utf16Len s > m then some (.partTooLong d.id m false) else
-      d.maxWords.bind fun w => if (s.splitOn " ").length > w then some (.partTooLong d.id w true) else none
-  | none, some w => if (s.splitOn " ").length > w then some (.partTooLong d.id w true) else none
-  | none, none => none
+/-- The limits one text of part `d` exceeds, in UTF-16 units as JavaScript counts and in words split
+at single spaces as myst-templates splits them; an empty text exceeds none. -/
+def tooLong (d : PartDef) (s : String) : Array Issue :=
+  if s.isEmpty then #[] else
+  (match d.maxChars with
+    | some m => if Jtex.utf16Len s > m then #[Issue.partTooLong d.id m false] else #[]
+    | none => #[]) ++
+  (match d.maxWords with
+    | some w => if (s.splitOn " ").length > w then #[Issue.partTooLong d.id w true] else #[]
+    | none => #[])
 
 /-- The parts a template renders with, from the given ones, under the rendered options: each whose
 condition holds, as one text or a list; the issues name a missing required one, an unknown one,
@@ -348,7 +383,7 @@ def parts (t : TemplateYml) (given : List (String × PartText)) (opts : List (St
     if d.required && !(given.any (·.1 == d.id)) then out := out.push (.partMissing d.id)
   for (k, _) in given do
     unless live.any (·.id == k) do out := out.push (.partUnknown k)
-  let mut res : List (String × PartText) := []
+  let mut res : Array (String × PartText) := #[]
   for d in live do
     if let some (_, p) := given.find? (·.1 == d.id) then
       let p := match d.asList, p with
@@ -359,9 +394,9 @@ def parts (t : TemplateYml) (given : List (String × PartText)) (opts : List (St
         | .one s => #[s]
         | .many xs => xs
       for s in each do
-        if let some i := tooLong d s then out := out.push i
-      res := res ++ [(d.id, p)]
-  return (res, out)
+        out := out ++ tooLong d s
+      res := res.push (d.id, p)
+  return (res.toList, out)
 
 /-- The required doc fields, under the rendered options, the front matter leaves unset. -/
 def docIssues (t : TemplateYml) (frontmatter : List (String × Value)) (opts : List (String × Value)) :
@@ -371,148 +406,171 @@ def docIssues (t : TemplateYml) (frontmatter : List (String × Value)) (opts : L
 
 /-- The letters indices take: A to Z, then AA to ZZ and on. -/
 def letter (index : Nat) : String :=
-  -- myst-templates' table repeats U for T; this one does not, a departure from the 20th on
+  -- myst-templates' table reads Q U R S for Q R S T; this one does not, a departure at the 18th to 20th
   let alpha := "ABCDEFGHIJKLMNOPQRSTUVWXYZ".toList
   let c := alpha.getD (index % 26) 'A'
   String.ofList (List.replicate (index / 26 + 1) c)
-
-private def fieldsOf : Value → List (String × Value)
-  | .obj fs => fs
-  | _ => []
 
 private def textOf : Value → Option String
   | .str s => some s
   | .num n => some (toString n)
   | _ => none
 
+/-- A text's pieces apart at any of `seps`, trimmed, the empty ones dropped. -/
+private def splitAt (seps : List Char) (s : String) : List String :=
+  ((s.split fun c => seps.contains c).toList.map fun t => t.toString.trimAscii.toString).filter (!·.isEmpty)
+
+/-- A value as a list: a list itself, a text apart at `seps`, nothing for none, else alone. -/
+private def listOf (seps : List Char) : Value → List Value
+  | .arr xs => xs
+  | .str s => (splitAt seps s).map Value.str
+  | .undef | .null => []
+  | v => [v]
+
 /-- A date's day, month and year as myst-templates prints them from an ISO date, the year alone
-the first of January as JavaScript reads it. -/
+the first of January as JavaScript reads it; none for a calendar date that does not exist. -/
 def dateParts (s : String) : Option (String × String × String) :=
   let s := s.trimAscii.toString
   let body := ((s.splitOn "T").head?.getD s)
+  let year (y : String) := y.length == 4 && y.all Char.isDigit
+  let days (y m : Nat) : Nat :=
+    if m == 2 then (if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) then 29 else 28)
+    else if [4, 6, 9, 11].contains m then 30 else 31
   match body.splitOn "-" with
-  | [y] => if y.length == 4 && y.all Char.isDigit then some ("1", "1", y) else none
+  | [y] => if year y then some ("1", "1", y) else none
   | [y, m] => m.toNat?.bind fun mn =>
-    if y.length == 4 && y.all Char.isDigit && 1 ≤ mn && mn ≤ 12 then some ("1", toString mn, y) else none
-  | [y, m, d] => match m.toNat?, d.toNat? with
-    | some mn, some dn =>
-      if y.length == 4 && y.all Char.isDigit && 1 ≤ mn && mn ≤ 12 && 1 ≤ dn && dn ≤ 31 then
+    if year y && 1 ≤ mn && mn ≤ 12 then some ("1", toString mn, y) else none
+  | [y, m, d] => match m.toNat?, d.toNat?, y.toNat? with
+    | some mn, some dn, some yn =>
+      if year y && 1 ≤ mn && mn ≤ 12 && 1 ≤ dn && dn ≤ days yn mn then
         some (toString dn, toString mn, y)
       else none
-    | _, _ => none
+    | _, _, _ => none
   | _ => none
 
-/-- One affiliation as myst normalizes it: a mapping keeps its fields with its id or its name as
-id, a bare name is its own id and name. -/
-def affiliationOf : Value → Option (String × List (String × Value))
-  | .str s => some (s, [("id", .str s), ("name", .str s)])
+/-- Affiliations as myst-frontmatter stashes them, in the order first met: a declared one or an
+author's by its `id` or `ref`, a name standing for the one of that id or a new one of that name,
+an object without an id taking a generated one unless one of the same content stands. -/
+structure Stash where
+  items : Array (String × List (String × Value)) := #[]
+  generated : Nat := 0
+
+/-- An affiliation stashed, with the id it stands under. -/
+def Stash.add (st : Stash) (v : Value) : Stash × Option String :=
+  match v with
+  | .str s =>
+    if st.items.any (·.1 == s) then (st, some s)
+    else ({ st with items := st.items.push (s, [("id", .str s), ("name", .str s)]) }, some s)
   | .obj fs =>
-    (((fs.find? (·.1 == "id")).bind (textOf ·.2)).orElse fun _ =>
-        (fs.find? (·.1 == "name")).bind (textOf ·.2)).map fun id =>
-      (id, if fs.any (·.1 == "id") then fs else ("id", .str id) :: fs)
-  | _ => none
+    let get (k : String) := (fs.find? (·.1 == k)).bind (textOf ·.2)
+    let fs := fs.map fun (k, x) => (if k == "institution" && !fs.any (·.1 == "name") then "name" else k, x)
+    match (get "id").orElse fun _ => get "ref" with
+    | some id =>
+      let fs := if fs.any (·.1 == "name") then fs else fs ++ [("name", .str id)]
+      let fs := ("id", .str id) :: fs.filter fun (k, _) => k != "id" && k != "ref"
+      if st.items.any (·.1 == id) then (st, some id) else ({ st with items := st.items.push (id, fs) }, some id)
+    | none =>
+      match st.items.find? (fun (_, g) => g.filter (·.1 != "id") == fs) with
+      | some (id, _) => (st, some id)
+      | none =>
+        let id := s!"affiliations-generated-uid-{st.generated}"
+        ({ items := st.items.push (id, ("id", .str id) :: fs), generated := st.generated + 1 }, some id)
+  | _ => (st, none)
 
-/-- One author as myst normalizes it: a bare name its `name`, an affiliation or a list of them its
-`affiliations` by id. -/
-def authorOf (v : Value) : List (String × Value) :=
-  let fs := match v with
-    | .str s => [("name", Value.str s)]
-    | .obj fs => fs
-    | _ => []
-  fs.map fun (k, x) =>
-    if k == "affiliations" || k == "affiliation" then
-      let xs : List Value := match x with
-        | .arr xs => xs
-        | x => [x]
-      ("affiliations", Value.arr (xs.filterMap fun a => (affiliationOf a).map fun (id, _) => Value.str id))
-    else (k, x)
+/-- An author's name as myst-frontmatter formats it: a text, or a mapping's `literal`, else its
+given and family names apart by a space. -/
+private def nameOf : Value → String
+  | .str s => s
+  | .obj fs =>
+    let get (k : String) := ((fs.find? (·.1 == k)).bind (textOf ·.2)).getD ""
+    if get "literal" != "" then get "literal" else
+      " ".intercalate ([get "given", get "family"].filter (!·.isEmpty))
+  | _ => ""
 
 /-- A front matter as the `doc` a template reads, as extendFrontmatter makes it: its authors and
 the affiliations they name indexed and lettered, the date's fields and a lone `.bib` as `bibtex`;
 an undated document gets no date, never the clock's. -/
 def extend (fm : List (String × Value)) : Value × Array Issue := Id.run do
-  let get (k : String) : Value := ((fm.find? (·.1 == k)).map (·.2)).getD .null
-  let authorsIn : List Value := match get "authors", get "author" with
-    | .arr xs, _ => xs
-    | .null, .arr xs => xs
-    | .null, .null => []
-    | .null, x => [x]
-    | x, _ => [x]
-  let authors := authorsIn.map authorOf
-  -- every affiliation declared, then each an author names that none declares
-  let mut declared : List (String × List (String × Value)) := []
-  for a in (match get "affiliations" with
-      | .arr xs => xs
-      | .null => []
-      | x => [x]) do
-    if let some p := affiliationOf a then declared := declared ++ [p]
-  for au in authorsIn do
-    for x in (match (fieldsOf (match au with | .obj _ => au | _ => .null)).find? (fun f => f.1 == "affiliations" || f.1 == "affiliation") with
-        | some (_, .arr xs) => xs
-        | some (_, x) => [x]
-        | none => []) do
-      if let some (id, fs) := affiliationOf x then
-        unless declared.any (·.1 == id) do declared := declared ++ [(id, fs)]
-  let mut named : List String := []
-  for au in authors do
-    for x in (match (au.find? (·.1 == "affiliations")).map (·.2) with
-        | some (.arr xs) => xs
-        | _ => []) do
-      if let some id := textOf x then
-        unless named.contains id do named := named ++ [id]
+  let fm := fm.map fun (k, v) => (((aliases.find? (·.1 == k)).map (·.2)).getD k, v)
+  let get (k : String) : Value := ((fm.find? (·.1 == k)).map (·.2)).getD .undef
+  let mut issues : Array Issue := #[]
+  -- the declared affiliations first, then each author's, as myst-frontmatter stashes them
+  let mut st : Stash := {}
+  for a in listOf [';'] (get "affiliations") do
+    st := (st.add a).1
+  let mut authorsIn : Array (List (String × Value) × List String) := #[]
+  for (au, k) in (listOf [';'] (get "authors")).zipIdx do
+    let fs := match au with
+      | .str s => [("name", Value.str s)]
+      | .obj fs => fs
+      | _ => []
+    let mut ids : Array String := #[]
+    for a in listOf [';'] (((fs.find? fun (k, _) => k == "affiliations" || k == "affiliation").map (·.2)).getD .undef) do
+      let (st', id) := st.add a
+      st := st'
+      if let some id := id then ids := ids.push id
+    let fs := fs.filter fun (k, _) => k != "affiliation"
+    let fs := fs.map fun (key, x) => if key == "name" then (key, Value.str (nameOf x)) else (key, x)
+    -- myst-frontmatter refuses a corresponding author without an email, setting it false
+    let unmailed := (fs.find? (·.1 == "corresponding")).any (·.2.truthy) &&
+      !(fs.any fun (key, x) => key == "email" && x.truthy)
+    if unmailed then issues := issues.push (.frontInvalid s!"authors.{k}.corresponding" "an email beside it")
+    let fs := if !unmailed then fs else
+      fs.map fun (key, x) => if key == "corresponding" then (key, Value.bool false) else (key, x)
+    authorsIn := authorsIn.push (fs, ids.toList)
+  let mut named : Array String := #[]
+  for (_, ids) in authorsIn do
+    for id in ids do
+      unless named.contains id do named := named.push id
   let collab (fs : List (String × Value)) : Bool :=
     (fs.find? (·.1 == "collaboration")).any (·.2.truthy)
-  let indexed (pick : Bool) : List (String × Value) := Id.run do
-    let mut res : List (String × Value) := []
+  let indexed (pick : Bool) : Array (String × Value) := Id.run do
+    let mut res : Array (String × Value) := #[]
     for id in named do
-      if let some (_, fs) := declared.find? (·.1 == id) then
+      if let some (_, fs) := st.items.find? (·.1 == id) then
         if collab fs == pick then
-          let i := res.length
-          res := res ++ [(id, .obj (fs ++ [("value", .obj fs), ("index", .num (i + 1)),
-            ("letter", .str (letter i))]))]
+          let i := res.size
+          res := res.push (id, .obj (fs ++ [("value", .obj fs), ("index", .num (i + 1)),
+            ("letter", .str (letter i))]))
     return res
   let affs := indexed false
   let collabs := indexed true
   let mut corresponding : Nat := 0
-  let mut authorValues : List Value := []
-  for (au, i) in authors.zipIdx do
-    let ids := match (au.find? (·.1 == "affiliations")).map (·.2) with
-      | some (.arr xs) => xs.filterMap textOf
-      | _ => []
-    let pickAll (from_ : List (String × Value)) : Value :=
+  let mut authorValues : Array Value := #[]
+  for ((au, ids), i) in authorsIn.zipIdx do
+    let pickAll (from_ : Array (String × Value)) : Value :=
       match ids.filterMap fun id => (from_.find? (·.1 == id)).map (·.2) with
-      | [] => .null
+      | [] => .undef
       | xs => .arr xs
     let corr : Value := match (au.find? (·.1 == "corresponding")).map (·.2) with
       | some (Value.bool false) => .obj [("value", .bool false)]
       | some v => if v.truthy then
           .obj [("value", v), ("index", .num (corresponding + 1)), ("letter", .str (letter corresponding))]
-        else .null
-      | none => .null
+        else .undef
+      | none => .undef
     if (corr.get "index").truthy then corresponding := corresponding + 1
     let name := ((au.find? (·.1 == "name")).bind (textOf ·.2)).getD ""
     let words := name.splitOn " "
     let rest := au.filter fun (k, _) => !["affiliations", "corresponding"].contains k
-    authorValues := authorValues ++ [.obj (rest ++ [("index", .num (i + 1)), ("letter", .str (letter i)),
+    authorValues := authorValues.push (.obj (rest ++ [("index", .num (i + 1)), ("letter", .str (letter i)),
       ("corresponding", corr), ("affiliations", pickAll affs), ("collaborations", pickAll collabs),
-      ("given_name", .str (words.headD "")), ("surname", .str (" ".intercalate words.tail))])]
-  let mut issues : Array Issue := #[]
+      ("given_name", .str (words.headD "")), ("surname", .str (" ".intercalate words.tail))]))
   let date : Value ← match get "date" with
-    | .null => issues := issues.push .undated; pure .null
+    | .undef | .null => issues := issues.push .undated; pure .undef
     | v => match (textOf v).bind dateParts with
       | some (d, m, y) => pure (.obj [("day", .str d), ("month", .str m), ("year", .str y)])
-      | none => issues := issues.push (.dateUnread ((textOf v).getD "")); pure .null
-  let bib : List Value := match get "bibliography" with
-    | .arr xs => xs
-    | .null => []
-    | x => [x]
+      | none => issues := issues.push (.dateUnread ((textOf v).getD "")); pure .undef
+  let bib := listOf [','] (get "bibliography")
   let bibtex : Value := match bib with
-    | [.str b] => if b.endsWith ".bib" then .str b else .null
-    | _ => .null
+    | [.str b] => if b.endsWith ".bib" then .str b else .undef
+    | _ => .undef
   let own := fm.filter fun (k, _) =>
-    !["date", "authors", "author", "affiliations", "collaborations", "bibliography", "bibtex"].contains k
-  return (.obj (own ++ [("date", date), ("authors", .arr authorValues),
-    ("affiliations", .arr (affs.map (·.2))), ("collaborations", .arr (collabs.map (·.2))),
-    ("bibliography", if bib.isEmpty then .null else .arr bib), ("bibtex", bibtex)]), issues)
+    !["date", "authors", "affiliations", "collaborations", "bibliography", "bibtex", "keywords"].contains k
+  return (.obj (own ++ [("date", date), ("authors", .arr authorValues.toList),
+    ("affiliations", .arr (affs.toList.map (·.2))), ("collaborations", .arr (collabs.toList.map (·.2))),
+    ("keywords", match get "keywords" with
+      | .undef => .undef
+      | v => .arr (listOf [',', ';'] v)),
+    ("bibliography", if bib.isEmpty then .undef else .arr bib), ("bibtex", bibtex)]), issues)
 
 end LeanTex.Core.MystTemplate
