@@ -319,7 +319,6 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     let (raws, spliced) := Compat.applyLocalSty draws #[("venueguide", sraws)]
     let ds := (Elab.runRaws "t" raws).2
     spliced.map fun (s, src, p) => Compat.styRead (src.getD "t") s p ds
-  | .N0021 => dvL (w := w) one (dvDoc "\\page{ headsep = 20pt, footskip = 30pt }\n" "x")
   | .W0368 => dvE (w := w) (dvDoc "\\usepackage[klingon]{babel}\n" "x") ++
       dvE (w := w) (dvDoc "\\pdfmeta{ language = \"xx\" }\n" "x")
   | .W0369 => dvE (w := w) (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
@@ -443,6 +442,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       dvE (w := w) "\\mystery[16]{x} and \\mystery{y}"
   | .W0307 => dvE (w := w) (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0302 => dvE (w := w) (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
+  | .W0458 => dvE (w := w) (dvDoc "" ("\\newenvironment{probenote}[1]{\\textbf{#1:} }{}\n\n" ++
+      "\\begin{probenote}{Note}words here\\end{probenote}"))
   | .W0303 =>
     (dvE (w := w) (dvDoc "\\define \\underline(a: content) {\\a}\n" "x")) ++
     (

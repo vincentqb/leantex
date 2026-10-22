@@ -28,7 +28,7 @@ def corpora : List (String × String × List String) :=
 
 /-- The unknown-construct codes, raised where the engine meets a name nothing answers; the
 blocker ranking reads the same two. -/
-def unknownCodes : List String := ["W0301", "W0302"]
+def unknownCodes : List String := ["W0301", "W0302", "W0458"]
 
 /-- The codes whose loss is a face's, keyed by constructor so the cause class is data. -/
 def fontCodes : List DiagCode :=

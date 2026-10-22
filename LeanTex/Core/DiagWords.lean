@@ -58,22 +58,17 @@ public inductive Diag.Noun where
   | «class» | theme | file | directory | output | image | figure | picture | font | face | family
   | glyph | character | encoding | language | labelKey | reference | citation | entry | field
   | string | style | element | icon | code | pageSize | argument | parameter | signature
-  | assertion | group | line | table | row | frame | page | node | measure | heading | title
-  | link | anchor | landmark | altText | overlay | conditional | definition | template | math
-  | listing | lexer | statement | phrase | resource | standard | pageBox | attribute | ink
-  | profile | footnote | marker | text | unit | date | collation | backend | operation
-  | expression | division | markup | runningHead | runningFoot | footer | spacing | width
-  | numbering | nesting | syntax | covering | seeds | mix | tool | drawing | highlighter | tag
-  | target | facts | commit | graph | object | intent | year | mathFont | declaration
-  | box | cell | column | counter | note | paragraph | alphabet | weight | symbol | accent
-  | address | kind | mode | step | share | rule | skip | gap | margin | size | shape | coordinate
-  | path | pattern | layer | arrow | scheme | role | token | comment | header | region | variable
-  | slot | record | number | dimension | branch | shortTitle | paragraphBreak | pageStyle
-  | frameTitle | titlePage | bibliography | url | level | list | item | contract | fill | space
-  | fontSize | locale | hook | stylesheet | entryType | headingLevel | scope | alignment | «float»
-  | caption | body | block | display | columnSpec | delimiter | conversion | converter | version
-  | property | feature | mark | format | section | annotation | sequence | order | content
-  | environmentName | optionalArgument
+  | assertion | group | line | table | row | frame | page | node | measure | heading | title | link
+  | anchor | landmark | altText | overlay | conditional | definition | template | math | listing
+  | statement | phrase | resource | standard | pageBox | attribute | ink | profile | footnote
+  | marker | text | unit | date | collation | backend | operation | expression | division | markup
+  | runningHead | runningFoot | footer | spacing | width | numbering | nesting | syntax | covering
+  | seeds | mix | tool | drawing | highlighter | tag | target | facts | commit | graph | object
+  | mathFont | declaration | box | column | counter | note | alphabet | kind | skip | gap | margin
+  | size | shape | coordinate | path | arrow | scheme | token | comment | variable | slot | record
+  | number | shortTitle | paragraphBreak | pageStyle | frameTitle | bibliography | level | list
+  | stylesheet | entryType | «float» | caption | body | block | display | columnSpec | version
+  | property | feature | format | environmentName | optionalArgument
   deriving Repr, BEq, DecidableEq
 
 public def Diag.Noun.label : Diag.Noun → String
@@ -136,7 +131,6 @@ public def Diag.Noun.label : Diag.Noun → String
   | .template => "template"
   | .math => "math"
   | .listing => "listing"
-  | .lexer => "lexer"
   | .statement => "statement"
   | .phrase => "phrase"
   | .resource => "resource"
@@ -176,26 +170,14 @@ public def Diag.Noun.label : Diag.Noun → String
   | .commit => "commit"
   | .graph => "graph"
   | .object => "object"
-  | .intent => "output intent"
-  | .year => "year"
   | .mathFont => "math font"
   | .declaration => "declaration"
   | .box => "box"
-  | .cell => "cell"
   | .column => "column"
   | .counter => "counter"
   | .note => "note"
-  | .paragraph => "paragraph"
   | .alphabet => "alphabet"
-  | .weight => "weight"
-  | .symbol => "symbol"
-  | .accent => "accent"
-  | .address => "address"
   | .kind => "kind"
-  | .mode => "mode"
-  | .step => "step"
-  | .share => "share"
-  | .rule => "rule"
   | .skip => "skip"
   | .gap => "gap"
   | .margin => "margin"
@@ -203,61 +185,33 @@ public def Diag.Noun.label : Diag.Noun → String
   | .shape => "shape"
   | .coordinate => "coordinate"
   | .path => "path"
-  | .pattern => "pattern"
-  | .layer => "layer"
   | .arrow => "arrow"
   | .scheme => "scheme"
-  | .role => "role"
   | .token => "token"
   | .comment => "comment"
-  | .header => "header"
-  | .region => "region"
   | .variable => "variable"
   | .slot => "slot"
   | .record => "record"
   | .number => "number"
-  | .dimension => "dimension"
-  | .branch => "branch"
   | .shortTitle => "short title"
   | .paragraphBreak => "paragraph break"
   | .pageStyle => "page style"
   | .frameTitle => "frame title"
-  | .titlePage => "title page"
   | .bibliography => "bibliography"
-  | .url => "url"
   | .level => "level"
   | .list => "list"
-  | .item => "item"
-  | .contract => "contract"
-  | .fill => "fill"
-  | .space => "space"
-  | .fontSize => "font size"
-  | .locale => "locale"
-  | .hook => "hook"
   | .stylesheet => "stylesheet"
   | .entryType => "entry type"
-  | .headingLevel => "heading level"
-  | .scope => "scope"
-  | .alignment => "alignment"
   | .«float» => "float"
   | .caption => "caption"
   | .body => "body"
   | .block => "block"
   | .display => "display"
   | .columnSpec => "column spec"
-  | .delimiter => "delimiter"
-  | .conversion => "conversion"
-  | .converter => "converter"
   | .version => "version"
   | .property => "property"
   | .feature => "feature"
-  | .mark => "mark"
   | .format => "format"
-  | .section => "section"
-  | .annotation => "annotation"
-  | .sequence => "sequence"
-  | .order => "order"
-  | .content => "content"
   | .environmentName => "environment name"
   | .optionalArgument => "optional argument"
 

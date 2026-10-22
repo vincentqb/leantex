@@ -168,17 +168,14 @@ info: resolved environment ifbackend [N0019]
 ── N0020 (info) a local style file is read as part of the preamble
 info: translated file venueguide.sty [N0020]
   note: honoured: 2, named: 1, TeX internals refused: 1
-── N0021 (info) header and footer gaps differ as declared; equal gaps are the default
-info: default gap [N0021]
-  note: 10pt between the header and footer gaps
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
 info: translated picture [N0023]
   note: drawn by lualatex at the boundary; its text is not in the census
-── N0024 (info) a figure is drawn by an external converter, because the engine does not draw one of its features
-info: translated figure figures/plot.pdf [N0024]
-  note: drawn by pdftocairo, for its 'type1' font
-info: translated figure figures/chart.svg [N0024]
-  note: drawn by rsvg-convert, for its 'filter' property
+── N0024 (info) a figure feature the engine does not draw; an external converter draws the figure
+info: unsupported font 'type1' for figure figures/plot.pdf [N0024]
+  note: drawn by pdftocairo
+info: unsupported property filter for figure figures/chart.svg [N0024]
+  note: drawn by rsvg-convert
 ── N0025 (info) an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads
 info: resolved option latin1 for package inputenc [N0025]
   note: 'doc.tex' reads as Windows-1252 (Latin-1)
@@ -390,8 +387,8 @@ warning: undefined command \mystery [W0301]
 warning: undefined command \mystery [W0301] (2 sites)
   note: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
 info: undefined command \mystery [W0301]
-── W0302 (degraded) unknown environment; body kept
-warning: unsupported environment banner [W0302]
+── W0302 (degraded) an environment nothing defines; its body kept
+warning: Environment banner undefined [W0302]
   note: \defineenv{name}(...) {begin} {end} declares one
 ── W0303 (config) a redefinition of a built-in the engine does not apply; the built-in stands
 warning: ignored definition \underline [W0303]
@@ -485,7 +482,7 @@ warning: unsupported operation parabola for \draw [W0334]
 warning: overfull picture [W0335]
   note: 1138.11pt × 28.453pt against 345pt × 550pt
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
-warning: overfull label [W0336]
+warning: illegible node [W0336]
   note: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0338 (degraded) table is wider than the measure
 warning: overfull table [W0338]
@@ -771,6 +768,9 @@ warning: unexpected environment itemize for command \fbox [W0455]
 ── W0457 (degraded) a margin note where its page sets no margin beside the text (a frame or card, a float, box, table, note or display, which LaTeX refuses outside its paragraphs); its text sets where it stands
 warning: unsupported margin for float [W0457]
   note: move the '\marginpar' outside it, beside a line of the page's own text
+── W0458 (degraded) an environment defined in a way the engine does not apply; its body kept
+warning: unsupported environment probenote [W0458]
+  note: define the environment in the preamble, before '\begin{document}'
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography

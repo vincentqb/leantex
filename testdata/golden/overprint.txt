@@ -94,4 +94,4 @@ info[N0100] 28:1 translated environment overprint | detail: \alt alternation, on
 info[N0100] 7:1 translated class beamer | detail: \documentclass[aspectratio=169]{slides}
 info[N0100] 7:1 translated package amsmath | detail: nothing: the engine does this itself
 info[N0100] 7:1 translated package amsthm | detail: \theoremstyle{plain}
-warning[W0302] 35:1 unsupported environment overprint | help: \defineenv{name}(...) {begin} {end} declares one
+warning[W0302] 35:1 Environment overprint undefined | help: \defineenv{name}(...) {begin} {end} declares one

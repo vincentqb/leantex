@@ -112,16 +112,6 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
     let held := ((layoutOf fonts doc).pages[0]?.map (·.lines.filter (!·.furniture))).map (·.size)
     t s!"{cls}: a page of prose holds lualatex's {lines} lines, the last one's depth below the block"
       (held == some lines)
-  let n0021 (pre : String) : Bool :=
-    let (doc, _) := Elab.run "t.tex" ("\\documentclass{article}" ++ pre ++
-      "\\runninghead{Notes}\\begin{document}x\\end{document}")
-    (layoutOf fonts doc).diags.any (·.code == "N0021")
-  t "a class's own head and foot distances differ unnamed, declared ones named"
-    (!n0021 "" && !n0021 "\\page{ headsep = 10pt }" &&
-      n0021 "\\page{ headsep = 10pt, footskip = 20pt }" &&
-      (layoutOf fonts (Elab.run "t.tex" ("\\documentclass{ltflow}\\tokens{ headsep = 20pt, " ++
-        "footskip = 30pt }\\runninghead{N}\\begin{document}x\\end{document}")).1).diags.any
-        (·.code == "N0021"))
   let page (src : String) : Ir.PageSpec :=
     (Elab.run "t.tex" (src ++ "\\begin{document}x\\end{document}")).1.page
   t "a declared side margin claims the page across, the class's area standing down"

@@ -419,13 +419,13 @@ def environScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let unappliedText := pageTextOf fonts unapplied
   let unappliedDs := dvE unapplied
   let unknownAt (n : String) : Bool :=
-    unappliedDs.any fun d => d.code == "W0302" && d.subject == some ("env:" ++ n) && !d.demoted
+    unappliedDs.any fun d => d.code == "W0458" && d.subject == some ("env:" ++ n) && !d.demoted
   t "an unapplied body definition's uses set their arguments and body plainly, or nothing"
     (hasStr unappliedText "Note words here" && hasStr unappliedText "Theorem words" &&
       !hasStr unappliedText "Hidden" && unappliedDs.all (·.severity != .error))
-  t "an unapplied body definition's plain use is a degraded unknown environment"
+  t "an unapplied body definition's plain use is a degraded unsupported environment"
     (unknownAt "probenote" && unknownAt "probethm" && !unknownAt "probehide" &&
-      DiagCode.W0302.loss == .degraded)
+      DiagCode.W0458.loss == .degraded)
 
 /-- environ's `\NewEnviron` defines the environment it names, as the kernel spelling with the body
 at `\BODY`. -/

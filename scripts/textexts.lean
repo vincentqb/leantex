@@ -27,6 +27,8 @@ def probes : List Probe := [
     body := "\\begin{itemize}\n\\item Kilo\n\\end{enumerate}" },
   { key := "envUnclosed", code := "E0205", names := ["itemize", "document"],
     body := "\\begin{itemize}\n\\item Kilo\n" },
+  { key := "envUndefined", code := "W0302", names := ["zzbanner"],
+    body := "\\begin{zzbanner}\nKilo\n\\end{zzbanner}" },
   { key := "inputMissing", code := "E0502", names := ["zzabsent.tex"],
     body := "\\input{zzabsent}" },
   { key := "nesting", code := "W0010",

@@ -129,8 +129,8 @@ start, rebuild if it was interrupted, or accept the loss with \\allow\{W0609}"
 
 /-- N0024: a figure's drawing is the external converter's, because the engine does not draw the feature. -/
 @[expose] public def convertedDiag (imp : Importer) (src : String) (l : Gfx.Loss) : Diag :=
-  Diag.of .N0024 (Diag.say .N0024 .figure src)
-    (detail := some s!"drawn by {imp.tool}, for its {words l}")
+  Diag.of .N0024 (Diag.say .N0024 (named l).1 (named l).2 (some (some .figure, src)))
+    (detail := some s!"drawn by {imp.tool}")
     (subject := some (subject imp.kind l)) (output := imp.output)
 
 /-- W0609 for a PDF figure's web face. -/

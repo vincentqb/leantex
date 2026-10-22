@@ -134,7 +134,7 @@ def venueEdgeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
       "\\begin{Verbatim}[label={[a]b}]\na_b\n\\end{Verbatim}") "a_b")
   let (_, other) := elabStr (dvDoc "\\DefineVerbatimEnvironment{Y}{BVerbatim}{}\n" "x")
   t "a definition on a base the reader does not set is named, not noted as read"
-    (other.any (·.code == "W0302") && !other.any fun d => d.code == "N0100" &&
+    (other.any (·.code == "W0458") && !other.any fun d => d.code == "N0100" &&
       hasStr d.message "DefineVerbatimEnvironment")
   let stored := "\\usepackage{environ}\n\\NewEnviron{ack}{\\BODY}\n\\NewEnviron{hide}{}\n" ++
     "\\newcommand{\\later}{\\let\\ack\\hide}\n"
@@ -146,7 +146,7 @@ def fancyIncludedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (_, ds, _) ← runStyParity "fancy-input"
   t "a definition in an included file is named where it stands"
-    ((ds.filter fun d => d.code == "W0302" && d.span.any (·.file.endsWith "fancy-part.tex")).size == 1 &&
+    ((ds.filter fun d => d.code == "W0458" && d.span.any (·.file.endsWith "fancy-part.tex")).size == 1 &&
       !ds.any fun d => d.code == "N0100" && hasStr d.message "DefineVerbatimEnvironment")
 
 /-- A document's artifacts: the page's lines, its HTML, its markdown twin and its PDF's bytes. -/

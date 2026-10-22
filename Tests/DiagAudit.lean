@@ -35,6 +35,7 @@ import Tests.Settings
 import Tests.UnusedSettings
 import Tests.BibEdges
 import Tests.CodeDoc
+import Tests.Redefine
 
 /-! The diagnostics audit: each code's decided verdict, the construct rung it aims at, and the pin
 that fails when the decision regresses; `scripts/diagaudit.lean` ratchets the codes no row binds. -/
@@ -190,7 +191,8 @@ def registry : List AuditRow :=
    ⟨.W0428, .keep, .degraded, check% biblatexSuperciteChecks⟩,
    ⟨.W0429, .keep, .degraded, check% bibFieldBackstopChecks⟩,
    ⟨.W0107, .keep, .degraded, check% unreadableLengthChecks⟩,
-   ⟨.W0449, .keep, .native, check% Tests.UnusedSettings.firesChecks⟩]
+   ⟨.W0449, .keep, .native, check% Tests.UnusedSettings.firesChecks⟩,
+   ⟨.W0458, .keep, .degraded, check% environScopeChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

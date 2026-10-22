@@ -10,8 +10,8 @@ inductive Rung where
   /-- Nothing was measured: every shape produced only diagnostics about the probe's own
   malformed arguments. -/
   | unprobed
-  /-- Nothing answers the name and its arguments survive as text: W0301/W0302, or W0012
-  for a name the math parser does not know. -/
+  /-- Nothing answers the name, or nothing applies its definition, and its arguments survive as
+  text: W0301/W0302/W0458, or W0012 for a name the math parser does not know. -/
   | unknown
   /-- Recognised, and the construct earns a `dropped` code: the content is
   gone and no plan owns it. -/

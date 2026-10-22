@@ -96,8 +96,9 @@ def Rung.best (a b : Rung) : Rung := if a.level ≥ b.level then a else b
 
 def Rung.worse (a b : Rung) : Rung := if a.level ≤ b.level then a else b
 
-/-- The unknown-construct codes in text, where any command may stand. -/
-def textUnknownCodes : List String := ["W0301", "W0302"]
+/-- The unknown-construct codes in text, where any command may stand, and an environment
+definition the engine does not apply. -/
+def textUnknownCodes : List String := ["W0301", "W0302", "W0458"]
 
 /-- The math parser's decline (W0012), read as no information, since a math place only
 rescues the constructs living in math. -/

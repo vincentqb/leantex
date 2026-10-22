@@ -12135,7 +12135,7 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
   let a := match labelCollisions pic boxes with
     | 0 => a
     | _ =>
-      { a with diags := a.diags.push (Diag.of .W0336 (Diag.say .W0336 .labelKey)
+      { a with diags := a.diags.push (Diag.of .W0336 (Diag.say .W0336 .node)
         (help := "declare the extent ([minimum width = ...]) or widen the \
 separation ([node distance = ...])")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
@@ -22245,16 +22245,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let accF := if acc.owed.any (·.fil) then
       { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
     else acc
-  -- A furniture-gap asymmetry the document declares is named, a class's own unnamed.
-  let preDiags := if let (some gt, some gb) := (gapTop, gapBot) then
-      -- premise: classAreaChecks — a class's head and foot distances are no declaration
-      if gt != gb && (doc.docClass.record.area == .engine ||
-          doc.page.headsep.isSome && doc.page.footskip.isSome) then
-        acc.diags.push (Diag.of .N0021 (Diag.say .N0021 .gap) (output := some .pdf)
-          (detail := some s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt between the \
-header and footer gaps"))
-      else acc.diags
-    else acc.diags
+  let preDiags := acc.diags
   -- A heading's declared space above must not be the smaller (Butterick); defaults satisfy it.
   let preDiags := ["section", "subsection", "subsubsection"].foldl (fun ds element =>
     match doc.styles.find? element with
@@ -22928,7 +22919,7 @@ public theorem ladderDiags_accounts (labels : Array (Option String))
 overfull line, a page short of its height, the measure's band, a natural table, box, float or
 footnote past the text block, running furniture, page rules and math set without a math face. -/
 public def paperLossCodes : List DiagCode :=
-  [.W0003, .W0005, .N0200, .W0201, .W0338, .W0358, .W0328, .W0333, .N0021, .W0304,
+  [.W0003, .W0005, .N0200, .W0201, .W0338, .W0358, .W0328, .W0333, .W0304,
    .W0386, .E0405, .W0009, .W0016]
 
 /-- Whether a flow sets nothing whose setting raises a loss its web page shares (a frame, a picture,

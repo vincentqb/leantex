@@ -2319,12 +2319,6 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
        (dGeom.vmargin + dBand.band) - dFurn.foldl min y0 == Dim.pt 20 &&
          dFurn.foldl max y0 - (dGeom.pageH - dGeom.bottomMargin) == Dim.pt 20
      | none => false)
-  t "equal declared seps carry no note" (!dOut.diags.any (·.code == "N0021"))
-  let (nDoc, _) := elabStr (declPre "\\page{ headsep = 20pt, footskip = 30pt }")
-  let nOut := layoutOf oneFace nDoc
-  t "differing declared seps are named as declared, once"
-    ((nOut.diags.filter (·.code == "N0021")).size == 1 &&
-      nOut.diags.all fun dg => dg.code != "N0021" || dg.severity == .note)
   let (fDoc, _) := elabStr (declPre "\\page{ furnituregap = 12pt }")
   let fGeom := Layout.Geom.ofPage fDoc.page
   let fOut := layoutOf oneFace fDoc fGeom
@@ -2333,7 +2327,6 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (fOut.pages.all fun p =>
       p.lines.any (fun l => l.furniture && l.y == fHeadY) &&
       p.lines.any (fun l => l.furniture && l.y == fFootY))
-  t "the native gap carries no note" (!fOut.diags.any (·.code == "N0021"))
 
 /-- The default `plain` page style numbers every page once in its footer band, and the documented
 exceptions carry no number. -/

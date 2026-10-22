@@ -178,7 +178,6 @@ public inductive DiagCode where
   | W0363
   | W0364
   | E0365
-  | N0021
   | W0368
   | W0369
   | E0375
@@ -262,6 +261,7 @@ public inductive DiagCode where
   | W0454
   | W0455
   | W0457
+  | W0458
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -346,7 +346,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0201 => ("0201", .standard, "measure outside the readable band")
   | .W0202 => ("0202", .standard, "heading sets more space below than above")
   | .W0301 => ("0301", .degraded, "unknown command; {...} arguments kept as text")
-  | .W0302 => ("0302", .degraded, "unknown environment; body kept")
+  | .W0302 => ("0302", .degraded, "an environment nothing defines; its body kept")
   | .W0303 => ("0303", .config, "a redefinition of a built-in the engine does not apply; the built-in stands")
   | .W0304 => ("0304", .degraded, "colour name not in the palette; content kept uncoloured")
   | .W0307 => ("0307", .pending, "construct not implemented yet; its content is not rendered")
@@ -399,7 +399,6 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0363 => ("0363", .degraded, "a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place")
   | .W0364 => ("0364", .degraded, "an unresolved data path; nothing renders in its place")
   | .E0365 => ("0365", .dropped, "\\data file not found; its records are absent")
-  | .N0021 => ("0021", .info, "header and footer gaps differ as declared; equal gaps are the default")
   | .W0368 => ("0368", .degraded, "a language the engine ships no locale for; English captions and patterns stand in")
   | .W0369 => ("0369", .degraded, "a per-language font binding; one face serves every language, so the binding is dropped")
   | .E0375 => ("0375", .dropped, "\\dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped")
@@ -419,7 +418,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0603 => ("0603", .degraded, "an image's embedded colour profile is dropped; the page reads it as device colour")
   | .W0604 => ("0604", .degraded, "an image's orientation tag is dropped; the page shows the stored orientation")
   | .W0609 => ("0609", .degraded, "a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn")
-  | .N0024 => ("0024", .info, "a figure is drawn by an external converter, because the engine does not draw one of its features")
+  | .N0024 => ("0024", .info, "a figure feature the engine does not draw; an external converter draws the figure")
   | .N0026 => ("0026", .info, "an SVG's font family is not the document's; its text is set in one of the document's own faces")
   | .N0027 => ("0027", .info, "an SVG figure holds a link, which its drawing does not carry; the figure draws the link's content")
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
@@ -483,6 +482,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0454 => ("0454", .degraded, "a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked")
   | .W0455 => ("0455", .degraded, "a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block")
   | .W0457 => ("0457", .degraded, "a margin note where its page sets no margin beside the text (a frame or card, a float, box, table, note or display, which LaTeX refuses outside its paragraphs); its text sets where it stands")
+  | .W0458 => ("0458", .degraded, "an environment defined in a way the engine does not apply; its body kept")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -494,13 +494,13 @@ public def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 public def DiagCode.qual : DiagCode → Diag.Qual
   | .E0306 | .E0322 | .E0324 | .E0326 | .E0328 | .E0329 | .W0111 | .W0301 | .W0304 |
     .E0340 | .W0316 | .W0319 | .W0323 | .W0349 | .W0351 | .W0353 | .W0364 | .W0381 | .W0426 |
-    .W0412 | .W0454 =>
+    .W0412 | .W0454 | .W0302 =>
     .undefined
   | .E0006 | .E0111 | .E0112 | .E0113 | .E0309 | .W0010 | .W0011 | .W0012 | .W0015 | .W0102 |
-    .W0103 | .W0106 | .W0109 | .W0302 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
+    .W0103 | .W0106 | .W0109 | .W0458 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
     .W0363 | .E0375 | .W0370 | .W0371 | .W0374 | .W0380 | .W0701 |
     .W0609 | .W0389 | .E0390 | .W0419 | .W0435 | .W0422 | .W0423 | .W0427 |
-    .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 | .W0457 =>
+    .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 | .W0457 | .N0024 =>
     .unsupported
   | .W0101 | .N0102 | .N0104 | .W0001 | .W0007 | .W0104 | .W0108 | .W0110 | .W0303 | .E0336 |
     .W0317 | .E0334 | .W0340 | .E0347 | .W0355 |
@@ -528,20 +528,20 @@ public def DiagCode.qual : DiagCode → Diag.Qual
     .unexpected
   | .W0004 | .W0006 | .W0009 | .W0016 | .W0368 | .N0026 | .W0421 | .W0447 =>
     .substituted
-  | .W0005 | .W0328 | .W0333 | .W0335 | .W0336 | .W0338 | .W0358 | .W0384 | .W0400 |
+  | .W0005 | .W0328 | .W0333 | .W0335 | .W0338 | .W0358 | .W0384 | .W0400 |
     .W0386 | .W0396 =>
     .overfull
-  | .W0201 | .W0315 | .W0330 | .W0345 | .W0308 =>
+  | .W0201 | .W0315 | .W0330 | .W0345 | .W0308 | .W0336 =>
     .illegible
   | .E0004 | .E0330 =>
     .failed
   | .N0200 =>
     .tight
-  | .N0100 | .N0020 | .N0023 | .N0024 | .N0030 =>
+  | .N0100 | .N0020 | .N0023 | .N0030 =>
     .translated
   | .N0114 | .N0019 | .N0025 | .N0448 =>
     .resolved
-  | .N0016 | .N0017 | .N0021 =>
+  | .N0016 | .N0017 =>
     .default
 
 /-- A message in the one form, opening with its code's word. -/
@@ -633,7 +633,8 @@ public def DiagCode.retired : List (String × Option String) :=
    ("W0376", some "N0376"),
    ("N0419", some "W0419"),
    ("W0397", none),
-   ("W0356", some "W0104")]
+   ("W0356", some "W0104"),
+   ("N0021", none)]
 
 /-- Codes renumbered for their class, whose successor names exactly their loss; `\allow` of the
 old spelling accepts the successor. -/

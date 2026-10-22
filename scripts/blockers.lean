@@ -15,8 +15,9 @@ def blockersPath : String := "testdata/coverage/blockers.tsv"
 path relative to the TeX distribution's root. -/
 def manifestPath : String := "testdata/coverage/public-corpus.txt"
 
-/-- The unknown-construct codes: the engine met a name nothing answers. -/
-def blockerCodes : List String := ["W0301", "W0302"]
+/-- The unknown-construct codes: the engine met a name nothing answers, or a definition it does
+not apply. -/
+def blockerCodes : List String := ["W0301", "W0302", "W0458"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg

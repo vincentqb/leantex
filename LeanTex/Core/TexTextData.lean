@@ -14,6 +14,7 @@ public inductive TexKey where
   | preambleText
   | envMismatch
   | envUnclosed
+  | envUndefined
   | inputMissing
   | nesting
   | preambleOnly
@@ -52,6 +53,10 @@ public def TexKey.row : TexKey → TexText
     { key := "envUnclosed", code := .E0205,
       text := "\\begin{#1} ended by \\end{#2}",
       source := "latex.ltx:8985, LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)" }
+  | .envUndefined =>
+    { key := "envUndefined", code := .W0302,
+      text := "Environment #1 undefined",
+      source := "latex.ltx:1319, LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)" }
   | .inputMissing =>
     { key := "inputMissing", code := .E0502,
       text := "File `#1' not found",
@@ -82,7 +87,7 @@ public def TexKey.row : TexKey → TexText
       source := "latex.ltx:14932, LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)" }
 
 public def TexText.rows : List TexText :=
-  [TexKey.row .brace, TexKey.row .tab, TexKey.row .math, TexKey.row .itemMissing, TexKey.row .preambleText, TexKey.row .envMismatch, TexKey.row .envUnclosed, TexKey.row .inputMissing, TexKey.row .nesting, TexKey.row .preambleOnly, TexKey.row .extraTab, TexKey.row .citation, TexKey.row .reference, TexKey.row .labelTwice]
+  [TexKey.row .brace, TexKey.row .tab, TexKey.row .math, TexKey.row .itemMissing, TexKey.row .preambleText, TexKey.row .envMismatch, TexKey.row .envUnclosed, TexKey.row .envUndefined, TexKey.row .inputMissing, TexKey.row .nesting, TexKey.row .preambleOnly, TexKey.row .extraTab, TexKey.row .citation, TexKey.row .reference, TexKey.row .labelTwice]
 
 public def TexText.preambleOnly : List String :=
   ["@onlypreamble",
