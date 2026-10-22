@@ -2544,12 +2544,21 @@ def taintedWord (c : Chars) (t : Option Nat) (s : Nat) : Option Nat := Id.run do
     unless (c.at? k).any fun d => CiteKey.isAlnum d || d == '.' do return none
   return some t
 
-/-- A MyST target line's label, `(label)=` alone on its line, its label holding no space. -/
+/-- A MyST label as the key its target and references share: its white space runs one hyphen,
+lower case, as an anchor spells it. -/
+public def mystLabelKey (label : String) : String :=
+  -- white space runs fold to one hyphen, leading and trailing ones dropped
+  let (key, _) := label.trimAscii.toString.foldl (fun (acc : String × Bool) c =>
+    if c == ' ' || c == '\t' || c == '\n' then (acc.1, true)
+    else ((if acc.2 then acc.1.push '-' else acc.1).push c.toLower, false)) ("", false)
+  -- the characters an anchor keeps, as Ir.labelAnchor spells one
+  String.ofList (key.toList.map fun c =>
+    if c.toNat ≥ 0x80 || c.isAlpha || c.isDigit || c == ':' || c == '.' || c == '-' || c == '_' then c else '-')
+
+/-- A MyST target line's label, `(label)=` alone on its line. -/
 def mystTargetAt (cs : Array Char) (i : Nat) : Option String :=
   let t := (sliceStr cs i cs.size).trimAscii.toString
-  if t.startsWith "(" && t.endsWith ")=" && t.length > 3 then
-    let label := ((t.drop 1).dropEnd 2).toString
-    if label.any (fun c => c == ' ' || c == '\t' || c == '(' || c == ')') then none else some label
+  if t.startsWith "(" && t.endsWith ")=" && t.length > 3 then some ((t.drop 1).dropEnd 2).toString
   else none
 
 /-- A MyST role's name the text ends with, `{name}`, and the text before it. -/
@@ -2581,7 +2590,7 @@ def roleInls (name body : String) (p : Pos) : Array Inl :=
   | "cite:t" | "cite:ts" =>
     #[.cite (keys.toArray.map fun k => CiteItem.mk k .authorInText #[] #[]) p]
   | "ref" | "numref" | "eq" =>
-    #[.link ("#" ++ target.2) (if name == "eq" then "myst:eq" else "myst:ref")
+    #[.link ("#" ++ mystLabelKey target.2) (if name == "eq" then "myst:eq" else "myst:ref")
       (if target.1.isEmpty then #[] else #[.text target.1 p]) p]
   | _ => #[.code body p]
 
@@ -4215,7 +4224,7 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       acc := a
       diags := diags ++ ds
       leaf := .none
-      acc := acc.push (.para #[.text ("(" ++ label ++ ")=") lpos] lpos)
+      acc := acc.push (.para #[.anchor (mystLabelKey label) lpos] lpos)
     else if let some attrs := (if doc && ind ≤ 3 then leanDivAt cs j else none) then
       let (a, ds, dd) := closePara leaf acc lpos
       defs := addDefs defs dd

@@ -1536,7 +1536,7 @@ private def refInls (titles : List (String × Array Inl)) : List Inl → List In
 private def refInl (titles : List (String × Array Inl)) : Inl → Inl
   | .link dest title body p =>
     if dest.startsWith "#" && body.isEmpty && title != "myst:eq" then
-      match titles.find? (·.1 == (dest.drop 1).toString) with
+      match titles.find? (·.1 == mystLabelKey (dest.drop 1).toString) with
       | some (_, t) => .link dest "" t p
       | none => .link dest title body p
     else .link dest title (refInls titles body.toList).toArray p
@@ -1586,35 +1586,82 @@ private def refItemBlks (titles : List (String × Array Inl)) : List (Array Blk)
 
 end
 
+/-- A heading's inlines as a reference's text: its notes and anchors dropped, its links their text,
+the space a dropped note leaves trimmed. -/
+private def titleInls (body : Array Inl) : Array Inl :=
+  let kept := body.foldl (init := #[]) fun out x => match x with
+    | .note .. | .anchor .. => out
+    | .link _ _ b _ => out.append b
+    | x => out.push x
+  match kept.back? with
+  | some (Inl.text t q) => kept.pop.push (.text t.trimAsciiEnd.toString q)
+  | _ => kept
+
 /-- The headings' targets and their text, which a reference with none of its own sets: the heading's
 inlines without its notes, anchors and links of its own. -/
 private def targetTitles (blocks : Array Blk) : List (String × Array Inl) :=
   blocks.toList.filterMap fun b => match b with
     | .heading _ body _ => match body.back? with
-      | some (.anchor l _) => some (l, body.pop.filter fun x =>
-          !(x matches .note .. || x matches .anchor .. || x matches .link ..))
+      | some (.anchor l _) => some (l, titleInls body.pop)
       | _ => none
     | _ => none
 
-/-- A MyST target's label, where a paragraph is `(label)=` alone. -/
+/-- A MyST target's key, where the block reader set a target line as a paragraph of its anchor. -/
 private def targetOf? : Blk → Option (String × Pos)
-  | .para #[.text t _] p =>
-    let t := t.trimAscii.toString
-    if t.startsWith "(" && t.endsWith ")=" && t.length > 3 then
-      some (((t.drop 1).dropEnd 2).toString, p) else none
+  | .para #[.anchor l _] p => some (l, p)
   | _ => none
 
-/-- Blocks with each MyST target set as a label: in the heading it stands before, else alone. -/
-private def mystTargets : List Blk → Array Blk → Array Blk
-  | [], out => out
-  | b :: rest, out =>
+private theorem blks_toList_lt (b : Array Blk) : sizeOf b.toList < sizeOf b := by
+  cases b; simp
+
+private theorem items_toList_lt (b : Array (Array Blk)) : sizeOf b.toList < sizeOf b := by
+  cases b; simp
+
+mutual
+
+/-- Blocks with each MyST target set in the heading it stands before, else left as its anchor, in
+every container too. -/
+private def mystTargets : List Blk → List Blk
+  | [] => []
+  | b :: rest =>
     match targetOf? b, rest.head? with
-    | some (l, p), some (.heading lv body q) =>
-      mystTargets rest.tail (out.push (.heading lv (body.push (.anchor l p)) q))
-    | some (l, p), _ => mystTargets rest (out.push (.para #[.anchor l p] p))
-    | none, _ => mystTargets rest (out.push b)
-termination_by l => l.length
-decreasing_by all_goals simp_wf <;> (try cases rest) <;> simp <;> omega
+    | some (l, p), some (.heading lv body q) => .heading lv (body.push (.anchor l p)) q :: mystTargets rest.tail
+    | _, _ => mystTargetsIn b :: mystTargets rest
+termination_by l => sizeOf l
+decreasing_by all_goals (simp_wf; (try cases rest) <;> (try simp_all) <;> omega)
+
+/-- A block's containers with their MyST targets set. -/
+private def mystTargetsIn : Blk → Blk
+  | .quote body p => .quote (mystTargets body.toList).toArray p
+  | .aside body p => .aside (mystTargets body.toList).toArray p
+  | .note l body p => .note l (mystTargets body.toList).toArray p
+  | .disclosure s e body p => .disclosure s e (mystTargets body.toList).toArray p
+  | .list o st t items p => .list o st t (mystItems items.toList).toArray p
+  | .para body p => .para body p
+  | .heading l body p => .heading l body p
+  | .code info text p => .code info text p
+  | .rule p => .rule p
+  | .table a header rows p => .table a header rows p
+  | .lean attrs p => .lean attrs p
+  | .metadata fields p => .metadata fields p
+  | .refs p => .refs p
+termination_by b => sizeOf b
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := blks_toList_lt body; omega)
+    | (have := items_toList_lt items; omega)
+
+/-- A list's items with their MyST targets set. -/
+private def mystItems : List (Array Blk) → List (Array Blk)
+  | [] => []
+  | item :: rest => (mystTargets item.toList).toArray :: mystItems rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals first | omega | (have := blks_toList_lt item; omega)
+
+end
 
 /-- The whole document: markdown source to the surface AST, with the reader's
 own diagnostics carrying `.md` spans; its metadata opens it, and its reference list stands in
@@ -1634,8 +1681,8 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
     else m
   let blocks := if smart then abbrevBlks split.2.toList else split.2.toList
   let blocks := if dialect != .myst then blocks else
-    let targeted := mystTargets blocks #[]
-    refBlks (targetTitles targeted) targeted.toList
+    let targeted := mystTargets blocks
+    refBlks (targetTitles targeted.toArray) targeted
   let cited := citesBlks citesInls blocks
   let placed := refsAt blocks
   -- The heading the metadata sets over the list at the file's end, which the list drops where it
