@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.CaseFold
+import LeanTex.Core.Hex
 
 public section
 
@@ -73,14 +74,45 @@ def jsSpace (c : Char) : Bool :=
     c.val == 0xA0 || c.val == 0x1680 || (0x2000 ≤ c.val && c.val ≤ 0x200A) || c.val == 0x2028 ||
     c.val == 0x2029 || c.val == 0x202F || c.val == 0x205F || c.val == 0x3000 || c.val == 0xFEFF
 
-/-- A text as JavaScript's `Number` reads it over integers, none for NaN or a fraction. -/
+/-- Digits in base `b` as a number, none where one is not a digit of it. -/
+private def digitsIn (b : Nat) (s : String) : Option Nat :=
+  if s.isEmpty then none else
+  s.foldl (fun acc c => acc.bind fun n =>
+    match Hex.digit? c with
+    | some d => if d < b then some (n * b + d) else none
+    | none => none) (some 0)
+
+/-- A text as JavaScript's `Number` reads it where the number is an integer: decimal with a
+fraction and exponent, or `0x`, `0o` and `0b`; none for NaN, an infinity or a fraction. -/
 def numberOf (s : String) : Option Int :=
   let t := ((s.dropWhile jsSpace).copy.dropEndWhile jsSpace).copy
   if t.isEmpty then some 0 else
+  let pre := (t.take 2).copy.toLower
+  if pre == "0x" then (digitsIn 16 (t.drop 2).copy).map Int.ofNat
+  else if pre == "0o" then (digitsIn 8 (t.drop 2).copy).map Int.ofNat
+  else if pre == "0b" then (digitsIn 2 (t.drop 2).copy).map Int.ofNat else
   let (neg, body) := if t.startsWith "-" then (true, (t.drop 1).copy)
     else if t.startsWith "+" then (false, (t.drop 1).copy) else (false, t)
-  if body.isEmpty || !body.all Char.isDigit then none else
-    body.toNat?.map fun n => if neg then -(n : Int) else n
+  let (mant, ex) := match body.toLower.splitOn "e" with
+    | [m] => (m, some (0 : Int))
+    | [m, e] => (m, if e.startsWith "-" then (digitsIn 10 (e.drop 1).copy).map fun n => -(n : Int)
+        else (digitsIn 10 (if e.startsWith "+" then (e.drop 1).copy else e)).map Int.ofNat)
+    | _ => (body, none)
+  let (whole, frac) := match mant.splitOn "." with
+    | [w] => (w, "")
+    | [w, f] => (w, f)
+    | _ => ("x", "")
+  if whole.isEmpty && frac.isEmpty then none else
+  match (if whole.isEmpty then some 0 else digitsIn 10 whole),
+      (if frac.isEmpty then some 0 else digitsIn 10 frac), ex with
+  | some w, some f, some e =>
+    -- the value is (w·10^|frac| + f)·10^(e - |frac|), an integer only where the shift leaves none over
+    let digits : Int := w * 10 ^ frac.length + f
+    let shift := e - frac.length
+    let v : Option Int := if shift ≥ 0 then some (digits * 10 ^ shift.toNat)
+      else if digits % 10 ^ (-shift).toNat == 0 then some (digits / 10 ^ (-shift).toNat) else none
+    v.map fun v => if neg then -v else v
+  | _, _, _ => none
 
 /-- A value as JavaScript's `ToPrimitive` leaves it: an array or object as its text. -/
 def Value.prim : Value → Value
@@ -269,7 +301,7 @@ def elex (src : String) : Except String (Array ETok) := Id.run do
   for _ in [0:cs.size + 1] do
     if i ≥ cs.size then break
     let c := cs.getD i ' '
-    if jsSpace c then i := i + 1; continue
+    if c == ' ' || c == '\n' || c == '\t' || c == '\r' || c.val == 0xA0 then i := i + 1; continue
     if c.isAlpha || c == '_' then
       let mut j := i
       for _ in [i:cs.size] do
@@ -293,11 +325,8 @@ def elex (src : String) : Except String (Array ETok) := Id.run do
         if j ≥ cs.size then break
         let d := cs.getD j ' '
         if d == '\\' then
-          v := v.push (match cs.getD (j + 1) ' ' with
-            | 'n' => '\n'
-            | 't' => '\t'
-            | 'r' => '\r'
-            | e => e)
+          let e := cs.getD (j + 1) ' '
+          v := v.push (if e == 'n' then '\n' else if e == 't' then '\t' else if e == 'r' then '\r' else e)
           j := j + 2
           continue
         if d == c then closed := true; j := j + 1; break
@@ -503,15 +532,36 @@ def Arg.eval (sc : Scope) : Arg → Value
   | .lit v => v
   | .path p => sc.lookup p
 
-/-- A text in lower case as JavaScript's `toLowerCase` sets it: a character with an upper case
-mapping is lower already, any other its single folded form, `İ` its two. -/
-def lowerText (s : String) : String :=
-  s.foldl (fun out c =>
-    if CaseFold.upperChar c != #[c] then out.push c
-    else if c == 'İ' then out ++ "i̇"
-    else match CaseFold.foldChar c with
-      | #[d] => out.push d
-      | _ => out.push c) ""
+/-- The title case letters, which `toLowerCase` lowers though they have an upper case mapping. -/
+private def titleCase (c : Char) : Bool :=
+  [0x1C5, 0x1C8, 0x1CB, 0x1F2].contains c.val || (0x1F88 ≤ c.val && c.val ≤ 0x1F8F) ||
+    (0x1F98 ≤ c.val && c.val ≤ 0x1F9F) || (0x1FA8 ≤ c.val && c.val ≤ 0x1FAF) ||
+    [0x1FBC, 0x1FCC, 0x1FFC].contains c.val
+
+/-- One character in lower case as JavaScript's `toLowerCase` sets it outside a final sigma: a
+lower case one itself, a Cherokee capital its small letter, any other its single folded form. -/
+private def lowerChar (c : Char) : String :=
+  if c == 'İ' then "i̇" else if c == 'ẞ' then "ß"
+  else if 0x13A0 ≤ c.val && c.val ≤ 0x13EF then (Char.ofNat (c.val.toNat - 0x13A0 + 0xAB70)).toString
+  else if 0x13F0 ≤ c.val && c.val ≤ 0x13F5 then (Char.ofNat (c.val.toNat + 8)).toString
+  else if titleCase c && c.val ≥ 0x1F88 then
+    (Char.ofNat (if c.val.toNat ≤ 0x1FAF then c.val.toNat - 8 else c.val.toNat - 9)).toString
+  else if CaseFold.upperChar c != #[c] && !titleCase c then c.toString
+  else match CaseFold.foldChar c with
+    | #[d] => d.toString
+    | _ => c.toString
+
+/-- A text in lower case as JavaScript's `toLowerCase` sets it, a capital sigma ending a word as
+the final `ς`. -/
+def lowerText (s : String) : String := Id.run do
+  let cs := s.toList.toArray
+  let mut out := ""
+  for k in [0:cs.size] do
+    let c := cs.getD k ' '
+    let letter (d : Char) := d.isAlpha || d.val ≥ 0x370
+    let final := c == 'Σ' && k > 0 && letter (cs.getD (k - 1) ' ') && !((cs[k + 1]?).any letter)
+    out := out ++ (if final then "ς" else lowerChar c)
+  return out
 
 /-- A filter of the subset applied, as nunjucks 3.2.4 applies it: `join` with its separator and an
 item's attribute, `length`, jtex's `len`, `first`, `lower` and `upper`; the reason where nunjucks
@@ -522,10 +572,12 @@ def filterApply (name : String) (v : Value) (args : List Value) : Except String 
     | .str s => some s
     | _ => none
   match name, v with
+  | _, .splice n => .error s!"the filter '{name}' on the typed content '{n}'"
   | "join", .arr items =>
+    if items.any (· matches .splice _) then .error "a join of typed content into text" else
     let sep := match args.head? with
-      | some (.undef) | none => ""
-      | some s => s.prim.show
+      | some s => if s.truthy then s.prim.show else ""
+      | none => ""
     let items := match args[1]? with
       | some attr => if attr.truthy then items.map fun (x : Value) => x.get attr.prim.show else items
       | none => items
@@ -568,6 +620,7 @@ def Expr.eval (sc : Scope) : Expr → Except String Value
   | .cmp op a b => do
     let x ← a.eval sc
     let y ← b.eval sc
+    if x matches .splice _ || y matches .splice _ then throw "a comparison of typed content"
     return .bool (match op with
       | .eq => x.looseEq y
       | .ne => !x.looseEq y
@@ -593,11 +646,13 @@ decreasing_by
   simp_all
   omega
 
-/-- Whether an expression holds only the template's own text: a string literal, or a variable a
-`set` bound to one. -/
+/-- Whether an expression holds only the template's own text: a string literal, a variable a `set`
+bound to one, either side of `and` or `or` where both are, and a case or first filter over one. -/
 def Expr.own (sc : Scope) : Expr → Bool
   | .lit (.str _) => true
   | .path [n] => (sc.find? n).any (·.own)
+  | .and a b | .or a b => a.own sc && b.own sc
+  | .filter e f _ => ["lower", "upper", "first"].contains f && e.own sc
   | _ => false
 
 /-- A printed expression's pieces: the template's own text as text, a join's items each as printed
@@ -609,11 +664,13 @@ def printed (sc : Scope) (e : Expr) : Except String (Array Piece) := do
     match ← inner.eval sc with
     | .arr items =>
       let vals := args.map (·.eval sc)
-      let sep : Array Piece := match args.head?, vals.head? with
-        | some (.lit (.str s)), _ => #[.text s]
-        | _, some Value.undef => #[]
-        | _, none => #[]
-        | _, some s => #[.value s.prim.show]
+      let sepOwn := match args.head? with
+        | some (.lit (.str _)) => true
+        | some (.path p) => (Expr.path p).own sc
+        | _ => false
+      let sep : Array Piece := match vals.head? with
+        | some s => if !s.truthy then #[] else if sepOwn then #[.text s.prim.show] else #[.value s.prim.show]
+        | none => #[]
       let items := match vals[1]? with
         | some attr => if attr.truthy then items.map fun (x : Value) => x.get attr.prim.show else items
         | none => items
@@ -689,8 +746,10 @@ def parseNodes (toks : Array Tok) : Except String (List Node) := Id.run do
           stack := stack.pop; top := outer.push node
         | _ => return .error "an endif outside an if"
       | "for" =>
-        match rest.splitOn " in " with
-        | [v, seqSrc] =>
+        let spaced := String.ofList (rest.toList.map fun c => if c == '\t' || c == '\n' || c == '\r' then ' ' else c)
+        let cut := (spaced.splitOn " in ").head?.map (·.length)
+        match cut.map fun k => [(rest.take k).copy, (rest.drop (k + 4)).copy] with
+        | some [v, seqSrc] =>
           let v := v.trimAscii.toString
           unless isName v do return .error s!"a for over '{v}', not one name"
           match expr seqSrc with
@@ -782,45 +841,37 @@ def Piece.spelled : Piece → String
   | .text s | .value s => s
   | .splice n => "⟦" ++ n ++ "⟧"
 
-/-- The characters TeX reads as other than themselves in running text, and the line ends that would
-end an argument's paragraph. -/
-def texSpecials : List Char := ['\\', '{', '}', '$', '&', '#', '^', '_', '%', '~', '\n', '\r']
+/-- Each character TeX reads as other than itself in running text, with the spelling that sets it:
+a control for a special one, a space for a line or page end, nothing for DEL. -/
+def escapeTable : List (Char × String) :=
+  [('\\', "\\textbackslash{}"), ('{', "\\{"), ('}', "\\}"), ('$', "\\$"), ('&', "\\&"), ('#', "\\#"),
+   ('^', "\\textasciicircum{}"), ('_', "\\_"), ('%', "\\%"), ('~', "\\textasciitilde{}"),
+   ('\n', " "), ('\r', " "), ('\x0c', " "), ('\x7f', "")]
 
-/-- The spellings a special character takes: each a control TeX reads as setting that character, or
-a space for a line end. -/
-def escapeSpellings : List String :=
-  ["\\textbackslash{}", "\\{", "\\}", "\\$", "\\&", "\\#", "\\textasciicircum{}", "\\_", "\\%",
-   "\\textasciitilde{}", " "]
+/-- The characters `escapeTable` respells. -/
+def texSpecials : List Char := escapeTable.map (·.1)
 
-/-- A character as running text spells it: a special one as the control that sets it. -/
+/-- A character as running text spells it: its table spelling, else itself. -/
 def escapeChar (c : Char) : String :=
-  match c with
-  | '\\' => "\\textbackslash{}"
-  | '{' => "\\{"
-  | '}' => "\\}"
-  | '$' => "\\$"
-  | '&' => "\\&"
-  | '#' => "\\#"
-  | '^' => "\\textasciicircum{}"
-  | '_' => "\\_"
-  | '%' => "\\%"
-  | '~' => "\\textasciitilde{}"
-  | '\n' | '\r' => " "
-  | c => c.toString
+  ((escapeTable.find? (·.1 == c)).map (·.2)).getD c.toString
 
 /-- A value the document chose, as TeX source: each character's spelling in order. -/
 def escapeTex (s : String) : String := String.join (s.toList.map escapeChar)
 
-/-- A special character spells one of the escape spellings. -/
-theorem escapeChar_special (c : Char) (h : c ∈ texSpecials) : escapeChar c ∈ escapeSpellings := by
-  simp only [texSpecials, List.mem_cons, List.not_mem_nil, or_false] at h
-  rcases h with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+/-- The table names each character once, so a special one spells exactly its table spelling. -/
+theorem escapeChar_special (c : Char) (s : String) (h : (c, s) ∈ escapeTable) : escapeChar c = s := by
+  simp only [escapeTable, List.mem_cons, List.not_mem_nil, or_false, Prod.mk.injEq] at h
+  rcases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ |
+    ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> decide
 
 /-- Any other character spells itself. -/
 theorem escapeChar_plain (c : Char) (h : c ∉ texSpecials) : escapeChar c = c.toString := by
-  simp only [texSpecials, List.mem_cons, List.not_mem_nil, or_false, not_or] at h
   unfold escapeChar
-  split <;> simp_all
+  have : escapeTable.find? (·.1 == c) = none := by
+    rw [List.find?_eq_none]
+    intro x hx hc
+    exact h (by simp only [texSpecials, List.mem_map]; exact ⟨x, hx, by simpa using hc⟩)
+  simp [this]
 
 /-- The pieces as TeX source, each value escaped and each splice given by `splice`. -/
 def Piece.tex (splice : String → String) : Piece → String
