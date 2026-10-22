@@ -476,7 +476,8 @@ private def inlRaws (file : String) (dialect : Dialect) : Inl → Array Raw × A
     | some r => (#[r], #[])
     | none =>
       let delim := if display then "$$" else "$"
-      (#[.ctrl "texttt" p, .group (textRaws (delim ++ src ++ delim) p) p],
+      let flat := String.ofList ((delim ++ src ++ delim).toList.map fun c => if c == '\n' || c == '\r' then ' ' else c)
+      (#[.ctrl "texttt" p, .group (textRaws flat p) p],
         #[routeDegraded file "docstring-math" (Diag.say .W0392 .math) p
           (detail := some "the math model does not read it")])
   | .soft _ => (#[.space], #[])
@@ -500,7 +501,7 @@ private def inlRaws (file : String) (dialect : Dialect) : Inl → Array Raw × A
     if dialect == .myst && dest.startsWith "#" && body.isEmpty then
       (mystRefRaws (if title == "myst:eq" then "eqref" else "ref") (dest.drop 1).toString p, ds)
     else
-    let ds := if title.isEmpty || title.startsWith "myst:" then ds else
+    let ds := if title.isEmpty || (dialect == .myst && title.startsWith "myst:") then ds else
       ds.push (routeDegraded file "link-title" (Diag.say .W0392 .title) p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest title alt p =>
@@ -1585,11 +1586,13 @@ private def refItemBlks (titles : List (String × Array Inl)) : List (Array Blk)
 
 end
 
-/-- The headings' targets and their text, which a reference with none of its own sets. -/
+/-- The headings' targets and their text, which a reference with none of its own sets: the heading's
+inlines without its notes, anchors and links of its own. -/
 private def targetTitles (blocks : Array Blk) : List (String × Array Inl) :=
   blocks.toList.filterMap fun b => match b with
     | .heading _ body _ => match body.back? with
-      | some (.anchor l _) => some (l, body.pop)
+      | some (.anchor l _) => some (l, body.pop.filter fun x =>
+          !(x matches .note .. || x matches .anchor .. || x matches .link ..))
       | _ => none
     | _ => none
 
@@ -1658,14 +1661,8 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
 /-- The markdown a document is written in: MyST's where its front matter holds a key only MyST
 reads (an export, its parts, a notebook's kernel), else the document dialect. -/
 public def dialectOf (input : String) : Dialect :=
-  let lines := (input.splitOn "\n").map (·.trimAsciiEnd.toString)
-  match lines with
-  | first :: rest =>
-    if first.trimAscii.toString != "---" then .document else
-    let block := rest.takeWhile fun l => l != "---" && l != "..."
-    let keys := templateKeys ++ ["kernelspec", "jupytext"]
-    if block.any (fun l => keys.any (fun k => l.startsWith (k ++ ":"))) then .myst else .document
-  | [] => .document
+  if (frontMatterKeys input).any (fun k => (templateKeys ++ ["kernelspec", "jupytext"]).contains k) then .myst
+  else .document
 
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/
 public def read (file input : String) : Array Raw × Array Diag := desugar file input (dialectOf input)

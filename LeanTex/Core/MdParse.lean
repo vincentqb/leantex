@@ -781,6 +781,11 @@ def metadataAt (lines : Array Line) : Option (Array MetaField × Nat) := do
   let fields ← metaFields (lines.extract 1 closer)
   return (fields, closer + 1)
 
+
+/-- The top-level keys of a document's opening metadata block, as the block reader reads them. -/
+public def frontMatterKeys (input : String) : Array String :=
+  ((metadataAt (splitLines input)).map fun (fields, _) => fields.map (·.key)).getD #[]
+
 /-- A metadata block closing the document, as Pandoc reads one after a blank line: `---`, no
 blank line, the mapping, and `---` or `...` with nothing but blank lines after it; its fields and
 the index of its opening line, past `from`. -/
@@ -2539,6 +2544,14 @@ def taintedWord (c : Chars) (t : Option Nat) (s : Nat) : Option Nat := Id.run do
     unless (c.at? k).any fun d => CiteKey.isAlnum d || d == '.' do return none
   return some t
 
+/-- A MyST target line's label, `(label)=` alone on its line, its label holding no space. -/
+def mystTargetAt (cs : Array Char) (i : Nat) : Option String :=
+  let t := (sliceStr cs i cs.size).trimAscii.toString
+  if t.startsWith "(" && t.endsWith ")=" && t.length > 3 then
+    let label := ((t.drop 1).dropEnd 2).toString
+    if label.any (fun c => c == ' ' || c == '\t' || c == '(' || c == ')') then none else some label
+  else none
+
 /-- A MyST role's name the text ends with, `{name}`, and the text before it. -/
 def roleBefore (pending : String) : Option (String × String) :=
   if !pending.endsWith "}" then none else
@@ -2555,7 +2568,7 @@ def knownRoles : List String := ["math", "cite", "cite:p", "cite:ps", "cite:t", 
 its keys, `{ref}`, `{numref}` and `{eq}` a reference to the target its text names (a title before
 `<label>` its text), any other its text as code. -/
 def roleInls (name body : String) (p : Pos) : Array Inl :=
-  let keys := (body.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  let keys := ((body.splitOn ",").flatMap (·.splitOn ";")).map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   let target : String × String :=
     if body.endsWith ">" && (body.splitOn "<").length > 1 then
       ((body.splitOn "<").dropLast |> "<".intercalate |>.trimAscii.toString,
@@ -4195,6 +4208,14 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       diags := diags ++ ds
       leaf := .none
       acc := acc.push (.rule lpos)
+    else if let some label := (if dialect == .myst && ind ≤ 3 then mystTargetAt cs j else none) then
+      -- MyST's target is a block of its own, ending the paragraph before it
+      let (a, ds, dd) := closePara leaf acc lpos
+      defs := addDefs defs dd
+      acc := a
+      diags := diags ++ ds
+      leaf := .none
+      acc := acc.push (.para #[.text ("(" ++ label ++ ")=") lpos] lpos)
     else if let some attrs := (if doc && ind ≤ 3 then leanDivAt cs j else none) then
       let (a, ds, dd) := closePara leaf acc lpos
       defs := addDefs defs dd

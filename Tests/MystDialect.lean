@@ -29,6 +29,12 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t s!"myst: formulas, roles and references to a heading's target as its text ({censusText c})"
     (pageHas c 0 "See Papa, Papa and the opening;" && !pageHas c 0 "$x" && !pageHas c 0 "{math}" &&
       !pageHas c 0 "(intro)=" && ds.any (·.subject == some "md:role:abbr"))
+  let (c, ds) := page (myst ("(sec-a)=\n# Alpha[^n]\n\n[^n]: A note.\n\n(para-t)=\nSome paragraph.\n\n" ++
+    "$$\n\\label{eq-x}\na = b\n$$\n\nSee [](#sec-a) and {cite}`zza, zzb; zzc`.\n"))
+  t s!"myst: a target ends the paragraph before it, a reference sets its heading's text without notes, a formula the model does not read is named ({censusText c})"
+    (!pageHas c 0 "(para-t)=" && pageHas c 0 "Some paragraph." && pageHas c 0 "See Alpha and" &&
+      ds.all (·.code != "E0405") && ds.any (·.subject == some "md:docstring-math") &&
+      (ds.filter (·.code == "W0351")).size == 3)
   let (c, _) := page "---\ntitle: Kilo\n---\n\nA price of $5 and $6.\n"
   t "myst: a document outside MyST's dialect keeps its dollars as text"
     (pageHas c 0 "A price of $5 and $6.")
