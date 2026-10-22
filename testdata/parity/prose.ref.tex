@@ -4,16 +4,12 @@
 % written at 10pt sets 0.375 % smaller than the document asked for. Pinning
 % the units here removes that from the comparison instead of tolerating it.
 %
-% The paragraph gap with no indent is the engine's paragraph model, not a
-% preference: it separates paragraphs by a gap and never by an indent, so an
-% indent here would be a difference in the pairing rather than between the
-% engines.
+% The paragraphs are article.cls's own, its indent and its parskip, as the
+% engine sets a standard class's.
 \documentclass{article}
 \usepackage[letterpaper,margin=72bp]{geometry}
 \usepackage{fontspec}
 \setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/]
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{6bp}
 \pagestyle{plain}
 \AtBeginDocument{\fontsize{10bp}{12bp}\selectfont}
 \begin{document}

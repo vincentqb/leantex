@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import LeanTex.Core.Layout.Quality
 
 public section
 
@@ -229,6 +230,17 @@ def parIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t s!"par indent: \\noindent where TeX ignores it neither fails nor warns ({markDs.map (·.code)})"
     (markDs.all (·.severity == .note) &&
       indents oneFace marks ["Charlie"] == [some 0])
+  -- The indent's box is never expanded, so a first line shrinking under font expansion keeps its
+  -- glue's share and stays on the measure.
+  let words := #["Pstart", "theta", "lantern", "harbor", "omicron", "window", "upsilon", "meadow",
+    "Thunder", "candle", "epsilon", "gamma", "silver", "kappa", "garden", "river"]
+  let para (k : Nat) : String := " ".intercalate ((List.range (40 + k % 7)).map fun i =>
+    words[(i * 7 + k * 3) % words.size]?.getD "")
+  let long := doc "{article}" "" ("\n\n".intercalate ((List.range 40).map para))
+  let (ld, _) := elabStr long
+  let lgeom := Layout.Geom.ofPage ld.page
+  t "par indent: an indented first line under font expansion stays on the measure"
+    ((Layout.Quality.overflows lgeom (layoutOf oneFace ld lgeom).pages).isEmpty)
   t "par indent: \\noindent inside a paragraph leaves it whole"
     ((elabStr (doc "{article}" "" "Alpha \\noindent bravo.")).1.body.size == 1)
 

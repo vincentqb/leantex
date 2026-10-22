@@ -1,14 +1,14 @@
 fixture: prose
 compiles: yes
-pdf-key: 8358B46D3E39C5DFFD74643C7E5113CD
-pdf-size: 9264
-src-key: 351AAB6DF716E853733B9821EEFA2241
+pdf-key: 699D66A409B65DCCEF7023C3DBBCBCE6
+pdf-size: 9267
+src-key: 8872CE1B9496ABE91F41B61C469FFBDB
 src-body-key: 4AF1AE8F338A0B2F616157DD5EEBAAD5
-ref-src-key: 9D1AEEDD14BA116BA73B509B4BAD3F95
+ref-src-key: B90BA299A48C0C33A0EFD2437B71DC71
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 format: LaTeX2e <2025-11-01>
-argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -output-directory=<scratch> -jobname=prose.ref \pdfvariable trailerid{[<9D1AEEDD14BA116BA73B509B4BAD3F95> <9D1AEEDD14BA116BA73B509B4BAD3F95>]}\input{prose.ref.tex}
-inputs: ./prose.ref.tex=9D1AEEDD14BA116BA73B509B4BAD3F95 ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D
+argv: -halt-on-error -interaction=nonstopmode -file-line-error -recorder -output-directory=<scratch> -jobname=prose.ref \pdfvariable trailerid{[<B90BA299A48C0C33A0EFD2437B71DC71> <B90BA299A48C0C33A0EFD2437B71DC71>]}\input{prose.ref.tex}
+inputs: ./prose.ref.tex=B90BA299A48C0C33A0EFD2437B71DC71 ../corpus/fonts/OpenSans-Regular.ttf=FDCC645FD27DF1A327D9634213E3DB1D
 pages: 1
 overfull: 0
 provenance: one page of justified prose at a fully declared geometry; every level is expected to hold, so a failure here is the engine changing

@@ -7164,8 +7164,9 @@ private def lineSetting (items : Array Item) (a j : Nat) (target : Length)
   let mut boxTaken : Length := 0
   if f != 0 then
     for k in [a:j] do
-      if let some (.box w _ _ _ _ _ _ _ _ _ _) := items[k]? then
-        boxTaken := boxTaken + expandSpan f (wordOffsets[k]?.getD 0) w - w
+      if let some (.box w _ _ _ _ _ metrics _ _ _ _) := items[k]? then
+        unless metrics.fixed do
+          boxTaken := boxTaken + expandSpan f (wordOffsets[k]?.getD 0) w - w
     if let some (.pen w _ _ _ _ _) := items[j]? then
       boxTaken := boxTaken + w * f / 1000
   let delta := delta - boxTaken

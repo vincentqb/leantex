@@ -906,8 +906,8 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
     ((pr "setcounter").counted && (pr "stepcounter").counted
       && (pr "addtocounter").counted && (pr "refstepcounter").counted)
   expect "a rewrite onto nothing is skipped, not translated"
-    (rungOfProbe "noindent" #[] (Elab.run "p" (wrap "\\noindent")).2 == .skipped
-      && pr "noindent" == .skipped && pr "PackageWarning" == .skipped)
+    (rungOfProbe "nonfrenchspacing" #[] (Elab.run "p" (wrap "\\nonfrenchspacing")).2 == .skipped
+      && pr "nonfrenchspacing" == .skipped && pr "PackageWarning" == .skipped)
   -- The silence guard's W0387 carries `ctrl:<name>`, so its two log commands read `skipped`.
   expect "a construct the silence guard names reads skipped"
     (pr "ClassError" == .skipped && pr "PackageError" == .skipped)
