@@ -1651,8 +1651,8 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"{what}: the page sets 'x' ({entries})" (entries.any (hasStr · "x"))
     t s!"{what}: the html reads 'x'" (hasStr html "x")
     t s!"{what}: the skip is named as the body's is, and nothing backstops the field \
-      ({ds.filter (fun d => d.code == "W0329" || d.code == "W0429") |>.map (·.code)})"
-      ((ds.filter (·.code == "W0329")).size == 1 && !ds.any (·.code == "W0429"))
+      ({ds.filter (fun d => d.code == "W0104" || d.code == "W0429") |>.map (·.code)})"
+      ((ds.filter (·.code == "W0104")).size == 1 && !ds.any (·.code == "W0429"))
   let fields := bibFuzzFields 300
   let png ← IO.FS.readBinFile bibFieldPng
   let box ← IO.FS.readBinFile bibFieldBox

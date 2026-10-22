@@ -274,7 +274,7 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       headings := #[("h3", "Alpha Detail", "SecondWords")] }
   verify ref fonts "a theme's section page" "\\theme{moloch}" sectioned themed
   verify ref fonts "a theme after the document's hook sets its own, as beamer's, and says so"
-    "\\AtBeginSection[]{}\n\\theme{moloch}" sectioned { themed with warns := #["W0348"] }
+    "\\AtBeginSection[]{}\n\\theme{moloch}" sectioned { themed with warns := #["W0104"] }
   verify ref fonts "a progress bar's colour declares no section page"
     "\\theme{default}\n\\setbeamercolor{progress bar}{fg=red}" sectioned pageless
   verify ref fonts "the document's section hook" ("\\theme{default}\n" ++ outlineHook) sectioned hooked

@@ -3169,7 +3169,7 @@ the preamble's declarations, the file's name the title where no description open
   let stray := (strayDirective? lang src).map fun off =>
     let (line, col) := lineCol starts off
     let written := String.ofList ((src.extract off src.size).toList.takeWhile (· != '\n'))
-    Diag.of .W0387 (Diag.say .W0387 .comment (Diag.Name.value written.trimAscii.toString))
+    Diag.of .W0104 (Diag.say .W0104 .comment (Diag.Name.value written.trimAscii.toString))
       (some ⟨file, { line, col }⟩)
       (detail := some "a leantex directive is read only on a file's first line, or after '#!'")
       (help := s!"move it to the file's first line, or the line after `#!`: `{directiveMarker lang} …`")

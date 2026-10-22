@@ -89,7 +89,7 @@ def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (hasStr text "boxed words" && treeShownOccurs body "boxed words" == 1)
   t "the document's own use of the venue macro keeps its arguments"
     (hasStr text "kept words" && treeShownOccurs body "kept words" == 1)
-  let pkg := ds.filter fun d => d.code == "W0391" && d.span.any (·.file == "venuecode.sty")
+  let pkg := ds.filter fun d => d.code == "W0104" && d.span.any (·.file == "venuecode.sty")
   t "the internal is named once under its own key, the style's refusal"
     (pkg.size == 1 &&
      pkg.all (fun d => d.subject == some "pkgcode:@venuehelper" && d.severity == .note) &&
@@ -111,7 +111,7 @@ def packageCodeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (hasStr sText "Small words." && !hasStr sText "11")
   t "the trial reads the body as its use will: the refused size is a step"
     ((sDs.filter fun d => d.code == "N0100" && d.span.any (·.file == "venuesize.sty")).size == 2 &&
-     sDs.all (·.code != "W0391"))
+     sDs.all (·.code != "W0104"))
   let (gDoc, _, _) ← runStyParity "guardhook"
   let (_, gBody, _) := HtmlDoc.emitTree {} gDoc
   t "a style's hook test sets no text in the web page either"

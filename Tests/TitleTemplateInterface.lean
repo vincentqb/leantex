@@ -14,10 +14,10 @@ example : List (String × TitleTemplate.Font) → Array Parse.Raw →
 example : TitleTemplate.Read → Array (String × String) := TitleTemplate.roles
 example : TitleTemplate.Read → TitleTemplate.Part → Option String := TitleTemplate.partFont
 example : String → Bool := TitleTemplate.fontDecl
-example : Array String → String × String × Option String :=
+example : Array String → String × String × String × Option String :=
   TitleTemplate.unplacedLoss
-example : String → String → String × String := TitleTemplate.skippedLoss
-example : String → Bool → String × String × Option String :=
+example : String → String → String × String × String := TitleTemplate.skippedLoss
+example : String → Bool → String × String × String × Option String :=
   TitleTemplate.mixedLoss
 
 example : True := by

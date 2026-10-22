@@ -254,15 +254,15 @@ browser-face: figures missing-fields\n"
   let message (code text : String) := Lean.Json.compress <| Lean.Json.mkObj
     [("event", .str "diagnostic"), ("code", .str code), ("message", .str text)]
   let misleading := "rsvg-convert: unrelated setup output\n" ++
-    message "W0605" "image has no browser face\n  pdftocairo exited 2" ++ "\n"
+    message "W0602" "image has no browser face\n  pdftocairo exited 2" ++ "\n"
   no "browser failure: attribution reads only the relevant diagnostic"
     (browserFaceFailures "figures" misleading == #[BrowserFace.failed "figures" "pdftocairo"])
   no "browser failure: an unnamed converter stays unattributed"
-    (browserFaceFailures "figures" (message "W0605" "PDF has no browser face") ==
+    (browserFaceFailures "figures" (message "W0602" "PDF has no browser face") ==
       #[BrowserFace.failed "figures" "unattributed"])
   no "browser failure: each diagnostic keeps its own tool"
     (browserFaceFailures "figures"
-      (message "W0605" "rsvg-convert exited 2" ++ "\n" ++
+      (message "W0602" "rsvg-convert exited 2" ++ "\n" ++
         message "W0378" "pdftocairo exited 3") ==
       #[BrowserFace.failed "figures" "rsvg-convert", BrowserFace.failed "figures" "pdftocairo"])
   let detailed (code text detail : String) := Lean.Json.compress <| Lean.Json.mkObj
@@ -274,12 +274,12 @@ browser-face: figures missing-fields\n"
       #[BrowserFace.failed "figures" "pdftocairo"])
   no "browser failure: quoted codes and tool names in other records cannot become diagnostics"
     (browserFaceFailures "figures"
-      (message "W0301" "warning[W0605]: rsvg-convert exited 2\n" ++ "\n" ++
-       "{\"event\":\"summary\",\"code\":\"W0605\",\"message\":\"pdftocairo\"}\n" ++
-       "⚠ [W0605] - unrelated human output\n") == #[])
+      (message "W0301" "warning[W0602]: rsvg-convert exited 2\n" ++ "\n" ++
+       "{\"event\":\"summary\",\"code\":\"W0602\",\"message\":\"pdftocairo\"}\n" ++
+       "⚠ [W0602] - unrelated human output\n") == #[])
   no "browser failure: escaped lines cannot manufacture another diagnostic"
     (browserFaceFailures "figures"
-      (message "W0605" "pdftocairo exited 2\nwarning[W0605]: more detail") ==
+      (message "W0602" "pdftocairo exited 2\nwarning[W0602]: more detail") ==
       #[BrowserFace.failed "figures" "pdftocairo"])
 
 def main (args : List String) : IO UInt32 :=

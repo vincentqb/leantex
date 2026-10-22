@@ -3854,10 +3854,10 @@ public def undecodableIndices (imgs : Image.Store) (uses : Array String) : Array
     if acc.contains k then acc else acc.push k) #[]).filter fun k =>
       (imgs.get? k).any pdfPageImg
 
-/-- W0605, an image with no browser face, its subject keyed by store index. -/
+/-- W0602, an image with no browser face, its subject keyed by store index. -/
 public def undecodableDiag (src : String) (reason : Option String := none)
     (index : Option Nat := none) : Diag :=
-  Diag.of .W0605 (Diag.say .W0605 .image src)
+  Diag.of .W0602 (Diag.say .W0602 .image src)
     (detail := reason)
     (subject := some (match index with
       | some k => s!"img:{k}:{src}"

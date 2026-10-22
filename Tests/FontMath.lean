@@ -77,7 +77,7 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((FontDb.resolve faces "Alpha Sans" {}).map (·.1.subfamily) == some "Regular")
 
 /-- The weight axis below the driver: `\fonts` series spellings, exact resolution for an installed
-weight, the nearest with W0366 for a missing one, categorical italic, the declared-face override,
+weight, the nearest with W0006 for a missing one, categorical italic, the declared-face override,
 and `docWeightKeys`. -/
 def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -190,7 +190,7 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fonts unknown variant key" (errCodes (pre ++ "\\fonts{ body.slanted = \"Y\" }" ++ post)
     == ["E0322"])
   t "fonts variant wrong type" (errCodes (pre ++ "\\fonts{ body.bold = 12 }" ++ post)
-    == ["E0323"])
+    == ["E0321"])
   let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Semibold]{Ordwick}" ++ post)).1.fonts
   t "fontspec * expands to the family name" (d4.faceFor 1 400 false == some "Ordwick-Semibold")
   -- A substitution's words, then its site's particulars (the weights).
@@ -220,7 +220,7 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       some (some "substituted face 'Alpha Sans Light' for 'Alpha Sans Light Bold'"))
   t "a satisfied variant carries no message"
     ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (subMsg ·.2) == some none)
-  t "a missing family is still the caller's W0403"
+  t "a missing family is still the caller's W0390"
     ((FontDb.resolveVariant faces "Nope Sans" (some "Also Nope") { bold := true }).isNone)
   let beta700 : FontDb.Face := { synthFace "Beta Sans" "/x/bs-b.otf" with
     subfamily := "Bold", bold := true, weight := 700 }
@@ -797,7 +797,7 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   t "a Path per face keeps every directory" (d5.dirs == #["serif/", "sans/"])
   let d4 := (elabStr (pre ++ "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }" ++ post)).1.fonts
   t "fonts dir" (d4.dirs == #["fonts"] && d4.body == some "Source Serif Pro")
-  t "fonts dir wrong type" (errCodes (pre ++ "\\fonts{ dir = 12 }" ++ post) == ["E0323"])
+  t "fonts dir wrong type" (errCodes (pre ++ "\\fonts{ dir = 12 }" ++ post) == ["E0321"])
   let plain : FontDb.Face := {
     path := "/x/a.otf"
     family := "X"
@@ -901,7 +901,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fonts sf alias maps to sans" (fDoc.fonts.sans == some "DejaVu Sans")
   t "fonts mono unset" (fDoc.fonts.mono == none)
   t "fonts wrong type" (errCodes ("\\documentclass{article}\\fonts{ body = 12 }" ++
-    "\\begin{document}x\\end{document}") == ["E0323"])
+    "\\begin{document}x\\end{document}") == ["E0321"])
   t "fonts unknown key" (errCodes ("\\documentclass{article}\\fonts{ script = \"X\" }" ++
     "\\begin{document}x\\end{document}") == ["E0322"])
 
@@ -1744,13 +1744,13 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "$\\text{a{b}c}$" == [] &&
       glyphChars "$\\text{a{b}c}$" == glyphChars "$\\text{abc}$")
   t "a style command inside \\text keeps its letters, names the styling"
-    (warnCodes "$\\text{\\textbf{bold} word}$" == ["W0385"] &&
+    (warnCodes "$\\text{\\textbf{bold} word}$" == ["W0012"] &&
       glyphChars "$\\text{\\textbf{bold} word}$" == glyphChars "$\\text{bold word}$")
   t "a symbol inside \\text contributes its scalar"
     (warnCodes "$\\text{a\\ldots b}$" == [] &&
       (glyphChars "$\\text{a\\ldots b}$").contains '…')
   t "a colour inside \\text keeps its content, names the colour"
-    (warnCodes "$\\text{\\textcolor{indigo}{red} ink}$" == ["W0385"] &&
+    (warnCodes "$\\text{\\textcolor{indigo}{red} ink}$" == ["W0012"] &&
       glyphChars "$\\text{\\textcolor{indigo}{red} ink}$" ==
         glyphChars "$\\text{red ink}$")
   t "a coloured styled alignment renders as a grid, never as source"

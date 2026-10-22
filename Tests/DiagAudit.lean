@@ -161,7 +161,6 @@ def registry : List AuditRow :=
    ⟨.N0026, .keep, .rewritten, check% Tests.svgFontMatchChecks⟩,
    ⟨.N0027, .native, .native, check% Tests.svgLinkNoteChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
-   ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,
    ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩,
    ⟨.E0005, .refusal, .fails, check% Tests.publicationInputChecks⟩,

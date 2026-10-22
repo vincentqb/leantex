@@ -188,12 +188,12 @@ def figureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     "\\begin{document}\nx\n\\end{document}")
   t "quoted trapping and channel counts read as written, and a wrong type names the values it takes"
     (strings.info.trapped == some true && (strings.info.intent.bind (·.components)) == some 4 &&
-      codes stringDs .E0323 == 0 &&
-      wrongDs.any fun d => d.code == DiagCode.E0323.code && hasStr (saidText d) "true, false or \
+      codes stringDs .E0321 == 0 &&
+      wrongDs.any fun d => d.code == DiagCode.E0321.code && hasStr (saidText d) "true, false or \
 unknown")
   let (_, febDs) := elabStr ("\\documentclass{article}\n\\pdfmeta{ created = \"2026-02-31\" }\n" ++
     "\\begin{document}\nx\n\\end{document}")
-  t "a date the calendar does not have is refused" (codes febDs .E0323 == 1)
+  t "a date the calendar does not have is refused" (codes febDs .E0321 == 1)
   let builtin (pre : String) : Option Ir.OutputIntent := (elabStr ("\\DocumentMetadata{pdfstandard=X-4, " ++
     "colorprofiles={X=FOGRA39L_coated.icc}}\n\\documentclass{article}\n" ++ pre ++
     "\\begin{document}\nx\n\\end{document}")).1.info.intent
@@ -412,7 +412,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     let src := (card "" "Alpha").replace "Info = {Probe~press,~coated~stock}" s!"Info = {value}"
     let (ds, claim, pdf) := written oneFace src (some icc)
     t s!"a profile description's value is carried exactly and sets no other key ({value})"
-      (ds.all (·.severity != .error) && codes ds .W0101 == 0 && codes ds .W0343 == 0 && claimed claim &&
+      (ds.all (·.severity != .error) && codes ds .W0101 == 0 && codes ds .W0322 == 0 && claimed claim &&
         ((PdfX.read pdf).toOption.bind fun f => f.intents[0]?.bind (·.info)) == some read &&
         bytesContain (pdfText pdf) "/RegistryName (http://www.example.org)")
   let special := (card "" "Alpha").replace "OutputConditionIdentifier = Probe~Press~1"

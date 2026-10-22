@@ -379,7 +379,7 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let ws := ds.filter (·.code == code)
     t s!"inline code {label}: named once, by its own code"
       (ws.size == 1 && ws.all (·.severity == .warning) &&
-        !(ds.any fun d => d.code == "W0346" || (d.code != code && (d.code == "W0411" || d.code == "W0413"))))
+        !(ds.any fun d => d.code == "W0340" || (d.code != code && (d.code == "W0411" || d.code == "W0413"))))
     match word? gs "Alpha", word? gs "probe" mono, word? gs "def" mono with
     | some a, some p, some d =>
       t s!"inline code {label}: set as inline code on the line of text, its keyword painted"

@@ -128,7 +128,7 @@ private def browserImageChecks (ref : IO.Ref (List String)) (name : String)
       t s!"html a11y {name}: '{href}' no browser decodes, and a diagnostic names it"
         (diags.any fun d => d.subject == some s!"img:{k}:{href}")
   for d in diags do
-    if d.code == "W0605" then
+    if d.code == "W0602" then
       let named := (Array.range store.entries.size).filter fun k =>
         d.subject == some s!"img:{k}:{HtmlDoc.resolvedSrc store.entries[k]!}"
       t s!"html a11y {name}: a browser-face loss names exactly one emitted request"
@@ -279,16 +279,16 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (dims == #[(some "340", some "204")])
     t "html a11y: a PDF page's <img> is named undecodable"
       (pdiags.any fun d => d.subject == some "img:0:box.pdf")
-    -- W0605's remedy clears it: the web include gated to HTML and the PDF include to PDF.
+    -- W0602's remedy clears it: the web include gated to HTML and the PDF include to PDF.
     let webOnly := "\\begin{ifbackend}{html}\n\\includegraphics[alt={A card}]{rects.png}\n\
 \\end{ifbackend}\n"
     let pdfInclude := "\\includegraphics[alt={A card}]{box.pdf}"
     let fires (body : String) : Bool :=
       let (_, _, ds) := HtmlDoc.emitTree { imgs := boxStore } (elabStr (dvDoc "" body)).1
       ds.any fun d => d.subject == some "img:0:box.pdf"
-    t "html a11y: W0605 holds while the PDF include ships to both backends"
+    t "html a11y: W0602 holds while the PDF include ships to both backends"
       (fires (webOnly ++ pdfInclude))
-    t "html a11y: W0605's remedy clears it"
+    t "html a11y: W0602's remedy clears it"
       (!fires (webOnly ++ "\\begin{ifbackend}{pdf}\n" ++ pdfInclude ++ "\n\\end{ifbackend}"))
     let pdoc := (elabStr (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"))).1

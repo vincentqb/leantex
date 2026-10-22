@@ -85,7 +85,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
       "\\caption{Lima caption.}\n\\end{figure}\nMike words."))).filter (· == .W0358) == #[.W0358])
   t "page overrun: an untitled frame whose rule overruns names the rule, not its note"
     ((allCodes oneFace (deck "\\begin{frame}\n\\rule{1cm}{12cm}\\footnote{Kilo note.}\n\\end{frame}")).filter
-      (fun c => c == .W0358 || c == .W0372) == #[.W0358])
+      (fun c => c == .W0358 || c == .W0005) == #[.W0358])
   t "page overrun: an untitled frame's overrunning rule on its second step names it once"
     (codes oneFace (deck ("\\begin{frame}\n\\only<1>{Mike words.}\n\\only<2>{\\rule{1cm}{12cm}}\n" ++
       "\\end{frame}")) == #[.W0358])
@@ -130,7 +130,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     t s!"page overrun: a float whose footnote {what} alone overruns its page names the note"
       ((allCodes oneFace (article ("Kilo words.\n\\begin{figure}[h]\n\\rule{1cm}{15cm}" ++ box ++
         "\n\\caption{Lima caption." ++ caption ++ "}\n\\end{figure}\nMike words."))).filter
-        (fun c => c == .W0358 || c == .W0372) == #[.W0372])
+        (fun c => c == .W0358 || c == .W0005) == #[.W0005])
   let boxDetails (src : String) : Array (Option String) :=
     ((fittedOf oneFace (elabStr src).1).out.diags.filter (·.kind == .W0358)).map (·.detail)
   for (what, noted) in [

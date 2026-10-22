@@ -173,7 +173,7 @@ def diagnosticTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let silent := triggerDiags file
     "\\thispagestyle{plain}\n\\begin{document}x\\end{document}"
   t "diagnostic trigger: attribution does not count as an effect for the silence guard"
-    (triggerAt silent .W0387 file 1 1 "\\thispagestyle")
+    (triggerAt silent .W0104 file 1 1 "\\thispagestyle")
   let cond := triggerDiags file "\\newif\\iftrigger\n\\triggertrue\n\\iftrigger x\\fi"
   for (line, trigger) in [(1, "\\newif"), (2, "\\triggertrue"), (3, "\\iftrigger")] do
     t s!"diagnostic trigger: conditional execution attributes {trigger}"

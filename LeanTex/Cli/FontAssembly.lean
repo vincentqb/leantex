@@ -168,7 +168,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (spec.faces.toList.filterMap fun ((s, w, i), _) =>
       if (s == effectiveOf slot || (ownFirst slot && s == slot)) && !(standard.contains (w, i))
       then some (w, i) else none)
-  -- A weight off lualatex's corners sets in the nearest corner's file (W0366).
+  -- A weight off lualatex's corners sets in the nearest corner's file (W0006).
   let nearestFile (slot weight : Nat) (italic : Bool) : Option (Nat × String) :=
     if slot != 2 || weight == 400 || weight == 700 then none else
     match pick with

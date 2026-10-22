@@ -141,8 +141,8 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       proseOf .java "/**\r\n * Adds.\r\n */" == "Adds.")
   let (strayC, strayCDs) := elabCode "t.c" "/* An invented licence. */\n// leantex: formats = html\nint x;\n"
   t "code files: a directive after a leading block comment is named, not read"
-    (strayC.output.formats.isEmpty && strayCDs.any (·.kind == .W0387) &&
-      (elabCode "t.c" "/* An invented licence. */\n// leantex: formats = html\n").2.any (·.kind == .W0387))
+    (strayC.output.formats.isEmpty && strayCDs.any (·.kind == .W0104) &&
+      (elabCode "t.c" "/* An invented licence. */\n// leantex: formats = html\n").2.any (·.kind == .W0104))
   let cSrc ← fixtureText "testdata/codedoc/langs/c-docs.c"
   t "code files: a C doc comment after a macro on its line stays in the macro"
     ((prosePieces .c cSrc).size == 3 &&
@@ -191,12 +191,12 @@ def codeDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabCode "t.sh" "#!/bin/sh\n# leantex: formats = html\necho x\n").1.output.formats == #["html"])
   t "code files: a directive past the leading comments is a comment of the code"
     (let (d, ds) := elabCode "t.sh" "#!/bin/sh\necho x\n# leantex: formats = html\n"
-     d.output.formats.isEmpty && !ds.any (·.kind == .W0387))
+     d.output.formats.isEmpty && !ds.any (·.kind == .W0104))
   let (strayDoc, strayDs) := elabCode "t.py"
     "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n# leantex: formats = html\nx = 1\n"
   t "code files: a directive among the leading comments past its line is named once where it stands"
-    (strayDoc.output.formats.isEmpty && (strayDs.filter (·.kind == .W0387)).size == 1 &&
-      strayDs.any fun d => d.kind == .W0387 && d.span.map (·.pos.line) == some 3)
+    (strayDoc.output.formats.isEmpty && (strayDs.filter (·.kind == .W0104)).size == 1 &&
+      strayDs.any fun d => d.kind == .W0104 && d.span.map (·.pos.line) == some 3)
   t "code files: a directive key neither declaration takes is named by the declaration"
     ((elabCode "t.lean" "-- leantex: colour = blue\ndef x := 1\n").2.any (·.kind == .E0322))
   t "code files: the directive's entries cross to the declaration as written"

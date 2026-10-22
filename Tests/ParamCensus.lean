@@ -162,7 +162,7 @@ def warnsKeyed (key : String) (d : Diag) : Bool :=
 
 /-- The codes that say a setting is not read. -/
 def unreadCodes : List String :=
-  ["W0101", "W0103", "W0104", "W0110", "W0340", "W0354", "W0367"]
+  ["W0101", "W0103", "W0104", "W0110", "W0340"]
 
 /-- Whether a keyed warning says the setting is applied in part, which a change bears out. -/
 def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
@@ -774,7 +774,7 @@ nothing reads"
   let body := plain "" "" |>.replace "Probe words." "Words. \\setlength{\\textheight}{500pt} More."
   let geoKeys (o : String) : String := plain "" s!"\\usepackage[{o}]\{geometry}"
   let pageNamed (src : String) : Bool := (elabStr src).2.any fun d =>
-    (d.code == "W0340" || d.code == "W0343") && hasStr (saidText d) "\\page"
+    (d.code == "W0340" || d.code == "W0322") && hasStr (saidText d) "\\page"
   t "messages name what the author wrote, and geometry's later key wins"
     (!pageNamed body && !pageNamed (geoKeys "nofoot,footskip=1cm") &&
       !pageNamed (geoKeys "footskip=1cm,nofoot") && !pageNamed (geoKeys "nohead,headsep=1cm"))
@@ -1010,7 +1010,7 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
       (elabStr (art "\\page{ textheight = 500pt }\\page{ margin = 1in }")).2.any fun d =>
         d.code == "W0110" && d.subject == some "partial:\\page:margin")
   t "text block: a negative margin is refused, and margins leaving no block are named"
-    ((elabStr (native "tmargin = -10pt")).2.any (fun d => d.code == "E0323") &&
+    ((elabStr (native "tmargin = -10pt")).2.any (fun d => d.code == "E0321") &&
       named (native "tmargin = 500pt, bmargin = 500pt") "vmargin" &&
       held (native "tmargin = 500pt, bmargin = 500pt") (page (art "")).vmargin
         (page (art "")).bottomMargin)

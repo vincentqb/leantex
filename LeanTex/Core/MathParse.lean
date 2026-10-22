@@ -1315,7 +1315,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
         | none => notes := notes.push (.inkMissed name)
         i := j
       else if n == "color" then
-        -- `\color` is a colour whatsit; its model form names its change (W0385).
+        -- `\color` is a colour whatsit; its model form names its change (W0012).
         unless pending.isEmpty do throw (tokName tok)
         let k := if toks[i + 1]? == some .ws then i + 2 else i + 1
         if toks[k]? == some (.ch '[') then

@@ -163,7 +163,7 @@ def macroForwardingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       (dvDoc (pre ++ "\\renewcommand\\maketitle{" ++ replacement ++ "}") "\\maketitle/Z")
     let (_, cout, chtml, _) := sourceArtifacts fonts (dvDoc pre "\\maketitle/Z")
     check ref s!"macro forwarding {label} builtin replacement remains refused"
-      (ds.any (·.code == "W0361") && ds.all (fun d => d.severity == .note || d.code == "W0361"))
+      (ds.any (·.code == "W0303") && ds.all (fun d => d.severity == .note || d.code == "W0303"))
     check ref s!"macro forwarding {label} builtin refusal preserves both artifacts"
       (html == chtml && shippedBodyGlyphs out == shippedBodyGlyphs cout)
 

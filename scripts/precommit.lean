@@ -3251,7 +3251,7 @@ def wholeTreeChecks (say : String → IO Unit) : IO Unit := do
   The dispatcher's silence guard reads diags.size and the writes counter
   (rewriteCtrl_accounts, THEOREMS.md § Surfaces), and a modify/set outside the declared doors
   (compatStateDoors, scripts/precommit.lean) is invisible to both: the
-  arm would look silent and draw a false W0387.
+  arm would look silent and draw a false W0104.
   Fix: mutate through `write` (it counts); diagnostics go through `say`."
 
   -- The generic walks' leaf functions, whose catch-alls are the fold's own, and the frozen holes.

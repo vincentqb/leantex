@@ -1670,7 +1670,7 @@ private def blockStyleKeyChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
       check ref s!"block style {probe} {el}: the HTML ships as without the keys"
         (html src == html styled)
   for (el, entry, code) in [("alertblock", "foo = 1", "E0322"),
-      ("block", "slot = { set = title, anchor = west, at = west }", "E0323")] do
+      ("block", "slot = { set = title, anchor = west, at = west }", "E0321")] do
     let src := paletteFree.replace "\\begin{document}" s!"\\style\{{el}}\{ {entry} }\n\\begin\{document}"
     let (_, diags) := Elab.run "block-style-owned.tex" src
     let raised := diags.filter (·.severity != .note)

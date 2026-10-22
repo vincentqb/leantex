@@ -48,7 +48,7 @@ def svgTerminalDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
       let log := run.stdout ++ run.stderr
       check ref s!"source-only SVG: {ext} builds both figures without image loss"
         (run.exitCode == 0 && !((log.splitOn "W0601").length > 1) &&
-          !((log.splitOn "W0602").length > 1) && !((log.splitOn "W0605").length > 1))
+          !((log.splitOn "W0602").length > 1))
     let html ← IO.FS.readFile (dir / "figure.html")
     check ref "source-only SVG: both HTML images have reachable source attributes"
       ((html.splitOn "<img ").length == 3 && (html.splitOn "data-image-src=").length == 1)

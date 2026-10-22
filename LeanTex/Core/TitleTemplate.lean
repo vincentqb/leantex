@@ -4,6 +4,7 @@ public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 import LeanTex.Core.Picture
 import LeanTex.Core.KeyVal
+import LeanTex.Core.Diag
 
 /-! The reader of beamer's `title page` template in its full-bleed shape, an overlay `tikzpicture`
 of a page fill and pinned nodes, read as source into the engine's own title-page declarations. -/
@@ -548,37 +549,30 @@ private def dataPhrase (ds : List String) : String :=
   | last :: init =>
     String.intercalate ", " (init.reverse.map (s!"the {·}")) ++ s!" and the {last}"
 
-/-- The loss naming a node the engine cannot pin (`W0363`): key suffix, message and help. -/
-public def unplacedLoss (data : Array String) : String × String × Option String :=
+/-- The template a title-page loss names its node for. -/
+private def template : Option (Option Diag.Noun × Diag.Name) := some (some .template, "title page")
+
+/-- The loss naming a node the engine cannot pin (`W0363`): key suffix, message, detail and help. -/
+public def unplacedLoss (data : Array String) : String × String × String × Option String :=
   let key := if data.isEmpty then "text" else String.intercalate "+" data.toList
   let help := data[0]?.map fun d =>
     s!"pin the node to a point of the page: \\node[anchor=west] at (current page.west) \{\\insert{d}}"
-  let msg := match data[0]? with
-    | some d =>
-      let verb := if data.size > 1 then "set" else "sets"
-      s!"the title-page template's {d} node is not pinned to the page; \
-{dataPhrase data.toList} {verb} in the title page's flow"
-    | none => "a title-page template node of literal text is not pinned to the page; \
-it sets in the title page's flow"
-  (key, msg, help)
+  let verb := if data.size > 1 then "set" else "sets"
+  (key, Diag.say .W0363 .node (data[0]?.map Diag.Name.of) template,
+   s!"not pinned to the page; {dataPhrase data.toList} {verb} in the title page's flow", help)
 
-/-- A control word beside a datum that the reader does not read (`W0104`): key suffix and
-message. -/
-public def skippedLoss (construct datum : String) : String × String :=
-  (construct,
-   s!"'{construct}' in the title-page template's {datum} node is not read; the {datum} \
-sets without it")
+/-- A control word beside a datum that the reader does not read (`W0104`): key suffix, message and
+detail. -/
+public def skippedLoss (construct datum : String) : String × String × String :=
+  (construct, Diag.say .W0104 .command construct (some (some .node, Diag.Name.of datum)),
+   s!"in the title-page template; the {datum} sets without it")
 
-/-- A datum beside literal text (`W0363`): key suffix, message and help. -/
-public def mixedLoss (datum : String) (groundKept : Bool) : String × String × Option String :=
-  let msg :=
-    if groundKept then
-      s!"the {datum} shares a node with literal text; its custom arrangement falls back while \
-the readable full-page ground stays"
-    else
-      s!"the title-page template sets the {datum} beside literal text, which no slot holds; \
-the built-in title page stands"
-  (datum, msg,
+/-- A datum beside literal text (`W0363`): key suffix, message, detail and help. -/
+public def mixedLoss (datum : String) (groundKept : Bool) :
+    String × String × String × Option String :=
+  (datum, Diag.say .W0363 .node datum template,
+   if groundKept then "beside literal text; the built-in arrangement and the full-page ground stand"
+   else "beside literal text, which no slot holds; the built-in title page stands",
    some s!"set the text in a node of its own, and \\insert{datum} alone in another")
 
 /-- Read a `title page` template of the overlay shape; `none` for any other shape. -/

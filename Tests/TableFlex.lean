@@ -79,7 +79,7 @@ def tableFlexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        | none => false)
     t s!"tabularx {c.name}: valid input has no table or command refusal"
       ((ds ++ out.diags).all fun d =>
-        !d.code.startsWith "E" && !#["W0301", "W0302", "W0337", "W0338"].contains d.code)
+        !d.code.startsWith "E" && !#["W0301", "W0302", "W0014", "W0338"].contains d.code)
 
 /-- An impossible target keeps a one-em X column (`TX@error@width`), sized in the font in force. -/
 def tableFlexOverflowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

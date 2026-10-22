@@ -64,21 +64,21 @@ identified. -/
 public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
   let (message, detail) := match error with
     | .byteOffset bytes =>
-      (Diag.say .E0607 .output,
+      (Diag.say .E0006 .output,
         s!"the PDF body needs {bytes} bytes; offsets stay below {2 ^ 64}")
     | .objectStreamSize bytes =>
-      (Diag.say .E0607 .output,
+      (Diag.say .E0006 .output,
         s!"the largest object stream needs {bytes} decoded bytes; the limit is \
 {PdfRead.maxDecoded}")
     | .xrefStreamSize bytes =>
-      (Diag.say .E0607 .output,
+      (Diag.say .E0006 .output,
         s!"the cross-reference stream needs {bytes} decoded bytes; the limit is \
 {PdfRead.maxDecoded}")
     | .objectSpelling id =>
-      (Diag.say .E0607 .object (Diag.Name.of (toString id)),
+      (Diag.say .E0006 .object (Diag.Name.of (toString id)),
         "a spelling the writer cannot represent")
     | .inkRaster page =>
-      (Diag.say .E0607 .image,
+      (Diag.say .E0006 .image,
         s!"a picture on page {page + 1} paints a raster image")
   let split := "split the document into smaller files and compile each with `leantex <file>.tex`"
   let help := match error with
@@ -87,7 +87,7 @@ public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
     | .objectStreamSize _ => "objects that index the whole document grow with it: " ++ split
     | .byteOffset _ | .xrefStreamSize _ => split
     | .inkRaster _ => "draw the picture without an embedded raster, or include the image with \\includegraphics"
-  Diag.of .E0607 message
+  Diag.of .E0006 message
     (help := help) (detail := some detail)
 
 /-- E0402: `LEANTEX_FONT` names a file that does not parse as a font. -/
@@ -108,13 +108,13 @@ public def fontsDirMissing (decl resolved : String) : Diag :=
   Diag.of .W0008 (Diag.say .W0008 .directory decl) (detail := some s!"resolves to {resolved}")
     (subject := some "param:\\fonts:dir")
 
-/-- W0403: a named family is not installed, at the declaration naming it; `near` are the closest
+/-- W0390: a named family is not installed, at the declaration naming it; `near` are the closest
 installed names, `installed` the family count when nothing is close. -/
 public def familyMissing (family : String) (near : List String) (installed : Nat)
     (span : Option Span := none) : Diag :=
   let hint := if near.isEmpty then s!"{installed} families are installed"
     else s!"did you mean: {String.intercalate ", " near}?"
-  Diag.of .W0403 (Diag.say .W0403 .family family) span
+  Diag.of .W0390 (Diag.say .W0390 .family family) span
     (subject := some ("family:" ++ family))
     (help := s!"{hint} — `leantex fonts` lists every family")
 
@@ -122,11 +122,11 @@ public def familyMissing (family : String) (near : List String) (installed : Nat
 public def fontFileUnusable (path err : String) : Diag :=
   Diag.of .E0404 (Diag.say .E0404 .font path) (detail := some err)
 
-/-- W0366: a name asked for a weight the family does not ship; the nearest
+/-- W0006: a name asked for a weight the family does not ship; the nearest
 installed weight substitutes, both weights named. -/
 public def weightSubstituted (asked : String) (requested : Nat) (face : FontDb.Face) : Diag :=
-  Diag.of .W0366
-    (Diag.say .W0366 .face s!"{face.family} {face.subfamily}" (some (none, asked)))
+  Diag.of .W0006
+    (Diag.say .W0006 .face s!"{face.family} {face.subfamily}" (some (none, asked)))
     (detail := some s!"weight {requested} asked, weight {face.weight} the nearest")
     (help := "install the named weight, or name the face to use \
 (\\fonts{ sans.upright = \"...\" } and siblings)")
@@ -173,7 +173,7 @@ public def monoUpright (family : String) (declarable : Bool := true) (own : Bool
       else if declarable then some s!"{remedy}, or {declare}" else some remedy)
 
 /-- The two substitution codes of one resolution result: a missing variant is W0006, a
-missing weight W0366. -/
+missing weight W0006. -/
 public def substituted : FontDb.Substituted → Diag
   | .variant asked declared face =>
     Diag.of .W0006 (Diag.say .W0006 .face s!"{face.family} {face.subfamily}" (some (none, asked)))

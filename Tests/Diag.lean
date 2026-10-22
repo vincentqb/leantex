@@ -230,7 +230,10 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0003 => #[DriverDiag.outputPathsConflict "HTML and Markdown both name 'out.html'"]
   | .E0004 => #[DriverDiag.outputUnwritable "site/out.pdf" "permission denied"]
   | .E0005 => #[DriverDiag.outputOverwritesInput (.same "Markdown" "doc.md" "doc.md")]
-  | .E0006 => #[DriverDiag.outputFormatUnknown "notes.tex"]
+  | .E0006 =>
+    (#[DriverDiag.outputFormatUnknown "notes.tex"]) ++
+    (#[DriverDiag.pdfWriteRefused (.objectStreamSize 67108865),
+      DriverDiag.pdfWriteRefused (.objectSpelling 4)])
   | .E0101 => dvE (w := w) "a\\"
   | .E0102 => dvE (w := w) "\\begin{verbatim}\nx"
   | .E0111 => dvE (w := w) (dvDeck "" ("\\addtobeamertemplate{block begin}{\\textbf{x}}{}\n" ++
@@ -252,20 +255,22 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0313 => dvE (w := w) "\\documentclass{article}\nstray text\n\\begin{document}\nx\n\\end{document}"
   | .E0316 => dvE (w := w) (dvDoc "\\define \\x(a?: text) {\\a}\n" "\\x[oops")
   | .E0320 => dvE (w := w) (dvDoc "\\page{ oops }\n" "x")
-  | .E0321 => dvE (w := w) "\\includegraphics[scale=big]{x.png}"
-  | .E0322 => dvE (w := w) (dvDoc "\\page{ zoom = 3 }\n" "x")
-  | .E0323 => dvE (w := w) (dvDoc "\\page{ vmargin = \"x\" }\n" "x")
+  | .E0321 =>
+    (dvE (w := w) "\\includegraphics[scale=big]{x.png}") ++
+    (dvE (w := w) (dvDoc "\\page{ vmargin = \"x\" }\n" "x")) ++
+    (dvE (w := w) (dvDoc "\\palette{covered = 100\\%}\n" "x"))
+  | .E0322 =>
+    (dvE (w := w) (dvDoc "\\page{ zoom = 3 }\n" "x")) ++
+    (dvE (w := w) (dvDoc "\\page{ header = x }\n" "x"))
   | .E0324 => dvE (w := w) (dvDoc "\\page{ size = quarto }\n" "x")
   | .E0325 => dvE (w := w) (dvDoc "\\assert{ pages =~ 1 }\n" "x")
   | .E0326 => dvE (w := w) (dvDoc "\\palette{ a = missingname }\n" "x")
-  | .E0327 => dvE (w := w) (dvDoc "\\page{ header = x }\n" "x")
   | .E0328 => dvE (w := w) (dvDoc "\\style{banana}{ color = ink }\n" "x")
   | .E0329 => dvE (w := w) (dvDoc "\\allow{W9999}\n" "x")
   | .E0330 =>
     (Check.one { pages := 2, fontsEmbedded := true }
       { kind := .pages .eq 1, span := none }).toArray
   | .E0331 => dvE (w := w) "\\includegraphics[width=banana]{x.png}"
-  | .E0332 => dvE (w := w) (dvDoc "\\palette{covered = 100\\%}\n" "x")
   | .E0333 => dvE (w := w) (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\fill (\\nope,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .E0336 => dvE (w := w) (dvDoc "" "\\begin{banner}{Logo}\nx\n\\end{banner}")
@@ -274,8 +279,6 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       "orphaned\n\\end{ifbackend}\\end{ifbackend}"))
   | .E0401 => #[DriverDiag.noFont]
   | .E0402 => probed .E0402
-  | .W0403 => #[DriverDiag.familyMissing "Sourse Serif Pro" ["Source Serif Pro"] 0,
-      DriverDiag.familyMissing "Kaputt Grotesk" [] 12]
   | .E0404 => #[DriverDiag.fontFileUnusable "fonts/Broken-Regular.otf"
       "not a TrueType or OpenType file"]
   | .E0405 => dvL (w := w) mapped "lost \u27e8 here"
@@ -322,13 +325,12 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0369 => dvE (w := w) (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
   | .E0375 => dvE (w := w) (dvDoc
       "\\newlength{\\half}\\setlength{\\half}{\\dimexpr\\textwidth/2\\relax}\n" "x")
-  | .W0370 => dvE (w := w) (dvDoc "" "a claim\\footnotemark stands here") ++
-      dvE (w := w) (dvDoc "" "a claim\\footnotemark[3] stands here")
+  | .W0370 =>
+    (dvE (w := w) (dvDoc "" "a claim\\footnotemark stands here") ++
+      dvE (w := w) (dvDoc "" "a claim\\footnotemark[3] stands here")) ++
+    (dvE (w := w) (dvDoc ""
+      "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}"))
   | .W0371 => dvE (w := w) (dvDoc "" "a\\footnote{first\n\nsecond}")
-  | .W0372 => dvL (w := w) one (dvDoc "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"
-      ("x\\footnote{" ++ String.intercalate " " (List.replicate 60 "wow") ++ "}"))
-  | .W0373 => dvE (w := w) (dvDoc "\\title{An Invented Panel\\thanks{Synthetic Grant 1}}\n"
-      "x\n\\maketitle")
   | .W0374 => dvE (w := w) ("\\documentclass{card}\n\\begin{document}\n" ++
       "x\\footnote{an aside}\n\\end{document}")
   | .N0376 => dvE (w := w) (dvDoc "" "\\includegraphics{chart.png}") ++
@@ -340,6 +342,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0001 => dvE (w := w) (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL (w := w) one (dvDoc "" "$x^2$")
   | .W0005 =>
+    (
     -- Located, so each states how far it runs, a stage's with its frame or section page.
     let w := { w with located := true }
     let wide := String.ofList (List.replicate 90 'w')
@@ -348,8 +351,11 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     dvL (w := w) one (dvDeck "\\theme{moloch}\n" ("\\begin{frame}\n" ++ wide ++ "\\footnote{" ++
       wide ++ "}\n\\end{frame}\n\\begin{frame}\n\\begin{columns}\\column{0.7\\textwidth}Left." ++
       "\\column{0.7\\textwidth}Right.\n\\end{columns}\n\\end{frame}\n\\section{" ++ wide ++ "}\n" ++
-      "\\begin{frame}\nx\n\\end{frame}"))
+      "\\begin{frame}\nx\n\\end{frame}"))) ++
+    (dvL (w := w) one (dvDoc "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"
+      ("x\\footnote{" ++ String.intercalate " " (List.replicate 60 "wow") ++ "}")))
   | .W0006 =>
+    (
     let face : FontDb.Face := { path := "fonts/DemoSerif-Regular.otf"
                                 family := "Demo Serif"
                                 subfamily := "Regular"
@@ -361,7 +367,18 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       match FontDb.resolveVariant #[face] "Demo Serif" declared { bold := true } with
       | some (_, some sub) => #[DriverDiag.substituted sub]
       | _ => #[]
-    ask none ++ ask (some "DemoSerif-Bold.otf")
+    ask none ++ ask (some "DemoSerif-Bold.otf")) ++
+    (
+    let mk (sub : String) (w : Nat) : FontDb.Face :=
+      { path := s!"fonts/DemoSans-{sub}.otf", family := "Demo Sans"
+        subfamily := sub, bold := w ≥ 600, italic := false
+        fixedPitch := false, weight := w }
+    let faces := #[mk "Regular" 400, mk "Bold" 700]
+    let ask (family : String) (declared : Option String) : Array Diag :=
+      match FontDb.resolveVariant faces family declared {} with
+      | some (_, some sub) => #[DriverDiag.substituted sub]
+      | _ => #[]
+    ask "Demo Sans Light" none ++ ask "Demo Sans" (some "Demo Sans Medium"))
   | .W0007 => dvH (w := w) (dvDoc "\\runninghead{name}\n" "x")
   | .W0008 => probed .W0008
   | .W0009 => dvL (w := w) mapped "for all is \u2200 set"
@@ -370,21 +387,46 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       String.join ((List.range 5).map fun _ => "\\end{itemize}\n")))
   | .W0011 => probed .W0011
   | .W0012 =>
+    (
     dvE (w := w) "$\\overset{?}{=}$" ++
-    dvE (w := w) "$\\overset{\\alpha}{\\beta}$"
+    dvE (w := w) "$\\overset{\\alpha}{\\beta}$") ++
+    (dvE (w := w) (dvDoc "\\title{An Invented Panel\\thanks{Synthetic Grant 1}}\n"
+      "x\n\\maketitle")) ++
+    (dvE (w := w) "$\\text{\\textbf{bold} word}$")
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
-  | .W0014 => dvE (w := w) "\\begin{align*}a &= b \\\\ c\\end{align*}" ++
-    dvE (w := w) "$\\begin{array}{c}a & b\\end{array}$"
+  | .W0014 =>
+    (dvE (w := w) "\\begin{align*}a &= b \\\\ c\\end{align*}" ++
+    dvE (w := w) "$\\begin{array}{c}a & b\\end{array}$") ++
+    (dvE (w := w) (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}") ++
+      dvE (w := w) (dvDoc "" ("\\begin{tabular}{lll}\n\\multicolumn{\\relax}{c}{w} & c & d \\\\\n" ++
+        "a \\multicolumn{2}{c}{x} & y & z \\\\\n\\end{tabular}")))
   | .W0015 => dvE (w := w) "\\begin{align}a &= b\\end{align}"
   | .W0101 => dvE (w := w) (dvDoc "\\usepackage{natbib}\n\\bibpunct{(}{)}{;}{s}{,}{,}\n" "x")
   | .W0102 => dvE (w := w) (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
   | .W0103 => dvE (w := w) (dvDoc "\\usepackage{nosuchpkg}\n" "x")
-  | .W0104 => dvE (w := w) (dvDoc (String.intercalate "\n"
+  | .W0104 =>
+    (dvE (w := w) (dvDoc (String.intercalate "\n"
       ["\\directlua{tex.print('x')}", "\\raggedright",
        "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{headings}",
        "\\ifx\\x\\y\\fi", "\\usecolortheme{dove}",
        "\\setbeamercovered{again covered}", "\\titlegraphic{}"] ++ "\n") "x") ++
-      dvE (w := w) "\\documentclass[twocolumn,draft]{article}\n\\begin{document}\nx\n\\end{document}\n"
+      dvE (w := w) "\\documentclass[twocolumn,draft]{article}\n\\begin{document}\nx\n\\end{document}\n") ++
+    (dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")) ++
+    (dvE (w := w) (dvDoc "\\fontfallback{x}\n" "x")) ++
+    (dvE (w := w) (dvDeck "\\palette{ alert = #112233 }\n\\theme{moloch}\n"
+      "\\begin{frame}{T}\nx\n\\end{frame}")) ++
+    (dvE (w := w) (dvDoc
+      "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{labelfont=bf}\n" "x")) ++
+    (
+    dvE (w := w) ("\\documentclass{beamer}\n\\usepackage[debug,size=a1]{beamerposter}\n" ++
+      "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")) ++
+    (dvE (w := w) (dvDoc "\\thispagestyle{plain}\n\\palette{codestring = #AA0000}\n" "x")) ++
+    (
+    let sty := "\\AtBeginDocument{\\@venueprobe{hidden words}}\n"
+    let sraws := (Parse.parse "venuecode.sty" (Lex.lex "venuecode.sty" sty).1).1
+    let draws := (Parse.parse "t" (Lex.lex "t"
+      "\\usepackage{venuecode}\n\\begin{document}\nx\n\\end{document}\n").1).1
+    (Elab.runRaws "t" (Compat.applyLocalSty draws #[("venuecode", sraws)]).1).2)
   | .W0105 => dvE (w := w) "\\uncover<zz>{x}"
   | .W0106 => dvE (w := w) (dvDoc "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff\n" "x")
   | .W0107 => dvE (w := w) (dvDoc "" "x \\setlength{\\parskip}{foo}")
@@ -401,12 +443,18 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       dvE (w := w) "\\mystery[16]{x} and \\mystery{y}"
   | .W0307 => dvE (w := w) (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0302 => dvE (w := w) (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
-  | .W0303 => dvE (w := w) (dvDoc "\\define \\underline(a: content) {\\a}\n" "x")
+  | .W0303 =>
+    (dvE (w := w) (dvDoc "\\define \\underline(a: content) {\\a}\n" "x")) ++
+    (
+    dvE (w := w) (dvDoc "\\title{T}\\newcommand{\\maketitle}{\\venuetitlebox}\n" "\\maketitle"))
   | .W0304 => dvE (w := w) "\\textcolor{nope}{x}"
   | .W0309 => dvE (w := w) (dvDoc "" "\\maketitle")
   | .W0310 => dvE (w := w) (dvDoc "" "\\section[oops\nnever closed")
-  | .W0311 => dvE (w := w) (dvDeck "" ("\\begin{frame}\n\\frametitle{One}\n" ++
-      "\\frametitle{Two}\nx\n\\end{frame}"))
+  | .W0311 =>
+    (dvE (w := w) (dvDeck "" ("\\begin{frame}\n\\frametitle{One}\n" ++
+      "\\frametitle{Two}\nx\n\\end{frame}"))) ++
+    (dvE (w := w) (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"
+      "\\muted{x}"))
   | .W0312 => dvE (w := w) "\\title[never closes\n\\begin{document}\nx\n\\end{document}"
   | .W0314 => dvE (w := w) (dvDeck "" ("\\begin{frame}{T}\\begin{columns}\n" ++
       "\\begin{column}{banana}\nx\n\\end{column}\n\\end{columns}\\end{frame}"))
@@ -483,11 +531,14 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0447 => probed .W0447
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
-  | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
   | .W0319 => dvE (w := w) (dvDoc "\\theme{banana}\n" "x")
   | .W0320 => dvE (w := w) (dvDoc "" "\\section{a}\n\n\\subsubsection{b}\nx")
   | .W0321 => dvE (w := w) (dvDoc "\\title{T}\n" "\\section{a}\nx\n\n\\maketitle")
-  | .W0322 => dvE (w := w) (dvDoc "\\title{T}\n" "\\maketitle\n\n\\maketitle")
+  | .W0322 =>
+    (dvE (w := w) (dvDoc "\\title{T}\n" "\\maketitle\n\n\\maketitle")) ++
+    (
+    dvE (w := w) (dvDoc "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n" "x") ++
+    dvE (w := w) (dvDoc "\\runningfoot{one}\n\\runningfoot{two}\n" "x"))
   | .W0323 => dvE (w := w) (dvDoc "" "\\begin{ifbackend}{banana}\nx\n\\end{ifbackend}")
   | .W0325 => dvH (w := w) (dvDoc "" ("\\begin{nav}\\link{#a}{A}\\end{nav}\n\n" ++
       "\\begin{nav}\\link{#b}{B}\\end{nav}\n\n\\section{a}\nx"))
@@ -496,15 +547,10 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0328 => dvL (w := w) one (dvDoc
       (s!"\\runningfoot\{{String.intercalate " " (List.replicate 40 "an overlong footer")}}\n")
       "x")
-  | .W0329 => dvE (w := w) (dvDoc "\\fontfallback{x}\n" "x")
   | .W0330 => dvE (w := w) (dvDoc "\\palette{ bg = #18181B }\n" "x")
   | .W0331 => dvH (w := w) (dvDoc
       "\\style{itemize}{ marker = {\\includegraphics{rects.png}} }\n"
       "\\begin{itemize}\n\\item a\n\\end{itemize}")
-  | .W0348 => dvE (w := w) (dvDeck "\\palette{ alert = #112233 }\n\\theme{moloch}\n"
-      "\\begin{frame}{T}\nx\n\\end{frame}")
-  | .W0354 => dvE (w := w) (dvDoc
-      "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{labelfont=bf}\n" "x")
   | .W0355 => dvE (w := w) (dvDoc "\\theme{moloch}\n" "x")
   | .W0351 => dvBib (w := w) "@misc{real, year = 2024}" "ghost" none ++
       dvE (w := w) (dvDoc "" "x \\cite{ghost}")
@@ -542,9 +588,13 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0429 => dvBib (w := w) "@misc{k, title = {T}, note = {\\section{S}}, year = 2024}" "k" none
   | .W0332 => dvE (w := w) (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
-  | .W0333 => dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
+  | .W0333 =>
+    (dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
       (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
-       "\\begin{frame}{F}\nx\n\\end{frame}"))
+       "\\begin{frame}{F}\nx\n\\end{frame}"))) ++
+    (dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
+      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
+       "\\begin{frame}{F}\nx\n\\end{frame}")))
   | .W0334 => dvE (w := w) (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\draw (0,0) parabola (1,1);\n\\end{tikzpicture}"))
   | .W0335 => dvL (w := w) one (dvDoc "" ("\\begin{tikzpicture}\n" ++
@@ -553,9 +603,6 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0336 => dvL (w := w) one (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\node (a) {A Wide Enough Label};\n" ++
       "\\node (b) [right =of a] {Another Wide Label};\n\\end{tikzpicture}"))
-  | .W0337 => dvE (w := w) (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}") ++
-      dvE (w := w) (dvDoc "" ("\\begin{tabular}{lll}\n\\multicolumn{\\relax}{c}{w} & c & d \\\\\n" ++
-        "a \\multicolumn{2}{c}{x} & y & z \\\\\n\\end{tabular}"))
   | .W0338 => dvL (w := w) one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))
   | .W0384 => dvF (w := w) one (dvDeck "\\theme{moloch}\n"
@@ -568,16 +615,12 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
        String.join (List.replicate 16 "one line\n\n") ++ "\\end{frame}"))
   | .W0399 => dvH (w := w) (dvDeck ""
       "\\begin{frame}\n\\begin{itemize}\n\\item Kilo\n\\vfill\nLima\n\\end{itemize}\n\\end{frame}")
-  | .W0385 => dvE (w := w) "$\\text{\\textbf{bold} word}$"
   | .W0389 => dvE (w := w) "$\\raisebox{1pt}{\\sum_{k} x_k}$"
-  | .W0390 => probed .W0390
+  | .W0390 =>
+    (probed .W0390) ++
+    (#[DriverDiag.familyMissing "Sourse Serif Pro" ["Source Serif Pro"] 0,
+      DriverDiag.familyMissing "Kaputt Grotesk" [] 12])
   | .N0031 => probed .N0031
-  | .W0391 =>
-    let sty := "\\AtBeginDocument{\\@venueprobe{hidden words}}\n"
-    let sraws := (Parse.parse "venuecode.sty" (Lex.lex "venuecode.sty" sty).1).1
-    let draws := (Parse.parse "t" (Lex.lex "t"
-      "\\usepackage{venuecode}\n\\begin{document}\nx\n\\end{document}\n").1).1
-    (Elab.runRaws "t" (Compat.applyLocalSty draws #[("venuecode", sraws)]).1).2
   | .E0390 => dvMd (w := w) "a paragraph\n\n<div>raw</div>\n"
   | .W0392 => dvMd (w := w) "[a link](https://example.org \"the title\")\n"
   | .W0435 => dvE (w := w) (dvDoc "\\usepackage{amsthm}\n"
@@ -586,29 +629,22 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       ("\\page{ width = 220pt, margin = 20pt }\n" ++
        "\\title{Coordinating Placeholder Schedules\\\\A Second Declared Line}\n")
       "\\maketitle")
-  | .W0388 => dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
-      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
-       "\\begin{frame}{F}\nx\n\\end{frame}"))
   | .W0358 => dvL (w := w) one (dvDoc "\\page{ size = a5 }\n"
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++
        String.join (List.replicate 60 "alpha \\\\\n") ++
        "\\end{tabular}\n\\caption{Below the table}\n\\end{table}"))
   | .W0340 =>
+    (
     dvE (w := w) (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny") ++
-    dvE (w := w) (dvDoc "" "x\n\n\\usepackage{pgfplots}\n\ny")
-  | .W0342 => dvE (w := w) (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"
-      "\\muted{x}")
-  | .W0343 =>
-    dvE (w := w) (dvDoc "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n" "x") ++
-    dvE (w := w) (dvDoc "\\runningfoot{one}\n\\runningfoot{two}\n" "x")
+    dvE (w := w) (dvDoc "" "x\n\n\\usepackage{pgfplots}\n\ny")) ++
+    (
+    dvE (w := w) (dvDoc "" "a {\\palette{ q = #112233 } b} c") ++
+    dvE (w := w) (dvDoc "" "\\textbf{\\page{ size = a5 } x}"))
   | .W0345 =>
     dvE (w := w) (dvDeck "\\palette{ covered = #000000 }\n"
       "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}") ++
     dvE (w := w) (dvDeck "\\palette{ covered = 80\\% }\n"
       "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}")
-  | .W0346 =>
-    dvE (w := w) (dvDoc "" "a {\\palette{ q = #112233 } b} c") ++
-    dvE (w := w) (dvDoc "" "\\textbf{\\page{ size = a5 } x}")
   | .E0347 =>
     dvE (w := w) (dvDoc "" "\\runninghead{Chapter One}\n\nx") ++
     dvE (w := w) (dvDoc "" "\\textbf{\\runningfoot{Y} z}")
@@ -621,13 +657,14 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0363 => dvE (w := w) (dvDeck ("\\setbeamertemplate{title page}{\\begin{tikzpicture}" ++
       "[remember picture,overlay]\\node at (0,0) {\\inserttitle};\\end{tikzpicture}}" ++
       "\\title{T}\n") "\\titlepage")
-  | .W0602 => #[Image.imageUndecodable "figures/plot.gif"
-      "not a PNG, JPEG, or PDF file"]
+  | .W0602 =>
+    (#[Image.imageUndecodable "figures/plot.gif"
+      "not a PNG, JPEG, or PDF file"]) ++
+    (#[HtmlDoc.undecodableDiag "figures/box.pdf",
+      HtmlDoc.undecodableDiag "figures/locked.pdf"
+        (some "the PDF is encrypted; its content cannot be read; pdftocairo is not on PATH")])
   | .W0603 => #[Image.imageIccDropped "figures/plot.png"]
   | .W0604 => #[Image.imageOrientationDropped "figures/photo.jpg" 6]
-  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf",
-      HtmlDoc.undecodableDiag "figures/locked.pdf"
-        (some "the PDF is encrypted; its content cannot be read; pdftocairo is not on PATH")]
   | .W0609 => FigureLoss.diags
       (FigureLoss.pdfLostDiag "plot.pdf" (.unfinished "pdftocairo produced an empty image"))
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
@@ -646,14 +683,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0396 => Tests.LayoutInkContracts.boundaryWitness one .W0396
   | .W0398 => dvE (w := w) (dvDoc "\\setmainfont{Demo Serif}\n\\usepackage{booktabs}\n" "x")
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
-  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectStreamSize 67108865),
-      DriverDiag.pdfWriteRefused (.objectSpelling 4)]
   | .N0023 => dvE (w := w) (dvDoc ""
       "\\begin{tikzpicture}\\draw (0,0) parabola (1,1);\\end{tikzpicture}")
   | .N0025 => probed .N0025
-  | .W0383 => dvE (w := w) (dvDoc ""
-      "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
-  | .W0387 => dvE (w := w) (dvDoc "\\thispagestyle{plain}\n\\palette{codestring = #AA0000}\n" "x")
   | .W0449 =>
     dvE (w := w) (dvDoc "\\definecolor{plum}{HTML}{AA0000}\n" "x") ++
     dvE (w := w) (dvDoc "\\style{itemize}{ gap = 4pt }\n" "x") ++
@@ -675,14 +707,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0349 => dvE (w := w) "\\ref{nowhere}"
   | .W0350 => dvE (w := w) "\\section{A}\\label{twice}\\label{twice}"
   | .W0380 => dvE (w := w) "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"
-  | .W0367 =>
-    dvE (w := w) ("\\documentclass{beamer}\n\\usepackage[debug,size=a1]{beamerposter}\n" ++
-      "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
   | .W0357 =>
     dvE (w := w) (dvDoc "\\edef\\x{\\csname y\\endcsname}\n" "x") ++
     dvE (w := w) (dvDoc "\\def\\pair#1.#2{#1 and #2}\n" "x")
-  | .W0361 =>
-    dvE (w := w) (dvDoc "\\title{T}\\newcommand{\\maketitle}{\\venuetitlebox}\n" "\\maketitle")
   | .W0364 =>
     dvData (w := w) ("\\data{ @job{a, role = {X}, start = 2020} " ++
         "@job{b, role = {Y}, start = 2021, end = 2024} }\n" ++
@@ -690,17 +717,6 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     dvData (w := w) "\\data{ @job{a, role = {X}} }\\val{k.role}" ++
     dvData (w := w) "\\data{ @job{a, role = {X}} }\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}"
   | .E0365 => probed .E0365
-  | .W0366 =>
-    let mk (sub : String) (w : Nat) : FontDb.Face :=
-      { path := s!"fonts/DemoSans-{sub}.otf", family := "Demo Sans"
-        subfamily := sub, bold := w ≥ 600, italic := false
-        fixedPitch := false, weight := w }
-    let faces := #[mk "Regular" 400, mk "Bold" 700]
-    let ask (family : String) (declared : Option String) : Array Diag :=
-      match FontDb.resolveVariant faces family declared {} with
-      | some (_, some sub) => #[DriverDiag.substituted sub]
-      | _ => #[]
-    ask "Demo Sans Light" none ++ ask "Demo Sans" (some "Demo Sans Medium")
 
 /-- Whether a text holds `\{name}`, an interpolation its string literal never ran. -/
 def dvPlaceholder (s : String) : Bool :=
@@ -908,11 +924,6 @@ def dvForm? (s : String) : Option Diag.Words := do
   let w : Diag.Words := { qual, noun, name, obj }
   if w.render == s then some w else none
 
-/-- Codes whose messages are still free prose: a baseline that may fall and never rise. -/
-def formDebt : List String :=
-  ["W0361",
-   "W0363"]
-
 /-- A template's literal runs between its `#k` slots. -/
 def dvTemplateRuns (template : String) : List String := Id.run do
   let cs := template.toList.toArray
@@ -994,7 +1005,7 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
       for tok in dvForeignCodes d.code s do
         fail s!"{d.code} {part}: names {tok}, which the reader cannot look up: {s}"
   unless dvTexOk d do judge "message" d.message
-  unless formDebt.contains d.code || dvFormOk d do
+  unless dvFormOk d do
     fail s!"{d.code} message: not the form '{d.kind.qual.label} <noun> [name] [for [noun] name]': {d.message}"
   if let some text := d.detail then judge "detail" text
   if d.kind.loss.severity.isWarning && dvMeasured d.message then
@@ -1080,7 +1091,7 @@ def siteAccounting : List (String × String × String) :=
   [("N0100", "W0319", "LeanTex/Core/Compat.lean, the \\usetheme rewrite: its translation \
 note stands beside the refusal of the theme it produced, one construct accounted twice; say \
 the translation in the refusal, or note it only when the theme resolves"),
-   ("N0100", "W0361", "LeanTex/Core/Compat.lean and Elab.lean, the \\renewcommand rewrite: \
+   ("N0100", "W0303", "LeanTex/Core/Compat.lean and Elab.lean, the \\renewcommand rewrite: \
 its translation note stands beside the refusal of the definition it produced; the same fold \
 as the row above, one class"),
    ("W0334", "W0362", "LeanTex/Core/Elab.lean, the picture diagnostics loop: each refused \
@@ -1095,7 +1106,7 @@ conditional's part is skipped, one construct accounted twice; say the translatio
 
 /-- Independent facts at one source site, witnessed by varying each separately; not merge debt. -/
 def independentSiteFacts : List (String × String) :=
-  [("N0100", "W0315"), ("N0100", "W0387"), ("W0005", "W0386"), ("W0358", "W0384")]
+  [("N0100", "W0315"), ("N0100", "W0104"), ("W0005", "W0386"), ("W0358", "W0384")]
 
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||
@@ -1142,10 +1153,10 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, keyedDs) := elabStr (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "x")
   let (_, nativeKeyDs) := elabStr (dvDoc "\\palette{codestring = #AA0000}\n" "x")
   let (_, plainDefDs) := elabStr (dvDoc "\\definecolor{plum}{HTML}{AA0000}\n" "x")
-  t "independent site facts N0100/W0387: the native key alone is named, untranslated"
-    (nativeKeyDs.any (·.kind == .W0387) && nativeKeyDs.all (·.kind != .N0100))
-  t "independent site facts N0100/W0387: a translated colour of its own is translated, not named"
-    (plainDefDs.any (·.kind == .N0100) && plainDefDs.all (·.kind != .W0387))
+  t "independent site facts N0100/W0104: the native key alone is named, untranslated"
+    (nativeKeyDs.any (·.kind == .W0104) && nativeKeyDs.all (·.kind != .N0100))
+  t "independent site facts N0100/W0104: a translated colour of its own is translated, not named"
+    (plainDefDs.any (·.kind == .N0100) && plainDefDs.all (·.kind != .W0104))
   independentWitnesses := independentWitnesses ++ siteCollisions keyedDs
   let some macroFace ← loadTestFont "OpenSans-Regular.ttf"
     | t "independent site facts W0005/W0386: the face loads" false
@@ -1323,7 +1334,7 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (_, ds) := elabStr (dvDoc "" (before ++ "\n\n" ++
       "\\renewcommand{\\maketitle}{\\begin{zzbanner}x\\end{zzbanner} \\zzmix[1]{y}}" ++
       "\n\nDelta."))
-    ((ds.filter (·.code == "W0361"))[0]?).map (·.message)
+    ((ds.filter (·.code == "W0303"))[0]?).map (·.message)
   t "redefinition trial: a recorded line index does not reach into the trial"
     (let withSite := redefVerdict "Alpha \\zzmix{Bravo} charlie."
      withSite.isSome && withSite == redefVerdict "Alpha charlie.")
@@ -1493,9 +1504,9 @@ def subjectDebt : List String :=
   ["W0003", "W0006", "W0007", "W0010", "W0011", "W0102",
    "W0310", "W0311", "W0312", "W0319", "W0320",
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
-   "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",
-   "W0353", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
-   "W0377", "W0379", "W0380", "W0381", "W0388"]
+   "W0333", "W0335", "W0336", "W0338", "W0352",
+   "W0353", "W0358", "W0364", "W0368", "W0369",
+   "W0377", "W0379", "W0380", "W0381"]
 
 /-- Every counted loss can be counted: a censused code's witness fires with a subject, or the code
 is on `subjectDebt`, read both ways. -/
@@ -1526,13 +1537,11 @@ why: a baseline that may fall and never rise. -/
 def repeatFoldUnexercised : List (String × String) :=
   unexercisedAs "its construct is a preamble declaration, which the repetition does not write twice"
     ["W0007", "W0101", "W0102", "W0103", "W0104", "W0106", "W0111", "W0202", "W0303", "W0306",
-     "W0312", "W0316", "W0317", "W0318", "W0319", "W0328", "W0329", "W0330", "W0331", "W0342",
-     "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
-     "W0373", "W0387", "W0398", "W0434", "W0442", "W0443", "W0109", "W0449"] ++
+     "W0312", "W0316", "W0317", "W0319", "W0328", "W0330", "W0331", "W0355", "W0357", "W0363",
+     "W0368", "W0369", "W0398", "W0434", "W0442", "W0443", "W0109", "W0449"] ++
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"
-    ["W0006", "W0013", "W0378", "W0382", "W0391", "W0393", "W0394", "W0396", "W0403", "W0601",
-     "W0602",
-     "W0603", "W0604", "W0605", "W0609", "W0701"] ++
+    ["W0006", "W0013", "W0378", "W0382", "W0393", "W0394", "W0396", "W0601", "W0602", "W0603",
+     "W0604", "W0609", "W0701"] ++
   unexercisedAs "one record per Lean declaration, which a file declares once"
     ["W0414", "W0415"] ++
   unexercisedAs "one record per declared phrase, in the directive a file reads once"
@@ -1541,16 +1550,13 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0431", "W0432"] ++
   unexercisedAs "its witness is the facts reader's own record, with no source to write twice"
     ["W0433"] ++
-  unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \
-font assembly's records are held by `weightSubstitutionRecordChecks`")
-    ["W0366"] ++
   unexercisedAs "its witness is one driver run, with no source to write twice"
     ["W0008", "W0011", "W0379", "W0390", "W0419", "W0424", "W0503"] ++
   unexercisedAs ("one record per file, its sites the offsets in its detail; a second file is a \
 second loss, named in its words")
     ["W0002", "W0004"] ++
   unexercisedAs "a layout record with no source, which the layout keeps once (`Layout.uniqueDiags`)"
-    ["W0010", "W0336", "W0372"] ++
+    ["W0010", "W0336"] ++
   unexercisedAs ("a layout record whose witness carries no picture source, which the layout \
 keeps once (`Layout.uniqueDiags`)")
     ["W0335"] ++
@@ -1694,12 +1700,6 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   subjectCensusChecks ref one mapped withMath probeOf
   dvNumberSelfChecks ref
   dvFormSelfChecks ref
-  for code in formDebt do
-    match DiagCode.ofString? code with
-    | some c =>
-      check ref s!"form debt {code}: the baseline row still describes a real gap"
-        (((diagWitness one mapped withMath probeOf c).filter (·.kind == c)).any (!dvFormOk ·))
-    | none => failures ref s!"form debt {code}: names no code"
   repeatFoldChecks ref one mapped withMath probeOf
   let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
@@ -2254,7 +2254,7 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"locale help: a language without a record, by {site}, names every shipped locale"
       (names (helpOf .W0368 (dvE src)) (Locale.builtin.map (·.tag)))
   t "size help: a size the style key cannot read names every size"
-    (names (helpOf .E0323 (dvE (dvDoc "\\style{abstract}{ body-size = zzsize }\n" "x")))
+    (names (helpOf .E0321 (dvE (dvDoc "\\style{abstract}{ body-size = zzsize }\n" "x")))
       (Ir.sizeScale.map (·.1)))
   t "format help: an unknown output format names every backend"
     (names (helpOf .E0321 (dvE (dvDoc "\\output{ formats = zzformat }\n" "x"))) Ir.backendNames)

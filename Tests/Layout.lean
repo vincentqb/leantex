@@ -2574,15 +2574,15 @@ def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
   let inlSrc := doc "a {\\palette{ q = #112233 } b} c"
   let dsi := (elabStr inlSrc).2
-  t "an inline palette is W0346, never unknown, and its block never errors"
-    (dsi.any (·.code == "W0346") && dsi.all (·.code != "W0301") &&
+  t "an inline palette is W0340, never unknown, and its block never errors"
+    (dsi.any (·.code == "W0340") && dsi.all (·.code != "W0301") &&
       dsi.all (·.code != "E0311"))
   t "the inline declaration's block never ships as ink"
     (let c := censusOfSrc inlSrc
      !hasStr (censusText c) "112233" && hasStr (censusText c) "b c")
-  t "an inline preamble-only declaration is W0346 too"
+  t "an inline preamble-only declaration is W0340 too"
     (let ds := (elabStr (doc "\\textbf{\\page{ size = a5 } x}")).2
-     ds.any (·.code == "W0346") && ds.all (·.code != "W0301"))
+     ds.any (·.code == "W0340") && ds.all (·.code != "W0301"))
   t "an inline runninghead drops content, an error like the body form"
     (let ds := (elabStr (doc "\\textbf{\\runninghead{X} y}")).2
      ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
@@ -3166,7 +3166,7 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       declDoc.page.width - 2 * declDoc.page.hmargin == Dim.pt 345)
   t "measure key rejects a stray value"
     ((elabStr "\\documentclass{article}\\page{ measure = loose }\\begin{document}x\\end{document}").2.any
-      (·.code == "E0323"))
+      (·.code == "E0321"))
   let pageOf (src : String) : Ir.PageSpec :=
     (elabStr (src ++ "\\begin{document}x\\end{document}")).1.page
   t "slides default to beamer's 11pt"
@@ -3181,7 +3181,7 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((pageOf "\\documentclass[10pt]{article}\\page{ fontsize = 14pt }").fontSize == Dim.pt 14)
   t "a sub-point \\page fontsize is rejected and keeps the base"
     (((elabStr ("\\documentclass{article}\\page{ fontsize = 0.4pt }" ++
-        "\\begin{document}x\\end{document}")).2.any (·.code == "E0323")) &&
+        "\\begin{document}x\\end{document}")).2.any (·.code == "E0321")) &&
      (pageOf "\\documentclass{article}\\page{ fontsize = 0.4pt }").fontSize
        == Ir.baseFontSize)
 
@@ -3252,7 +3252,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((elabStr "\\page{ hyphenate = off }\\begin{document}x\\end{document}").1.page.hyphenate
       == some false)
   t "hyphenate rejects a value that is not on or off"
-    (errCodes "\\page{ hyphenate = 5pt }\\begin{document}x\\end{document}" == ["E0323"])
+    (errCodes "\\page{ hyphenate = 5pt }\\begin{document}x\\end{document}" == ["E0321"])
   let hyphenRendered (doc : Ir.Doc) : Bool :=
     let out := layoutOf oneFace doc (pats := some pats)
     out.pages.any fun p => p.lines.any fun l =>
@@ -3379,7 +3379,7 @@ def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (let p := pageOf "marks = cut, mark-gap = 0.1in, mark-thickness = 1pt"
      p.markGap == (Dim.inch 1).ofRatioRound 1 10 && p.markThickness == Dim.pt 1)
   t "an unknown marks value is refused by name"
-    (errCodes (src "marks = frame") == ["E0323"])
+    (errCodes (src "marks = frame") == ["E0321"])
   t "the defaults are the sourced tokens"
     (({} : Ir.PageSpec).markGap == Ir.cutMarkGap &&
      ({} : Ir.PageSpec).markThickness == Ir.cutMarkThickness)
@@ -5130,7 +5130,7 @@ def bodyColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       | _ => true)
 
 /-- A footnote mark is a raised run in its line, and its note lands at the foot of the mark's page,
-spilling with its line and named (W0372) when taller than the text block. -/
+spilling with its line and named (W0005) when taller than the text block. -/
 def footnoteLayoutChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -5193,10 +5193,10 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
   let (bigDoc, _) := elabStr (dvDoc
     "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"
     ("x\\footnote{" ++ String.intercalate " " (List.replicate 60 "wow") ++ "}"))
-  t "footnote: a note taller than the text block fires W0372"
-    ((layoutOf oneFace bigDoc).diags.any (·.code == "W0372"))
-  t "footnote: an ordinary note stays silent on W0372"
-    (out.diags.all (·.code != "W0372") && (dvE src).all (·.code != "W0372"))
+  t "footnote: a note taller than the text block fires W0005"
+    ((layoutOf oneFace bigDoc).diags.any (·.code == "W0005"))
+  t "footnote: an ordinary note stays silent on W0005"
+    (out.diags.all (·.code != "W0005") && (dvE src).all (·.code != "W0005"))
   let gapOf (pre : String) : Option Dim.Length := Id.run do
     let (d, _) := elabStr (dvDoc pre
       ("Top claim\\footnote{gap probe} anchor.\n\n" ++

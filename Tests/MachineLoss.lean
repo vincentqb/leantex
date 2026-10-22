@@ -256,7 +256,7 @@ def machineLossChecks (ref : IO.Ref (List String))
             some (Ir.picSrcPrefix ++ (s.drop "picture:boundary:".length).toString)
           else none
       let subject := c.subject <|> declared.head?
-      let losses := coded ["W0378", "W0379", "W0602", "W0605"]
+      let losses := coded ["W0378", "W0379", "W0602"]
       t s!"machine loss CLI {c.name}: one {c.code}, under its subject, and no other machine loss"
         (subject.isSome && losses.length == 1 && losses.all fun j =>
           j.getObjValAs? String "code" == .ok c.code &&
@@ -292,7 +292,7 @@ def machineLossChecks (ref : IO.Ref (List String))
           (j.getObjValAs? String "code").toOption else none
       t s!"machine native CLI {name}: the build ships (exit {run.exitCode})" (run.exitCode == 0)
       t s!"machine native CLI {name}: no machine loss and no refusal ({codes})"
-        (!codes.any (["E0606", "W0378", "W0379", "W0602", "W0605", "W0609"].contains ·))
+        (!codes.any (["E0606", "W0378", "W0379", "W0602", "W0609"].contains ·))
       match ← (IO.FS.readFile out).toBaseIO with
       | .error _ => t s!"machine native CLI {name}: the HTML page is written" false
       | .ok html =>
@@ -340,7 +340,7 @@ def machineLossChecks (ref : IO.Ref (List String))
     IO.FS.writeFile lockedDoc (lockedIncludeSource (corpus / "fonts"))
     let locked ← build lockedDoc bare "locked" (dir / "locked" / "page.html")
     let faceless := (recordsOf locked).filter fun j =>
-      (j.getObjValAs? String "code").toOption == some "W0605"
+      (j.getObjValAs? String "code").toOption == some "W0602"
     t s!"figure remedy CLI: a refused PDF include with no converter names the install ({faceless.map wordsOf})"
       (locked.exitCode == 0 && !faceless.isEmpty && faceless.all fun j =>
         (wordsOf j).any fun w => hasStr w "install 'pdftocairo'" && hasStr w "PATH")
@@ -363,7 +363,7 @@ def machineLossChecks (ref : IO.Ref (List String))
     t s!"machine loss CLI accepted refusal: accepted once, no machine loss named ({named})"
       (acceptedCodes.any (·.any fun c => (c.getObjValAs? String "code").toOption == some "W0382" &&
           (c.getObjValAs? Nat "count").toOption == some 1) &&
-        !named.any (["E0606", "W0378", "W0379", "W0602", "W0605"].contains ·))
+        !named.any (["E0606", "W0378", "W0379", "W0602"].contains ·))
     match ← (IO.FS.readFile acceptedOut).toBaseIO with
     | .error _ => t "machine loss CLI accepted refusal: the HTML page is written" false
     | .ok html =>

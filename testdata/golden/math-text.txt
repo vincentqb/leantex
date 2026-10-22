@@ -56,5 +56,5 @@ para
   math inline "\\overset {?}{=}"
   text " sets its characters and names the construct, and no control sequence reaches the page."
 -- diagnostics
-warning[W0385] 24:1 unsupported command \textbf
+warning[W0012] 24:1 unsupported command \textbf
 warning[W0012] 40:59 unsupported command \overset | detail: set as its text content

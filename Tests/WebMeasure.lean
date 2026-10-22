@@ -92,7 +92,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
         hasStr d "--wide-room: 0px;")
   let (_, badDs) := elabStr ("\\documentclass{article}\\page{ web = magazine }\\begin{document}" ++
     "x\\end{document}")
-  t "web measure: a layout no theme names is named" (badDs.any (·.kind == .E0323))
+  t "web measure: a layout no theme names is named" (badDs.any (·.kind == .E0321))
   let (mdArt, mdArtDs) := elabMd ("---\nweb: article\n---\n\n" ++ guide)
   let mdArtCss := HtmlDoc.baseCss {} mdArt
   t "web measure: a markdown document's metadata declares the article layout as the TeX page's does"
@@ -105,7 +105,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
       (HtmlDoc.emit {} mdBook).1 == (HtmlDoc.emit {} doc).1)
   let (mdBad, mdBadDs) := elabMd ("---\nweb: magazine\n---\n\n" ++ guide)
   t s!"web measure: a markdown layout no theme names is named as the TeX one is ({mdBadDs.map (·.message)})"
-    (mdBad.page.web.isNone && mdBadDs.size == 1 && mdBadDs.all fun d => d.kind == .E0323 &&
+    (mdBad.page.web.isNone && mdBadDs.size == 1 && mdBadDs.all fun d => d.kind == .E0321 &&
       d.message == "invalid value 'magazine' for key web" && (d.span.map (·.pos.line)) == some 2 &&
       (d.help.getD "") == "write 'web: book' or 'web: article'")
   let (_, mdListDs) := elabMd ("---\nweb: [book, article]\n---\n\n" ++ guide)
@@ -127,7 +127,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
     (raws[0]? matches some (Parse.Raw.ctrl _ _) && 3 < k && k < raws.size && midDs.isEmpty &&
       midDoc.page.web == some .article && (HtmlDoc.emit {} midDoc).1 == (HtmlDoc.emit {} headDoc).1)
   t "web measure: TeX names a layout no theme names in the markdown words, its help in its own spelling"
-    (badDs.size == 1 && badDs.all fun d => d.kind == .E0323 &&
+    (badDs.size == 1 && badDs.all fun d => d.kind == .E0321 &&
       d.message == "invalid value 'magazine' for key web" &&
       (d.help.getD "") == "write '\\page{ web = book }' or '\\page{ web = article }'")
   let (inc, incDs) := includedDoc "host.tex" (neutralHost "a")
@@ -138,7 +138,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, dimDs) := elabStr ("\\documentclass{article}\\page{ web = 3pt }\\begin{document}" ++
     "x\\end{document}")
   t "web measure: a value of the wrong type names the layouts"
-    (dimDs.any fun d => d.kind == .E0323 && hasStr (d.detail.getD "") "'book' or 'article'")
+    (dimDs.any fun d => d.kind == .E0321 && hasStr (d.detail.getD "") "'book' or 'article'")
   let (_, deckDs) := elabStr ("\\documentclass{beamer}\\page{ web = book }\\begin{document}" ++
     "\\begin{frame}{One}x\\end{frame}\\end{document}")
   t "web measure: a layout declared on a page no flow sets is named"
@@ -215,7 +215,7 @@ def paperLossChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (!sized && sizedDs.any fun d => d.kind == .W0338 && d.output.isNone)
   let (tall, tallDs) := paperOnly (article ("x\\footnote{" ++ String.join (List.replicate 600 "tall note words ") ++ "}"))
   t "paper losses: a footnote past the text block is unset, its overrun the paper's"
-    (tall && tallDs.any fun d => d.kind == .W0372 && d.output == some .pdf)
+    (tall && tallDs.any fun d => d.kind == .W0005 && d.output == some .pdf)
   let (allowed, _) := elabStr ("\\documentclass{article}\\allow{W0338}\\begin{document}x\\end{document}")
   t "paper losses: a paper loss accepted by name is set, so its acceptance fires"
     (!Layout.paperLossesOnly allowed)

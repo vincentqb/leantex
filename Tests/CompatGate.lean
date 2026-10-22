@@ -64,11 +64,11 @@ def logOnlyQuiet (d : Ir.Doc) : Bool :=
   && d.info.title.isNone
 
 /-- Whether a construct's consumption is accounted by name: N0100 under `ctrl:nothing:<name>`, or
-W0387 under `ctrl:<name>`, read off `Diag.subject`. -/
+W0104 under `ctrl:<name>`, read off `Diag.subject`. -/
 def logOnlyAccounted (name : String) (ds : Array Diag) : Bool :=
   ds.any fun d =>
     (d.code == "N0100" && d.subject == some ("ctrl:nothing:" ++ name))
-    || (d.code == "W0387" && d.subject == some ("ctrl:" ++ name))
+    || (d.code == "W0104" && d.subject == some ("ctrl:" ++ name))
 
 /-- Every log-only control the engine consumes, probed in the body and through a deferred hook,
 leaves no ink, warning or error, is named, and has its LaTeX arity. -/
@@ -244,12 +244,12 @@ def spanAccounting : List (String × String) := []
 def spanAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let visible (ds : Array Diag) (p : String → Bool) : Bool :=
-    ds.any fun d => d.code == "W0337" && d.severity == .warning && (d.subject.map p).getD false
+    ds.any fun d => d.code == "W0014" && d.severity == .warning && (d.subject.map p).getD false
   for (what, pre, body) in spanAccountingProbes do
     let (_, ds) := elabStr (dvDoc pre body)
     let doubled := visible ds (·.startsWith "ctrl:multicolumn") &&
       visible ds (· == "tabular:ragged")
-    t s!"span accounting {what}: a set span prints no W0337"
+    t s!"span accounting {what}: a set span prints no W0014"
       (!visible ds fun _ => true)
     if spanAccounting.any (·.1 == what) then
       t s!"span accounting {what}: the row still describes two lines for one span"

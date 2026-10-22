@@ -47,7 +47,7 @@ def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (style out).bind (·.align)
   let refusalSites (out : Ir.Doc × Array Diag) :
       Array (Option Span × Option String × Option String × Option String) :=
-    (out.2.filter (·.kind == .W0361)).map
+    (out.2.filter (·.kind == .W0303)).map
       (fun d => (d.span, d.subject, d.refused, d.triggerText))
   let conditional (name : String) :=
     "\\newcommand{\\inserttitle}{}\n\\ifdefined\\" ++ name ++

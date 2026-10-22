@@ -217,7 +217,7 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
 
     for (name, body, code) in [
         ("expanding-definition", "\\edef\\optionprobe{\\csname x\\endcsname}", "W0357"),
-        ("package-error", "\\PackageError{pkgoptionsprobe}{Unused}{Unused}", "W0387"),
+        ("package-error", "\\PackageError{pkgoptionsprobe}{Unused}{Unused}", "W0104"),
         ("lua", "\\directlua{error('unused')}", "W0104")] do
       let decl := "\\DeclareOption*{" ++ body ++ "}\\ProcessOptions*\\relax"
       let ds ← samePage name decl "u" "Tail" "Tail"

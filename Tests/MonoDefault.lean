@@ -345,7 +345,7 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
     | .ok (fsB, docB, diagsB, pathsB) =>
       let b := fileOf fsB pathsB
       t s!"tex: an off-corner weight sets in the nearest corner's file, named ({b 600 false})"
-        (b 600 false == "lmmonolt10-bold.otf" && diagsB.any (·.kind == .W0366)
+        (b 600 false == "lmmonolt10-bold.otf" && diagsB.any (·.kind == .W0006)
           && runFace (layoutOf fsB docB) "semibold" == some (fsB.lookup 2 600 false))
     | .error d => t s!"the off-corner Latin Modern assembly succeeds ({d.message})" false
     let serif : Array FontDb.Face :=

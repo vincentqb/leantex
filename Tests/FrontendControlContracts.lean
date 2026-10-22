@@ -58,7 +58,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .refuse code .each msg _ => ds.any fun d => d.kind == code && d.message == msg
     | .discard _ key =>
       ds.any fun d => d.kind == .N0100 && d.subject == some ("ctrl:nothing:" ++ key)
-    | .inert => ds.any fun d => d.kind == .W0387 && d.subject == some ("ctrl:" ++ row.name)
+    | .inert => ds.any fun d => d.kind == .W0104 && d.subject == some ("ctrl:" ++ row.name)
     | .lower .. => true
   t "control table: every skip row names a kernel skip amount"
     (Compat.ctrlRows.all fun row => match row.action with
@@ -91,7 +91,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let earlier := listed "\\renewcommand{\\ensuremath}{\\setlength{\\itemsep}{9pt}}"
     "\\ensuremath{x^2}" ""
   t "dispatch order: a lowered control after a redefinition the built-in overrides keeps meaning"
-    (earlier.any (·.kind == .W0361) && !settled earlier && earlier.all (·.severity != .error))
+    (earlier.any (·.kind == .W0303) && !settled earlier && earlier.all (·.severity != .error))
   let missing := Elab.run file ("\\documentclass{article}\\usepackage{natbib}\\begin{document}" ++
     "alpha \\bibpunct{(}{)} \\section{Zzsec} omega\\end{document}")
   t "body declaration: one missing a group is left to elaboration with what follows it"
@@ -176,7 +176,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.recoveryDiagnostic pending).kind == pending.code)
   t "synthetic recovery without option evidence makes no shape claim"
     ((Elab.recoveryDiagnostic recovered).help == none)
-  let unrelated := Diag.of .W0346 "a separate declaration" none
+  let unrelated := Diag.of .W0340 "a separate declaration" none
     (subject := some recovered.subject)
   t "a different diagnostic code cannot account for recovered content"
     ((Elab.accountRecoveredItem #[unrelated] recovered).any

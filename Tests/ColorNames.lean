@@ -219,12 +219,12 @@ public def htmlDecimalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   t "xcolor decimals: a defined HTML colour ships lualatex's operator"
     (bytesContain pdf "0.92157 0.50587 0.10588 rg")
 
-/-- A `\palette` name nothing reads (`ink`, `surface`) is one W0387 at its declaration, pointing at
+/-- A `\palette` name nothing reads (`ink`, `surface`) is one W0104 at its declaration, pointing at
 the key likely meant. -/
 public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let named (ds : Array Diag) (key : String) : Array Diag :=
-    ds.filter fun d => d.code == "W0387" && d.subject == some s!"palette:{key}"
+    ds.filter fun d => d.code == "W0104" && d.subject == some s!"palette:{key}"
   let (_, unread) := elabStr (article "\\palette{ ink = #333333, surface = #F4F4F4 }\n" "Probe.")
   t "palette keys: an unread ink is named once, pointing at fg"
     ((named unread "ink").size == 1 &&
@@ -238,7 +238,7 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "palette keys: an xcolor definition is an author colour, never named" (named xcolor "ink").isEmpty
   let (_, roles) := elabStr (article "\\palette{ fg = #333333, bg = #FFFFFF }\n" "Probe.")
   t "palette keys: the role keys say nothing"
-    (roles.all fun d => d.code != "W0387")
+    (roles.all fun d => d.code != "W0104")
   -- Only the engine's reads count; the word in prose or a comment reads nothing.
   let declared := "\\palette{ ink = #333333, surface = #F4F4F4 }\n"
   let (_, prose) := elabStr (article declared
@@ -308,8 +308,8 @@ private def flipArtifact (fonts : Font.FontSet) (doc : Ir.Doc) : ByteArray × St
     !(d.startsWith "--ltx-c-" || d.startsWith "--ink:" || d.startsWith "--surface:")
   (pdf, Html.render (Html.elem "body" body) 0, "\n".intercalate rules)
 
-/-- W0387 is the two-build oracle: changing one key's value leaves the artifact unchanged exactly
-when that key draws W0387. -/
+/-- W0104 is the two-build oracle: changing one key's value leaves the artifact unchanged exactly
+when that key draws W0104. -/
 public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let probes : List (String × String × String × String × Bool) := [
@@ -337,10 +337,10 @@ public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     let (a, ds) := build "#2A6F3A"
     let (b, _) := build "#C0157D"
     let changed := a.1 != b.1 || a.2.1 != b.2.1 || a.2.2 != b.2.2
-    let warned := ds.any fun d => d.code == "W0387" && d.subject == some s!"palette:{key}"
+    let warned := ds.any fun d => d.code == "W0104" && d.subject == some s!"palette:{key}"
     t s!"palette keys, two builds: {what} {if read then "reads" else "leaves unread"} '{key}'"
       (changed == read)
-    t s!"palette keys, two builds: {what}: W0387 exactly when the artifact ignores '{key}'"
+    t s!"palette keys, two builds: {what}: W0104 exactly when the artifact ignores '{key}'"
       (warned == !changed)
   let deck (v : String) := Id.run do
     let (doc, ds) := elabStr ("\\documentclass{beamer}\n\\palette{ ink = " ++ v ++ " }\n" ++
@@ -350,6 +350,6 @@ public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   let (a, ds) := deck "#2A6F3A"
   let (b, _) := deck "#C0157D"
   t "palette keys, two builds: a beamer frame title reads 'ink'"
-    ((a.1 != b.1) && !(ds.any fun d => d.code == "W0387" && d.subject == some "palette:ink"))
+    ((a.1 != b.1) && !(ds.any fun d => d.code == "W0104" && d.subject == some "palette:ink"))
 
 end Tests.ColorNames

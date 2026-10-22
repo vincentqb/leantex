@@ -1547,8 +1547,8 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
         ("the boundary diagram", (corpus : System.FilePath), dir / "diagram.html", shade, false)] do
       let (code, records, html) ← build src out
       t s!"native faces: {name} builds HTML with no converter on PATH" (code == 0)
-      t s!"native faces: {name} names no missing face (W0605, W0378) and no loss (W0609)"
-        (!named records "W0605" && !named records "W0378" && !named records "W0609")
+      t s!"native faces: {name} names no missing face (W0602, W0378) and no loss (W0609)"
+        (!named records "W0602" && !named records "W0378" && !named records "W0609")
       t s!"native faces: {name}'s page embeds the engine's own drawing, byte for byte"
         ((faceOf pdf stretch).any fun face => (html.splitOn face).length ≥ 2)
     let (_, _, chartHtml) ← build (dir / "figure.tex") (dir / "figure-words.html")

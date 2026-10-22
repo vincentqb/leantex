@@ -82,6 +82,6 @@ frame
   title
     text "Escape hatch"
 -- diagnostics
-warning[W0329] 15:1 ignored command \fontfallback
+warning[W0104] 15:1 ignored command \fontfallback
 warning[W0307] 43:3 unsupported command \figure
 warning[W0307] 49:3 unsupported environment external

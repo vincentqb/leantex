@@ -450,7 +450,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (friendlyDoc, friendlyDs) := markerDoc (decl ++ "\\setminted{style=friendly}")
     let (defaultDoc, defaultDs) := markerDoc (decl ++ "\\setminted{style=default}")
     let inert := fun (ds : Array Diag) (name : String) =>
-      ds.filter fun d => d.code == "W0387" && d.subject == some s!"lstopt:style:{name}"
+      ds.filter fun d => d.code == "W0104" && d.subject == some s!"lstopt:style:{name}"
     t s!"code roles, {label}: the declared style changes the page exactly when a role is left to it"
       ((shipped friendlyDoc == shipped defaultDoc) == answered)
     t s!"code roles, {label}: the style is named as inert exactly when it changes no page"
@@ -481,7 +481,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     for spelling in [s!"\\palette\{ {key} = #AA0000 }", s!"\\definecolor\{{key}}\{HTML}\{AA0000}",
         s!"\\colorlet\{{key}}\{black}"] do
       let (_, ds) := markerDoc (palette ++ spelling)
-      let named := ds.filter fun d => d.code == "W0387" && d.subject == some s!"listingkey:{key}"
+      let named := ds.filter fun d => d.code == "W0104" && d.subject == some s!"listingkey:{key}"
       t s!"code roles: {spelling} is named once where it stands, pointing to {Ir.codeKey r}"
         (named.size == 1 && named.all fun d => hasStr (d.help.getD "") (Ir.codeKey r))
       t s!"code roles: {spelling} leaves the listing holding its type as the document without it"
@@ -489,7 +489,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, early) := elabStr (dvDoc "\\usepackage{minted}"
     "\\textcolor{codestring}{x}\n\n\\palette{codestring = #AA0000}\n\n\\textcolor{codestring}{y}")
   t "code roles: a retired key used before its declaration is still named at full strength"
-    (early.any fun d => d.code == "W0387" && !d.demoted && d.help.isSome)
+    (early.any fun d => d.code == "W0104" && !d.demoted && d.help.isSome)
   t "code roles: no shipped bundle declares a retired key"
     (Theme.builtin.all fun th => (deckBundle th).entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)

@@ -147,7 +147,7 @@ def synthetic : String :=
   "\\runningfoot{An Invented Foot}\n" ++
   "\\logo{L}\n" ++
   "\\assert{ pages <= 4 }\n" ++
-  "\\allow{W0318}\n" ++
+  "\\allow{W0104}\n" ++
   "\\begin{document}\n\\begin{frame}{A}\nx\n\\end{frame}\n\\end{document}\n"
 
 /-- Same-head adjacent blocks with field-disjoint keys, which the different-head sweep

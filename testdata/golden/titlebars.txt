@@ -31,4 +31,4 @@ info[N0100] 19:1 translated command \renewcommand{\@maketitle} | detail: \define
 warning[W0104] 19:34 ignored length \hsize | detail: it shapes a paragraph's lines, which the engine sets to the measure in force
 info[N0100] 19:96 translated command \bf | detail: \normalfont\bfseries
 info[N0100] 19:151 translated command \bf | detail: \normalfont\bfseries
-warning[W0361] 15:1 the redefinition of '\maketitle' uses '\@maketitle', which the engine cannot run; the built-in stands | detail: '\@maketitle' at titlebars.tex:15; styled by the redefinition's rules and spacing
+warning[W0303] 15:1 ignored definition \maketitle | detail: it uses '\@maketitle' at titlebars.tex:15, which the engine cannot run; the built-in stands; styled by the redefinition's rules and spacing

@@ -164,7 +164,7 @@ def blueprintChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (outside, ods) := docOf ("\\documentclass{article}\n\\usepackage{blueprint}\n" ++
     "\\begin{document}\nA claim \\lean{Example.Widget}\\leanok here.\n\\end{document}\n")
   t "blueprint: a mark outside a statement marks nothing and is named"
-    (ods.any (·.kind == .W0387) && !(paragraphs (docNodesOf outside)).any (hasStr · "Lean"))
+    (ods.any (·.kind == .W0104) && !(paragraphs (docNodesOf outside)).any (hasStr · "Lean"))
   -- Without the package or a definition of its, the marks are no command's.
   let (foreign, fds) := docOf ("\\documentclass{article}\n\\begin{document}\n" ++
     "A claim \\lean{Example.Widget} here.\n\\end{document}\n")

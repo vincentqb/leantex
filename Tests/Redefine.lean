@@ -54,7 +54,7 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     (hasStr (html ("\\documentclass{article}" ++ body)) "class=\"abstract size-small quoted\"")
   let (bad, badDs) := elabStr ("\\documentclass{article}\\style{abstract}{ body-size = big }" ++ body)
   t "an unknown body size is named and leaves the built-in's"
-    (Ir.abstractBodySize bad.styles == "small" && badDs.any (·.code == "E0323"))
+    (Ir.abstractBodySize bad.styles == "small" && badDs.any (·.code == "E0321"))
   let refusal (begin : String) : Option String × Option Ir.ElementStyle :=
     let (d, ds) := elabStr (venue begin)
     ((ds.find? (·.code == "W0303")).map saidText, d.styles.find? "abstract")
@@ -208,7 +208,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let selfRef := "\\captionsetup[table]{skip=\\abovecaptionskip}\n"
   t "a skip set to the caption skip itself changes nothing and is honoured"
     (shippedLines fonts (dvDoc selfRef body) == shippedLines fonts (dvDoc "" body) &&
-     !((dvE (dvDoc selfRef body)).any (·.code == "W0354")))
+     !((dvE (dvDoc selfRef body)).any (·.code == "W0104")))
   let reg := "\\newlength{\\placeholdergap}\\setlength{\\placeholdergap}{3pt}\n" ++
     "\\captionsetup[table]{skip=\\placeholdergap}\n"
   t "a skip naming a declared length reads its value"
@@ -216,7 +216,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let (tOther, fOther) := gaps "\\captionsetup[lstlisting]{skip=3pt}\n"
   t "a scope the engine has no float for reaches no float, and is named"
     (tOther == tDef && fOther == fDef &&
-      (dvE (dvDoc "\\captionsetup[lstlisting]{skip=3pt}\n" body)).any (·.code == "W0354"))
+      (dvE (dvDoc "\\captionsetup[lstlisting]{skip=3pt}\n" body)).any (·.code == "W0104"))
   let html := (HtmlDoc.emit {} (elabStr (dvDoc "\\captionsetup[table]{skip=3pt}\n" body)).1).1
   t "the HTML table caption prefers the table's gap to the document's"
     (hasStr html "--tablecaptionsep: 2.989pt" &&
@@ -230,7 +230,7 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     (subPage "sub" == subPage "subfigure" &&
       subPage "sub" != shippedLines fonts (dvDoc "\\usepackage{subcaption}\n" subBody) &&
       !((dvE (dvDoc "\\usepackage{subcaption}\n\\captionsetup[sub]{skip=2pt}\n" subBody)).any
-        (·.code == "W0354")))
+        (·.code == "W0104")))
 
 
 /-- Whether the document's own caption skips still follow their object-binding reading rather than

@@ -197,10 +197,10 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a poster width holding another entry sets no other page key"
     (pagesOf oneFace (poster "30, margin=1") == pagesOf oneFace (poster "30, gutter=1"))
   t "a poster width holding another entry drops the custom size, named"
-    ((dvE (poster "30, margin=1")).any fun d => d.code == "W0367" && hasStr d.message "size=custom")
+    ((dvE (poster "30, margin=1")).any fun d => d.code == "W0104" && hasStr d.message "size=custom")
   let unnumbered := dvE (poster "abc")
   t "a poster width that is no number drops the custom size, named, and ships"
-    (unnumbered.any (fun d => d.code == "W0367" && hasStr d.message "size=custom") &&
+    (unnumbered.any (fun d => d.code == "W0104" && hasStr d.message "size=custom") &&
       !unnumbered.any (·.severity == .error))
   let geometry (opts : String) : String :=
     "\\documentclass{article}\n\\usepackage[" ++ opts ++ "]{geometry}\n\\begin{document}\n" ++
@@ -934,7 +934,7 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     (paras grouped == 1 && spaces grouped == #[toString (Dim.pt 7), toString (Dim.pt 3)])
   let boxed := dvDoc gap "A \\hbox{\\gap=2pt p\\hspace{\\gap}q} r."
   t s!"a length assigned in inline content is read there, no restore leaking ({codes boxed})"
-    (!(codes boxed).contains "W0346" && !hasStr (text boxed) "restore" &&
+    (!(codes boxed).contains "W0340" && !hasStr (text boxed) "restore" &&
       spaces boxed == #[toString (Dim.pt 2)])
   let pads (src : String) : Array String := Ir.foldBlocks (fun acc _ => acc) (fun acc x =>
     match x with
@@ -1037,10 +1037,10 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     ((subjects setTex "W0104").length == 1)
   let footLater := dvDoc "\\usepackage[margin=1in]{geometry}\n\\setlength{\\footskip}{20pt}\n" "Alpha."
   t "a footskip declared after the page replaces the class's with no second value named"
-    (!(codes footLater).contains "W0343" && footOfDoc footLater == some (Dim.pt 20))
+    (!(codes footLater).contains "W0322" && footOfDoc footLater == some (Dim.pt 20))
   let footKey := dvDoc "\\usepackage[margin=1in]{geometry}\n\\geometry{footskip=25pt}\n" "Alpha."
   t "a later geometry footskip replaces the class's with no second value named"
-    (!(codes footKey).contains "W0343" && footOfDoc footKey == some (Dim.pt 25))
+    (!(codes footKey).contains "W0322" && footOfDoc footKey == some (Dim.pt 25))
   -- The paper in force follows a declared paper size and a class paper the page has no size for.
   t "geometry: a paper option after a declared paper size, or beside an unsized class paper, sets it"
     ((paperDoc "\\documentclass{article}\n" "\\usepackage[paperwidth=20cm,paperheight=20cm]{geometry}\n\\geometry{letterpaper}\n").width ==

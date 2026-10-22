@@ -345,7 +345,7 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .table cols pl pr _ _ _ => acc.push (cols, pl, pr)
       | _ => acc) (fun acc _ => acc) #[] doc.body)[0]?
   let isFlex := fun (w : Ir.ColWidth) => match w with | .flex _ => true | _ => false
-  let cascade := ["W0104", "W0337", "W0338", "W0103", "W0301", "W0302"]
+  let cascade := ["W0104", "W0014", "W0338", "W0103", "W0301", "W0302"]
   let (d1, ds1) := elabStr (dvDoc "\\usepackage{tabularx}\n"
     "\\begin{tabularx}{\\linewidth}{>{\\raggedright\\arraybackslash}X}Key.\\end{tabularx}")
   t "a raggedright X stays flexible and left-aligned, no cascade"
@@ -380,7 +380,7 @@ def recipeColModChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some (cols, _, _) =>
        cols.size == 1 && cols[0]?.map (·.align) == some .center &&
        (ds4.filter (·.code == "W0104")).size == 1 &&
-       ds4.all (fun d => d.code != "W0337")
+       ds4.all (fun d => d.code != "W0014")
      | none => false)
   let (d5, ds5) := elabStr (dvDoc ""
     "\\begin{tabular}{c<{\\arraybackslash}}a\\end{tabular}")

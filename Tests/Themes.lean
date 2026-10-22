@@ -661,10 +661,10 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (deck169 "\\chrome{ footer = { left = \\pagenumber } }" frame)).2.any fun d =>
       d.code == "E0321" && ((d.help.getD "").splitOn "sectiontitle").length == 2)
   t "a non-block footer is a type error"
-    ((elabStr (deck169 "\\chrome{ footer = 3pt }" frame)).2.any (·.code == "E0323"))
+    ((elabStr (deck169 "\\chrome{ footer = 3pt }" frame)).2.any (·.code == "E0321"))
   t "chrome outside slides warns"
     ((elabStr ("\\documentclass{article}\\chrome{ footer = { right = \\framenumber } }" ++
-      "\\begin{document}x\\end{document}")).2.any (·.code == "W0318"))
+      "\\begin{document}x\\end{document}")).2.any (·.code == "W0104"))
   let mixedBody := "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}"
   t "undeclared sequence mixing warns by name"
     ((elabStr (deck169 "\\theme{moloch}" mixedBody)).2.any fun d =>
@@ -688,44 +688,44 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the palette contract rejects a muted one step weaker"
     (!Contrast.paletteContract weaker)
 
-/-- W0348 names a theme replacing a key the document declared with another value, and only that. -/
+/-- W0104 names a theme replacing a key the document declared with another value, and only that. -/
 def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ds (pre : String) : Array Diag :=
     (elabStr (deck169 pre "\\begin{frame}{T}\nx\n\\end{frame}")).2
   t "a theme replacing a document-declared colour names both"
     ((ds "\\palette{ alert = #112233 }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "alert").length == 2 &&
+      d.code == "W0104" && (d.message.splitOn "alert").length == 2 &&
         ((saidText d).splitOn "moloch").length == 2)
   t "the help points past theme"
     ((ds "\\palette{ alert = #112233 }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && ((d.help.getD "").splitOn "\\theme").length == 2)
+      d.code == "W0104" && ((d.help.getD "").splitOn "\\theme").length == 2)
   t "a theme filling keys the document never declared is silent"
-    (!(ds "\\theme{moloch}").any (·.code == "W0348"))
+    (!(ds "\\theme{moloch}").any (·.code == "W0104"))
   t "an override after the theme is silent"
-    (!(ds "\\theme{moloch}\\palette{ alert = #112233 }").any (·.code == "W0348"))
+    (!(ds "\\theme{moloch}\\palette{ alert = #112233 }").any (·.code == "W0104"))
   let molochAlert := (Ir.Design.declared? (deckBundle Theme.moloch) .alert).getD .black
   t "a declaration the theme agrees with replaces nothing"
-    (!(ds ("\\palette{ alert = #" ++ molochAlert.hex (hash := false) ++ " }\\theme{moloch}")).any (·.code == "W0348"))
+    (!(ds ("\\palette{ alert = #" ++ molochAlert.hex (hash := false) ++ " }\\theme{moloch}")).any (·.code == "W0104"))
   t "a second theme replacing the first theme's values is silent"
-    (!(ds "\\theme{plain}\\theme{moloch}").any (·.code == "W0348"))
+    (!(ds "\\theme{plain}\\theme{moloch}").any (·.code == "W0104"))
   t "a replaced chrome slot is named as its slot"
     ((ds "\\chrome{ footer = { right = \\framefraction } }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "footer.right").length == 2)
+      d.code == "W0104" && (d.message.splitOn "footer.right").length == 2)
   t "a theme declares no covered share, so the document's stands, replaced by nothing"
     (!(ds "\\palette{ covered = 50\\% }\\theme{moloch}").any (fun d =>
-      d.code == "W0348" && (d.message.splitOn "'covered'").length == 2) &&
+      d.code == "W0104" && (d.message.splitOn "'covered'").length == 2) &&
      (elabStr ("\\documentclass{slides}\\palette{ covered = 50\\% }\\theme{moloch}" ++
        "\\begin{document}x\\end{document}")).1.palette.coveredFraction == some 50)
   t "a replaced element style is named"
     ((ds "\\style{frametitle}{ font = {\\small} }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "frametitle").length == 2)
+      d.code == "W0104" && (d.message.splitOn "frametitle").length == 2)
   t "a replaced token is named"
     ((ds "\\tokens{ progressheight = 3pt }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "progressheight").length == 2)
+      d.code == "W0104" && (d.message.splitOn "progressheight").length == 2)
   t "an untouched element style beside a replaced one stays silent"
     (((ds "\\style{section}{ before = 3pt }\\theme{moloch}").filter
-      (·.code == "W0348")).isEmpty)
+      (·.code == "W0104")).isEmpty)
 
 /-- A bundle's element style is installed whole (`Theme.styleMerge`). -/
 def styleMergeChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -1282,7 +1282,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
          String.join (r.toList.map Ir.blocksText))
        (s.splitOn "Head").length == 2 && !s.toList.contains '2' &&
          !s.toList.contains 'X' &&
-         rows.all (·.size == cols.size) && !ctDs.any (·.code == "W0337") &&
+         rows.all (·.size == cols.size) && !ctDs.any (·.code == "W0014") &&
          ctDs.any (·.subject == some "tabular:colspec") &&
          spans == #[{ row := 0, col := 0, n := 2, spec := { width := .natural, align := .left } }]
      | _ => false)
@@ -1363,13 +1363,13 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}x\\end{document}")).1.palette.coveredFraction == some 21)
   t "palette covered fraction out of range" (errCodes
     ("\\documentclass{article}\\palette{covered = 100\\%}" ++
-     "\\begin{document}x\\end{document}") == ["E0332"])
+     "\\begin{document}x\\end{document}") == ["E0321"])
   t "palette covered still accepts a colour" (
     (elabStr ("\\documentclass{article}\\palette{covered = #808080}" ++
       "\\begin{document}x\\end{document}")).1.palette.find? "covered"
       == some { r := 0x80, g := 0x80, b := 0x80 })
   t "palette wrong type" (errCodes ("\\documentclass{article}\\palette{a = 3pt}" ++
-    "\\begin{document}x\\end{document}") == ["E0323"])
+    "\\begin{document}x\\end{document}") == ["E0321"])
   t "palette cannot shadow builtin" (errCodes
     ("\\documentclass{article}\\palette{textbf = #fff}" ++
      "\\begin{document}x\\end{document}") == ["E0303"])
@@ -2034,14 +2034,14 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
      schemeRead (schemeRoot qCss .light).2 (schemeRoot qCss .light).1 "var(--ltx-c-quiet)" ==
        "#123456")
 
-/-- W0342 names a definition shadowing a palette role, judged against the final palette. -/
+/-- W0311 names a definition shadowing a palette role, judged against the final palette. -/
 def roleShadowChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let diags (pre : String) : Array Diag :=
     (elabStr ("\\documentclass{article}\n" ++ pre ++
       "\\begin{document}\nx\n\\end{document}")).2
   let fires (ds : Array Diag) : Bool := ds.any fun d =>
-    d.code == "W0342" && d.severity == .warning &&
+    d.code == "W0311" && d.severity == .warning &&
       (d.message.splitOn "\\muted").length > 1
   t "a definition shadowing a theme role is named"
     (fires (diags "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"))
@@ -2058,12 +2058,12 @@ def roleShadowChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.span)).any (·.pos.line == 3))
 
 /-- A repeated setting composes predictably: maps merge, scalars replace, and a conflicting scalar
-repeat is named (W0343). -/
+repeat is named (W0322). -/
 def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let wrap (pre : String) : String := dvDoc pre "x"
   let deck (pre body : String) : String := dvDeck (pre ++ "\n") body
-  let w0343 (s : String) : Bool := (warnCodes s).contains "W0343"
+  let w0343 (s : String) : Bool := (warnCodes s).contains "W0322"
 
   let (fDoc, _) := elabStr
     (wrap "\\fonts{ body.bold = \"First Face\" }\n\\fonts{ body.bold = \"Second Face\" }\n")
@@ -2139,13 +2139,13 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      "\\chrome{ footer = { left = \\framenumber } }") frame)
   t "a conflicting chrome slot warns and the later wins"
     (sDoc.chrome.footerLeft == some .frameNumber &&
-     sDs.any (·.code == "W0343"))
+     sDs.any (·.code == "W0322"))
   let (s2Doc, s2Ds) := elabStr (deck
     ("\\chrome{ footer = { right = \\framenumber } }\n" ++
      "\\chrome{ footer = { right = \\slidenumber } }") frame)
   t "one datum under two spellings is silent"
     (s2Doc.chrome.footerRight == some .frameNumber &&
-     !s2Ds.any (·.code == "W0343"))
+     !s2Ds.any (·.code == "W0322"))
   t "a second running head with different content warns"
     (w0343 (wrap "\\runninghead{a}\n\\runninghead{b}\n"))
   t "an identical running head repeat is silent"

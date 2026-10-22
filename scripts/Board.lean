@@ -892,7 +892,7 @@ def browserFaceFailures (fixture log : String) : Array BrowserFace :=
     let event ← (record.getObjValAs? String "event").toOption
     if event != "diagnostic" then none else do
     let code ← (record.getObjValAs? String "code").toOption
-    if !["W0605", "W0378"].contains code then none else do
+    if !["W0602", "W0378"].contains code then none else do
     let message ← (record.getObjValAs? String "message").toOption
     let said := message ++ ((record.getObjValAs? String "detail").toOption.map ("\n" ++ ·)).getD ""
     let tools := ["rsvg-convert", "pdftocairo", "xmllint"].filter fun tool =>

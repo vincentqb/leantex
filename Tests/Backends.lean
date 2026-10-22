@@ -1195,7 +1195,7 @@ def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
        "{ nav a { transition: none; } }"))
   t "an unreadable motion duration is an error"
     (errCodes ("\\documentclass{article}\\style{nav}{ motion = fast }" ++
-      "\\begin{document}x\\end{document}") == ["E0323"])
+      "\\begin{document}x\\end{document}") == ["E0321"])
 
 /-- The definitions of a source, docstrings stripped, that spell `animation:` without a
 reduced-motion guard, a `…Guard` ending, or an allowlisted own gate. -/

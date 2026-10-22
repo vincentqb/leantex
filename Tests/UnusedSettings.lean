@@ -153,7 +153,7 @@ def refusedCases : List (String × DiagCode × String) :=
      "\\begin{tcolorbox}[colback=probeink]Words.\\end{tcolorbox}"),
    ("an unknown environment's options", .W0302, article probeColor
      "\\begin{probeframe}[color=probeink]Words.\\end{probeframe}"),
-   ("a refused caption key", .W0354, article
+   ("a refused caption key", .W0104, article
      ("\\usepackage{caption}" ++ probeColor ++ "\\captionsetup{labelfont={color=probeink}}")
      "\\begin{figure}Words.\\caption{A caption.}\\end{figure}"),
    ("a refused list option", .W0104, article ("\\usepackage{enumitem}" ++ probeColor)
@@ -174,9 +174,9 @@ def refusedCases : List (String × DiagCode × String) :=
    ("a dropped beamer template", .E0111, deck
      (probeColor ++ "\\setbeamertemplate{probe element}{\\color{probeink}Probe}")
      "\\begin{frame}{Title}Words.\\end{frame}"),
-   ("a style value refused as malformed", .E0323, article
+   ("a style value refused as malformed", .E0321, article
      (probeColor ++ "\\style{section}{ rule-position = probeink }") "\\section{Opening}Words."),
-   ("a title slot off the title page", .E0323, article
+   ("a title slot off the title page", .E0321, article
      (probeColor ++ "\\style{section}{ slot = { content = {\\color{probeink} Probe} } }")
      "\\section{Opening}Words."),
    ("a style key the element never reads", .W0104, article
@@ -187,7 +187,7 @@ def refusedCases : List (String × DiagCode × String) :=
    ("a refused listing key setting a font before the colour", .W0110, article
      ("\\usepackage{listings}" ++ probeColor ++ "\\lstset{keywordstyle=\\bfseries\\color{probeink}}")
      "\\begin{lstlisting}\nx = 1\n\\end{lstlisting}"),
-   ("a refused caption key setting a font after the colour", .W0354, article
+   ("a refused caption key setting a font after the colour", .W0104, article
      ("\\usepackage{caption}" ++ probeColor ++ "\\captionsetup{probefont={\\color{probeink}\\bfseries}}")
      "\\begin{figure}Words.\\caption{A caption.}\\end{figure}"),
    ("an unknown command's page colour", .W0301, article probeColor
@@ -326,7 +326,7 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
         "\\NewDocumentCommand{\\textit}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}")] do
     let (_, ds) := elabStr (article decl "Some \\textbf{bold} and \\textit{slanted} words.")
     t s!"unused settings: {what} the gate refuses is its one accounting ({ds.map (·.kind.code)})"
-      (ds.any (·.kind == .W0361) && !skipped ds)
+      (ds.any (·.kind == .W0303) && !skipped ds)
   let hooked := "\\DeclareRobustCommand{\\viahook}[1]{\\ifx\\relax#1\\relax H\\else I\\fi}\n" ++
     "\\DeclareRobustCommand{\\viacs}[1]{\\ifx\\relax#1\\relax W\\else X\\fi}\n" ++
     "\\AtBeginDocument{Hello \\viahook{h}}"
@@ -339,7 +339,7 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\renewcommand{\\textbf}[1]{\\ifmmode\\mathbf{#1}\\else{\\bfseries #1}\\fi}"
     "Some \\textbf{bold} words.")
   t s!"unused settings: a bold redefinition reading \\ifmmode wins, skipping nothing ({moded.map (·.kind.code)})"
-    (!moded.any (·.kind == .W0361) && !skipped moded)
+    (!moded.any (·.kind == .W0303) && !skipped moded)
   let cond := "\\NewDocumentCommand{\\zzcond}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}"
   let (_, unused) := elabStr (article cond "Some words.")
   let (_, used) := elabStr (article cond "Some \\zzcond{called} words.")
@@ -350,22 +350,22 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let skippedAt (line : Nat) := ds.any fun d => d.kind == .W0104 && d.severity == .warning &&
     d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == line)
   t s!"unused settings: a redefinition that wins keeps its skipped text's loss beside a refused one's refusal ({ds.map (·.kind.code)})"
-    (ds.any (·.kind == .W0361) && !skippedAt 2 && skippedAt 3)
+    (ds.any (·.kind == .W0303) && !skippedAt 2 && skippedAt 3)
   let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifx\\relax#1 x\\fi}\n" ++
     "\\renewcommand{\\textbf}[1]{\\ifx\\relax#1\\relax\\else{\\bfseries #1}\\fi}") "Some \\textbf{bold} words.")
   t s!"unused settings: a refusal after an earlier definition names that definition as the one standing, which keeps its loss ({ds.map (·.message)})"
-    (ds.any (fun d => d.kind == .W0361 && hasStr d.message ":2 stands") && ds.any fun d =>
+    (ds.any (fun d => d.kind == .W0303 && hasStr (d.detail.getD "") ":2 stands") && ds.any fun d =>
       d.kind == .W0104 && d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == 2))
   let (_, ds) := elabStr (article
     "\\def\\probesetup{\\renewcommand{\\textbf}[1]{\\ifx\\relax##1\\relax\\else{\\bfseries ##1}\\fi}}\n\\probesetup"
     "Some \\textbf{bold} words.")
   t s!"unused settings: a redefinition a macro makes, refused where it is called, is the refusal's alone ({ds.map (·.kind.code)})"
-    (ds.any (·.kind == .W0361) && !skipped ds)
+    (ds.any (·.kind == .W0303) && !skipped ds)
   let (_, ds) := elabStr (article
     "\\NewDocumentCommand{\\probecond}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}"
     "Some \\probecond{probe} words.")
   t s!"unused settings: a definition nothing refuses keeps the loss of its skipped text ({ds.map (·.kind.code)})"
-    (skipped ds && !ds.any (·.kind == .W0361))
+    (skipped ds && !ds.any (·.kind == .W0303))
 
 /-- `\allow{W0449}` accepts the loss as a note; a site another warning names keeps that one
 accounting; a translated declaration's note stands beside the loss as its own fact. -/
@@ -667,9 +667,9 @@ def faceChecks (ref : IO.Ref (List String)) : IO Unit := do
   match ← FontAssembly.buildFontSet missingDoc scan cache .settled (sites := missingSpans.faces) with
   | .ok (fs, doc, ds, _) =>
     t s!"unused faces: a family no installed face answers is named by its loss alone ({(FaceUse.diags missingSpans.faces fs doc).map (·.subject)})"
-      (ds.any (·.kind == .W0403) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
-    t s!"unused faces: a family no installed face answers is named at the entry naming it ({(ds.filter (·.kind == .W0403)).map (·.span.map (·.pos.line))})"
-      ((ds.filter (·.kind == .W0403)).map (·.span.map (·.pos.line)) == #[some 2])
+      (ds.any (·.kind == .W0390) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
+    t s!"unused faces: a family no installed face answers is named at the entry naming it ({(ds.filter (·.kind == .W0390)).map (·.span.map (·.pos.line))})"
+      ((ds.filter (·.kind == .W0390)).map (·.span.map (·.pos.line)) == #[some 2])
   | .error _ => t "unused faces: a document missing one family still settles its face set" false
   let deckFaces := serif ++ ", sans = \"Open Sans\", mono = \"Source Code Pro\""
   let deckBody := "\\begin{frame}{Title}Words.\\end{frame}"

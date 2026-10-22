@@ -603,8 +603,8 @@ def artProps : List ArtProp :=
   [.pageBox, .bodyArea, .bandFree, .markupInk, .pageBytes, .glyphNames]
 
 /-- The codes whose meaning accounts for ink outside the text area (`bodyArea`): W0005, W0335 and
-W0388. -/
-def artOverflowCodes : List String := ["W0005", "W0335", "W0388"]
+W0333. -/
+def artOverflowCodes : List String := ["W0005", "W0335", "W0333"]
 
 /-- A fixture's reading, with the two facts a claim needs beside it: the
 body area the document declared, and whether its build named a loss that
@@ -707,7 +707,7 @@ def artKnownOffences : List (String × ArtProp × String) := [
   ("diagram-overflow", .pageBox, "a picture wider than the page paints its fill past the \
 page edge; W0335 names it, and a picture should fit the medium or be clipped to it"),
   ("footer-collide", .pageBox, "a footline token with no legal break paints past the page \
-edge; W0388 names it, and a footline should break or shrink what it cannot fit")]
+edge; W0333 names it, and a footline should break or shrink what it cannot fit")]
 
 def artTagIsArtifact : Pdf.MarkTag → Bool
   | .artifact _ => true
@@ -1649,8 +1649,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mixedLayoutDs := mixedDs.filter (·.code == "W0363")
   t "a mixed title node is one accounting for its fallback and retained ground"
     (mixedLayoutDs.size == 1 && mixedLayoutDs.any fun d =>
-      hasStr d.message "custom arrangement falls back" &&
-      hasStr d.message "readable full-page ground stays")
+      hasStr (d.detail.getD "") "built-in arrangement" && hasStr (d.detail.getD "") "ground stand")
   t s!"a readable full-page fill survives title-layout fallback in both artifacts: \
 {mixedOffences.toList}"
     (mixedPainted && hasStr mixedCss "--ltx-titlepagebg: #202833;" && mixedOffences.isEmpty)

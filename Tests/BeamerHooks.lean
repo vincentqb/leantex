@@ -64,7 +64,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       (reprStr (layoutOf fonts actual).pages != plainPages && hookHtmlFacts actual != plainHtml)
     t s!"beamer hook {skips}: translation is accounted without a loss"
       (ds.any (fun d => d.code == "N0100" && hasStr d.message "addtobeamertemplate") &&
-       !ds.any (fun d => d.severity == .error || d.code == "W0104" || d.code == "W0387"))
+       !ds.any (fun d => d.severity == .error || d.code == "W0104"))
   let actual := (elabStr (hookDeck (hook "\\smallskip") (hookBlocks))).1
   let firstY (doc : Ir.Doc) (text : String) :=
     (bodyLines (layoutOf fonts doc)).findSome? fun line =>
@@ -155,7 +155,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let (logged, logDs) := elabStr (hookDeck
     "\\AtBeginDocument{\\PackageError{probe}{LogPayload}{HelpPayload}}" (hookBlocks))
   t "beamer error control: PackageError already consumes all groups through a deferred hook"
-    (logDs.any (fun d => d.code == "W0387" && d.subject == some "ctrl:PackageError") &&
+    (logDs.any (fun d => d.code == "W0104" && d.subject == some "ctrl:PackageError") &&
       !logDs.any (fun d => d.code == "W0301" || d.severity == .error) &&
       reprStr (layoutOf fonts logged).pages == plainPages && hookHtmlFacts logged == plainHtml)
   let footerPre := "\\chrome{footer={left=\\sectiontitle,right=\\framefraction}}"
@@ -186,7 +186,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ((out.pages[1]?.bind (·.foot)).isNone)
   t "standout footer hook: a successful patch does not execute its failure callback"
     (!restoreDs.any (fun d =>
-      d.severity == .error || d.code == "W0301" || d.code == "W0104" || d.code == "W0387") &&
+      d.severity == .error || d.code == "W0301" || d.code == "W0104") &&
       restoreDs.any (fun d => d.code == "N0100" && hasStr d.message "apptocmd") &&
       treeOccurs html "PatchFailure" == 0 && treeOccurs html "PatchHelp" == 0)
   let withoutOut := layoutOf fonts without
@@ -207,7 +207,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "standout footer hook: an unselected callback is opaque to every preamble pass"
     (reprStr (layoutOf fonts dormantDoc).pages == reprStr out.pages &&
       hookHtmlFacts dormantDoc == hookHtmlFacts restored &&
-      !dormantDs.any (fun d => d.severity == .error || d.code == "W0387" ||
+      !dormantDs.any (fun d => d.severity == .error || d.code == "W0104" ||
         d.code == "W0105" || hasStr d.message "overprint" ||
         hasStr d.message "IfPackageLoadedTF" || hasStr d.message "AtBeginDocument"))
   -- A dormant delimited definition does not change a live macro's call syntax.
@@ -231,7 +231,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     let (refused, ds) := build (tokenHook ++ tail ++ "\\makeatother")
     t s!"standout footer hook token callbacks {tail}: one refusal owns all four arguments"
       ((ds.filter (·.severity == .error)).map (·.code) == #["E0111"] &&
-        !ds.any (fun d => d.code == "W0301" || d.code == "W0387" ||
+        !ds.any (fun d => d.code == "W0301" || d.code == "W0104" ||
           hasStr d.message "AtBeginDocument"))
     t s!"standout footer hook token callbacks {tail}: neither artifact gains callback ink"
       (reprStr (layoutOf fonts refused).pages == reprStr withoutOut.pages &&
@@ -260,7 +260,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     let (refused, ds) := build (standoutFooterHook body success dormant)
     t s!"standout footer hook refusal {body}/{success}: one whole-command refusal, no execution"
       ((ds.filter (·.code == "E0111")).size == 1 &&
-        !ds.any (fun d => d.code == "W0301" || d.code == "W0387") &&
+        !ds.any (fun d => d.code == "W0301" || d.code == "W0104") &&
         reprStr (layoutOf fonts refused).pages == reprStr withoutOut.pages &&
         hookHtmlFacts refused == hookHtmlFacts without)
   let unbraced := (standoutFooterHook).replace "{\\KV@beamerframe@standout}"
@@ -271,7 +271,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       standoutFooterHook ++ "\\theme{default}"] do
     let (doc, ds) := build source
     t "standout footer hook: token target, key whitespace and later theme preserve the behavior"
-      (!ds.any (fun d => d.severity == .error || d.code == "W0301" || d.code == "W0387") &&
+      (!ds.any (fun d => d.severity == .error || d.code == "W0301" || d.code == "W0104") &&
         reprStr (layoutOf fonts doc).pages == reprStr out.pages &&
         hookHtmlFacts doc == hookHtmlFacts restored)
   let (disabled, disabledDs) := build
@@ -284,7 +284,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ((standoutFooterHook).replace "KV@beamerframe@standout" "unrelatedHook")
   t "standout footer hook: the same body on an unknown target is refused without executing callbacks"
     ((wrongTargetDs.filter (·.code == "E0111")).size == 1 &&
-      !wrongTargetDs.any (fun d => d.code == "W0301" || d.code == "W0387") &&
+      !wrongTargetDs.any (fun d => d.code == "W0301" || d.code == "W0104") &&
       reprStr (layoutOf fonts wrongTarget).pages == reprStr withoutOut.pages &&
       hookHtmlFacts wrongTarget == hookHtmlFacts without)
   for (pre, body) in [("{" ++ standoutFooterHook ++ "}", frames),
@@ -292,7 +292,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     let (scopedDoc, ds) := elabStr (hookDeck (footerPre ++ pre) body)
     t "standout footer hook: a scoped or body patch cannot set global footer policy"
       ((ds.filter (·.code == "E0111")).size == 1 &&
-        !ds.any (fun d => d.code == "W0301" || d.code == "W0387") &&
+        !ds.any (fun d => d.code == "W0301" || d.code == "W0104") &&
         reprStr (layoutOf fonts scopedDoc).pages == reprStr withoutOut.pages &&
         hookHtmlFacts scopedDoc == hookHtmlFacts without)
   let titleBody := "\\framefoot{TitleNote}\\maketitle" ++ frames

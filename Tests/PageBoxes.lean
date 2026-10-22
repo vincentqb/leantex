@@ -170,7 +170,7 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
 and one holding it unexpanded is named and replaces it"
     (!bytesContain rpdf "/TrimBox" && bytesContain rpdf "/BleedBox [0 0 270 162]" &&
       bytesContain kpdf "/TrimBox [9 9 261 153]" && bytesContain kpdf "/BleedBox [0 0 270 162]" &&
-      codes kds .W0343 == 0 && codes uds2 .W0443 == 1 && !bytesContain updf2 "/TrimBox")
+      codes kds .W0322 == 0 && codes uds2 .W0443 == 1 && !bytesContain updf2 "/TrimBox")
   let (_, nds, npdf, _) := artifacts oneFace (card (attrHook "/TrimBox [1.2.3 0 10 10] /BleedBox [0 0 270 162]") "x")
   t "a box whose numbers do not read is named, and the rest of the attribute written"
     (codes nds .W0443 == 1 && nds.all (·.severity != .error) && !bytesContain npdf "/TrimBox" &&

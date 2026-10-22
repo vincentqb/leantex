@@ -438,7 +438,8 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- a1 fontscale 1/√2 × 1.4 rounds to 0.99, and 24.88pt × 0.99 = 24.6312pt.
   t "fontsize is 24.88 × scale × fontscale, rounded as the sty rounds"
     (d.page.fontSize == (Dim.pt 1).ofRatioRound 246312 10000)
-  t "the carried options fire no beamerposter drop" (!ds.any (·.code == "W0367"))
+  let posterDrop (d : Diag) : Bool := d.code == "W0104" && d.subject.any (hasStr · "beamerposter")
+  t "the carried options fire no beamerposter drop" (!ds.any posterDrop)
   let (d0, _) := elabStr (deck "size=a0")
   t "the default a0 board is the poster record's own"
     (d0.page.width == Dim.mm 1189 && d0.page.height == Dim.mm 841 &&
@@ -448,8 +449,7 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dc.page.width == (Dim.inch 1).ofRatioRound (84 * 100) 254 &&
       dc.page.fontSize == (Dim.pt 1).ofRatioRound (2488 * 120) 10000)
   let (_, dd) := elabStr (deck "debug,size=a2")
-  t "an option outside the model is dropped by name (W0367)"
-    (dd.any (·.code == "W0367"))
+  t "an option outside the model is dropped by name (W0104)" (dd.any posterDrop)
   let src := "\\documentclass{poster}\n" ++
     "\\newlength{\\colwidth}\n\\setlength{\\colwidth}{0.3\\paperwidth}\n" ++
     "\\begin{document}\n\\begin{frame}{T}\n\\begin{columns}\n" ++
@@ -718,7 +718,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"compat {name} lets no reserved character of a log group reach the page ({spacing})"
         (diagDs.all fun d => d.code != "W0301" && d.code != "E0311" &&
           d.severity != .error)
-      -- A row with a reason is silent through one named N0100; a row with none is named by the silence guard (W0387).
+      -- A row with a reason is silent through one named N0100; a row with none is named by the silence guard (W0104).
       match key with
       | some key =>
         t s!"compat {name} accounts for its no-op as N0100 naming the command ({spacing})"
@@ -726,7 +726,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
             d.subject == some ("ctrl:nothing:" ++ key)).size == 1)
       | none =>
         t s!"compat {name} is consumed with its loss named ({spacing})"
-          (diagDs.any fun d => d.code == "W0387")
+          (diagDs.any fun d => d.code == "W0104")
   let (unkDoc, unkDs) := elabStr ("\\documentclass{article}\n" ++
     "\\begin{document}\n\\zzzNotAControl{kept one}{kept two} x\n\\end{document}")
   let unkText := Ir.plainText (match unkDoc.body with
@@ -776,7 +776,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.severity == .note))
   t "compat captionsetup names an unhonoured key once"
     (warnCodes (pre ("\\captionsetup[table]{labelfont=bf}\n" ++
-      "\\captionsetup[subtable]{labelfont=bf}")) == ["W0354"] &&
+      "\\captionsetup[subtable]{labelfont=bf}")) == ["W0104"] &&
      ((elabStr (pre "\\captionsetup[table]{labelfont=bf}")).2.map (·.message)).any
       (fun m => (m.splitOn "labelfont").length == 2))
   -- A `[float type]` scope declares the kind's own token, which only that kind reads (`Ir.captionTokenOf`).
@@ -795,7 +795,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      (elabStr (pre "\\captionsetup{margin=12pt}")).2.all (·.severity == .note) &&
      (elabStr (pre "\\usepackage[margin=12pt]{caption}")).1.tokens.find? "captionmargin"
         == some { width := { fixed := Dim.pt 12 } } &&
-     (warnCodes (pre "\\captionsetup{margin={1em,2em}}")).contains "W0354")
+     (warnCodes (pre "\\captionsetup{margin={1em,2em}}")).contains "W0104")
   -- geometry centres a declared `textwidth` and splits a declared `textheight` 2:3 (geometry manual §5.2).
   t "compat newgeometry textwidth/textheight place the text block as geometry does"
     (let doc := (elabStr (pre "\\newgeometry{textwidth=396pt, textheight=576pt}")).1
@@ -997,7 +997,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let (d, ds) := elabStr (ladderPre
       "\\renewcommand{\\small}{\\@setfontsize\\small\\@xiipt{14}}")
      (d.page.scale.lookup "small") == some 900 &&
-       ds.any fun dg => dg.code == "W0361" &&
+       ds.any fun dg => dg.code == "W0303" &&
          ((saidText dg).splitOn "out of order").length > 1)
   -- The venue's ladder is one declaration: steps that order only against each other land whole.
   t "a venue ladder ordered against itself lands whole"
@@ -1089,7 +1089,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\renewcommand{\\maketitle}{\\begingroup\\venuetitlebox\\endgroup}" ++
     "\\begin{document}\\maketitle Body.\\end{document}"
   t "a maketitle redefinition the engine cannot run is refused, named"
-    (warnCodes venue == ["W0361"])
+    (warnCodes venue == ["W0303"])
   t "the built-in maketitle stands: the title is still the level-0 heading"
     (Ir.headingLevels (elabStr venue).1.body == #[0])
   let winner := "\\documentclass{article}" ++
@@ -1103,7 +1103,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\renewcommand{\\maketitle}{}" ++
     "\\begin{document}\\maketitle Body.\\end{document}"
   t "an empty maketitle redefinition renders nothing and is refused"
-    (warnCodes emptied == ["W0361"] &&
+    (warnCodes emptied == ["W0303"] &&
      Ir.headingLevels (elabStr emptied).1.body == #[0])
   -- `\providecommand` of a built-in is LaTeX's documented no-op (usrguide, "Defining commands").
   let provided := "\\documentclass{article}\\title{Kept Probe}" ++
@@ -1148,10 +1148,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\maketitle Body.\\end{document}"
   let (iDoc, iDs) := elabStr insertVenue
   t "beamer's inserts refuse like the internals: the built-in still stands"
-    (warnCodes insertVenue == ["W0361"] &&
+    (warnCodes insertVenue == ["W0303"] &&
      Ir.headingLevels iDoc.body == #[0])
   t "the refusal says what the declared appearance gave it"
-    (iDs.any fun d => d.code == "W0361" &&
+    (iDs.any fun d => d.code == "W0303" &&
       ((saidText d).splitOn "styled by the redefinition's rules and spacing").length == 2)
   t "an insert-spelled title reads its rules onto the built-in title page"
     (inTitleBlock iDoc fun b => match b with
@@ -1318,16 +1318,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   t "compat expl3 is skipped whole"
     (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
-  -- A dropped command is a note when the drop is its meaning, else the guard's W0387; `\noindent`
+  -- A dropped command is a note when the drop is its meaning, else the guard's W0104; `\noindent`
   -- inside a paragraph does nothing, as TeX's does.
   t "compat inert commands vanish, accounted"
     (let ds := (elabStr "a\\noindent\\relax\\thispagestyle{plain} b").2
-     ds.all (fun d => d.code == "N0100" || d.code == "W0387") &&
-     ds.any (fun d => d.code == "W0387") &&
+     ds.all (fun d => d.code == "N0100" || d.code == "W0104") &&
+     ds.any (fun d => d.code == "W0104") &&
      (ds.filter (·.code == "N0100")).size == 2)
-  t "compat noindent opens its paragraph flush, never the guard's W0387"
+  t "compat noindent opens its paragraph flush, never the guard's W0104"
     (let (d, ds) := elabStr (dvDoc "" "\\noindent x")
-     ds.all (·.code != "W0387") && d.body[0]? == some (.role Ir.parContinuesRole #[]))
+     ds.all (·.code != "W0104") && d.body[0]? == some (.role Ir.parContinuesRole #[]))
   t "compat raggedright maps mid-flow instead of naming a loss"
     ((elabStr "a\\raggedright b").1.body ==
       #[.para #[.text "a"], .ragged .left #[.para #[.text "b"]]])
@@ -1505,9 +1505,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (pre "\\RedeclareSectionCommand[beforeskip=1ex]{part}") == ["W0111"])
   t "compat RedeclareSectionCommand with no mappable key names its drop"
     (warnCodes (pre "\\RedeclareSectionCommand[font=\\large]{section}") == ["W0101"])
-  t "compat silence guard warns W0387 once per name"
+  t "compat silence guard warns W0104 once per name"
     (warnCodes ("\\documentclass{article}\\thispagestyle{plain}\\begin{document}" ++
-      "a \\thispagestyle{plain} b\\end{document}") == ["W0387"])
+      "a \\thispagestyle{plain} b\\end{document}") == ["W0104"])
   t "compat relax and makeatletter earn their silence as notes"
     (let ds := (elabStr (pre "\\makeatletter\\relax\\makeatother")).2
      ds.all (·.severity != .warning) && (ds.filter (·.code == "N0100")).size ≥ 3)
@@ -1637,7 +1637,7 @@ def linenoChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((pageOf "\\usepackage[modulo]{lineno}").lineModulo == some 5)
   t "a bad flag and a zero modulus are refused by name"
     (errCodes ("\\documentclass{article}\\page{ linenumbers = maybe, modulo = 0 }" ++
-      "\\begin{document}x\\end{document}") == ["E0323", "E0323"])
+      "\\begin{document}x\\end{document}") == ["E0321", "E0321"])
   t "the pagewise option is refused named"
     ((warnCodes ("\\documentclass{article}\\usepackage[pagewise]{lineno}" ++
       "\\begin{document}x\\end{document}")) == ["W0104"])
@@ -2750,7 +2750,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.code == "N0019")).size == 1)
   t "a document without a conditional is never noted"
     ((elabStr "x\n\n\\begin{nav}\\href{#a}{A}\\end{nav}").2.all (·.code != "N0019"))
-  -- A theme's slides furniture under article is named at the install; the document's own `\chrome` stays W0318.
+  -- A theme's slides furniture under article is named at the install; the document's own `\chrome` stays W0104.
   t "a theme's slides furniture under article is named at the install"
     ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.any fun d =>
       d.code == "W0355" && ((saidText d).splitOn "chrome").length > 1 &&
@@ -2759,7 +2759,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (dvDeck "\\theme{moloch}\n" "\\begin{frame}{T}\nx\n\\end{frame}")).2.all
       (·.code != "W0355"))
   t "the theme install is never the document's own chrome door"
-    ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.all (·.code != "W0318"))
+    ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.all (·.code != "W0104"))
   -- The genre classes imply their contracts as assertions, and a declared assertion of the same form takes control.
   let clsDoc (cls extra body : String) : Ir.Doc :=
     (elabStr s!"\\documentclass\{{cls}}\n{extra}\\begin\{document}\n{body}\n\\end\{document}").1
@@ -2838,7 +2838,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\documentclass{article}\\figure{x}" ++
       "\\begin{document}y\\end{document}")).1.body == #[.para #[.text "y"]])
   t "elab reserved layout-only command warns" (warnCodes ("\\documentclass{article}\\fontfallback{x}" ++
-    "\\begin{document}y\\end{document}") == ["W0329"])
+    "\\begin{document}y\\end{document}") == ["W0104"])
   -- An unknown environment keeps its body; begin-line arguments go with the wrapper, a later-line group is content.
   t "elab unknown environment keeps its body"
     ((elabStr "\\begin{wrap}{arg}\nkept\n\\end{wrap}").1.body == #[.para #[.text "kept"]])
@@ -3308,7 +3308,7 @@ def declChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "decl unknown key" (errCodes ("\\documentclass{article}\n\\page{ bogus = 1pt }\n" ++
     "\\begin{document}x\\end{document}") == ["E0322"])
   t "decl wrong type" (errCodes ("\\documentclass{article}\n\\page{ vmargin = \"x\" }\n" ++
-    "\\begin{document}x\\end{document}") == ["E0323"])
+    "\\begin{document}x\\end{document}") == ["E0321"])
   t "decl bad assertion" (errCodes ("\\documentclass{article}\n\\assert{ pages =~ 1 }\n" ++
     "\\begin{document}x\\end{document}") == ["E0325"])
   t "decl needs a block" (errCodes ("\\documentclass{article}\n\\page\n" ++
@@ -3359,9 +3359,9 @@ def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
     match b with
     | .spaced before _ => before.value.width.ex == 1500
     | _ => false)
-  -- A bare name is a well-formed value of the wrong type (E0323); text that parses as nothing is E0321.
+  -- A bare name, a well-formed value of the wrong type, and text that parses as nothing are both E0321.
   t "tokens reject wrong type" (errCodes ("\\documentclass{article}\\tokens{ a = wat }" ++
-    "\\begin{document}x\\end{document}") == ["E0323"])
+    "\\begin{document}x\\end{document}") == ["E0321"])
   t "tokens reject junk" (errCodes
     ("\\documentclass{article}\\tokens{ a = 3 furlongs }" ++
      "\\begin{document}x\\end{document}") == ["E0321"])
@@ -4511,9 +4511,9 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a theme's title-page redefinition is refused, never an error"
     (dsT.all (·.severity != .error) &&
      splicedT.toList.map (·.1) == ["beamerthemeplinth.sty"] &&
-     dsT.any fun d => d.code == "W0361" && d.span.any (·.file.endsWith ".sty"))
+     dsT.any fun d => d.code == "W0303" && d.span.any (·.file.endsWith ".sty"))
   t "the refusal names what the theme's declared appearance gave the built-in"
-    (dsT.any fun d => d.code == "W0361" &&
+    (dsT.any fun d => d.code == "W0303" &&
       ((saidText d).splitOn "styled by the redefinition's rules and spacing").length == 2)
   -- A theme the engine absorbs nothing of is no unknown theme; the default bundle floors it.
   let (docH, dsH, _) ← run "themehollow"
@@ -4823,7 +4823,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let lineWith (needle : String) : Option Layout.LineOut :=
     titleLines.find? fun l => hasStr (lineText l) needle
   t "an overlay title-page template is read as slots, never refused"
-    (dsO.all (·.code != "W0361") && dsO.all (·.code != "W0110") &&
+    (dsO.all (·.code != "W0303") && dsO.all (·.code != "W0110") &&
      ((docO.styles.find? "titlepage").map (·.slots.size)) == some 3)
   t "the theme's fonts a read template selects are honoured, not skipped"
     (dsO.all fun d => !(d.code == "W0104" &&
@@ -4850,7 +4850,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\setbeamertemplate{title page}{\\centering\\inserttitle\\par\\null}\\title{T}"
     "\\titlepage")
   t "a title-page template of another shape keeps its refusal"
-    (dsR.any (·.code == "W0361"))
+    (dsR.any (·.code == "W0303"))
   -- The withdrawal's premise: two builds differing only by the font's size ship different title sizes.
   let fontProbe (size : String) : Option Dim.Length :=
     let pre := "\\setbeamerfont{probe heading}{size=" ++ size ++ "}" ++
@@ -4893,7 +4893,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       t s!"a custom font's {label} is named once when selected in the {site}"
         (losses.size == 1 && losses.any (fun d =>
           d.code == code && d.subject == some subject && hasStr (saidText d) note) &&
-         ds.all fun d => d.severity != .error && d.code != "W0361" && d.code != "W0363")
+         ds.all fun d => d.severity != .error && d.code != "W0303" && d.code != "W0363")
       let c := censusOf (coveredColorsOf doc) out
       t s!"a custom font's {label} keeps the title's ink in the {site}"
         (out.pages.size == 1 && pageOccurs c 0 "Font Alpha" == 1 &&
@@ -4996,7 +4996,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (pinnedAuthor "\\insertauthor"))
   t "control: a template read whole ships its title pinned, with no loss named"
     (shows cK hK "Probe Heading" && (slotOf docK "title").any (·.place.isSome) &&
-     dsK.all fun d => d.code != "W0110" && d.code != "W0363" && d.code != "W0361")
+     dsK.all fun d => d.code != "W0110" && d.code != "W0363" && d.code != "W0303")
   let (docB, dsB, cB, hB) := ship (overlay (pinnedTitle "\\bfseries\\inserttitle")
     (pinnedAuthor "\\insertauthor"))
   t "a font declaration beside the title is read: the title ships pinned, in bold"
@@ -5254,7 +5254,7 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
       ((screenRuleOf css s!"section.slide.title-page > .u-titlepage-slot-{i}").any fun rule =>
         hasStr rule "position: absolute" && hasStr rule tr)
   t "a supported optional title template has no arrangement loss"
-    (ds.all fun d => d.code != "W0363" && d.code != "W0361")
+    (ds.all fun d => d.code != "W0363" && d.code != "W0303")
   t "selected custom title fonts reach the page, no dropped-font warning"
     (ds.all fun d => d.severity != .error &&
       !(d.code == "W0104" && d.subject.any (·.startsWith "beamer:setbeamerfont:probe")))
@@ -5413,7 +5413,7 @@ def titleTemplateColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
            (hasStr · "translate(-0%, -100%)"))
       t s!"{label} title colour {expr} is read without a title loss"
         (ds.all (fun d => d.severity != .error && d.code != "W0104" && d.code != "W0110" &&
-          d.code != "W0361" && d.code != "W0363") &&
+          d.code != "W0303" && d.code != "W0363") &&
          dsK.all (·.severity != .error))
 
 /-- E0502 and W0503 name the file and line of the failing reference, never a directory. -/
@@ -5590,13 +5590,13 @@ def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
        ((Ir.blocksText doc.body).splitOn "kept words").length == 2)
   t "a plain footnote stays silent on W0370"
     ((dvE (dvDoc "" "a\\footnote{x}")).all (·.code != "W0370"))
-  t "thanks in the title fires W0373 and keeps its text inline"
+  t "thanks in the title fires W0012 and keeps its text inline"
     (let (doc, ds) := elabStr (dvDoc
       "\\title{A Panel\\thanks{Synthetic Grant 1}}\n" "x\n\\maketitle")
-     ds.any (·.code == "W0373") &&
+     ds.any (·.code == "W0012") &&
        ((Ir.blocksText doc.body).splitOn "Synthetic Grant 1").length == 2)
-  t "a title without thanks stays silent on W0373"
-    ((dvE (dvDoc "\\title{A Panel}\n" "x\n\\maketitle")).all (·.code != "W0373"))
+  t "a title without thanks stays silent on W0012"
+    ((dvE (dvDoc "\\title{A Panel}\n" "x\n\\maketitle")).all (·.code != "W0012"))
   t "a footnote on a card fires W0374 and keeps its text inline"
     (let (doc, ds) := elabStr ("\\documentclass{card}\n\\begin{document}\n" ++
       "x\\footnote{an aside}\n\\end{document}")

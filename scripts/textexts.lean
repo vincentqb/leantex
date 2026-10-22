@@ -33,7 +33,7 @@ def probes : List Probe := [
     body := String.join ((List.range 5).map fun _ => "\\begin{itemize}\\item Kilo\n") ++
       String.join ((List.range 5).map fun _ => "\\end{itemize}\n") },
   { key := "preambleOnly", code := "W0340", body := "Kilo\n\n\\usepackage{xcolor}\n\nlima" },
-  { key := "extraTab", code := "W0337",
+  { key := "extraTab", code := "W0014",
     body := "\\begin{tabular}{ll}\nKilo & lima & mike \\\\\n\\end{tabular}" },
   { key := "citation", code := "W0351", names := ["zzghost"], warning := true,
     body := "Kilo \\cite{zzghost}." },

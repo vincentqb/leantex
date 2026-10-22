@@ -77,10 +77,10 @@ def pdfBoundsChecks (ref : IO.Ref (List String)) : IO Unit := do
       (match e with
         | .objectSpelling id => id == Pdf.ObjTable.type0Id 0
         | _ => false)
-    check ref "PDF bounds: the producer's refusal reaches the registry as E0607"
-      ((LeanTex.Cli.DriverDiag.pdfWriteRefused e).code == DiagCode.E0607.code)
-  check ref "PDF bounds: a storage refusal reaches the registry as E0607"
+    check ref "PDF bounds: the producer's refusal reaches the registry as E0006"
+      ((LeanTex.Cli.DriverDiag.pdfWriteRefused e).code == DiagCode.E0006.code)
+  check ref "PDF bounds: a storage refusal reaches the registry as E0006"
     ((LeanTex.Cli.DriverDiag.pdfWriteRefused (.objectStreamSize (PdfRead.maxDecoded + 1))).code ==
-      DiagCode.E0607.code)
+      DiagCode.E0006.code)
   check ref "PDF bounds: a one-byte index field wraps at 256, so its width is computed"
     (Binary.readNatBE 1 (Pdf.Xref.row ⟨4, 1⟩ 2 1 256) 5 == some 0)

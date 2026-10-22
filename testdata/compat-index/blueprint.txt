@@ -35,6 +35,6 @@ statement impl \proves{lem:probe}
 statement impl \notready
 statement impl \mathlibok
 statement impl \discussion{12}
-body refuse:W0387 \lean{Example.Widget}
-body refuse:W0387 \leanok
+body refuse:W0104 \lean{Example.Widget}
+body refuse:W0104 \leanok
 body refuse:W0340 \dochome{https://example.org/docs}

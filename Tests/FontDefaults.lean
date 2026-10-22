@@ -69,7 +69,7 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
               t s!"{repr purpose} starts with the text regular face"
                 (fs.body.psName == expected[0]!.psName)
               t s!"{repr purpose} resolves every installed declaration"
-                (!diags.any (·.kind == .W0403))
+                (!diags.any (·.kind == .W0390))
               t s!"{repr purpose} supplies math when declared or needed"
                 (fs.mathFont?.isSome ==
                   (math.isSome || purpose != .provisional false))
@@ -132,8 +132,8 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"font defaults: missing slot {slot} still ships its document" false
       continue
     check ref s!"font defaults: missing slot {slot} is named once, as a degraded loss"
-      ((diags.filter (·.kind == .W0403)).size == 1 &&
-       diags.any (fun d => d.kind == .W0403 && hasStr d.message missing) &&
+      ((diags.filter (·.kind == .W0390)).size == 1 &&
+       diags.any (fun d => d.kind == .W0390 && hasStr d.message missing) &&
        diags.all (·.severity != .error))
     check ref s!"font defaults: missing slot {slot} sets as the undeclared document does"
       (asPlain fs && (fs.mathFont?.map (·.2.1.psName)) == (plain.mathFont?.map (·.2.1.psName)))
@@ -158,7 +158,7 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
     match ← buildFontSet doc scan cache .settled with
     | .ok (fs, _, diags, _) =>
       check ref s!"font defaults: {what} is named missing {if served then "never" else "once"}"
-        ((diags.filter (·.kind == .W0403)).size == (if served then 0 else 1))
+        ((diags.filter (·.kind == .W0390)).size == (if served then 0 else 1))
       check ref s!"font defaults: {what} sets {if served then "its faces" else "as undeclared"}"
         (if served then corner fs 0 700 false == bold.psName else asPlain fs)
     | .error _ => check ref s!"font defaults: {what} ships its document" false
@@ -176,7 +176,7 @@ def weightSubstitutionRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := fun why ok => check ref ("weight substitution records: " ++ why) ok
   let .ok (_, _, diags, _) ← buildFontSet doc scan (← FontEnv.Cache.mk') .settled |
     t "the assembly succeeds" false
-  let subs := diags.filter (·.kind == .W0366)
+  let subs := diags.filter (·.kind == .W0006)
   t s!"one record per substituted weight: {subs.map (·.detail)}"
     (subs.map (·.detail) == #[some "weight 200 asked, weight 400 the nearest",
       some "weight 300 asked, weight 400 the nearest"])

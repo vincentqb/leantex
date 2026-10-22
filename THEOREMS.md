@@ -48,7 +48,7 @@ named D A    : List Span := (lost D A).toList.flatMap Diag.piece
 
 theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) :
     let r := compile cfg src E      -- the stages above; src is f and every file the run reads
-    ((∀ d ∈ r.D, ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606, .E0607]) →
+    ((∀ d ∈ r.D, ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606]) →
       r.shipped = r.emitted) ∧
     (∀ A ∈ r.shipped,
       Text.view (named r.D A) (text A) = Text.view (named r.D A) (srcText A r.ex) ∧

@@ -1664,7 +1664,7 @@ private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
 
 /-- The one line a `\multicolumn` that does not open a tabular cell prints. -/
 public def multicolumnMisplaced : String :=
-  Diag.say .W0337 .command "\\multicolumn"
+  Diag.say .W0014 .command "\\multicolumn"
 
 public def multicolumnMisplacedHelp : String :=
   "write \\multicolumn first in a tabular cell"
@@ -7634,8 +7634,8 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
   let page : Native.Setting := .page keys
   became "\\usepackage{beamerposter}" ("\\documentclass{poster}" ++ (page.note?.getD "")) pos
   for o in dropped do
-    sayOnce ("param:usepackage:beamerposter:" ++ (KeyVal.entry o).1) .W0367
-      (Diag.say .W0367 .option o (ofPackage "beamerposter")) pos
+    sayOnce ("param:usepackage:beamerposter:" ++ (KeyVal.entry o).1) .W0104
+      (Diag.say .W0104 .option o (ofPackage "beamerposter")) pos
       (help := "size, orientation, scale, and custom width/height carry over; \
 \\page{ ... } declares anything further")
   return (Native.Head.documentclass #[] "poster").raws pos ++ (← carry page pos)
@@ -10482,8 +10482,9 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
       match TitleTemplate.read fonts (bodyArgs.getD 0 #[]) with
       | some rd@{ mixed := some datum, .. } =>
         -- A datum beside literal text has no slot, so the built-in title page sets every datum.
-        let (sfx, msg, help) := TitleTemplate.mixedLoss datum rd.ground.isSome
+        let (sfx, msg, detail, help) := TitleTemplate.mixedLoss datum rd.ground.isSome
         sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
+          (detail := some detail)
         match rd.ground with
         | some ground => return some (← carry (.palette #[("titlepagebg", ground)]) pos, k)
         | none => return some (#[], k)
@@ -10518,11 +10519,13 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
             (Diag.say .W0110 .template "title page" (ofWritten "\\setbeamertemplate")) pos
             (detail := some s!"not read: {String.intercalate ", " rd.unread.toList}")
         for data in rd.unplaced do
-          let (sfx, msg, help) := TitleTemplate.unplacedLoss data
+          let (sfx, msg, detail, help) := TitleTemplate.unplacedLoss data
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
+            (detail := some detail)
         for (construct, datum) in rd.skipped do
-          let (sfx, msg) := TitleTemplate.skippedLoss construct datum
+          let (sfx, msg, detail) := TitleTemplate.skippedLoss construct datum
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0104 msg pos
+            (detail := some detail)
         let index := (← get).templates.size
         write fun st => { st with templates := st.templates.push (.titlePage rd st.file pos) }
         return some ((← carry palette pos) ++
@@ -10655,7 +10658,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     let j := skipSpaces raws k
     match gs, raws[j]? with
     | #[_, _], some (.group _ _) =>
-      sayOnce "ctrl:multicolumn:misplaced" .W0337 multicolumnMisplaced pos
+      sayOnce "ctrl:multicolumn:misplaced" .W0014 multicolumnMisplaced pos
         (help := multicolumnMisplacedHelp)
       return some (#[], j)
     | _, _ => return none
@@ -10744,9 +10747,9 @@ private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
   else
     ((), { st with
       warned := st.warned.push ("silent:" ++ name)
-      diags := s0.diags.push (atSource st pos (Diag.of .W0387
-        (Diag.say .W0387 .command s!"\\{name}") (some ⟨st.file, pos⟩)
-        (help := "\\allow{W0387} accepts the skip")
+      diags := s0.diags.push (atSource st pos (Diag.of .W0104
+        (Diag.say .W0104 .command s!"\\{name}") (some ⟨st.file, pos⟩)
+        (help := "\\allow{W0104} accepts the skip")
         (subject := some ("ctrl:" ++ name)))) })
 
 /-- The mark before a deck's `\appendix` under appendixnumberbeamer, where the
@@ -18484,7 +18487,7 @@ public def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
    (mine.filter (·.severity == .warning)).size,
    (mine.filter fun d =>
      d.severity == .note &&
-       (d.code == "W0301" || d.code == "W0357" || d.code == "W0391")).size)
+       (d.code == "W0301" || d.code == "W0357" || d.code == "W0104")).size)
 
 /-- The one N0020 note: that the file was read, and how much of it took. -/
 public def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=

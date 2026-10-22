@@ -10,9 +10,13 @@ error: failed output site/out.pdf [E0004]
 ── E0005 (dropped) an artifact would be written over one of the build's inputs; publication is refused
 error: invalid output doc.md [E0005]
   note: the Markdown output is the input 'doc.md'
-── E0006 (dropped) an output file name ends in no extension of a format the engine writes; nothing is built
+── E0006 (dropped) an output the engine cannot write: a file name ending in no format's extension, or a PDF past supported spelling or storage limits; publication is refused
 error: unsupported output notes.tex [E0006]
   note: name an output file ending in '.pdf', '.html' or '.md' with -o, or a directory ending in '/'
+error: unsupported output [E0006]
+  note: the largest object stream needs 67108865 decoded bytes; the limit is 67108864
+error: unsupported object 4 [E0006]
+  note: a spelling the writer cannot represent
 ── E0101 (dropped) lone backslash at end of input
 error: unexpected character \ [E0101]
   note: at the end of input
@@ -63,15 +67,18 @@ error: unclosed optional argument for \x [E0316]
 ── E0320 (dropped) invalid key or missing value in a declaration block
 error: invalid entry oops for \page [E0320]
   note: it has no value
-── E0321 (dropped) unreadable value for a declaration key
+── E0321 (dropped) a declaration key's value that is unreadable, of the wrong type or out of range
 error: invalid value 'big' for key scale [E0321]
   note: a number
+error: invalid value for key vmargin [E0321]
+  note: \page expects a dimension, got a string
+error: invalid value '100\%' for key covered [E0321]
+  note: the fraction of each covered colour kept over the page; 0\%, the default, hides it
 ── E0322 (dropped) unknown key in a declaration block
 error: undefined key zoom for \page [E0322]
   note: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, linenumbers, furnituregap, twoside, headings, web
-── E0323 (dropped) declaration key value has the wrong type
-error: invalid value for key vmargin [E0323]
-  note: \page expects a dimension, got a string
+error: undefined key header for \page [E0322]
+  note: \runninghead{...} declares it; \hfill pushes content to the right
 ── E0324 (dropped) unknown page size name
 error: undefined page size quarto [E0324]
   note: known sizes: letter, legal, a4, a5, b5, executive, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2, 20:13
@@ -81,9 +88,6 @@ error: invalid assertion 'pages =~ 1' [E0325]
 ── E0326 (dropped) name not in the palette where a colour is required
 error: undefined colour missingname [E0326]
   note: aliases read earlier entries: declare \palette{ missingname = #RRGGBB } first
-── E0327 (dropped) not a \page key
-error: undefined key header for \page [E0327]
-  note: \runninghead{...} declares it; \hfill pushes content to the right
 ── E0328 (dropped) not a styleable element
 error: undefined element banana [E0328]
   note: elements: {,sub,subsub}section, heading{1,5,6}, abstract, {list,itemize,enumerate,description}{,1..4}, frametitle, sectionpage, standout, titlepage, nav, logo, link, url, cite, block, alertblock, exampleblock
@@ -96,9 +100,6 @@ error: failed assertion 'pages == 1' [E0330]
 ── E0331 (dropped) unreadable length
 error: invalid length 'banana' [E0331]
   note: image sizes look like 3cm or 0.8\textwidth
-── E0332 (dropped) covered fraction outside 0–99 percent
-error: invalid value '100\%' for key covered [E0332]
-  note: the fraction of each covered colour kept over the page; 0\%, the default, hides it
 ── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
 error: invalid expression for \fill [E0333]
   note: unknown macro '\nope'; the shape is not drawn
@@ -150,11 +151,6 @@ error: File `chapter1.tex' not found [E0502]
 ── E0606 (dropped) the HTML page has unresolved rendering resources; publication is refused
 error: missing resource [E0606]
   note: an image still names 'figures/plot.svg'
-── E0607 (dropped) the PDF cannot be represented within supported spelling or storage limits; publication is refused
-error: unsupported output [E0607]
-  note: the largest object stream needs 67108865 decoded bytes; the limit is 67108864
-error: unsupported object 4 [E0607]
-  note: a spelling the writer cannot represent
 ── N0016 (info) no math face declared; the engine picked one and says which
 info: default math font 'Fira Math' [N0016]
   note: the designed companion of 'Fira Sans'
@@ -255,7 +251,7 @@ warning: missing math font [W0003]
 ── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
 warning: substituted encoding 'Windows-1252 (Latin-1)' for 'UTF-8' [W0004]
   note: byte 0x92 at offset 83
-── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
+── W0005 (degraded) a line, column or footnote that does not fit its measure or page, where no re-flowed declared line accounts for it
 warning: overfull line [W0005]
   note: 175.215pt too wide
 warning: overfull column for frame [W0005]
@@ -266,10 +262,16 @@ warning: overfull line for frame [W0005]
   note: frame 1: 467.167pt too wide
 warning: overfull line for 'section page' [W0005]
   note: the section page: 834.237pt too wide
-── W0006 (degraded) declared face variant missing; another face substitutes
+warning: overfull footnote [W0005]
+  note: 60.123pt taller than the text block
+── W0006 (degraded) a declared face, variant or weight is not installed; the nearest installed face substitutes
 warning: substituted face 'Demo Serif Regular' for 'Demo Serif Bold' [W0006]
 warning: substituted face 'Demo Serif Regular' for 'Demo Serif Bold' [W0006]
   note: 'DemoSerif-Bold.otf' is not installed
+warning: substituted face 'Demo Sans Regular' for 'Demo Sans Light' [W0006]
+  note: weight 300 asked, weight 400 the nearest
+warning: substituted face 'Demo Sans Regular' for 'Demo Sans Medium' [W0006]
+  note: weight 500 asked, weight 400 the nearest
 ── W0007 (degraded) paged-media furniture omitted from HTML
 warning: ignored running head [W0007]
   note: body content reaches both backends: move the masthead there
@@ -285,19 +287,30 @@ warning: Too deeply nested [W0010]
 ── W0011 (degraded) declared math face has no OpenType MATH table
 warning: unsupported math font 'Open Sans' [W0011]
   note: testdata/corpus/fonts/OpenSans-Regular.ttf has no OpenType MATH table
-── W0012 (degraded) math construct not rendered yet; set as its text content
+── W0012 (degraded) a command the engine does not render as declared: a math construct set as its text, a colour or font change inside math, \thanks kept inline
 warning: unsupported command \overset [W0012]
   note: set as its text content
 warning: unsupported command \overset [W0012]
   note: set as a placeholder, having no text content
+warning: unsupported command \thanks [W0012]
+  note: kept inline in the title block
+warning: unsupported command \textbf [W0012]
 ── W0013 (config) an \allow'd code never fired
 warning: unused code E0333 [W0013]
   note: the document no longer needs it; drop the entry from \allow
-── W0014 (degraded) alignment row disagrees with its grid's columns; padded
+── W0014 (degraded) an alignment or table row disagrees with its columns; padded to the grid
 warning: invalid row for environment align* [W0014]
   note: row 2 has 1 cell(s) where 2 align
 warning: invalid row [W0014]
   note: 2 cells where the column spec declares 1
+warning: Extra alignment tab has been changed to \cr [W0014]
+  note: 3 cells where the spec declares 2
+warning: invalid row for environment tabular [W0014]
+  note: fewer cells than the column spec's 3
+warning: invalid number for \multicolumn [W0014]
+  note: its text fills one cell
+warning: invalid command \multicolumn [W0014]
+  note: write \multicolumn first in a tabular cell
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 warning: unsupported numbering for environment align [W0015]
   note: '{align*}' spells the unnumbered form, which renders the same
@@ -312,7 +325,7 @@ warning: unsupported colour model hsb [W0102]
   note: models: HTML, RGB, rgb, gray, cmyk
 ── W0103 (config) unsupported package skipped
 warning: unsupported package nosuchpkg [W0103]
-── W0104 (config) unsupported TeX construct skipped
+── W0104 (config) a construct the engine reads and does not apply
 warning: ignored command \directlua [W0104]
   note: \allow{W0104} accepts the skip
 warning: ignored command \sloppy [W0104]
@@ -326,6 +339,21 @@ warning: ignored option twocolumn for \documentclass [W0104]
   note: the text is set in one column
 warning: ignored option draft for \documentclass [W0104]
   note: the document is rendered in full
+warning: ignored command \chrome for class article [W0104]
+  note: \runninghead / \runningfoot are the page furniture
+warning: ignored command \fontfallback [W0104]
+warning: ignored key alert for \palette [W0104]
+  note: theme moloch replaces it
+warning: ignored key labelfont for \captionsetup[table] [W0104]
+  note: \tokens{ captionsep = ... } declares the caption gap
+warning: ignored option debug for package beamerposter [W0104]
+  note: size, orientation, scale, and custom width/height carry over; \page{ ... } declares anything further
+warning: ignored command \thispagestyle [W0104]
+  note: \allow{W0104} accepts the skip
+warning: ignored key codestring for \palette [W0104]
+  note: listings colour each token by its code role
+info: ignored command \@venueprobe [W0104]
+  note: \define \name(...) {body} declares it
 ── W0105 (degraded) overlay specification does not name a step
 warning: invalid overlay '<zz>' [W0105]
   note: write a numbered spec: <2>, <2->, or <2-3>; incremental specs are not modelled
@@ -365,9 +393,11 @@ info: undefined command \mystery [W0301]
 ── W0302 (degraded) unknown environment; body kept
 warning: unsupported environment banner [W0302]
   note: \defineenv{name}(...) {begin} {end} declares one
-── W0303 (config) built-in name cannot be redefined
+── W0303 (config) a redefinition of a built-in the engine does not apply; the built-in stands
 warning: ignored definition \underline [W0303]
   note: the built-in already does this; \define it under another name
+warning: ignored definition \maketitle [W0303]
+  note: it uses '\venuetitlebox' at t:2, which the engine cannot run; the built-in stands
 ── W0304 (degraded) colour name not in the palette; content kept uncoloured
 warning: undefined colour nope [W0304]
   note: declare colours with \palette{ name = #RRGGBB }
@@ -385,9 +415,11 @@ warning: missing title for \maketitle [W0309]
 ── W0310 (degraded) '[' never closes; not an argument
 warning: unclosed optional argument for \section [W0310]
   note: add the matching ']'
-── W0311 (degraded) a second \frametitle replaces the first
+── W0311 (degraded) a name given a second meaning: a second \frametitle replaces the first, a definition shadowing a palette role freezes the role where it is used
 warning: duplicate command \frametitle [W0311]
   note: the last one wins; remove the other '\frametitle'
+warning: duplicate command \muted [W0311]
+  note: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, progressfg, progressbg, separator, standoutfg, standoutbg, muted
 ── W0312 (degraded) no {...} group after a command; skipped
 warning: missing argument for \title [W0312]
   note: write \title{...}
@@ -402,9 +434,6 @@ warning: undefined option dark for \palette [W0316]
   note: options: decorative, seeds
 ── W0317 (config) a card carries no running head or foot; declaration dropped
 warning: ignored running head for class card [W0317]
-── W0318 (config) \chrome outside the slides class; ignored
-warning: ignored command \chrome for class article [W0318]
-  note: \runninghead / \runningfoot are the page furniture
 ── W0319 (degraded) unknown theme; the document is unthemed
 warning: undefined theme banana [W0319]
   note: themes: moloch, plain, daylight, gemini
@@ -414,8 +443,12 @@ warning: missing heading [W0320]
 ── W0321 (degraded) the document title follows another heading
 warning: unexpected title [W0321]
   note: put \maketitle before the first \section, so the outline starts at its top
-── W0322 (config) a second \maketitle is ignored; the title is typeset once
+── W0322 (config) a setting or command given twice; one of them stands
 warning: duplicate command \maketitle [W0322]
+warning: duplicate key margin for \page [W0322]
+  note: was '20pt'; the later value is used
+warning: duplicate command \runningfoot [W0322]
+  note: one '\runningfoot' declares the line; delete the one you do not mean
 ── W0323 (config) unknown backend name in \begin{ifbackend}; ignored
 warning: undefined backend banana for environment ifbackend [W0323]
   note: backends: pdf, html, md
@@ -431,8 +464,6 @@ warning: duplicate anchor signal-path [W0327]
 ── W0328 (degraded) one-line content wraps; only its first line is kept
 warning: overfull running head [W0328]
   note: the head, foot, and chrome bands hold one line each: shorten the content
-── W0329 (config) reserved layout-only construct skipped; no content is affected
-warning: ignored command \fontfallback [W0329]
 ── W0330 (degraded) declared page with a defaulted ink is illegible (WCAG 2.2)
 warning: illegible colour fg [W0330]
   note: the defaulted ink, #000000 on #18181B: 1.18:1, below 4.50:1 for text (SC 1.4.3)
@@ -442,7 +473,9 @@ warning: unsupported marker for itemize [W0331]
 ── W0332 (degraded) footer mixes the frame and physical page sequences undeclared
 warning: invalid footer \framefoot [W0332]
   note: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot
-── W0333 (degraded) band slots collide; the lower-priority slot is painted over
+── W0333 (degraded) a band slot past its room: painted over by a higher-priority slot, or off the medium, where a viewer clips it
+warning: overfull slot '\framefoot note' [W0333]
+  note: page 2, 268.759pt past its edge
 warning: overfull slot framenumber for '\framefoot note' [W0333]
   note: page 2
 ── W0334 (pending) picture construct outside the rendered subset; not drawn
@@ -454,44 +487,21 @@ warning: overfull picture [W0335]
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
 warning: overfull label [W0336]
   note: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
-── W0337 (degraded) table row disagrees with its column spec; padded to the grid
-warning: Extra alignment tab has been changed to \cr [W0337]
-  note: 3 cells where the spec declares 2
-warning: invalid row for environment tabular [W0337]
-  note: fewer cells than the column spec's 3
-warning: invalid number for \multicolumn [W0337]
-  note: its text fills one cell
-warning: invalid command \multicolumn [W0337]
-  note: write \multicolumn first in a tabular cell
 ── W0338 (degraded) table is wider than the measure
 warning: overfull table [W0338]
   note: 231pt wider than the measure
-── W0340 (config) a declaration in the document body is ignored
+── W0340 (config) a declaration in the document body or in inline content is ignored
 warning: ignored declaration \page [W0340]
   note: declare it before \begin{document}
 warning: Can be used only in preamble [W0340]
   note: load the package in the preamble, before '\begin{document}'
-── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
-warning: duplicate command \muted [W0342]
-  note: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, progressfg, progressbg, separator, standoutfg, standoutbg, muted
-── W0343 (config) one setting is given two different values; the later declaration wins
-warning: duplicate key margin for \page [W0343]
-  note: was '20pt'; the later value is used
-warning: duplicate command \runningfoot [W0343]
-  note: one '\runningfoot' declares the line; delete the one you do not mean
+warning: ignored declaration \palette [W0340]
+  note: write '\palette' between paragraphs, after a blank line; there it applies from where it stands
 ── W0345 (standard) a themed element's resolved colour pairing is illegible (WCAG 2.2)
 warning: illegible covering covered [W0345]
   note: the covered form reads as loud on the page as the active one
 warning: illegible covering fg [W0345]
   note: #4E4A49 against #292524: 1.73:1, below 3.00:1 for a state change (SC 1.4.11)
-── W0346 (config) a declaration inside inline content is ignored
-warning: ignored declaration \palette [W0346]
-  note: write '\palette' between paragraphs, after a blank line; there it applies from where it stands
-warning: ignored declaration \page [W0346]
-  note: declare it before \begin{document}
-── W0348 (config) a theme replaces a key the document already declared; the theme wins
-warning: ignored key alert for \palette [W0348]
-  note: theme moloch replaces it
 ── W0349 (degraded) reference to a key no \label numbers; set as '??'
 warning: Reference `nowhere' undefined [W0349]
   note: declare \label{nowhere} after the numbered thing it names
@@ -509,9 +519,6 @@ warning: invalid entry for file refs.bib [W0352]
 ── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat
 warning: undefined style mystery [W0353]
   note: styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv, alpha
-── W0354 (config) a caption option the engine does not honour; named and ignored
-warning: ignored key labelfont for \captionsetup[table] [W0354]
-  note: \tokens{ captionsep = ... } declares the caption gap
 ── W0355 (config) a theme's slides furniture cannot draw under the class in force
 warning: ignored template for theme moloch [W0355]
   note: chrome, frametitle, sectionpage, standout
@@ -523,15 +530,12 @@ warning: unsupported definition \def [W0357]
 ── W0358 (degraded) a float or box taller than the text block overruns its page
 warning: overfull float [W0358]
   note: a figure or table, 283.972pt taller than the text block
-── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
-warning: the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands [W0361]
-  note: '\venuetitlebox' at t:2
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
 warning: unsupported picture [W0362]
   note: \allow{W0362} accepts the placeholder
 ── W0363 (degraded) a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place
-warning: the title-page template's title node is not pinned to the page; the title sets in the title page's flow [W0363]
-  note: pin the node to a point of the page: \node[anchor=west] at (current page.west) {\inserttitle}
+warning: unsupported node title for template 'title page' [W0363]
+  note: not pinned to the page; the title sets in the title page's flow
 ── W0364 (degraded) an unresolved data path; nothing renders in its place
 warning: undefined field end for record @job [W0364]
   note: job[1] carries: role, start
@@ -539,14 +543,6 @@ warning: undefined variable k [W0364]
   note: '\begin{foreach}{k}{kind}' binds it over the '@kind' records
 warning: undefined record @trip [W0364]
   note: it carries: @job
-── W0366 (degraded) a named font weight is not installed; the nearest installed weight substitutes
-warning: substituted face 'Demo Sans Regular' for 'Demo Sans Light' [W0366]
-  note: weight 300 asked, weight 400 the nearest
-warning: substituted face 'Demo Sans Regular' for 'Demo Sans Medium' [W0366]
-  note: weight 500 asked, weight 400 the nearest
-── W0367 (config) a beamerposter option outside the poster model; named and ignored
-warning: ignored option debug for package beamerposter [W0367]
-  note: size, orientation, scale, and custom width/height carry over; \page{ ... } declares anything further
 ── W0368 (degraded) a language the engine ships no locale for; English captions and patterns stand in
 warning: substituted language English for klingon [W0368]
   note: the engine ships locale records for: en, fr, de
@@ -555,20 +551,15 @@ warning: substituted language English for xx [W0368]
 ── W0369 (degraded) a per-language font binding; one face serves every language, so the binding is dropped
 warning: ignored option french for \babelfont [W0369]
   note: one face serves every language
-── W0370 (pending) \footnotemark and \footnotetext are not paired yet; kept as text
+── W0370 (pending) a construct not implemented yet; kept as text
 warning: unsupported command \footnotemark [W0370]
   note: \footnote{...} where the mark should stand sets the note at the page foot
 warning: unsupported command \footnotemark [W0370]
   note: \footnote{...} where the mark should stand sets the note at the page foot; content, not options? start the '[' on the next line
+warning: unsupported command \lIf [W0370]
 ── W0371 (degraded) a footnote is one paragraph: a paragraph break inside \footnote is set as a space, a list's items as lines at its margin, a heading as a bold line
 warning: unsupported paragraph break for \footnote [W0371]
   note: a footnote is one paragraph; split a long note into two \footnote calls
-── W0372 (degraded) a footnote taller than the text block overruns its page
-warning: overfull footnote [W0372]
-  note: 60.123pt taller than the text block
-── W0373 (degraded) \thanks is kept inline in the title block
-warning: unsupported command \thanks [W0373]
-  note: kept inline in the title block
 ── W0374 (degraded) a footnote on a card face is kept inline; a face has no note apparatus
 warning: unsupported footnote for class card [W0374]
   note: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
@@ -596,35 +587,24 @@ warning: missing drawing for tool lualatex [W0382]
   note: lualatex says: ! Undefined control sequence. · l.7 \nope
 warning: missing drawing for tool lualatex [W0382]
   note: exit code 3
-── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
-warning: unsupported command \lIf [W0383]
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
 warning: overfull frame [W0384]
   note: frame 1: 174.016pt taller, continued on the next page
 warning: overfull frame [W0384]
   note: frame standout: 329.494pt taller, continued on the next page
-── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
-warning: unsupported command \textbf [W0385]
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed, and any line of it still past the measure is its overrun too
 warning: overfull line [W0386]
   note: a declared line re-flowed: it ships as 3 lines
-── W0387 (config) a known construct was read and had no effect
-warning: ignored command \thispagestyle [W0387]
-  note: \allow{W0387} accepts the skip
-warning: ignored key codestring for \palette [W0387]
-  note: listings colour each token by its code role
-── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
-warning: overfull slot '\framefoot note' [W0388]
-  note: page 2, 268.759pt past its edge
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
 warning: unsupported command \raisebox [W0389]
   note: its content operand sets in its place
-── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
+── W0390 (degraded) a font slot with no installed family: none declared, or none installed by the declared name; another family serves it
 warning: missing family mono [W0390]
   note: typewriter runs set in the body face, which is not fixed-pitch
-── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
-info: ignored command \@venueprobe [W0391]
-  note: \define \name(...) {body} declares it
+warning: missing family 'Sourse Serif Pro' [W0390]
+  note: did you mean: Source Serif Pro? — `leantex fonts` lists every family
+warning: missing family 'Kaputt Grotesk' [W0390]
+  note: 12 families are installed — `leantex fonts` lists every family
 ── W0392 (degraded) a markdown construct sets with part of its declaration dropped; its content still sets
 warning: ignored title [W0392]
 ── W0393 (degraded) the installed syntax highlighter cannot classify a listing; its source is set as plain text
@@ -643,11 +623,6 @@ warning: ignored command \vfill [W0399]
 ── W0400 (degraded) a frame a little taller than its page stands past its text area, in the gap below it
 warning: overfull frame [W0400]
   note: frame 1: 1.216pt past its text area, in the gap below it
-── W0403 (degraded) no installed font family by that name; the slot's default family stands in
-warning: missing family 'Sourse Serif Pro' [W0403]
-  note: did you mean: Source Serif Pro? — `leantex fonts` lists every family
-warning: missing family 'Kaputt Grotesk' [W0403]
-  note: 12 families are installed — `leantex fonts` lists every family
 ── W0411 (standard) a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent
 warning: unexpected environment minted [W0411]
   note: within a line of text or an argument; set as inline code
@@ -804,20 +779,19 @@ warning: unreadable image figures/plot.png [W0601]
   note: not found at /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added
 warning: unreadable image figures/plot.png [W0601]
   note: permission denied (error code: 13)
-── W0602 (degraded) image format unusable; placeholder box placed
+── W0602 (degraded) an image format the PDF or the web page cannot use; a placeholder box marks its place
 warning: unsupported image figures/plot.gif [W0602]
   note: not a PNG, JPEG, or PDF file
+warning: unsupported image figures/box.pdf [W0602]
+  note: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
+warning: unsupported image figures/locked.pdf [W0602]
+  note: the PDF is encrypted; its content cannot be read; pdftocairo is not on PATH
 ── W0603 (degraded) an image's embedded colour profile is dropped; the page reads it as device colour
 warning: ignored profile for image figures/plot.png [W0603]
   note: re-export the image without the profile, or accept the device reading with \allow{W0603}
 ── W0604 (degraded) an image's orientation tag is dropped; the page shows the stored orientation
 warning: ignored tag orientation for image figures/photo.jpg [W0604]
   note: orientation tag 6
-── W0605 (degraded) an image has no usable browser face; the web page shows a placeholder instead
-warning: unsupported image figures/box.pdf [W0605]
-  note: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
-warning: unsupported image figures/locked.pdf [W0605]
-  note: the PDF is encrypted; its content cannot be read; pdftocairo is not on PATH
 ── W0609 (degraded) a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn
 warning: unsupported font 'type1' for figure plot.pdf [W0609]
   note: pdftocairo produced an empty image

@@ -88,7 +88,7 @@ public def resolveDocDirs (file : String) (dirs : Array String) :
       diags := diags.push (DriverDiag.fontsDirMissing d p.toString)
   return (docDirs, diags)
 
-/-- W0403 for a family no installed face answers, naming the installed families nearest it; a host
+/-- W0390 for a family no installed face answers, naming the installed families nearest it; a host
 may hold thousands. -/
 public def familyMissingIn (faces : Array FontDb.Face) (family : String) (span : Option Span) :
     Diag :=
@@ -167,7 +167,7 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
               | some named => DriverDiag.mathFaceCompanion f.family named
               | none => DriverDiag.mathFaceFirst f.family
             let written := (source.bind (·.pos.command)).bind Diag.Spelling.ofWritten?
-            -- A declared family's W0403 already names the stand-in.
+            -- A declared family's W0390 already names the stand-in.
             if declared.isNone then
               diags := diags.push { note with span := source, trigger := written }
   return { fonts, paths, index := mathIdx, missing, diags }

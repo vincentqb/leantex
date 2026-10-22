@@ -339,7 +339,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((b + s + a - want).natAbs ≤ 3)
   | _, _, _ => check ref "block skips HTML: the block boundary's three addends are in the sheet" false
 
-/-- A skip inside inline content has no vertical glue to stand in: it is skipped with one W0329 and
+/-- A skip inside inline content has no vertical glue to stand in: it is skipped with one W0104 and
 the document builds. -/
 private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let sites := [("a table cell", "\\begin{tabular}{p{3cm}}cell words \\vskip 3pt more\\end{tabular}"),
@@ -352,8 +352,8 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
     check ref s!"block skips: a skip inside {name} builds, got {(diags.filter (·.severity == .error)).map (·.code)}"
       (diags.all (·.severity != .error))
-    check ref s!"block skips: a skip inside {name} is named once, W0329, and nothing of it unknown"
-      ((diags.filter (·.code == "W0329")).size == 1 && diags.all (·.code != "W0301"))
+    check ref s!"block skips: a skip inside {name} is named once, W0104, and nothing of it unknown"
+      ((diags.filter (·.code == "W0104")).size == 1 && diags.all (·.code != "W0301"))
     check ref s!"block skips: a skip inside {name} sets none of its spelling as text"
       (pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "before")
   -- An infinite skip there is the same one skipped site, with no stretch loss of its own.
@@ -364,8 +364,8 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       ("a table cell", "\\begin{tabular}{p{3cm}}cell \\vspace{1em plus 1fill} words\\end{tabular}"),
       ("a primitive skip", "\\textbf{bold \\vskip 1em plus 1fill words}")] do
     let (_, fdiags) := Elab.run "block-skips-inline-fil.tex" (document "" [frame body])
-    check ref s!"block skips: an infinite skip inside inline content ({name}) is named once, W0329, and no stretch loss"
-      ((fdiags.filter (·.code == "W0329")).size == 1 && fdiags.all (·.code != "W0104"))
+    check ref s!"block skips: an infinite skip inside inline content ({name}) is named once, W0104, and no stretch loss"
+      ((fdiags.filter (·.code == "W0104")).size == 1)
   let titled := document "" ["\\begin{frame}[t]{Frame \\vskip 3pt title}Words.\\end{frame}\n"]
   let (_, diags) := Elab.run "block-skips-inline-title.tex" titled
   check ref "block skips: a skip inside a frame title builds" (diags.all (·.severity != .error))
@@ -423,7 +423,7 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (nfill.isSome && nfill == vfill && nds.all (·.severity != .error))
   let (_, bad) := pageOf "\\block[stretch = 3pt]{}"
   check ref "block skips: a stretch the block reader does not take names its values"
-    (bad.any fun d => d.code == "E0323" && hasStr (saidText d) "fill or unranked")
+    (bad.any fun d => d.code == "E0321" && hasStr (saidText d) "fill or unranked")
 
 /-- The sheet's rules for a skip box whose follower's term differs from the generic boundary's: a
 frame opening, a step carrier, a paragraph after a list, and a rule's `<hr>`. -/

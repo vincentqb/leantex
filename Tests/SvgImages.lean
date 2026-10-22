@@ -131,7 +131,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "typed HTML embeds the captured SVG"
     (srcs == #["data:image/svg+xml;base64,PHN2Zy8+"])
   t "SVG browser face has no PDF-only placeholder diagnostic"
-    (!(diags.any (·.code == "W0605")))
+    (!(diags.any (·.code == "W0602")))
   -- The native decode can succeed before the browser poster conversion fails.
   let reason := "rsvg-convert exited 19: poster unavailable"
   for (src, href) in [("diagram.svg", ""), ("diagram.pdf", ""), ("diagram", "diagram.svg")] do
@@ -153,14 +153,14 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let facts := HtmlDoc.a11yFacts true false tree
     t s!"failed browser conversion {src}: the accessibility judge counts the placeholder"
       (facts.imgs == 1 && facts.imgsUnnamed == 0)
-    let losses := ds.filter (·.code == "W0605")
+    let losses := ds.filter (·.code == "W0602")
     t s!"failed browser conversion {src}: its reason is accounted once"
       (losses.size == 1 && losses.any (fun d => hasStr (diagWords d) reason))
     let pdfOnly := (elabStr (dvDoc ""
       ("\\begin{ifbackend}{pdf}" ++ source ++ "\\end{ifbackend}"))).1
     let (_, _, hiddenDs) := HtmlDoc.emitTree { imgs := failed } pdfOnly
     t s!"failed browser conversion {src}: an absent HTML include has no loss"
-      (!(hiddenDs.any (·.code == "W0605")))
+      (!(hiddenDs.any (·.code == "W0602")))
 
   -- A resolved filename is no request identity: pages, posters and aliases can share it.
   let selected : Image.Store := { entries := #[
@@ -196,7 +196,7 @@ def svgAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (marked == indices)
     let unique := indices.foldl (fun acc k =>
       if acc.contains k then acc else acc.push k) #[]
-    let losses := ds.filter (·.code == "W0605")
+    let losses := ds.filter (·.code == "W0602")
     t s!"image failure identity {name}: each request is named once, in page order"
       (losses.size == unique.size && (unique.zip losses).all fun (k, d) =>
         d.subject == some s!"img:{k}:sequence.pdf" &&

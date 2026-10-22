@@ -154,9 +154,9 @@ public inductive DiagCode where
   | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
-  | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
-  | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336 | E0340
-  | E0401 | E0402 | W0403 | E0404 | E0405
+  | E0316 | E0320 | E0321 | E0322 | E0324 | E0325 | E0326
+  | E0328 | E0329 | E0330 | E0331 | E0333 | E0334 | E0336 | E0340
+  | E0401 | E0402 | E0404 | E0405
   | E0501 | E0502
   | N0100 | N0102 | N0103 | N0104 | N0105 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
@@ -165,30 +165,25 @@ public inductive DiagCode where
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
   | W0201 | W0202
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
-  | W0312 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
+  | W0312 | W0314 | W0315 | W0316 | W0317 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0325 | W0326 | W0327 | W0328
-  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0336 | W0337 | W0338 | W0358
-  | W0340 | W0342 | W0343 | W0345 | W0346 | W0348 | W0354 | W0355
+  | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0336 | W0338 | W0358
+  | W0340 | W0345 | W0355
   | W0349 | W0350 | W0357
   | W0351 | W0352 | W0353
   | E0347
   | W0601 | W0602
   | N0359
-  | W0361
   | W0362
   | W0363
   | W0364
   | E0365
-  | W0366
   | N0021
-  | W0367
   | W0368
   | W0369
   | E0375
   | W0370
   | W0371
-  | W0372
-  | W0373
   | W0374
   | N0376
   | W0377
@@ -199,23 +194,17 @@ public inductive DiagCode where
   | W0382
   | W0380
   | W0381
-  | W0383
-  | W0387
   | W0701
   | W0603
   | W0604
-  | W0605
   | W0609
   | N0024
   | N0026
   | N0027
   | W0384
-  | W0385
   | W0386
-  | W0388
   | W0389
   | W0390
-  | W0391
   | E0390
   | W0392
   | W0419
@@ -226,7 +215,6 @@ public inductive DiagCode where
   | W0399
   | W0400
   | E0606
-  | E0607
   | N0029
   | W0420
   | W0421
@@ -284,7 +272,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
   | .E0004 => ("0004", .dropped, "an artifact could not be written to its destination")
   | .E0005 => ("0005", .dropped, "an artifact would be written over one of the build's inputs; publication is refused")
-  | .E0006 => ("0006", .dropped, "an output file name ends in no extension of a format the engine writes; nothing is built")
+  | .E0006 => ("0006", .dropped, "an output the engine cannot write: a file name ending in no format's extension, or a PDF past supported spelling or storage limits; publication is refused")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
   | .E0102 => ("0102", .dropped, "unclosed verbatim environment")
   | .E0111 => ("0111", .dropped, "beamer template body carrying content dropped")
@@ -304,22 +292,17 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0313 => ("0313", .dropped, "only declarations may appear before \\begin{document}")
   | .E0316 => ("0316", .dropped, "unclosed optional argument")
   | .E0320 => ("0320", .dropped, "invalid key or missing value in a declaration block")
-  | .E0321 => ("0321", .dropped, "unreadable value for a declaration key")
+  | .E0321 => ("0321", .dropped, "a declaration key's value that is unreadable, of the wrong type or out of range")
   | .E0322 => ("0322", .dropped, "unknown key in a declaration block")
-  | .E0323 => ("0323", .dropped, "declaration key value has the wrong type")
   | .E0324 => ("0324", .dropped, "unknown page size name")
   | .E0325 => ("0325", .dropped, "unreadable \\assert expression")
   | .E0326 => ("0326", .dropped, "name not in the palette where a colour is required")
-  | .E0327 => ("0327", .dropped, "not a \\page key")
   | .E0328 => ("0328", .dropped, "not a styleable element")
   | .E0329 => ("0329", .dropped, "unknown diagnostic code in \\allow")
   | .E0330 => ("0330", .dropped, "layout assertion failed against the shipped pages")
   | .E0331 => ("0331", .dropped, "unreadable length")
-  | .E0332 => ("0332", .dropped, "covered fraction outside 0–99 percent")
   | .E0401 => ("0401", .dropped, "no usable font found on the host")
   | .E0402 => ("0402", .dropped, "LEANTEX_FONT is unusable")
-  | .W0403 => ("0403", .degraded,
-    "no installed font family by that name; the slot's default family stands in")
   | .E0404 => ("0404", .dropped, "a font file could not be used")
   | .E0501 => ("0501", .dropped, "\\input nesting too deep")
   | .N0100 => ("0100", .info, "LaTeX idiom translated to its native declaration")
@@ -334,16 +317,16 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
   | .W0003 => ("0003", .degraded, "no math face available; math set as plain text")
   | .E0405 => ("0405", .dropped, "font has no glyph for a character; dropped")
-  | .W0005 => ("0005", .degraded, "overfull line, no feasible break, where no re-flowed declared line accounts for it")
-  | .W0006 => ("0006", .degraded, "declared face variant missing; another face substitutes")
+  | .W0005 => ("0005", .degraded, "a line, column or footnote that does not fit its measure or page, where no re-flowed declared line accounts for it")
+  | .W0006 => ("0006", .degraded, "a declared face, variant or weight is not installed; the nearest installed face substitutes")
   | .W0007 => ("0007", .degraded, "paged-media furniture omitted from HTML")
   | .W0008 => ("0008", .config, "\\fonts dir is not a directory")
   | .W0009 => ("0009", .degraded, "no glyph in the declared face; set from a fallback face")
   | .W0010 => ("0010", .degraded, "lists nest four levels; deeper levels reuse the fourth marker")
   | .W0011 => ("0011", .degraded, "declared math face has no OpenType MATH table")
-  | .W0012 => ("0012", .degraded, "math construct not rendered yet; set as its text content")
+  | .W0012 => ("0012", .degraded, "a command the engine does not render as declared: a math construct set as its text, a colour or font change inside math, \\thanks kept inline")
   | .W0013 => ("0013", .config, "an \\allow'd code never fired")
-  | .W0014 => ("0014", .degraded, "alignment row disagrees with its grid's columns; padded")
+  | .W0014 => ("0014", .degraded, "an alignment or table row disagrees with its columns; padded to the grid")
   | .W0015 => ("0015", .degraded, "equation numbers not rendered yet; rows set unnumbered")
   | .W0016 => ("0016", .degraded, "math alphabet glyph absent from the covered face; a stand-in keeps the letter")
   | .N0016 => ("0016", .info, "no math face declared; the engine picked one and says which")
@@ -353,7 +336,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0020 => ("0020", .info, "a local style file is read as part of the preamble")
   | .W0102 => ("0102", .degraded, "unsupported colour model")
   | .W0103 => ("0103", .config, "unsupported package skipped")
-  | .W0104 => ("0104", .config, "unsupported TeX construct skipped")
+  | .W0104 => ("0104", .config, "a construct the engine reads and does not apply")
   | .W0105 => ("0105", .degraded, "overlay specification does not name a step")
   | .W0106 => ("0106", .config, "expl3 code skipped")
   | .W0107 => ("0107", .degraded, "a length value the engine cannot read; the setting is skipped and the length keeps its value")
@@ -364,12 +347,12 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0202 => ("0202", .standard, "heading sets more space below than above")
   | .W0301 => ("0301", .degraded, "unknown command; {...} arguments kept as text")
   | .W0302 => ("0302", .degraded, "unknown environment; body kept")
-  | .W0303 => ("0303", .config, "built-in name cannot be redefined")
+  | .W0303 => ("0303", .config, "a redefinition of a built-in the engine does not apply; the built-in stands")
   | .W0304 => ("0304", .degraded, "colour name not in the palette; content kept uncoloured")
   | .W0307 => ("0307", .pending, "construct not implemented yet; its content is not rendered")
   | .W0309 => ("0309", .config, "\\maketitle with nothing declared")
   | .W0310 => ("0310", .degraded, "'[' never closes; not an argument")
-  | .W0311 => ("0311", .degraded, "a second \\frametitle replaces the first")
+  | .W0311 => ("0311", .degraded, "a name given a second meaning: a second \\frametitle replaces the first, a definition shadowing a palette role freezes the role where it is used")
   | .W0312 => ("0312", .degraded, "no {...} group after a command; skipped")
   | .E0333 => ("0333", .dropped, "picture expression unreadable or unresolvable; its shape is not drawn")
   | .E0336 => ("0336", .dropped, "{...} groups went with an unknown wrapper")
@@ -378,36 +361,28 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0315 => ("0315", .standard, "low-contrast colour pairing (WCAG 2.2)")
   | .W0316 => ("0316", .config, "unknown option in \\palette; block skipped")
   | .W0317 => ("0317", .config, "a card carries no running head or foot; declaration dropped")
-  | .W0318 => ("0318", .config, "\\chrome outside the slides class; ignored")
   | .W0319 => ("0319", .degraded, "unknown theme; the document is unthemed")
   | .W0320 => ("0320", .degraded, "heading levels skip a step (HTML §4.3.11, WCAG G141)")
   | .W0321 => ("0321", .degraded, "the document title follows another heading")
-  | .W0322 => ("0322", .config, "a second \\maketitle is ignored; the title is typeset once")
+  | .W0322 => ("0322", .config, "a setting or command given twice; one of them stands")
   | .W0323 => ("0323", .config, "unknown backend name in \\begin{ifbackend}; ignored")
   | .E0334 => ("0334", .dropped, "\\begin{ifbackend} content addressed to no backend")
   | .W0325 => ("0325", .degraded, "more than one <nav> landmark on one page")
   | .W0326 => ("0326", .degraded, "in-page link with no target anchor on the page")
   | .W0327 => ("0327", .degraded, "two distinct section titles fold to the same anchor")
   | .W0328 => ("0328", .degraded, "one-line content wraps; only its first line is kept")
-  | .W0329 => ("0329", .config, "reserved layout-only construct skipped; no content is affected")
   | .W0330 => ("0330", .degraded, "declared page with a defaulted ink is illegible (WCAG 2.2)")
   | .W0331 => ("0331", .degraded, "declared marker not expressible in this backend; default substituted")
   | .W0332 => ("0332", .degraded, "footer mixes the frame and physical page sequences undeclared")
-  | .W0333 => ("0333", .degraded, "band slots collide; the lower-priority slot is painted over")
+  | .W0333 => ("0333", .degraded, "a band slot past its room: painted over by a higher-priority slot, or off the medium, where a viewer clips it")
   | .W0334 => ("0334", .pending, "picture construct outside the rendered subset; not drawn")
   | .W0335 => ("0335", .degraded, "picture larger than the text area; it may overrun the page")
   | .W0336 => ("0336", .degraded, "node labels overlap; a relative placement parts centres, not text")
-  | .W0337 => ("0337", .degraded, "table row disagrees with its column spec; padded to the grid")
   | .W0338 => ("0338", .degraded, "table is wider than the measure")
   | .W0358 => ("0358", .degraded, "a float or box taller than the text block overruns its page")
-  | .W0340 => ("0340", .config, "a declaration in the document body is ignored")
-  | .W0342 => ("0342", .degraded, "a definition shadows a palette role; the role is frozen where it is used")
-  | .W0343 => ("0343", .config, "one setting is given two different values; the later declaration wins")
+  | .W0340 => ("0340", .config, "a declaration in the document body or in inline content is ignored")
   | .W0345 => ("0345", .standard, "a themed element's resolved colour pairing is illegible (WCAG 2.2)")
-  | .W0346 => ("0346", .config, "a declaration inside inline content is ignored")
   | .E0347 => ("0347", .dropped, "a running head or foot declared in the body is dropped with its content")
-  | .W0348 => ("0348", .config, "a theme replaces a key the document already declared; the theme wins")
-  | .W0354 => ("0354", .config, "a caption option the engine does not honour; named and ignored")
   | .W0355 => ("0355", .config, "a theme's slides furniture cannot draw under the class in force")
   | .W0349 => ("0349", .degraded, "reference to a key no \\label numbers; set as '??'")
   | .W0350 => ("0350", .config, "a key is \\label'ed more than once; the first wins")
@@ -417,24 +392,19 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0353 => ("0353", .degraded, "an unknown bibliography style; the reference list is set as unsrtnat")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
-  | .W0602 => ("0602", .degraded, "image format unusable; placeholder box placed")
+  | .W0602 => ("0602", .degraded, "an image format the PDF or the web page cannot use; a placeholder box marks its place")
   | .N0359 => ("0359", .info,
     "a \\note nested inside another note's frame is dropped, as beamer drops it")
-  | .W0361 => ("0361", .config, "a built-in is not replaced by a redefinition the engine cannot run")
   | .W0362 => ("0362", .degraded, "picture entirely outside the rendered subset; a placeholder box marks its place")
   | .W0363 => ("0363", .degraded, "a title-page template node the engine cannot pin as written; what it sets stands at the title page's default place")
   | .W0364 => ("0364", .degraded, "an unresolved data path; nothing renders in its place")
   | .E0365 => ("0365", .dropped, "\\data file not found; its records are absent")
-  | .W0366 => ("0366", .degraded, "a named font weight is not installed; the nearest installed weight substitutes")
   | .N0021 => ("0021", .info, "header and footer gaps differ as declared; equal gaps are the default")
-  | .W0367 => ("0367", .config, "a beamerposter option outside the poster model; named and ignored")
   | .W0368 => ("0368", .degraded, "a language the engine ships no locale for; English captions and patterns stand in")
   | .W0369 => ("0369", .degraded, "a per-language font binding; one face serves every language, so the binding is dropped")
   | .E0375 => ("0375", .dropped, "\\dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped")
-  | .W0370 => ("0370", .pending, "\\footnotemark and \\footnotetext are not paired yet; kept as text")
+  | .W0370 => ("0370", .pending, "a construct not implemented yet; kept as text")
   | .W0371 => ("0371", .degraded, "a footnote is one paragraph: a paragraph break inside \\footnote is set as a space, a list's items as lines at its margin, a heading as a bold line")
-  | .W0372 => ("0372", .degraded, "a footnote taller than the text block overruns its page")
-  | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
   | .N0376 => ("0376", .info, "an image ships no text alternative (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
@@ -445,24 +415,18 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0382 => ("0382", .degraded, "the boundary tool ran and drew nothing for a picture, or did not finish it; a placeholder box marks its place")
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
-  | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")
-  | .W0387 => ("0387", .config, "a known construct was read and had no effect")
   | .W0701 => ("0701", .pending, "an output contract fact this artifact does not yet realize")
   | .W0603 => ("0603", .degraded, "an image's embedded colour profile is dropped; the page reads it as device colour")
   | .W0604 => ("0604", .degraded, "an image's orientation tag is dropped; the page shows the stored orientation")
-  | .W0605 => ("0605", .degraded, "an image has no usable browser face; the web page shows a placeholder instead")
   | .W0609 => ("0609", .degraded, "a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn")
   | .N0024 => ("0024", .info, "a figure is drawn by an external converter, because the engine does not draw one of its features")
   | .N0026 => ("0026", .info, "an SVG's font family is not the document's; its text is set in one of the document's own faces")
   | .N0027 => ("0027", .info, "an SVG figure holds a link, which its drawing does not carry; the figure draws the link's content")
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
   | .W0400 => ("0400", .degraded, "a frame a little taller than its page stands past its text area, in the gap below it")
-  | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")
   | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed, and any line of it still past the measure is its overrun too")
-  | .W0388 => ("0388", .degraded, "ink is painted off the medium; a viewer clips to the page and cannot show it")
   | .W0389 => ("0389", .degraded, "a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics")
-  | .W0390 => ("0390", .degraded, "no family is declared for a font slot the document sets in; the body face serves it")
-  | .W0391 => ("0391", .config, "an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text")
+  | .W0390 => ("0390", .degraded, "a font slot with no installed family: none declared, or none installed by the declared name; another family serves it")
   | .E0390 => ("0390", .dropped, "a markdown construct this dialect refuses by design; its content is dropped")
   | .W0392 => ("0392", .degraded, "a markdown construct sets with part of its declaration dropped; its content still sets")
   | .W0419 => ("0419", .degraded, "a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line")
@@ -474,7 +438,6 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0398 => ("0398", .degraded, "booktabs loads after a face is declared; its rule paddings are measured in Latin Modern, not in that face")
   | .W0399 => ("0399", .degraded, "a fill the web slide cannot grow where it stands spaces nothing; the slide sets its frame as if it were absent")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
-  | .E0607 => ("0607", .dropped, "the PDF cannot be represented within supported spelling or storage limits; publication is refused")
   | .N0029 => ("0029", .info, "a .bib field the bibliography style prints nowhere for its entry's type; the reference list is the style's own")
   | .W0420 => ("0420", .degraded, "a .bib date or month biber does not read; it prints as written")
   | .W0421 => ("0421", .degraded, "a biblatex reference list worded in a language the engine has no bibliography strings for; English ones stand in")
@@ -529,44 +492,44 @@ public def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 
 /-- The word each code's messages open with, fixed per code. -/
 public def DiagCode.qual : DiagCode → Diag.Qual
-  | .E0306 | .E0322 | .E0324 | .E0326 | .E0327 | .E0328 | .E0329 | .W0111 | .W0301 | .W0304 |
+  | .E0306 | .E0322 | .E0324 | .E0326 | .E0328 | .E0329 | .W0111 | .W0301 | .W0304 |
     .E0340 | .W0316 | .W0319 | .W0323 | .W0349 | .W0351 | .W0353 | .W0364 | .W0381 | .W0426 |
     .W0412 | .W0454 =>
     .undefined
   | .E0006 | .E0111 | .E0112 | .E0113 | .E0309 | .W0010 | .W0011 | .W0012 | .W0015 | .W0102 |
     .W0103 | .W0106 | .W0109 | .W0302 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
-    .W0363 | .E0375 | .W0370 | .W0371 | .W0373 | .W0374 | .W0380 | .W0383 | .W0701 | .W0605 |
-    .W0609 | .W0385 | .W0389 | .E0390 | .W0419 | .W0435 | .E0607 | .W0422 | .W0423 | .W0427 |
+    .W0363 | .E0375 | .W0370 | .W0371 | .W0374 | .W0380 | .W0701 |
+    .W0609 | .W0389 | .E0390 | .W0419 | .W0435 | .W0422 | .W0423 | .W0427 |
     .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 | .W0457 =>
     .unsupported
   | .W0101 | .N0102 | .N0104 | .W0001 | .W0007 | .W0104 | .W0108 | .W0110 | .W0303 | .E0336 |
-    .W0317 | .W0318 | .E0334 | .W0329 | .W0340 | .W0346 | .E0347 | .W0348 | .W0354 | .W0355 |
-    .N0359 | .W0361 | .W0367 | .W0369 | .W0387 | .W0603 | .W0604 | .N0027 | .W0391 | .W0392 |
+    .W0317 | .E0334 | .W0340 | .E0347 | .W0355 |
+    .N0359 | .W0369 | .W0603 | .W0604 | .N0027 | .W0392 |
     .W0399 | .W0445 | .W0444 =>
     .ignored
   | .N0103 | .N0105 | .W0013 | .N0029 | .W0416 | .W0449 =>
     .unused
-  | .W0002 | .E0005 | .E0205 | .E0303 | .E0305 | .E0320 | .E0321 | .E0323 | .E0325 |
-    .E0331 | .E0332 | .E0501 | .W0014 | .W0105 | .W0107 | .W0202 | .E0333 | .W0314 | .W0332 |
-    .W0337 | .W0352 | .W0420 | .W0425 | .W0429 | .W0306 | .W0431 | .W0442 | .W0433 =>
+  | .W0002 | .E0005 | .E0205 | .E0303 | .E0305 | .E0320 | .E0321 | .E0325 |
+    .E0331 | .E0501 | .W0014 | .W0105 | .W0107 | .W0202 | .E0333 | .W0314 | .W0332 |
+    .W0352 | .W0420 | .W0425 | .W0429 | .W0306 | .W0431 | .W0442 | .W0433 =>
     .invalid
   | .E0001 | .E0402 | .E0404 | .W0601 | .W0446 =>
     .unreadable
-  | .W0403 | .E0304 | .E0401 | .W0003 | .E0405 | .W0008 | .N0018 | .W0309 | .W0312 | .W0320 | .W0326 |
+  | .E0304 | .E0401 | .W0003 | .E0405 | .W0008 | .N0018 | .W0309 | .W0312 | .W0320 | .W0326 |
     .E0502 | .E0365 | .N0376 | .W0377 | .W0378 | .W0379 | .W0382 | .W0390 | .W0393 | .W0394 |
     .E0395 | .E0606 | .W0424 | .N0031 | .W0414 | .W0432 | .N0032 | .W0503 =>
     .missing
-  | .E0003 | .W0311 | .W0322 | .W0325 | .W0327 | .W0342 | .W0343 | .W0350 | .W0441 | .W0450 =>
+  | .E0003 | .W0311 | .W0322 | .W0325 | .W0327 | .W0350 | .W0441 | .W0450 =>
     .duplicate
   | .E0102 | .E0201 | .E0316 | .W0310 =>
     .unclosed
   | .E0101 | .E0202 | .E0310 | .E0311 | .E0312 | .E0313 | .W0321 | .W0398 | .W0411 | .W0413 |
     .W0451 | .W0452 | .W0455 =>
     .unexpected
-  | .W0004 | .W0006 | .W0009 | .W0016 | .W0366 | .W0368 | .N0026 | .W0421 | .W0447 =>
+  | .W0004 | .W0006 | .W0009 | .W0016 | .W0368 | .N0026 | .W0421 | .W0447 =>
     .substituted
-  | .W0005 | .W0328 | .W0333 | .W0335 | .W0336 | .W0338 | .W0358 | .W0372 | .W0384 | .W0400 |
-    .W0386 | .W0388 | .W0396 =>
+  | .W0005 | .W0328 | .W0333 | .W0335 | .W0336 | .W0338 | .W0358 | .W0384 | .W0400 |
+    .W0386 | .W0396 =>
     .overfull
   | .W0201 | .W0315 | .W0330 | .W0345 | .W0308 =>
     .illegible
@@ -678,8 +641,32 @@ public def DiagCode.renumbered : List (String × String) :=
   [("E0382", "W0382"),
    ("E0002", "W0002"),
    ("E0503", "W0503"),
-   ("E0403", "W0403"),
-   ("E0359", "N0359")]
+   ("E0403", "W0390"),
+   ("E0359", "N0359"),
+   ("E0327", "E0322"),
+   ("E0323", "E0321"),
+   ("E0332", "E0321"),
+   ("E0607", "E0006"),
+   ("W0366", "W0006"),
+   ("W0346", "W0340"),
+   ("W0318", "W0104"),
+   ("W0329", "W0104"),
+   ("W0348", "W0104"),
+   ("W0354", "W0104"),
+   ("W0367", "W0104"),
+   ("W0387", "W0104"),
+   ("W0391", "W0104"),
+   ("W0343", "W0322"),
+   ("W0342", "W0311"),
+   ("W0337", "W0014"),
+   ("W0403", "W0390"),
+   ("W0372", "W0005"),
+   ("W0388", "W0333"),
+   ("W0373", "W0012"),
+   ("W0385", "W0012"),
+   ("W0605", "W0602"),
+   ("W0383", "W0370"),
+   ("W0361", "W0303")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where

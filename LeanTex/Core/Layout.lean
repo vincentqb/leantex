@@ -8244,11 +8244,12 @@ public def boxPastJoined (d : Diag) (o : Length) : Diag :=
 private def slotName (label : String) : Diag.Name :=
   Diag.Name.of ((label.dropPrefix? "the ").map (·.toString) |>.getD label)
 
-/-- W0372: a note block pushes its band `over` past the page's floor. -/
+/-- W0005: a note block pushes its band `over` past the page's floor. -/
 private def noteOverrunDiag (over : Length) (output : Option Diag.Output) : Diag :=
-  Diag.of .W0372 (Diag.say .W0372 .footnote)
+  Diag.of .W0005 (Diag.say .W0005 .footnote)
     (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })") (output := output)
     (detail := some s!"{over.toPtString}pt taller than the text block")
+    (subject := some "notes:overrun")
 
 /-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
 it stood overfull, W0384 where it continued, nothing where it fit. -/
@@ -8625,7 +8626,7 @@ private def Spacing.Page.noteOverrun (b : B) (over : Length) : B :=
       | _, _ => b.overruns }
 
 /-- What a band no break can help leaves past the page's floor, named once: a note block that alone
-pushes it past (W0372), else its own ink past the page's shrink, recorded by the ladder within its
+pushes it past (W0005), else its own ink past the page's shrink, recorded by the ladder within its
 clearance and named W0358 beyond it; a float's replay, named whole by `runFloat`, names nothing. -/
 private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Length) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
@@ -18214,7 +18215,7 @@ private def wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b :
 
 /-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
 holding nothing else; a group taller than the text block ships alone, named (W0358), and a note
-block it alone pushes past the floor is named as the note (W0372). -/
+block it alone pushes past the floor is named as the note (W0005). -/
 private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array Op) : StepSt :=
   let attempt := group.foldl (stepStaged fs imgs) st
@@ -21064,7 +21065,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
             lines := lines.push { x := x, y := (bandB + inkH) / 2,
                                   size := geom.fontSize, segs := segs,
                                   setWidth := w, furniture := true }
-    -- Colliding slots yield by ink, never position (W0333); ink off the medium is named (W0388).
+    -- Colliding slots yield by ink, never position; a slot past its room is named (W0333).
     if let some band := page.foot then
       -- One baseline for the band, from the box the page's floor was set against (`footBaseline`).
       let footY := footBaseline geom ((page.footBox.map (·.2)).getD 0)
@@ -21077,7 +21078,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
         cache := c
         if let some l := l? then
           unless geom.onMedium l.x l.setWidth do
-            diags := diags.push (Diag.of .W0388 (Diag.say .W0388 .slot (slotName slot.label))
+            diags := diags.push (Diag.of .W0333 (Diag.say .W0333 .slot (slotName slot.label))
               (help := "a band holds one line at a fixed position: shorten \
 the content, or widen the page (\\page{ width = ... })")
               (detail := some s!"page {i + 1}, \
@@ -22927,7 +22928,7 @@ public theorem ladderDiags_accounts (labels : Array (Option String))
 overfull line, a page short of its height, the measure's band, a natural table, box, float or
 footnote past the text block, running furniture, page rules and math set without a math face. -/
 public def paperLossCodes : List DiagCode :=
-  [.W0003, .W0005, .N0200, .W0201, .W0338, .W0358, .W0372, .W0328, .W0333, .W0388, .N0021, .W0304,
+  [.W0003, .W0005, .N0200, .W0201, .W0338, .W0358, .W0328, .W0333, .N0021, .W0304,
    .W0386, .E0405, .W0009, .W0016]
 
 /-- Whether a flow sets nothing whose setting raises a loss its web page shares (a frame, a picture,

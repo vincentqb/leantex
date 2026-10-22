@@ -2,7 +2,7 @@
 # §9 (predefined keywords: \KwIn, \For, \eIf, \Repeat, \Return, comments),
 # §6 (\SetKw and family), §7 (display options). A display setting outside
 # the model is N0102, named and ignored; a construct outside the modeled
-# subset is W0383, its content kept as plain lines.
+# subset is W0370, its content kept as plain lines.
 # The preamble rows of the \SetKw family and the two display switches bind
 # a keyword or a default and move no ink where they stand (inert:binds):
 # each one's effect is the algorithm body that uses it, and the body rows
@@ -43,7 +43,7 @@ pre refuse:N0102 \SetAlgoNoEnd
 pre refuse:N0102 \SetInd{0.5em}{1em}
 body refuse:N0102 \begin{algorithm}\SetAlgoLined x\;\end{algorithm}
 body refuse:N0102 \begin{algorithm}\SetAlgoVlined x\;\end{algorithm}
-body refuse:W0383 \begin{algorithm}\lIf{$a$}{x}\end{algorithm}
-body refuse:W0383 \begin{algorithm}\Begin{x\;}\end{algorithm}
-body refuse:W0383 \begin{algorithm}\Switch{$s$}{\Case{$1$}{x\;}\Other{y\;}}\end{algorithm}
+body refuse:W0370 \begin{algorithm}\lIf{$a$}{x}\end{algorithm}
+body refuse:W0370 \begin{algorithm}\Begin{x\;}\end{algorithm}
+body refuse:W0370 \begin{algorithm}\Switch{$s$}{\Case{$1$}{x\;}\Other{y\;}}\end{algorithm}
 body refuse:W0301 \listofalgorithms

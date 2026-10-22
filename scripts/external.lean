@@ -32,7 +32,7 @@ def unknownCodes : List String := ["W0301", "W0302"]
 
 /-- The codes whose loss is a face's, keyed by constructor so the cause class is data. -/
 def fontCodes : List DiagCode :=
-  [.E0401, .E0402, .W0403, .E0404, .E0405, .W0003, .W0006, .W0009, .W0011, .N0018]
+  [.E0401, .E0402, .W0390, .E0404, .E0405, .W0003, .W0006, .W0009, .W0011, .N0018]
 
 structure Doc where
   set : String

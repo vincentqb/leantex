@@ -65,7 +65,7 @@ public def TexKey.row : TexKey → TexText
       text := "Can be used only in preamble",
       source := "latex.ltx:9020, LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)" }
   | .extraTab =>
-    { key := "extraTab", code := .W0337,
+    { key := "extraTab", code := .W0014,
       text := "Extra alignment tab has been changed to \\cr",
       source := "LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)" }
   | .citation =>

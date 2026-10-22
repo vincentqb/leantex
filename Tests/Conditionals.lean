@@ -48,7 +48,7 @@ def modeReadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     "In \\R{} and $x\\in\\R$ and $\\textbf{x}+\\text{\\textbf{y}}$."
   let (_, idiomDs) := elabStr idiom
   t s!"ifmmode: a formula reading a command whose text branch is a formula sets, as one whose text argument does ({idiomDs.map (·.kind.code)})"
-    (!idiomDs.any (·.kind == .W0012))
+    (!idiomDs.any fun d => d.kind == .W0012 && !d.subject.any (·.startsWith "math:style:"))
   let raws := (Parse.parse "m.tex" (Lex.lex "m.tex" "\\ifmmode a\\else b\\fi \\ifmmode c").1).1
   t s!"ifmmode: a closed conditional reads back as written, an open one stays ({Parse.rawSrc raws})"
     (raws.any (· matches .env _ _ _) && Parse.rawSrc raws == "\\ifmmode a\\else b\\fi \\ifmmode c")

@@ -1313,7 +1313,7 @@ public def unknownKey (file : String) (what key : String) (known : List String)
 
 public def wrongType (file : String) (what key expected : String) (got : Value)
     (pos : Pos) : Diag :=
-  Diag.of .E0323 (Diag.say .E0323 .value (obj := some (some .key, Diag.Name.of key)))
+  Diag.of .E0321 (Diag.say .E0321 .value (obj := some (some .key, Diag.Name.of key)))
     (some ⟨file, pos⟩) (detail := some s!"\\{what} expects {expected}, got a {got.kindName}")
 
 end LeanTex.Core.Decl

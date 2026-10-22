@@ -120,7 +120,7 @@ exit 19\n"
     let html ← try IO.FS.readFile (output / "figure.html")
       catch err => throw <| IO.userError s!"{err}\n{run.stdout}{run.stderr}"
     let out := run.stdout ++ run.stderr
-    check ref "moving figure driver: no loss is reported" (!hasStr out "[W0605]" && !hasStr out "[W0609]")
+    check ref "moving figure driver: no loss is reported" (!hasStr out "[W0602]" && !hasStr out "[W0609]")
     let called ← if ← log.pathExists then pure !(← IO.FS.readFile log).isEmpty else pure false
     check ref "moving figure driver: the converter is never called" !called
     let (_, primary) ← svgPublishedAsset html "img" "src"
@@ -171,7 +171,7 @@ def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
         let log := run.stdout ++ run.stderr
         check ref s!"SVG doctype {name}: {extension} keeps the figure"
           (run.exitCode == 0 && (log.splitOn "W0602").length == 1 &&
-            (log.splitOn "W0605").length == 1)
+            (log.splitOn "W0602").length == 1)
       let html ← IO.FS.readFile (output / "figure.html")
       let (_, published) ← svgPublishedAsset html "img" "src"
       check ref s!"SVG doctype {name}: original browser source publishes"

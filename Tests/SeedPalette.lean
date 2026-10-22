@@ -386,7 +386,7 @@ def seedRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let (themedAfter, themedDs) := elabStr (deck (seeds ++ "\\theme{moloch}\n") frame)
   t "seed roles: a theme after the seeds replaces their colours and says so"
     (declared themedAfter .ink != some deckSeeds.ink &&
-      (themedDs.filter (·.code == "W0348")).size ≥ 1)
+      (themedDs.filter (·.code == "W0104")).size ≥ 1)
 
 /-- Seeds that generate no palette are named once by the failing role, and stand as the page's text,
 ground and accent. -/

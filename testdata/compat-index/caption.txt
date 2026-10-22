@@ -1,7 +1,7 @@
 # source: caption manual §2 (\captionsetup), §4 (\captionof, declarations).
-# An option the engine does not honour is W0354, named and ignored.
+# An option the engine does not honour is W0104, named and ignored.
 body impl \begin{figure}\caption{x}\end{figure}
-pre refuse:W0354 \captionsetup{font=small}
+pre refuse:W0104 \captionsetup{font=small}
 pre impl \captionsetup{margin=0.6in}
 pre impl \captionsetup{skip=6pt}
 pre impl \captionsetup{aboveskip=6pt}
@@ -9,6 +9,6 @@ pre impl \captionsetup{belowskip=6pt}
 pre impl \captionsetup{position=top}
 pre impl \captionsetup{tableposition=top}
 pre impl \captionsetup[figure]{position=bottom}
-pre refuse:W0354 \captionsetup{position=middle}
+pre refuse:W0104 \captionsetup{position=middle}
 body refuse:W0301 \captionof{figure}{x}
 pre refuse:W0301 \DeclareCaptionFormat{zz}{#3}

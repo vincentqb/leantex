@@ -30,7 +30,7 @@ def tableContextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let mc := censusOf #[] mout
     t s!"table context {env}: no misplaced span or error"
       ((dd ++ md ++ dout.diags ++ mout.diags).all fun d =>
-        d.code != "W0337" && d.severity != .error)
+        d.code != "W0014" && d.severity != .error)
     t s!"table context {env}: both HTML cells span two columns"
       (spans direct == #["2"] && spans indirect == #["2"])
     t s!"table context {env}: each head ships once at the same position"
