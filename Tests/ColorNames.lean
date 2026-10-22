@@ -22,7 +22,7 @@ private def pageFills (doc : Ir.Doc) (out : Layout.Out) : Array Ir.Color :=
 colours apart from palette roles, while a colour expression reads the author's colour first. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let (doc, ds) := elabStr (article "\\definecolor{bg}{rgb}{.9,.9,.9}\n" "\\textcolor{bg}{Probe text.}")
+  let (doc, ds) := elabStr (article "\\definecolor{bg}{rgb}{.9,.9,.9}\n" "Probe text.")
   let out := layoutOf fonts doc
   t "author colours: \\definecolor{bg} elaborates clean"
     (!ds.any (·.severity == .error))
@@ -33,10 +33,21 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let css := (HtmlDoc.emit {} doc).1
   let authorBg := ((doc.palette.lookup (.color "bg")).map HtmlDoc.cssColor).getD "none"
   t "author colours: the HTML body takes no ground from \\definecolor{bg}"
-    (hasStr css s!"--ltx-c-bg: {authorBg};" && !hasStr css s!"--ltx-bg: {authorBg};" &&
+    (!hasStr css s!"--ltx-bg: {authorBg};" &&
       hasStr css "background: var(--ltx-bg);" && !hasStr css "background: var(--ltx-c-bg)")
-  t "author colours: the reader name --bg stays the author's colour"
-    (hasStr css "--bg: var(--ltx-c-bg);" && !hasStr css "--bg: var(--ltx-bg);")
+  t "author colours: a colour nothing on the page reads is not declared, nor its name a role's"
+    (!hasStr css "--ltx-c-bg:" && !hasStr css "--bg: var(--ltx-bg);")
+  let shipped (pre body : String) (sheet : Option String) : String :=
+    let declared := if sheet.isSome then "\\output{ stylesheet = \"page.css\" }\n" else ""
+    (HtmlDoc.emit { stylesheet := sheet.map ("page.css", ·) } (elabStr (article (pre ++ declared)
+      body)).1).1
+  let bgDecl := "\\definecolor{bg}{rgb}{.9,.9,.9}\n"
+  t "author colours: the reader name --bg stays the author's colour where the page reads it"
+    (hasStr (shipped bgDecl "\\textcolor{bg}{Probe text.}" none) "--bg: var(--ltx-c-bg);")
+  t "author colours: a declared sheet reading a colour's name keeps it declared"
+    (hasStr (shipped bgDecl "Probe text." (some "p { color: var(--bg); }"))
+        "--bg: var(--ltx-c-bg);" &&
+      !hasStr (shipped bgDecl "Probe text." (some "p { margin: 0; }")) "--ltx-c-bg:")
   let (fgDoc, _) := elabStr (article "\\definecolor{fg}{HTML}{1A2B3C}\n" "Probe ink.")
   let fgOut := layoutOf fonts fgDoc
   t "author colours: \\definecolor{fg} sets no text"

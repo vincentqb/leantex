@@ -1085,10 +1085,6 @@ public theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode)
     Array.filter_push, hid]
   split <;> simp_all
 
-/-- W0302's words for an environment nothing defines: LaTeX's own in a LaTeX source. -/
-private def envUndefined (ctx : Ctx) (name : String) : String :=
-  Diag.texOr (ctx.surface != .markdown) .envUndefined [name] (Diag.say .W0302 .environment name)
-
 private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -5925,7 +5921,7 @@ sets as a block")
           have _ := sliceWeight_splice_le h hr line hl
           elabInlinesFrom ctx (raws.extract 0 i ++ line ++ raws.extract (i + 1) raws.size) i acc sb
         else
-          warnOnce ctx ("env:" ++ name) .W0302 (envUndefined ctx name) pos
+          warnOnce ctx ("env:" ++ name) .W0302 (Diag.say .W0302 .environment name) pos
             (help := "\\defineenv{name}(...) {begin} {end} declares one")
           -- Spliced into this scan, so its edge spaces are ordinary separators.
           let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
@@ -15110,7 +15106,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
   else if reservedEnv.contains n then
     warnOnce ctx ("env:" ++ n) .W0307 (Diag.say .W0307 .environment n) pos
   else
-    warnOnce ctx ("env:" ++ n) .W0302 (envUndefined ctx n) pos
+    warnOnce ctx ("env:" ++ n) .W0302 (Diag.say .W0302 .environment n) pos
       (help := "\\defineenv{name}(...) {begin} {end} declares one")
     let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
     let ⟨kept, _, _⟩ : { a : Array Raw //

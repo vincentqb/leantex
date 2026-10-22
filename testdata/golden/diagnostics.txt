@@ -10,7 +10,7 @@ error: failed output site/out.pdf [E0004]
 ── E0005 (dropped) an artifact would be written over one of the build's inputs; publication is refused
 error: invalid output doc.md [E0005]
   note: the Markdown output is the input 'doc.md'
-── E0006 (dropped) an output the engine cannot write: a file name ending in no format's extension, or a PDF past supported spelling or storage limits; publication is refused
+── E0006 (dropped) an output the engine cannot write; publication is refused
 error: unsupported output notes.tex [E0006]
   note: name an output file ending in '.pdf', '.html' or '.md' with -o, or a directory ending in '/'
 error: unsupported output [E0006]
@@ -67,7 +67,7 @@ error: unclosed optional argument for \x [E0316]
 ── E0320 (dropped) invalid key or missing value in a declaration block
 error: invalid entry oops for \page [E0320]
   note: it has no value
-── E0321 (dropped) a declaration key's value that is unreadable, of the wrong type or out of range
+── E0321 (dropped) an invalid value for a declaration key
 error: invalid value 'big' for key scale [E0321]
   note: a number
 error: invalid value for key vmargin [E0321]
@@ -248,7 +248,7 @@ warning: missing math font [W0003]
 ── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
 warning: substituted encoding 'Windows-1252 (Latin-1)' for 'UTF-8' [W0004]
   note: byte 0x92 at offset 83
-── W0005 (degraded) a line, column or footnote that does not fit its measure or page, where no re-flowed declared line accounts for it
+── W0005 (degraded) content past its measure, where no re-flowed declared line accounts for it
 warning: overfull line [W0005]
   note: 175.215pt too wide
 warning: overfull column for frame [W0005]
@@ -261,7 +261,7 @@ warning: overfull line for 'section page' [W0005]
   note: the section page: 834.237pt too wide
 warning: overfull footnote [W0005]
   note: 60.123pt taller than the text block
-── W0006 (degraded) a declared face, variant or weight is not installed; the nearest installed face substitutes
+── W0006 (degraded) a declared face that is not installed; the nearest installed face substitutes
 warning: substituted face 'Demo Serif Regular' for 'Demo Serif Bold' [W0006]
 warning: substituted face 'Demo Serif Regular' for 'Demo Serif Bold' [W0006]
   note: 'DemoSerif-Bold.otf' is not installed
@@ -284,7 +284,7 @@ warning: Too deeply nested [W0010]
 ── W0011 (degraded) declared math face has no OpenType MATH table
 warning: unsupported math font 'Open Sans' [W0011]
   note: testdata/corpus/fonts/OpenSans-Regular.ttf has no OpenType MATH table
-── W0012 (degraded) a command the engine does not render as declared: a math construct set as its text, a colour or font change inside math, \thanks kept inline
+── W0012 (degraded) a command the engine does not render as declared; its content stands
 warning: unsupported command \overset [W0012]
   note: set as its text content
 warning: unsupported command \overset [W0012]
@@ -295,7 +295,7 @@ warning: unsupported command \textbf [W0012]
 ── W0013 (config) an \allow'd code never fired
 warning: unused code E0333 [W0013]
   note: the document no longer needs it; drop the entry from \allow
-── W0014 (degraded) an alignment or table row disagrees with its columns; padded to the grid
+── W0014 (degraded) a row that disagrees with its columns; padded to the grid
 warning: invalid row for environment align* [W0014]
   note: row 2 has 1 cell(s) where 2 align
 warning: invalid row [W0014]
@@ -387,8 +387,8 @@ warning: undefined command \mystery [W0301]
 warning: undefined command \mystery [W0301] (2 sites)
   note: \define \name(...) {body} declares it; content, not options? start the '[' on the next line
 info: undefined command \mystery [W0301]
-── W0302 (degraded) an environment nothing defines; its body kept
-warning: Environment banner undefined [W0302]
+── W0302 (degraded) an environment the engine does not set; its body kept
+warning: unsupported environment banner [W0302]
   note: \defineenv{name}(...) {begin} {end} declares one
 ── W0303 (config) a redefinition of a built-in the engine does not apply; the built-in stands
 warning: ignored definition \underline [W0303]
@@ -412,7 +412,7 @@ warning: missing title for \maketitle [W0309]
 ── W0310 (degraded) '[' never closes; not an argument
 warning: unclosed optional argument for \section [W0310]
   note: add the matching ']'
-── W0311 (degraded) a name given a second meaning: a second \frametitle replaces the first, a definition shadowing a palette role freezes the role where it is used
+── W0311 (degraded) a name given a second meaning
 warning: duplicate command \frametitle [W0311]
   note: the last one wins; remove the other '\frametitle'
 warning: duplicate command \muted [W0311]
@@ -470,7 +470,7 @@ warning: unsupported marker for itemize [W0331]
 ── W0332 (degraded) footer mixes the frame and physical page sequences undeclared
 warning: invalid footer \framefoot [W0332]
   note: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot
-── W0333 (degraded) a band slot past its room: painted over by a higher-priority slot, or off the medium, where a viewer clips it
+── W0333 (degraded) a band slot past its room
 warning: overfull slot '\framefoot note' [W0333]
   note: page 2, 268.759pt past its edge
 warning: overfull slot framenumber for '\framefoot note' [W0333]
@@ -595,7 +595,7 @@ warning: overfull line [W0386]
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
 warning: unsupported command \raisebox [W0389]
   note: its content operand sets in its place
-── W0390 (degraded) a font slot with no installed family: none declared, or none installed by the declared name; another family serves it
+── W0390 (degraded) a font slot with no installed family; another family serves it
 warning: missing family mono [W0390]
   note: typewriter runs set in the body face, which is not fixed-pitch
 warning: missing family 'Sourse Serif Pro' [W0390]
@@ -768,8 +768,8 @@ warning: unexpected environment itemize for command \fbox [W0455]
 ── W0457 (degraded) a margin note where its page sets no margin beside the text (a frame or card, a float, box, table, note or display, which LaTeX refuses outside its paragraphs); its text sets where it stands
 warning: unsupported margin for float [W0457]
   note: move the '\marginpar' outside it, beside a line of the page's own text
-── W0458 (degraded) an environment defined in a way the engine does not apply; its body kept
-warning: unsupported environment probenote [W0458]
+── W0458 (degraded) an environment definition the engine does not apply; the environment's body kept
+warning: unsupported definition for environment probenote [W0458]
   note: define the environment in the preamble, before '\begin{document}'
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
@@ -779,7 +779,7 @@ warning: unreadable image figures/plot.png [W0601]
   note: not found at /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added
 warning: unreadable image figures/plot.png [W0601]
   note: permission denied (error code: 13)
-── W0602 (degraded) an image format the PDF or the web page cannot use; a placeholder box marks its place
+── W0602 (degraded) an image format an artifact cannot use; a placeholder box marks its place
 warning: unsupported image figures/plot.gif [W0602]
   note: not a PNG, JPEG, or PDF file
 warning: unsupported image figures/box.pdf [W0602]

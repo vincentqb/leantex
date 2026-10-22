@@ -893,6 +893,9 @@ def browserFaceFailures (fixture log : String) : Array BrowserFace :=
     if event != "diagnostic" then none else do
     let code ← (record.getObjValAs? String "code").toOption
     if !["W0602", "W0378"].contains code then none else do
+    -- the web page's own image losses are keyed by store index, the PDF's by source
+    if code == "W0602" && !((record.getObjValAs? String "subject").toOption.any
+      (·.startsWith "img:")) then none else do
     let message ← (record.getObjValAs? String "message").toOption
     let said := message ++ ((record.getObjValAs? String "detail").toOption.map ("\n" ++ ·)).getD ""
     let tools := ["rsvg-convert", "pdftocairo", "xmllint"].filter fun tool =>

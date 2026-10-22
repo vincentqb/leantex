@@ -16,6 +16,7 @@ structure Probe where
   /-- A warning is read from its `Warning:` or `Overfull` log line, an error from its `! ` line. -/
   warning : Bool := false
   preamble : String := ""
+  cls : String := "article"
 
 def probes : List Probe := [
   { key := "brace", code := "E0202", body := "Kilo}" },
@@ -28,8 +29,8 @@ def probes : List Probe := [
     body := "\\begin{itemize}\n\\item Kilo\n\\end{enumerate}" },
   { key := "envUnclosed", code := "E0205", names := ["itemize", "document"],
     body := "\\begin{itemize}\n\\item Kilo\n" },
-  { key := "envUndefined", code := "W0302", names := ["zzbanner"],
-    body := "\\begin{zzbanner}\nKilo\n\\end{zzbanner}" },
+  { key := "envUndefined", code := "W0302", names := ["abstract"], cls := "book",
+    body := "\\begin{abstract}\nKilo\n\\end{abstract}" },
   { key := "inputMissing", code := "E0502", names := ["zzabsent.tex"],
     body := "\\input{zzabsent}" },
   { key := "nesting", code := "W0010",
@@ -48,7 +49,7 @@ def probes : List Probe := [
 def contains (s needle : String) : Bool := (s.splitOn needle).length > 1
 
 def probeSource (p : Probe) : String :=
-  "\\documentclass{article}\n" ++ p.preamble ++ "\\begin{document}\n" ++ p.body ++
+  s!"\\documentclass\{{p.cls}}\n" ++ p.preamble ++ "\\begin{document}\n" ++ p.body ++
     "\n\\end{document}\n"
 
 /-- The text after a leading run of digits, dots and the unit, or `none` when none leads. -/
@@ -237,10 +238,17 @@ def scratch : IO System.FilePath := do
   IO.FS.createDirAll root
   return root
 
-/-- Each probe's standing, then the preamble-only commands', every fault said on stderr. -/
+/-- The committed table without its sources, which name the TeX installation the words came from. -/
+def unsourced (t : String) : List String :=
+  (t.splitOn "\n").filter fun l => !(l.trimAscii.toString.startsWith "source := ")
+
+/-- Each probe's standing and the table's, every fault said on stderr; no rows when lualatex cannot
+be run or any row falls short, since a TeX text is gated whole. -/
 def measureTier : IO (Array String × Array Scoreboard.Row) := do
   let root ← scratch
-  let (rows, preamble) ← generate root
+  let (rows, preamble) ← try generate root catch e => do
+    IO.eprintln s!"textexts: lualatex's words could not be read: {e}"
+    return (#[], #[])
   let committed := LeanTex.Core.TexText.rows
   let mut out : Array Scoreboard.Row := #[]
   for (p, r) in probes.zip rows.toList do
@@ -257,16 +265,13 @@ def measureTier : IO (Array String × Array Scoreboard.Row) := do
     unless says do
       IO.eprintln s!"textexts: {r.key} {r.code} does not say '{want}': {said.toList}"
     out := out.push { item := r.key, value := if held && refused && says then 1 else 0 }
-  let stale := committed.filter fun c => !rows.any (·.key == c.key)
-  unless stale.isEmpty do
-    IO.eprintln s!"textexts: rows no probe raises: {stale.map (·.key)} (run --write)"
-  let listed := LeanTex.Core.TexText.preambleOnly == preamble
-  unless listed do IO.eprintln "textexts: the preamble-only list is not latex.ltx's (run --write)"
-  out := out.push
-    { item := "preamble-commands", value := if listed && stale.isEmpty then 1 else 0 }
+  let generated := unsourced (← IO.FS.readFile dataPath) == unsourced (render rows preamble)
+  unless generated do IO.eprintln "textexts: the committed table is not the generator's (run --write)"
+  out := out.push { item := "table", value := if generated then 1 else 0 }
+  if out.any (·.value == 0) then return (#[], #[])
   return (#[s!"# rows: {rows.size} probes, each 1 when the committed table holds lualatex's words, \
-leantex says them on the probe and an error's probe stops lualatex; preamble-commands 1 when the \
-table's list is latex.ltx's and no row outlives its probe"], out)
+leantex says them on the probe and an error's probe stops lualatex; table 1 when the committed \
+table is the generator's but for its sources"], out)
 
 def selftest : IO UInt32 := Scoreboard.tierSelftest "textexts" fun no => do
   no "a particular TeX puts in its text is cut"

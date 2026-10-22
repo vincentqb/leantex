@@ -272,7 +272,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
   | .E0004 => ("0004", .dropped, "an artifact could not be written to its destination")
   | .E0005 => ("0005", .dropped, "an artifact would be written over one of the build's inputs; publication is refused")
-  | .E0006 => ("0006", .dropped, "an output the engine cannot write: a file name ending in no format's extension, or a PDF past supported spelling or storage limits; publication is refused")
+  | .E0006 => ("0006", .dropped, "an output the engine cannot write; publication is refused")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
   | .E0102 => ("0102", .dropped, "unclosed verbatim environment")
   | .E0111 => ("0111", .dropped, "beamer template body carrying content dropped")
@@ -292,7 +292,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0313 => ("0313", .dropped, "only declarations may appear before \\begin{document}")
   | .E0316 => ("0316", .dropped, "unclosed optional argument")
   | .E0320 => ("0320", .dropped, "invalid key or missing value in a declaration block")
-  | .E0321 => ("0321", .dropped, "a declaration key's value that is unreadable, of the wrong type or out of range")
+  | .E0321 => ("0321", .dropped, "an invalid value for a declaration key")
   | .E0322 => ("0322", .dropped, "unknown key in a declaration block")
   | .E0324 => ("0324", .dropped, "unknown page size name")
   | .E0325 => ("0325", .dropped, "unreadable \\assert expression")
@@ -317,16 +317,16 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
   | .W0003 => ("0003", .degraded, "no math face available; math set as plain text")
   | .E0405 => ("0405", .dropped, "font has no glyph for a character; dropped")
-  | .W0005 => ("0005", .degraded, "a line, column or footnote that does not fit its measure or page, where no re-flowed declared line accounts for it")
-  | .W0006 => ("0006", .degraded, "a declared face, variant or weight is not installed; the nearest installed face substitutes")
+  | .W0005 => ("0005", .degraded, "content past its measure, where no re-flowed declared line accounts for it")
+  | .W0006 => ("0006", .degraded, "a declared face that is not installed; the nearest installed face substitutes")
   | .W0007 => ("0007", .degraded, "paged-media furniture omitted from HTML")
   | .W0008 => ("0008", .config, "\\fonts dir is not a directory")
   | .W0009 => ("0009", .degraded, "no glyph in the declared face; set from a fallback face")
   | .W0010 => ("0010", .degraded, "lists nest four levels; deeper levels reuse the fourth marker")
   | .W0011 => ("0011", .degraded, "declared math face has no OpenType MATH table")
-  | .W0012 => ("0012", .degraded, "a command the engine does not render as declared: a math construct set as its text, a colour or font change inside math, \\thanks kept inline")
+  | .W0012 => ("0012", .degraded, "a command the engine does not render as declared; its content stands")
   | .W0013 => ("0013", .config, "an \\allow'd code never fired")
-  | .W0014 => ("0014", .degraded, "an alignment or table row disagrees with its columns; padded to the grid")
+  | .W0014 => ("0014", .degraded, "a row that disagrees with its columns; padded to the grid")
   | .W0015 => ("0015", .degraded, "equation numbers not rendered yet; rows set unnumbered")
   | .W0016 => ("0016", .degraded, "math alphabet glyph absent from the covered face; a stand-in keeps the letter")
   | .N0016 => ("0016", .info, "no math face declared; the engine picked one and says which")
@@ -346,13 +346,13 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0201 => ("0201", .standard, "measure outside the readable band")
   | .W0202 => ("0202", .standard, "heading sets more space below than above")
   | .W0301 => ("0301", .degraded, "unknown command; {...} arguments kept as text")
-  | .W0302 => ("0302", .degraded, "an environment nothing defines; its body kept")
+  | .W0302 => ("0302", .degraded, "an environment the engine does not set; its body kept")
   | .W0303 => ("0303", .config, "a redefinition of a built-in the engine does not apply; the built-in stands")
   | .W0304 => ("0304", .degraded, "colour name not in the palette; content kept uncoloured")
   | .W0307 => ("0307", .pending, "construct not implemented yet; its content is not rendered")
   | .W0309 => ("0309", .config, "\\maketitle with nothing declared")
   | .W0310 => ("0310", .degraded, "'[' never closes; not an argument")
-  | .W0311 => ("0311", .degraded, "a name given a second meaning: a second \\frametitle replaces the first, a definition shadowing a palette role freezes the role where it is used")
+  | .W0311 => ("0311", .degraded, "a name given a second meaning")
   | .W0312 => ("0312", .degraded, "no {...} group after a command; skipped")
   | .E0333 => ("0333", .dropped, "picture expression unreadable or unresolvable; its shape is not drawn")
   | .E0336 => ("0336", .dropped, "{...} groups went with an unknown wrapper")
@@ -374,7 +374,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0330 => ("0330", .degraded, "declared page with a defaulted ink is illegible (WCAG 2.2)")
   | .W0331 => ("0331", .degraded, "declared marker not expressible in this backend; default substituted")
   | .W0332 => ("0332", .degraded, "footer mixes the frame and physical page sequences undeclared")
-  | .W0333 => ("0333", .degraded, "a band slot past its room: painted over by a higher-priority slot, or off the medium, where a viewer clips it")
+  | .W0333 => ("0333", .degraded, "a band slot past its room")
   | .W0334 => ("0334", .pending, "picture construct outside the rendered subset; not drawn")
   | .W0335 => ("0335", .degraded, "picture larger than the text area; it may overrun the page")
   | .W0336 => ("0336", .degraded, "node labels overlap; a relative placement parts centres, not text")
@@ -392,7 +392,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0353 => ("0353", .degraded, "an unknown bibliography style; the reference list is set as unsrtnat")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
-  | .W0602 => ("0602", .degraded, "an image format the PDF or the web page cannot use; a placeholder box marks its place")
+  | .W0602 => ("0602", .degraded, "an image format an artifact cannot use; a placeholder box marks its place")
   | .N0359 => ("0359", .info,
     "a \\note nested inside another note's frame is dropped, as beamer drops it")
   | .W0362 => ("0362", .degraded, "picture entirely outside the rendered subset; a placeholder box marks its place")
@@ -425,7 +425,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0400 => ("0400", .degraded, "a frame a little taller than its page stands past its text area, in the gap below it")
   | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed, and any line of it still past the measure is its overrun too")
   | .W0389 => ("0389", .degraded, "a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics")
-  | .W0390 => ("0390", .degraded, "a font slot with no installed family: none declared, or none installed by the declared name; another family serves it")
+  | .W0390 => ("0390", .degraded, "a font slot with no installed family; another family serves it")
   | .E0390 => ("0390", .dropped, "a markdown construct this dialect refuses by design; its content is dropped")
   | .W0392 => ("0392", .degraded, "a markdown construct sets with part of its declaration dropped; its content still sets")
   | .W0419 => ("0419", .degraded, "a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line")
@@ -482,7 +482,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0454 => ("0454", .degraded, "a documentation comment's cross-reference names a program element no target on the page stands for; its text sets unlinked")
   | .W0455 => ("0455", .degraded, "a list-based environment in a box command's content, which LaTeX refuses in LR mode; the box holds it as a block")
   | .W0457 => ("0457", .degraded, "a margin note where its page sets no margin beside the text (a frame or card, a float, box, table, note or display, which LaTeX refuses outside its paragraphs); its text sets where it stands")
-  | .W0458 => ("0458", .degraded, "an environment defined in a way the engine does not apply; its body kept")
+  | .W0458 => ("0458", .degraded, "an environment definition the engine does not apply; the environment's body kept")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -494,10 +494,10 @@ public def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 public def DiagCode.qual : DiagCode → Diag.Qual
   | .E0306 | .E0322 | .E0324 | .E0326 | .E0328 | .E0329 | .W0111 | .W0301 | .W0304 |
     .E0340 | .W0316 | .W0319 | .W0323 | .W0349 | .W0351 | .W0353 | .W0364 | .W0381 | .W0426 |
-    .W0412 | .W0454 | .W0302 =>
+    .W0412 | .W0454 =>
     .undefined
   | .E0006 | .E0111 | .E0112 | .E0113 | .E0309 | .W0010 | .W0011 | .W0012 | .W0015 | .W0102 |
-    .W0103 | .W0106 | .W0109 | .W0458 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
+    .W0103 | .W0106 | .W0109 | .W0302 | .W0458 | .W0307 | .W0331 | .W0334 | .W0357 | .W0602 | .W0362 |
     .W0363 | .E0375 | .W0370 | .W0371 | .W0374 | .W0380 | .W0701 |
     .W0609 | .W0389 | .E0390 | .W0419 | .W0435 | .W0422 | .W0423 | .W0427 |
     .W0428 | .W0440 | .W0415 | .W0443 | .W0434 | .W0436 | .W0453 | .W0457 | .N0024 =>
@@ -636,8 +636,8 @@ public def DiagCode.retired : List (String × Option String) :=
    ("W0356", some "W0104"),
    ("N0021", none)]
 
-/-- Codes renumbered for their class, whose successor names exactly their loss; `\allow` of the
-old spelling accepts the successor. -/
+/-- Codes renumbered for their class or merged into the code saying their loss in the same words;
+`\allow` of the old spelling accepts the successor. -/
 public def DiagCode.renumbered : List (String × String) :=
   [("E0382", "W0382"),
    ("E0002", "W0002"),

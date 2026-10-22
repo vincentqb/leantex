@@ -589,13 +589,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0429 => dvBib (w := w) "@misc{k, title = {T}, note = {\\section{S}}, year = 2024}" "k" none
   | .W0332 => dvE (w := w) (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
-  | .W0333 =>
-    (dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
+  | .W0333 => dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
       (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
-       "\\begin{frame}{F}\nx\n\\end{frame}"))) ++
-    (dvL (w := w) one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
-      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 200 '0')}}\n" ++
-       "\\begin{frame}{F}\nx\n\\end{frame}")))
+       "\\begin{frame}{F}\nx\n\\end{frame}"))
   | .W0334 => dvE (w := w) (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\draw (0,0) parabola (1,1);\n\\end{tikzpicture}"))
   | .W0335 => dvL (w := w) one (dvDoc "" ("\\begin{tikzpicture}\n" ++
@@ -1107,7 +1103,7 @@ conditional's part is skipped, one construct accounted twice; say the translatio
 
 /-- Independent facts at one source site, witnessed by varying each separately; not merge debt. -/
 def independentSiteFacts : List (String × String) :=
-  [("N0100", "W0315"), ("N0100", "W0104"), ("W0005", "W0386"), ("W0358", "W0384")]
+  [("N0100", "W0315"), ("W0005", "W0386"), ("W0358", "W0384")]
 
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||

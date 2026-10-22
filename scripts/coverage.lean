@@ -100,9 +100,11 @@ def Rung.worse (a b : Rung) : Rung := if a.level ≤ b.level then a else b
 definition the engine does not apply. -/
 def textUnknownCodes : List String := ["W0301", "W0302", "W0458"]
 
-/-- The math parser's decline (W0012), read as no information, since a math place only
-rescues the constructs living in math. -/
-def mathDeclinedCodes : List String := ["W0012"]
+/-- The math parser's decline (W0012 for a construct it does not render, not a style change in
+math or `\thanks`), read as no information, since a math place only rescues the constructs
+living in math. -/
+def mathDeclined (d : Diag) : Bool :=
+  d.code == "W0012" && !d.subject.any fun s => s.startsWith "math:style:" || s == "ctrl:thanks"
 
 /-- The tokens the probe injects as arguments; a diagnostic naming one is a complaint
 about the probe's own operand, so the construct read its argument. -/
@@ -150,7 +152,7 @@ def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
   let about := ds.filter (isAbout name)
   let complaints := ds.filter (·.severity != .note)
   if about.any (fun d => textUnknownCodes.contains d.code) then .unknown
-  else if about.any (fun d => mathDeclinedCodes.contains d.code) then .unprobed
+  else if about.any mathDeclined then .unprobed
   else if !about.isEmpty then worstOf about
   else if ds.any (·.subject == some ("ctrl:nothing:" ++ name)) then .skipped
   else if complaints.any (·.subject.isNone) then .unprobed

@@ -12,7 +12,8 @@ open LeanTex.Core Scoreboard
 /-- A probe's verdict (the file header's 0/1/2). -/
 def verdict (doc : Ir.Doc) (ds : Array Diag) : Int :=
   let drawn := Elab.enginePictures doc.body > 0 && !(ds.any (·.code == "W0362"))
-  let lost := ds.any fun d => d.code == "W0334" || d.code == "E0333" || d.code == "W0012"
+  let lost := ds.any fun d => d.code == "W0334" || d.code == "E0333" ||
+    d.code == "W0012" && !d.subject.any (·.startsWith "math:style:")
   if !drawn then 0 else if lost then 1 else 2
 
 def measureTier : IO (Array String × Array Row) := do

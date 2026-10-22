@@ -2899,14 +2899,15 @@ private def keepRoles (keep : Ir.Role → Bool) : Html.Rewrite where
   attrs _ attrs := attrs.map fun (k, v) => if k == "style" then (k, keepRoleStyle keep v) else (k, v)
   style css := resolveRoleVars keep css
 
-/-- Read-only aliases of the roles under the engine's reader names, and each author colour's own
-name. -/
-private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : List String := []) :
+/-- Read-only aliases of the roles under the engine's reader names no colour the document declares
+takes, and each shipped author colour's own name. -/
+private def readerAliases (pal declared : Ir.Palette) (roles : List Ir.Role)
+    (taken : List String := []) :
     List String :=
   let roleNames : List (String × Ir.Role) :=
     [("fg", .ink), ("bg", .page), ("muted", .muted), ("ink", .ink), ("surface", .page),
      ("accent", .accent), ("tint", .codeSurface), ("rule", .rule)]
-  let authored (n : String) := pal.colors.any (·.1 == n)
+  let authored (n : String) := declared.colors.any (·.1 == n)
   -- an author colour's name is skipped where the engine reads that property itself
   let free (n : String) := !taken.contains ("--" ++ n) && !n.startsWith "ltx-"
   (roleNames.filter fun (n, r) => roles.contains r && !authored n && free n).map
@@ -3961,7 +3962,7 @@ public def genericFor (fs : Font.FontSet) (slot : Nat) (declared : String) : Str
 private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
     (taken : List String := []) : String :=
   let pal := cfg.floorPal
-  let aliases := readerAliases pal roles taken
+  let aliases := readerAliases pal doc.palette roles taken
   let palette := (pal.entries.toList.filterMap fun (n, c) => match n with
       | .role r => if roles.contains r then some (paletteVar n c) else none
       | .color _ => some (paletteVar n c)) ++ aliases
@@ -10892,11 +10893,17 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
       let (r, d) := nodeRefs.list () (#[], #[]) shipped.toList
       used := sheetReads.toList ++ r.toList ++
         d.toList.flatMap (fun (d : String × Array String) => d.2.toList)
-    -- an author colour nothing on the page reads is not declared
-    let read (p : Ir.Palette) : Ir.Palette := { p with entries := p.entries.filter fun (n, _) =>
-      match n with
-      | .color _ => used.contains n.property
-      | .role _ => true }
+    -- an author colour neither the page nor the declared sheet reads is not declared; a sheet the
+    -- page only links may read any
+    let sheet := doc.output.stylesheet.bind fun href =>
+      cfg.stylesheet.bind fun (source, css) => if source == href then some css else none
+    let sheetVars := ((sheet.map varReads).getD #[]).toList
+    let read (p : Ir.Palette) : Ir.Palette :=
+      if doc.output.stylesheet.isSome && sheet.isNone then p else
+      { p with entries := p.entries.filter fun (n, _) => match n with
+        | .color k => used.contains n.property || sheetVars.contains n.property ||
+            sheetVars.contains ("--" ++ k)
+        | .role _ => true }
     let sheetCfg := { cssCfg with pal := read cssCfg.pal, views := cssCfg.views.map read }
     head := head.modify styleAt fun _ => Node.style (faceRules ++ resolveRoleVars roles.contains
       (baseCss sheetCfg doc pairs (roles := some roles) (taken := sheetReads.toList)

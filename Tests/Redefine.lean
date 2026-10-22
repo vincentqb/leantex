@@ -216,7 +216,8 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let (tOther, fOther) := gaps "\\captionsetup[lstlisting]{skip=3pt}\n"
   t "a scope the engine has no float for reaches no float, and is named"
     (tOther == tDef && fOther == fDef &&
-      (dvE (dvDoc "\\captionsetup[lstlisting]{skip=3pt}\n" body)).any (·.code == "W0104"))
+      (dvE (dvDoc "\\captionsetup[lstlisting]{skip=3pt}\n" body)).any fun d =>
+        d.code == "W0104" && d.subject.any (·.startsWith "captionsetup:"))
   let html := (HtmlDoc.emit {} (elabStr (dvDoc "\\captionsetup[table]{skip=3pt}\n" body)).1).1
   t "the HTML table caption prefers the table's gap to the document's"
     (hasStr html "--tablecaptionsep: 2.989pt" &&

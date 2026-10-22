@@ -26,8 +26,8 @@ def corpora : List (String × String × List String) :=
    ("testdata/external/myst", "myst/",
      ownFiles ++ ["LICENSES.txt", "paper.md", "myst.yml", "refs.bib"])]
 
-/-- The unknown-construct codes, raised where the engine meets a name nothing answers; the
-blocker ranking reads the same two. -/
+/-- The unknown-construct codes, raised where the engine meets a name nothing answers or a
+definition it does not apply; the blocker ranking reads the same three. -/
 def unknownCodes : List String := ["W0301", "W0302", "W0458"]
 
 /-- The codes whose loss is a face's, keyed by constructor so the cause class is data. -/

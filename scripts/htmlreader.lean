@@ -252,7 +252,8 @@ browser-face: figures missing-fields\n"
     (browserExpectedFaces "figures" refs ==
       #[("figures", "figures/p0.svg"), ("figures", "figures/i1.svg"), ("figures", "figures/i2.svg")])
   let message (code text : String) := Lean.Json.compress <| Lean.Json.mkObj
-    [("event", .str "diagnostic"), ("code", .str code), ("message", .str text)]
+    ([("event", .str "diagnostic"), ("code", .str code), ("message", .str text)] ++
+      if code == "W0602" then [("subject", .str "img:0:figures/a.pdf")] else [])
   let misleading := "rsvg-convert: unrelated setup output\n" ++
     message "W0602" "image has no browser face\n  pdftocairo exited 2" ++ "\n"
   no "browser failure: attribution reads only the relevant diagnostic"
@@ -265,6 +266,10 @@ browser-face: figures missing-fields\n"
       (message "W0602" "rsvg-convert exited 2" ++ "\n" ++
         message "W0378" "pdftocairo exited 3") ==
       #[BrowserFace.failed "figures" "rsvg-convert", BrowserFace.failed "figures" "pdftocairo"])
+  no "browser failure: an image the PDF cannot use is no browser face's"
+    (browserFaceFailures "figures" (Lean.Json.compress <| Lean.Json.mkObj
+      [("event", .str "diagnostic"), ("code", .str "W0602"), ("message", .str "pdftocairo"),
+        ("subject", .str "figures/a.gif")]) == #[])
   let detailed (code text detail : String) := Lean.Json.compress <| Lean.Json.mkObj
     [("event", .str "diagnostic"), ("code", .str code), ("message", .str text),
       ("detail", .str detail)]

@@ -11443,7 +11443,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         write fun st => { st with fancyEnvs := st.fancyEnvs.push env }
         became s!"\\DefineVerbatimEnvironment\{{env}}" "its body set as a code block with its options" pos
       else
-        sayOnce ("fancyvrb:" ++ env) .W0458 (Diag.say .W0458 .environment env) pos
+        sayOnce ("fancyvrb:" ++ env) .W0458
+          (Diag.say .W0458 .definition (obj := some (some .environment, Diag.Name.of env))) pos
           (detail := some (if packageFile st.file then "defined in a package file, whose \
 definitions the document's reader does not see"
             else if st.file != st.docFile then "defined in an included file, whose definitions \
@@ -15334,7 +15335,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
       else if let some (spec, discards) := ((← get).refusedEnvs.find? (·.1 == n)).map (·.2) then
         -- An unapplied body definition's use sets its arguments and body plainly, or nothing.
         if discards then return .group #[] p
-        sayOnce ("env:" ++ n) .W0458 (Diag.say .W0458 .environment n) p
+        sayOnce ("env:" ++ n) .W0458
+          (Diag.say .W0458 .definition (obj := some (some .environment, Diag.Name.of n))) p
           (help := bodyEnvDefHelp)
         let body' ← rewriteList inBody body #[] body.toList 0 0
         let (args, k) := plainArgs spec body'
@@ -18487,7 +18489,8 @@ public def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
    (mine.filter (·.severity == .warning)).size,
    (mine.filter fun d =>
      d.severity == .note &&
-       (d.code == "W0301" || d.code == "W0357" || d.code == "W0104")).size)
+       (d.code == "W0301" || d.code == "W0357" ||
+         d.code == "W0104" && d.subject.any (·.startsWith "pkgcode:"))).size)
 
 /-- The one N0020 note: that the file was read, and how much of it took. -/
 public def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
