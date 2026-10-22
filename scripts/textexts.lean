@@ -1,7 +1,8 @@
-/- TeX's own words for the causes lualatex also reports, read from its logs on invented probes.
+/- The textexts tier: TeX's own words for the causes lualatex also reports, from its logs on probes.
 Usage: lake build leantex TestsModules &&
-  lake env lean --run scripts/textexts.lean [--write | --check] -/
+  lake env lean --run scripts/textexts.lean [--write | --check | --selftest] -/
 import Tests.Diag
+import scripts.Board
 
 namespace TexTexts
 
@@ -229,43 +230,67 @@ def leantexSays (root : System.FilePath) (p : Probe) : IO (Array String) := do
       (j.getObjValAs? String "message").toOption
     else none).toArray
 
-def main (args : List String) : IO UInt32 := do
+/-- A fresh scratch directory for the probes' runs. -/
+def scratch : IO System.FilePath := do
   let root : System.FilePath := ".lake/textexts"
   if ← root.pathExists then IO.FS.removeDirAll root
   IO.FS.createDirAll root
+  return root
+
+/-- Each probe's standing, then the preamble-only commands', every fault said on stderr. -/
+def measureTier : IO (Array String × Array Scoreboard.Row) := do
+  let root ← scratch
   let (rows, preamble) ← generate root
-  let text := render rows preamble
-  if args.contains "--write" then
-    IO.FS.writeFile dataPath text
-    IO.println s!"textexts: wrote {rows.size} rows to {dataPath}"
-    return 0
-  let mut faults := 0
-  let committed := LeanTex.Core.TexText.rows.map fun r => (r.key, r.code.code, r.text)
-  if committed != rows.toList.map (fun r => (r.key, r.code, r.text)) ||
-      LeanTex.Core.TexText.preambleOnly != preamble then
-    IO.println "textexts: the committed table differs from lualatex's words (run --write)"
-    faults := faults + 1
-  else
-    let unsourced (t : String) : List String :=
-      (t.splitOn "\n").filter fun l => !(l.trimAscii.toString.startsWith "source := ")
-    if unsourced (← IO.FS.readFile dataPath) != unsourced text then
-      IO.println "textexts: the committed table is not the generator's (run --write)"
-      faults := faults + 1
-    else if (← IO.FS.readFile dataPath) != text then
-      IO.println "textexts: the table's sources name another TeX installation; its words agree"
+  let committed := LeanTex.Core.TexText.rows
+  let mut out : Array Scoreboard.Row := #[]
   for (p, r) in probes.zip rows.toList do
-    if r.code.startsWith "E" && !r.failed then
-      IO.println s!"textexts: {r.key} {r.code} is an error lualatex accepts"
-      faults := faults + 1
+    let held := committed.any fun c => c.key == r.key && c.code.code == r.code && c.text == r.text
+    unless held do
+      IO.eprintln s!"textexts: {r.key}: the committed table does not hold lualatex's '{r.text}' \
+(run --write)"
+    let refused := !r.code.startsWith "E" || r.failed
+    unless refused do IO.eprintln s!"textexts: {r.key} {r.code} is an error lualatex accepts"
     let said ← leantexSays root p
     let want := ({ key := r.key, code := .E0001, text := r.text, source := "" } :
       LeanTex.Core.TexText).fill p.names
-    if said.any (· == want) then
-      IO.println s!"textexts: {r.key} {r.code} says '{want}'"
-    else
-      IO.println s!"textexts: {r.key} {r.code} does not say '{want}': {said.toList}"
-      faults := faults + 1
-  return if faults == 0 then 0 else 1
+    let says := said.any (· == want)
+    unless says do
+      IO.eprintln s!"textexts: {r.key} {r.code} does not say '{want}': {said.toList}"
+    out := out.push { item := r.key, value := if held && refused && says then 1 else 0 }
+  let stale := committed.filter fun c => !rows.any (·.key == c.key)
+  unless stale.isEmpty do
+    IO.eprintln s!"textexts: rows no probe raises: {stale.map (·.key)} (run --write)"
+  let listed := LeanTex.Core.TexText.preambleOnly == preamble
+  unless listed do IO.eprintln "textexts: the preamble-only list is not latex.ltx's (run --write)"
+  out := out.push
+    { item := "preamble-commands", value := if listed && stale.isEmpty then 1 else 0 }
+  return (#[s!"# rows: {rows.size} probes, each 1 when the committed table holds lualatex's words, \
+leantex says them on the probe and an error's probe stops lualatex; preamble-commands 1 when the \
+table's list is latex.ltx's and no row outlives its probe"], out)
+
+def selftest : IO UInt32 := Scoreboard.tierSelftest "textexts" fun no => do
+  no "a particular TeX puts in its text is cut"
+    (cutParticulars "Citation `k' on page 1 undefined on input line 4." == "Citation `k' undefined")
+  no "a name standing once becomes its slot"
+    (slotted "Environment zz undefined" ["zz"] == .ok "Environment #1 undefined")
+  no "a name standing twice is refused"
+    (match slotted "zz and zz" ["zz"] with | .error _ => true | .ok _ => false)
+  no "an error's text is its LaTeX Error line"
+    (logText "x\n! LaTeX Error: Environment zz undefined.\n" false [] ==
+      some ("Environment zz undefined.", true))
+  no "a warning's text is the line naming the probe's name"
+    (logText "LaTeX Warning: Reference `a' undefined.\nLaTeX Warning: Citation `b' undefined.\n"
+      true ["b"] == some ("Citation `b' undefined.", true))
+  no "every probe has a distinct key"
+    ((probes.map (·.key)).eraseDups.length == probes.length)
+
+def main (args : List String) : IO UInt32 := do
+  if args.contains "--write" then
+    let (rows, preamble) ← generate (← scratch)
+    IO.FS.writeFile dataPath (render rows preamble)
+    IO.println s!"textexts: wrote {rows.size} rows to {dataPath}"
+    return 0
+  Scoreboard.tierMain "textexts" .raw measureTier selftest args
 
 end TexTexts
 
