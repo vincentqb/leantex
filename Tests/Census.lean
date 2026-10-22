@@ -1493,7 +1493,9 @@ def censusCodeRows :
     let lead := Ir.leadingFor g.fontSize g.leading
     let hyp := linesFrom c "Theorem (Ebb.none_all). If"
     let swap := linesFrom c "Theorem (Ebb.swap)."
-    let both := linesFrom c "Theorem (Ebb.both_all)."
+    let both := (((c.toList.flatMap (·.lines.toList)).dropWhile
+      (!hasStr ·.text "Theorem (Ebb.both_all).")).filter
+        (!·.text.trimAscii.toString.all Char.isDigit)).toArray
     let listed := linesFrom c "Theorem (Ebb.all_iff)."
     let parityAt := (c.toList.flatMap (·.lines.toList)).dropWhile
       (!hasStr ·.text "Theorem (Ebb.parity).")
@@ -1526,6 +1528,10 @@ def censusCodeRows :
      ("a hypothesis about the bound name alone reads as a relative clause, under a quantifier and an existential",
        let said := " ".intercalate ((c.toList.flatMap (·.lines.toList)).map (·.text))
        hasStr said "that is moored," && hasStr said "that is moored such that"),
+     ("a predicate's definition says its defining equivalence, and a statement using it what it means after",
+       let said := " ".intercalate ((c.toList.flatMap (·.lines.toList)).map (·.text))
+       hasStr said "Definition (Ebb.Moored)." && hasStr said "is moored if and only if" &&
+         hasStr said "is moored means"),
      ("a conjunction of quantified statements sets as a numbered list right of the head's margin, each item a sentence",
        match both[0]?, both[1]?, both[2]? with
        | some h, some a, some b =>

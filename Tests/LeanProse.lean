@@ -69,7 +69,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .ok _ => none
     | .error u => some (d.name, u)
   let expected : List (String × Unsaid) := [("Tide.depth", .notProp), ("Tide.dep_hyp", .named "h"),
-    ("Tide.height", .notProp), ("Tide.holds", .notProp), ("Tide.nested_dep", .named "h"),
+    ("Tide.height", .notProp), ("Tide.nested_dep", .named "h"),
     ("Tide.same", .notProp), ("Tide.total", .notProp)]
   t s!"prose: the statements words cannot say are the definitions' and those naming a hypothesis ({unsaid.map (·.1)})"
     (unsaid.size == expected.length && expected.all unsaid.contains)
@@ -144,6 +144,36 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
           (.apps (.const "Tide.Calm") [.apps (.const "Nat.zero") []]) truth)) with
         | .ok (.all ..) => true
         | _ => false))
+  let calmTy : LeanFacts.Term := .pi "x" .explicit false nat prop
+  let calmDef : LeanFacts.Decl := { theoremAt "Tide.Calm" 2 calmTy with
+    kind := .definition, prop := false, value := some (.lam "x" .explicit nat truth) }
+  t "prose: a predicate's definition whose value the facts give says its defining equivalence, one without is not said"
+    ((match proseOf calmFacts (phrasedTable ()) calmDef calmTy with
+        | .ok (.all _ (.iff (.rel r _) (.atom _))) => r == calmT
+        | _ => false) &&
+      (match proseOf calmFacts (phrasedTable ()) { calmDef with value := none } calmTy with
+        | .error .notProp => true
+        | _ => false) &&
+      (match proseOf calmFacts (phrasedTable ()) { calmDef with value := some (.lam "x" .explicit nat
+          (.apps (.const "Tide.Calm.match_1") [.apps (.bvar 0) []])) } calmTy with
+        | .error .notProp => true
+        | _ => false))
+  let glossFacts := { calmFacts with decls := #[calmDef] }
+  let xLeaf := LeanProse.nameLeaf "x"
+  let calmOn (n : Leaf) : Stmt Leaf := .rel calmT [.leaf n]
+  let glossText (s : Stmt Leaf) : String :=
+    Parse.rawSrc (Code.glossaryRaws glossFacts (phrasedTable ()) s {})
+  t "prose: a glossary says what a predicate a statement's words use means, keeping its quantifier where the statement binds its name, entries apart by semicolons"
+    (hasStr (glossText (calmOn (LeanProse.nameLeaf "y"))) "means" &&
+      !hasStr (glossText (calmOn (LeanProse.nameLeaf "y"))) "every" &&
+      hasStr (glossText (.all ⟨⟨[xLeaf], [LeanStatement.opMath "N"], false⟩, []⟩ (calmOn xLeaf))) "every" &&
+      (glossText (.atom xLeaf)).isEmpty &&
+      (LeanProse.glossaryToks [([], (.atom "p" : Stmt String), .atom "q"), ([], .atom "r", .atom "s")]).contains (.w ";"))
+  t "prose: the glossary key reads where or none, any other value unread"
+    ((Code.showingOfValues .lean [("glossary", "where")]).glossary &&
+      !(Code.showingOfValues .lean [("glossary", "none")]).glossary &&
+      !(Code.showingOfValues .lean []).glossary &&
+      (Code.showingOfValues .lean [("glossary", "sometimes")]).unread.contains ("glossary", "sometimes"))
   -- Declared phrases, taken or refused by name.
   let declare (binders : Array (String × Array LeanFacts.Binder)) (declared : List (String × String)) :=
     (tableFor (factsWith binders) declared).refused.map (·.2)
@@ -247,7 +277,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       String.ofList (Code.codeOf (Code.segmentsOf .lean src)))
   t s!"prose: each statement words cannot say is named once, in source order, and Lean's own losses as before ({ds.map (·.subject)})"
     ((ds.filter (·.kind == .W0415)).map (·.subject) == #[some "prose:Tide.height",
-      some "prose:Tide.total", some "prose:Tide.depth", some "prose:Tide.holds", some "prose:Tide.same",
+      some "prose:Tide.total", some "prose:Tide.depth", some "prose:Tide.same",
       some "prose:Tide.dep_hyp", some "prose:Tide.nested_dep"] &&
       (ds.filter (·.kind == .W0414)).map (·.subject) == #[some "lean:Tide.placeholder", some "lean:refused"])
   let opening (ink : String) : List String := (ink.trimAscii.toString.splitOn " ").take 2
@@ -326,7 +356,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       (listings aloneDoc).map (·.2.trimAscii.toString) ==
         #["theorem placeholder (n : Nat) : n = Nat.notAThing n := rfl",
           "theorem refused (n : Nat) : n + (1 : String) = n := rfl"] &&
-      (aloneDs.filter (·.kind == .W0415)).size == 7)
+      (aloneDs.filter (·.kind == .W0415)).size == 6)
   let below := codePageLines fonts (readAs "show = prose, doc = below").1
   let hidden := codePageLines fonts (readAs "show = prose, doc = none").1
   t "prose: doc = below sets a declaration's documentation just after its statement, doc = none nowhere"

@@ -438,10 +438,15 @@ parentheses in their replacement text, and its lists are lists. The markdown
 twin opens each line after the first with a hard break and an em and an en space
 for each step, and sets each list as a numbered list. The words, with their
 blocks' bounds and their items' marks, parse back to the statement they say,
-implicit arguments hidden as in the math view. A declaration whose type is no
-proposition, or a statement the words cannot say (a hypothesis the rest names, a
-`let`), is set as mathematics, once on a page that also shows the math view, and
-the run says so.
+implicit arguments hidden as in the math view. A predicate's definition, `def
+Moored (b : Barge) : Prop := 0 < b.draft`, says its defining equivalence, for
+every b : Barge, b is moored if and only if 0 < b.draft, the exporter writing
+the value of each definition whose type ends in `Prop`; with `glossary = where`
+each statement in words is followed by what the predicates it uses mean, where b
+is moored means 0 < b.draft. Any other declaration whose type is no proposition,
+or a statement the words cannot say (a hypothesis the rest names, a `let`), is
+set as mathematics, once on a page that also shows the math view, and the run
+says so.
 A directive may give a constant its own words, `#k` standing for its k-th
 explicit argument:
 `phrase.Tide.height = "the height after #2 steps of #1"` says its terms, and a

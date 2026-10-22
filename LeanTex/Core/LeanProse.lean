@@ -433,10 +433,36 @@ private def renderTo : Place → Stmt α → List (Tok α) → List (Tok α)
 /-- A statement's sentence: its tokens, closed by a full stop. -/
 public def render (s : Stmt α) : List (Tok α) := renderTo .lead s [.w "."]
 
+/-- A glossary's tokens: each defined statement after the quantifiers it keeps, "means", and what it
+means, a semicolon between two entries, closed by a full stop. -/
+public def glossaryToks (es : List (List (Binder α) × Stmt α × Stmt α)) : List (Tok α) :=
+  let one (e : List (Binder α) × Stmt α × Stmt α) (rest : List (Tok α)) :=
+    e.1.foldr (fun b r => wordsTo (allWords b) (b.renderTo (.w "," :: r)))
+      (renderTo .operand e.2.1 (.w "means" :: renderTo .scope e.2.2 rest))
+  match es.reverse with
+  | [] => [.w "."]
+  | last :: before => before.foldl (fun acc e => one e (.w ";" :: acc)) (one last [.w "."])
+
+/-- What a predicate's definition said in words defines, and what that means, past its
+quantifiers. -/
+public def Stmt.meaning? : Stmt α → Option (List (Binder α) × Stmt α × Stmt α)
+  | .all b s => s.meaning?.map fun (bs, m) => (b :: bs, m)
+  | .iff a b => some ([], a, b)
+  | .ex .. | .allThat .. | .exThat .. | .imp .. | .conj .. | .disj .. | .tfae _ | .neg _
+  | .rel .. | .atom _ => none
+
+/-- The names a statement's quantifiers bind. -/
+public def Stmt.bound : Stmt α → List α
+  | .all b s | .ex b s => (b.first :: b.more).flatMap (·.names) ++ s.bound
+  | .allThat g _ _ s | .exThat g _ _ s => g.names ++ s.bound
+  | .imp a b | .conj a b | .disj a b | .iff a b => a.bound ++ b.bound
+  | .tfae s | .neg s => s.bound
+  | .rel .. | .atom _ => []
+
 /-- Whether a token sets against the one before it, with no space: a comma, a colon or a full stop
 does. -/
 public def Tok.joins : Tok α → Bool
-  | .w s => s == "," || s == ":" || s == "."
+  | .w s => s == "," || s == ":" || s == "." || s == ";"
   | .leaf _ | .bind _ | .indent | .dedent | .item => false
 
 /-- Binder groups: one, or two or more, "and" before the last. -/
@@ -2362,10 +2388,33 @@ public def Stmt.templates (acc : Array Template) : Stmt α → Array Template
       | .leaf _ => acc) (acc.push t)
   | .atom _ => acc
 
-/-- A declaration's statement said in words, or why it cannot be: only a proposition is. -/
+/-- Whether a constant is one Lean compiles a definition through, a matcher, a recursor or a
+conditional, so a value naming one is no reading of its source. -/
+public def compiledName (c : String) : Bool :=
+  let last := (c.splitOn ".").getLastD c
+  ["brecOn", "binductionOn", "rec", "recOn", "casesOn", "below", "_unary", "_f",
+      "_mutual"].contains last ||
+    last.startsWith "match_" || ["WellFounded.fix", "ite", "dite"].contains c
+
+/-- A predicate definition as the statement it makes: over its parameters, the predicate applied to
+them holds exactly when its value's body does, `k` parameters in. -/
+public def defining (c : String) : LeanFacts.Term → LeanFacts.Term → (k : Nat := 0) →
+    Option LeanFacts.Term
+  | .pi n b p t rest, .lam _ _ _ body, k => (defining c rest body (k + 1)).map (.pi n b p t ·)
+  | .apps (.sort "0") [], body, k =>
+    if (body.consts #[]).any compiledName then none
+    else some (.apps (.const "Iff")
+      [.apps (.const c) ((List.range k).reverse.map fun i => .apps (.bvar i) []), body])
+  | _, _, _ => none
+
+/-- A declaration's statement said in words, or why it cannot be: a proposition, or a predicate's
+definition where its value is known. -/
 public def proseOf (facts : LeanFacts.Facts) (tb : Table) (d : LeanFacts.Decl)
     (type : LeanFacts.Term) : Except Unsaid (Stmt Leaf) :=
-  if d.prop then stmtOf (LeanStatement.lookupOf facts d type) tb true [] type else .error .notProp
+  if d.prop then stmtOf (LeanStatement.lookupOf facts d type) tb true [] type
+  else match d.value.bind (defining d.name type) with
+    | some st => stmtOf (LeanStatement.lookupOf facts d st) tb true [] st
+    | none => .error .notProp
 
 /-- The constants a declared name names: itself, else each whose name ends with it. -/
 private def namedBy (facts : LeanFacts.Facts) (name : String) : List String :=
@@ -2637,6 +2686,9 @@ public theorem proseOf_parse_exact {facts : LeanFacts.Facts} {tb : Table} {d : L
   unfold proseOf at h
   split at h
   · exact parse_render_exact htb s (stmtOf_mem _ tb true [] type h)
-  · cases h
+  · split at h
+    · rename_i st _
+      exact parse_render_exact htb s (stmtOf_mem _ tb true [] st h)
+    · cases h
 
 end LeanTex.Core.LeanProse

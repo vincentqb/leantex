@@ -68,6 +68,8 @@ public structure Decl where
   proved : Bool := true
   /-- Whether its type is a proposition. -/
   prop : Bool
+  /-- A predicate definition's value, where the facts carry it. -/
+  value : Option Term := none
   deriving Repr, BEq, Inhabited
 
 /-- A declaration the file writes by name that Lean added nothing for: its name as written, its
@@ -251,8 +253,11 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let proof ← spanOf (j.getObjValD "proof")
     let proved ← j.getObjValAs? Bool "proved"
     let prop ← j.getObjValAs? Bool "prop"
+    let value ← match j.getObjValD "value" with
+      | .null => pure none
+      | v => some <$> (termOf (← v.getArr?))
     let decl : Decl :=
-      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop }
+      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop, value }
     return { facts with decls := facts.decls.push decl }
 
 /-- An answer, whole or refused whole. -/

@@ -697,9 +697,24 @@ private theorem wordsRaws_adm (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse
   simp only [Md.Vocab.admits, Bool.and_eq_true]
   exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx => hbody x (by simpa using hx)⟩
 
+private theorem glossaryRaws_adm (facts : LeanFacts.Facts) (tb : LeanProse.Table)
+    (s : LeanProse.Stmt LeanProse.Leaf) (pos : Pos) : Adm true (glossaryRaws facts tb s pos) := by
+  unfold glossaryRaws
+  dsimp only
+  split
+  · intro r hr; simp at hr
+  · have hbody := fun toks =>
+      sentenceRaws_adm pos #[.word "where" pos] (by intro r hr; simp at hr; subst hr; rfl) toks
+    intro r hr
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+    subst hr
+    simp only [Md.Vocab.admits, Bool.and_eq_true]
+    exact ⟨by simp [vocabulary, Md.vocabulary],
+      (admitsList_iff _ _).mpr fun x hx => hbody _ x (by simpa using hx)⟩
+
 private theorem viewPara_adm (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
-    (withMath : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) (v : View) :
-    Adm true (viewPara file facts tb withMath link d t v).1 := by
+    (withMath glossary : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term)
+    (v : View) : Adm true (viewPara file facts tb withMath glossary link d t v).1 := by
   cases v with
   | code => intro r hr; simp [viewPara] at hr
   | docs => intro r hr; simp [viewPara] at hr
@@ -707,7 +722,10 @@ private theorem viewPara_adm (file : String) (facts : LeanFacts.Facts) (tb : Lea
   | prose =>
     simp only [viewPara]
     split
-    · exact wordsRaws_adm _ _ _ _
+    · refine adm_append (wordsRaws_adm _ _ _ _) ?_
+      split
+      · exact glossaryRaws_adm _ _ _ _
+      · intro r hr; simp at hr
     · split
       · intro r hr; simp at hr
       · exact displayRaws_adm _ _ _ _
@@ -758,15 +776,15 @@ private theorem codeFor_adm (starts : Array Nat) (src : Array Char) (segs : List
 
 private theorem declPara_adm (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
     (starts : Array Nat) (src : Array Char) (segs : List Seg) (folds : List ProofFold)
-    (paras : Array (Array Raw)) (hp : ∀ p ∈ paras, Adm true p) (code withMath wanted : Bool)
+    (paras : Array (Array Raw)) (hp : ∀ p ∈ paras, Adm true p) (code withMath glossary wanted : Bool)
     (views : List View) (link : Option String) (d : LeanFacts.Decl) :
     Adm true
-      (declPara file facts tb starts src segs folds paras code withMath wanted views link d).1 := by
+      (declPara file facts tb starts src segs folds paras code withMath glossary wanted views link d).1 := by
   unfold declPara
   split
   · intro r hr; simp at hr
   · split
-    · exact foldl_adm _ (fun acc v h => adm_append h (viewPara_adm file facts tb withMath link d _ v))
+    · exact foldl_adm _ (fun acc v h => adm_append h (viewPara_adm file facts tb withMath glossary link d _ v))
         views (#[], #[], #[]) (by intro r hr; simp at hr)
     · split
       · intro r hr; simp at hr
@@ -856,8 +874,8 @@ private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Ar
     intro p hp
     simp only [statementsFor, statementsOf, Array.mem_append, Array.mem_map] at hp
     rcases hp with (⟨_, ⟨d, _, rfl⟩, rfl⟩ | ⟨_, ⟨d, _, rfl⟩, rfl⟩) | ⟨_, ⟨fl, _, rfl⟩, rfl⟩
-    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
-    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _)
+    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _ _)
+    · exact withDoc_adm _ (docIf_adm _ _ _ _ _ _ _) (declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _ _)
     · exact adm_ite_fst (withDoc_adm _ (docRaws_adm _ _ _ _ _ _)
         (show Adm true (codeFor starts src segs folds _ fl.head fl.stop, (#[] : Array Diag), ()).1 from
           codeFor_adm starts src segs folds _ h0 _ _)) (by intro r hr; simp at hr)

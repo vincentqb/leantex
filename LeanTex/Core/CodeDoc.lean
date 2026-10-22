@@ -198,6 +198,8 @@ public structure Showing where
   doc : DocPlace := .above
   /-- The text size an inclusion sets in, one of `textSizes`. -/
   size : Option String := none
+  /-- Whether each statement in words is followed by what the predicates it uses mean. -/
+  glossary : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- A proof a page folds or removes: its source offsets, and the paragraph standing for it where
@@ -502,7 +504,8 @@ public structure ShowKey where
 public def showKeyRows : List ShowKey :=
   [⟨"show", .list, true⟩, ⟨"decls", .list, true⟩, ⟨"proofs", .joined ", ", true⟩,
    ⟨"link", .joined ",", true⟩, ⟨"facts", .joined ",", true⟩, ⟨"bibliography", .list, true⟩,
-   ⟨"biblio-style", .joined ",", false⟩, ⟨"doc", .joined ",", true⟩, ⟨"size", .joined ",", true⟩]
+   ⟨"biblio-style", .joined ",", false⟩, ⟨"doc", .joined ",", true⟩, ⟨"size", .joined ",", true⟩,
+   ⟨"glossary", .joined ",", true⟩]
 
 /-- The keys a directive takes for what its page shows, which no declaration reads. -/
 public def showKeys : List String := showKeyRows.map (·.name)
@@ -595,10 +598,14 @@ public def showingOfValues (lang : Ir.CodeLang) (values : List (String × String
   let (size, unreadSize) := match value "size" with
     | none => (none, [])
     | some v => if textSizes.contains v then (some v, []) else (none, [("size", v)])
+  let (glossary, unreadGlossary) := match value "glossary" with
+    | none | some "none" => (false, [])
+    | some "where" => (true, [])
+    | some v => (false, [("glossary", v)])
   { views := if views.isEmpty then [.code] else views
     doc, size
-    decls, proofs
-    unread := unread ++ unreadDoc ++ unreadSize
+    decls, proofs, glossary
+    unread := unread ++ unreadDoc ++ unreadSize ++ unreadGlossary
     link := value "link"
     facts := value "facts"
     bibliography := (listField "bibliography").getD []
@@ -2321,6 +2328,23 @@ public def wordsRaws (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf) (p
     (link : Option String := none) : Array Raw :=
   #[.env "flushleft" (sentenceRaws pos (headRaws d pos link) (LeanProse.render s)) pos]
 
+/-- What the predicates a statement's words use mean, as the facts define them, a paragraph opening on
+"where", each keeping its quantifiers where their names are the statement's; none where it uses
+none. -/
+public def glossaryRaws (facts : LeanFacts.Facts) (tb : LeanProse.Table) (s : LeanProse.Stmt LeanProse.Leaf)
+    (pos : Pos) : Array Raw :=
+  let used := s.templates #[]
+  let es := tb.rels.filterMap fun (c, t) =>
+    if !used.contains t then none else
+      (facts.decls.find? (·.name == c)).bind fun d => d.type.bind fun ty =>
+        match LeanProse.proseOf facts tb d ty with
+        | .ok st => if d.prop then none else st.meaning?.map fun (bs, m) =>
+            (if (bs.flatMap fun b => (b.first :: b.more).flatMap (·.names)).any s.bound.contains
+              then bs else [], m)
+        | .error _ => none
+  if es.isEmpty then #[]
+  else #[.env "flushleft" (sentenceRaws pos #[.word "where" pos] (LeanProse.glossaryToks es)) pos]
+
 /-- Why a declaration's statement is not set, when it is not. -/
 private def unset? (d : LeanFacts.Decl) : Option String :=
   match d.type with
@@ -2418,7 +2442,7 @@ public def unsaidNote (file : String) (d : LeanFacts.Decl) (u : LeanProse.Unsaid
 back to its mathematics, which a page that shows the math view sets once, and the templates its
 words use. -/
 public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
-    (withMath : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) :
+    (withMath glossary : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) :
     View → Array Raw × Array Diag × Array LeanProse.Template
   | .code => (#[], #[], #[])
   -- The documentation view sets the file's comments, no declaration's paragraph.
@@ -2426,7 +2450,8 @@ public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Ta
   | .math => (displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link, #[], #[])
   | .prose =>
     match LeanProse.proseOf facts tb d t with
-    | .ok s => (wordsRaws d s (posOf d) link, #[], s.templates #[])
+    | .ok s => (wordsRaws d s (posOf d) link ++
+        (if glossary && d.prop then glossaryRaws facts tb s (posOf d) else #[]), #[], s.templates #[])
     | .error u =>
       (if withMath then #[] else displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link,
         #[unsaidNote file d u], #[])
@@ -2472,13 +2497,13 @@ each view's paragraph where the facts give a statement, its name linked where a 
 a page that shows no code, its code in the statement's place; its views' notes and templates. -/
 public def declPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
     (starts : Array Nat) (src : Array Char) (segs : List Seg) (folds : List ProofFold)
-    (paras : Array (Array Raw)) (code withMath wanted : Bool) (views : List View)
+    (paras : Array (Array Raw)) (code withMath glossary wanted : Bool) (views : List View)
     (link : Option String) (d : LeanFacts.Decl) :
     Array Raw × Array Diag × Array LeanProse.Template :=
   if !wanted || views.isEmpty then (#[], #[], #[]) else
     match d.type, unset? d with
     | some t, none => views.foldl (fun acc v =>
-        let p := viewPara file facts tb withMath link d t v
+        let p := viewPara file facts tb withMath glossary link d t v
         (acc.1 ++ p.1, acc.2.1 ++ p.2.1, acc.2.2 ++ p.2.2)) (#[], #[], #[])
     | _, _ => (if code then #[] else codeFor starts src segs folds paras d.head d.stop, #[], #[])
 
@@ -2554,8 +2579,8 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
       Array Raw × Array Diag × Array LeanProse.Template :=
     withDoc showing.doc
       (if code || views.isEmpty || !wanted d then (#[], #[]) else docRaws file starts src known docs d.start)
-      (declPara file facts tb starts src segs folds paras0 code showing.math (wanted d) views
-        (linkOf d) d)
+      (declPara file facts tb starts src segs folds paras0 code showing.math showing.glossary (wanted d)
+        views (linkOf d) d)
   let befores := ds.map (para before)
   let afters := ds.map (para after)
   let paras := befores.map (·.1) ++ afters.map (·.1)

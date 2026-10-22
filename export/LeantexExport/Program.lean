@@ -268,6 +268,15 @@ run_cmd do
     let prop ← liftTermElabM <| try Meta.isProp info.type catch _ => pure false
     let type := if e.over then "null" else s!"[{",".intercalate e.nodes.toList}]"
     unless e.over do consts := e.consts.foldl (fun acc c => acc.insert c) consts
+    let pred ← liftTermElabM <| try Meta.forallTelescope info.type fun _ b => pure b.isProp
+      catch _ => pure false
+    let mut value := ""
+    if let .defnInfo dv := info then
+      if pred then
+        let (_, ev) ← liftTermElabM <| (emit dv.value #[]).run {}
+        unless ev.over do
+          consts := ev.consts.foldl (fun acc c => acc.insert c) consts
+          value := s!",\"value\":[{",".intercalate ev.nodes.toList}]"
     let proved ← if info matches .thmInfo _ then
         do pure !(← collectAxioms name).contains ``sorryAx
       else pure true
@@ -276,7 +285,7 @@ run_cmd do
       s!"\"signature\":{spanText w.sig},\"proof\":{spanText w.val},\"proved\":{proved}," ++
       s!"\"prop\":{prop}," ++
       s!"\"doc\":{(doc.map jstr).getD "null"}," ++
-      s!"\"type\":{type}}")
+      s!"\"type\":{type}{value}}")
     decls := decls + 1
   for w in writtens do
     unless seen.contains w.id do

@@ -9,25 +9,38 @@ para
   text "Each statement of a list implies every other, as Mathlib’s TFAE says."
 role trivlist-env
   ragged left
-    para
-      styled bold
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Definition"
         italicCorr maybe
-        text "Definition"
-      italicCorr maybe
-      text " ("
-      styled mono
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "List.TFAE"
         italicCorr maybe
-        text "List.TFAE"
-      italicCorr maybe
-      text "). "
-      formula inline "\\mathrm {TFAE}:"
-        ord:alpha:rm{ord:𝑇 ord:𝐹 ord:𝐴 ord:𝐸} rel::
-      text " "
-      formula inline "\\mathrm {List}\\  \\mathrm {Prop}\\to {}"
-        ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝} rel:→ ord:{}
-      hspace 0pt
-      formula inline "\\mathrm {Prop}"
-        ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
+        text "). For every "
+        formula inline "\\mathit {l}:\\mathrm {List}\\  \\mathrm {Prop}"
+          ord:alpha:it{ord:𝑙} rel:: ord:alpha:rm{ord:𝐿 ord:𝑖 ord:𝑠 ord:𝑡} mu:6 ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
+        text ","
+      line 1
+        formula inline "\\mathit {l}.\\mathrm {TFAE}"
+          ord:alpha:it{ord:𝑙} ord:. ord:alpha:rm{ord:𝑇 ord:𝐹 ord:𝐴 ord:𝐸}
+        text " if and only if for all "
+        formula inline "\\mathit {x}\\in {}\\mathit {l}"
+          ord:alpha:it{ord:𝑥} rel:∈ ord:{} ord:alpha:it{ord:𝑙}
+        text " and "
+        formula inline "\\mathit {y}\\in {}\\mathit {l}"
+          ord:alpha:it{ord:𝑦} rel:∈ ord:{} ord:alpha:it{ord:𝑙}
+        text ","
+      line 2
+        formula inline "\\mathit {x}"
+          ord:alpha:it{ord:𝑥}
+        text " if and only if "
+        formula inline "\\mathit {y}"
+          ord:alpha:it{ord:𝑦}
+        text "."
 verbatim language lean4
   "def List.TFAE (l : List Prop) : Prop := forall x, Membership.mem l x ->"
   "  forall y, Membership.mem l y -> (x <-> y)"
@@ -321,25 +334,31 @@ verbatim language lean4
   "  draft : Nat"
 role trivlist-env
   ragged left
-    para
-      styled bold
+    lines
+      line 0
+        styled bold
+          italicCorr maybe
+          text "Definition"
         italicCorr maybe
-        text "Definition"
-      italicCorr maybe
-      text " ("
-      styled mono
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.Moored"
         italicCorr maybe
-        text "Ebb.Moored"
-      italicCorr maybe
-      text "). "
-      formula inline "\\mathrm {Moored}:"
-        ord:alpha:rm{ord:𝑀 ord:𝑜 ord:𝑜 ord:𝑟 ord:𝑒 ord:𝑑} rel::
-      text " "
-      formula inline "\\mathrm {Barge}\\to {}"
-        ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒} rel:→ ord:{}
-      hspace 0pt
-      formula inline "\\mathrm {Prop}"
-        ord:alpha:rm{ord:𝑃 ord:𝑟 ord:𝑜 ord:𝑝}
+        text "). For every "
+        formula inline "\\mathit {b}:\\mathrm {Barge}"
+          ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
+        text ","
+      line 1
+        formula inline "\\mathit {b}"
+          ord:alpha:it{ord:𝑏}
+        text " is moored if and only if "
+        formula inline "\\mathrm {0}<{}"
+          ord:alpha:rm{ord:0} rel:< ord:{}
+        hspace 0pt
+        formula inline "\\mathit {b}.\\mathrm {draft}"
+          ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:𝑑 ord:𝑟 ord:𝑎 ord:𝑓 ord:𝑡}
+        text "."
 verbatim language lean4
   "def Moored (b : Barge) : Prop := 0 < b.draft"
 role trivlist-env
@@ -427,6 +446,23 @@ role trivlist-env
           formula inline "\\mathit {bs}.\\mathrm {length}"
             ord:alpha:it{ord:𝑏 ord:𝑠} ord:. ord:alpha:rm{ord:𝑙 ord:𝑒 ord:𝑛 ord:𝑔 ord:𝑡 ord:ℎ}
           text "."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        text "where For every "
+        formula inline "\\mathit {b}:\\mathrm {Barge}"
+          ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
+        text ", "
+        formula inline "\\mathit {b}"
+          ord:alpha:it{ord:𝑏}
+        text " is moored means "
+        formula inline "\\mathrm {0}<{}"
+          ord:alpha:rm{ord:0} rel:< ord:{}
+        hspace 0pt
+        formula inline "\\mathit {b}.\\mathrm {draft}"
+          ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:𝑑 ord:𝑟 ord:𝑎 ord:𝑓 ord:𝑡}
+        text "."
 verbatim language lean4
   "theorem harbor_log (bs : List Barge) :"
   "    And (forall b, Membership.mem bs b -> Or (b.draft = 0) (Moored b))"
@@ -558,6 +594,23 @@ role trivlist-env
         formula inline "\\mathit {b}.\\mathrm {draft}"
           ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:𝑑 ord:𝑟 ord:𝑎 ord:𝑓 ord:𝑡}
         text "."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        text "where For every "
+        formula inline "\\mathit {b}:\\mathrm {Barge}"
+          ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
+        text ", "
+        formula inline "\\mathit {b}"
+          ord:alpha:it{ord:𝑏}
+        text " is moored means "
+        formula inline "\\mathrm {0}<{}"
+          ord:alpha:rm{ord:0} rel:< ord:{}
+        hspace 0pt
+        formula inline "\\mathit {b}.\\mathrm {draft}"
+          ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:𝑑 ord:𝑟 ord:𝑎 ord:𝑓 ord:𝑡}
+        text "."
 verbatim language lean4
   "theorem moored_draft : forall b : Barge, Moored b -> 0 < b.draft :="
   "  fun _ h => h"
@@ -585,6 +638,23 @@ role trivlist-env
         hspace 0pt
         formula inline "\\mathrm {0}"
           ord:alpha:rm{ord:0}
+        text "."
+role trivlist-env
+  ragged left
+    lines
+      line 0
+        text "where For every "
+        formula inline "\\mathit {b}:\\mathrm {Barge}"
+          ord:alpha:it{ord:𝑏} rel:: ord:alpha:rm{ord:𝐵 ord:𝑎 ord:𝑟 ord:𝑔 ord:𝑒}
+        text ", "
+        formula inline "\\mathit {b}"
+          ord:alpha:it{ord:𝑏}
+        text " is moored means "
+        formula inline "\\mathrm {0}<{}"
+          ord:alpha:rm{ord:0} rel:< ord:{}
+        hspace 0pt
+        formula inline "\\mathit {b}.\\mathrm {draft}"
+          ord:alpha:it{ord:𝑏} ord:. ord:alpha:rm{ord:𝑑 ord:𝑟 ord:𝑎 ord:𝑓 ord:𝑡}
         text "."
 verbatim language lean4
   "theorem some_moored : exists b : Barge, And (Moored b) (b.hull = 0) :="
@@ -668,6 +738,4 @@ verbatim language lean4
   ""
   "end Ebb"
 -- diagnostics
-warning[W0415] 7:1 unsupported statement List.TFAE | detail: it is no proposition
-warning[W0415] 45:1 unsupported statement Ebb.Moored | detail: it is no proposition
 warning[W0415] 47:1 unsupported statement Ebb.nameOf | detail: it is no proposition

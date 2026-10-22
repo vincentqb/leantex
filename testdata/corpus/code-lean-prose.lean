@@ -1,4 +1,4 @@
--- leantex: show = prose, code, facts = code-lean-prose.facts, phrase.Moored = "#1 is moored", phrase.nameOf = "the name of #1"
+-- leantex: show = prose, code, facts = code-lean-prose.facts, glossary = where, phrase.Moored = "#1 is moored", phrase.nameOf = "the name of #1"
 /-! # Laid-out statements
 
 Invented statements whose scopes the prose view sets as indented blocks and whose clauses it

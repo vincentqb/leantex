@@ -2505,7 +2505,13 @@ def reports : List Report := [
     pins := [check% Tests.ParIndent.parIndentChecks]
     accept := ["lualatex 1.24 on invented probes: article, report and book at 10, 11 and 12pt indent 15, 17 and 18pt, memoir alike, scrartcl 1em under parskip=false and never and none under half, letter none, the leantex class 17pt, amsart 12pt, amsproc 18pt, acmart 10pt and 9pt under acmtog; no indent after a heading or a starred one, where text goes on past a list, a display, a centre, a verbatim, a kernel theorem, an abstract or a float inside its paragraph, under the noindent command, in a list item, a minipage, a flushleft, a paragraph cell or a caption; an indent after a blank line past each, on a theorem's second paragraph and after an amsthm theorem; an abstract's paragraphs by 1.5em at the small size; a declared parindent in the preamble or the body to its group's end, a declared parskip keeping the indent and the parskip package dropping it but under its indent option; this tree sets each as lualatex does and the web page indents the same paragraphs, where main's binary at 75a8191e set every one flush; the guard fails there",
       "a paragraphs-only article page: lualatex sets 46 text lines, main's binary 41 to 43, this tree 46"]
-    state := .guarded "75a8191e" .before .author }
+    state := .guarded "75a8191e" .before .author },
+  { id := "R999", date := "2026-10-22"
+    what := "a Lean predicate's definition said in words set as its type alone, Moored : Barge → Prop, its meaning unread, and nothing could say what a predicate a theorem's words use means"
+    pins := [check% censusChecks, check% Tests.LeanProse.leanProseChecks,
+      thm% LeanProse.proseOf_parse_exact]
+    accept := ["main's binary at a90d1669 on the Lean prose fixture: Definition (Ebb.Moored). Moored : Barge → Prop, the guards failing there; this tree says For every b : Barge, b is moored if and only if 0 < b.draft, and with glossary = where follows each theorem using it with where b is moored means 0 < b.draft, in the PDF, on the web page and in the twin"]
+    state := .guarded "a90d1669" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
