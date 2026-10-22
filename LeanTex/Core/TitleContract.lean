@@ -40,13 +40,34 @@ private theorem TitleBodyContext.spellingView (context : TitleBodyContext)
     simp [TitleBodyContext.fill, declarativeTitleList, declarativeTitleRaw, ih]
 
 public theorem refusedTitleReadout_spelling_agree (user : Array UserCmd) (bound : Nat)
+    (parskip : Dim.SymGlue)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
     (hrow : row ∈ beamerInsertAlias) :
-    refusedTitleReadout user bound (context.fill (.ctrl row.1 pos)) =
-      refusedTitleReadout user bound (context.fill (.ctrl row.2 pos)) := by
+    refusedTitleReadout user bound parskip (context.fill (.ctrl row.1 pos)) =
+      refusedTitleReadout user bound parskip (context.fill (.ctrl row.2 pos)) := by
   have h := List.all_eq_true.mp barCtrlName_alias_resolves row hrow
   simp only [Bool.and_eq_true, beq_iff_eq] at h
   unfold refusedTitleReadout
+  rw [context.spellingView row.1 row.2 pos (h.1.trans h.2.symm)]
+
+public theorem refusedTitleAuthor_spelling_agree (user : Array UserCmd) (bound : Nat)
+    (context : TitleBodyContext) (pos : Pos) (row : String × String)
+    (hrow : row ∈ beamerInsertAlias) :
+    refusedTitleAuthor user bound (context.fill (.ctrl row.1 pos)) =
+      refusedTitleAuthor user bound (context.fill (.ctrl row.2 pos)) := by
+  have h := List.all_eq_true.mp barCtrlName_alias_resolves row hrow
+  simp only [Bool.and_eq_true, beq_iff_eq] at h
+  unfold refusedTitleAuthor
+  rw [context.spellingView row.1 row.2 pos (h.1.trans h.2.symm)]
+
+public theorem refusedTitleNotice_spelling_agree (user : Array UserCmd) (bound : Nat)
+    (context : TitleBodyContext) (pos : Pos) (row : String × String)
+    (hrow : row ∈ beamerInsertAlias) :
+    refusedTitleNotice user bound (context.fill (.ctrl row.1 pos)) =
+      refusedTitleNotice user bound (context.fill (.ctrl row.2 pos)) := by
+  have h := List.all_eq_true.mp barCtrlName_alias_resolves row hrow
+  simp only [Bool.and_eq_true, beq_iff_eq] at h
+  unfold refusedTitleNotice
   rw [context.spellingView row.1 row.2 pos (h.1.trans h.2.symm)]
 
 public theorem titleStyleMerge_spelling_agree (s : PreState) (st : ESt)
@@ -58,7 +79,7 @@ public theorem titleStyleMerge_spelling_agree (s : PreState) (st : ESt)
       { st with refusedTitleBody := some (context.fill (.ctrl row.2 pos)) }).1 := by
   rw [applyRefusedTitleStyle_result_exact, applyRefusedTitleStyle_result_exact]
   simp [titleStyleApply, refusedTitleFragment,
-    refusedTitleReadout_spelling_agree s.ctx.user s.ctx.limit context pos row hrow]
+    refusedTitleReadout_spelling_agree s.ctx.user s.ctx.limit (Ir.texParskipOf s.page) context pos row hrow]
 
 public theorem applyRefusedTitleStyle_spelling_agree (s : PreState) (st : ESt)
     (context : TitleBodyContext) (pos : Pos) (row : String × String)
@@ -70,11 +91,13 @@ public theorem applyRefusedTitleStyle_spelling_agree (s : PreState) (st : ESt)
   have h : refusedTitleFragment s (some (context.fill (.ctrl row.1 pos))) =
       refusedTitleFragment s (some (context.fill (.ctrl row.2 pos))) := by
     simp [refusedTitleFragment,
-      refusedTitleReadout_spelling_agree s.ctx.user s.ctx.limit context pos row hrow]
+      refusedTitleReadout_spelling_agree s.ctx.user s.ctx.limit (Ir.texParskipOf s.page) context pos row hrow]
   change
     (titleStyleMerge s (refusedTitleFragment s (some (context.fill (.ctrl row.1 pos)))), _) =
     (titleStyleMerge s (refusedTitleFragment s (some (context.fill (.ctrl row.2 pos)))), _)
-  simp only [h]
+  simp only [h, Option.bind_some,
+    refusedTitleAuthor_spelling_agree s.ctx.user s.ctx.limit context pos row hrow,
+    refusedTitleNotice_spelling_agree s.ctx.user s.ctx.limit context pos row hrow]
 
 public theorem runPreamble_spelling_agree (file : String) (p : Prepared)
     (earlier : Array Diag) (preamble : DocPreamble) (st : ESt)

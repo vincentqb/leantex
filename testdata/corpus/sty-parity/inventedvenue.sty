@@ -1,0 +1,62 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{inventedvenue}[2026/01/01 v1.0 Invented venue style]
+\newif\if@venuefinal\@venuefinalfalse
+\newif\if@anonymous\@anonymoustrue
+\DeclareOption{final}{\@venuefinaltrue\@anonymousfalse}
+\DeclareOption{open}{\@anonymousfalse}
+\ProcessOptions\relax
+\newcommand{\@toptitlebar}{\hrule height 4\p@\vskip 0.25in\vskip -\parskip}
+\newcommand{\@bottomtitlebar}{\vskip 0.29in\vskip -\parskip\hrule height 1\p@\vskip 0.09in}
+\renewcommand{\maketitle}{%
+  \par
+  \begingroup
+    \renewcommand{\thefootnote}{\fnsymbol{footnote}}
+    \long\def\@makefntext##1{\parindent 1em\noindent\hbox to 1.8em{\hss $\m@th ^{\@thefnmark}$}##1}
+    \thispagestyle{empty}
+    \@maketitle
+    \@thanks
+    \@notice
+  \endgroup
+  \let\maketitle\relax
+}
+\newcommand{\ftype@noticebox}{8}
+\newcommand{\@notice}{%
+  \enlargethispage{2\baselineskip}%
+  \@float{noticebox}[b]%
+    \footnotesize\@noticestring%
+  \end@float%
+}
+\if@venuefinal
+  \newcommand{\@noticestring}{Invented Venue 2026.}
+\else
+  \newcommand{\@noticestring}{Under review at an invented venue. Do not distribute.}
+\fi
+\renewcommand{\@maketitle}{%
+  \vbox{%
+    \hsize\textwidth
+    \linewidth\hsize
+    \vskip 0.1in
+    \@toptitlebar
+    \centering
+    {\LARGE\bf \@title\par}
+    \@bottomtitlebar
+    \if@anonymous
+      \begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}
+        Unnamed Writer(s) \\
+        Withheld Institution \\
+        \texttt{withheld} \\
+      \end{tabular}%
+    \else
+      \def\And{%
+        \end{tabular}\hfil\linebreak[0]\hfil%
+        \begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\ignorespaces%
+      }
+      \def\AND{%
+        \end{tabular}\hfil\linebreak[4]\hfil%
+        \begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\ignorespaces%
+      }
+      \begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author\end{tabular}%
+    \fi
+    \vskip 0.3in \@minus 0.1in
+  }
+}

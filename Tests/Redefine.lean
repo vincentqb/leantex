@@ -8,9 +8,9 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
 /-! A redefined built-in environment takes effect, read off the shipped page and the HTML tree. -/
 
-/-- Whether a redefined abstract's declared vertical skips are still unhonoured, read both ways by
-`abstractSkipChecks`. -/
-def abstractSkipsOwed : Bool := true
+/-- Whether a redefined abstract's declared skip under its heading is still unhonoured, read both
+ways by `abstractSkipChecks`. -/
+def abstractSkipsOwed : Bool := false
 
 /-- A redefined abstract's body sets at the size its begin body leaves in force. -/
 def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do

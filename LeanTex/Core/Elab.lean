@@ -721,6 +721,8 @@ public structure ESt where
   author : Option (Array Inline) := none
   /-- The author's names as the metadata reads them, where `\and` parts them. -/
   authorMeta : Option String := none
+  /-- The author's names as rows of side-by-side boxes, where a style's separators part them. -/
+  authorRows : Option (Array (Array (Array Inline))) := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
   /-- Beamer's optional short forms, read by its `\insertshort...` commands. -/
@@ -740,9 +742,14 @@ under them where the document ends. -/
   /-- The last refused `\maketitle` redefinition's body, read again at the
   preamble's end for its title styling. -/
   refusedTitleBody : Option (Array Raw) := none
-  /-- Refused size-command redefinitions' bodies, read again at the
-  preamble's end for their `\@setfontsize` ladder. -/
-  refusedSizeBodies : Array (String × Array Raw × Span) := #[]
+  /-- The block a refused title body sets where it reads no `\@author`, which `\maketitle` sets in
+  place of the declared author. -/
+  styleAuthor : Option (Array Raw) := none
+  /-- The text a refused title body sets in a bottom float, which `\maketitle` sets as its page's
+  notice. -/
+  styleNotice : Option (Array Raw × Nat) := none
+  /-- Size-command redefinitions' bodies, read again at the preamble's end for their size ladder. -/
+  sizeBodies : Array (String × Array Raw × Span) := #[]
   /-- The rendered built-ins whose redefinition the gate refused, each at its definition's site. -/
   refusedRedefs : Array (String × Span) := #[]
   /-- Speaker-note bodies met inside inline content, which the enclosing
@@ -6786,6 +6793,10 @@ when it is empty — '{}'")
     have _ : sliceWeight raws jr.1 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
+  else if name == "/" then
+    -- TeX's italic correction, a control symbol: the space after it is text.
+    have _ : sliceWeight raws (i + 1) < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push (.italicCorr false)) ""
   else if name == "ignorespaces" then
     -- TeX's `\ignorespaces`: the spaces after it set nothing.
     have _ : sliceWeight raws (skipSpaces raws (i + 1)) < sliceWeight raws i :=
@@ -6930,7 +6941,8 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   !declaresScope name && !isPageGround name && (ctx.palette.resolve name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
-  !(name == "ignorespaces") && !(name == "tokens") && (Compat.lengthRestoreKeys? name).isNone &&
+  !(name == "ignorespaces") && !(name == "/") && !(name == "tokens") &&
+  (Compat.lengthRestoreKeys? name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
   !(blockOnly.contains name || bodyDefiner name) &&
   !(Compat.nativeReadCtrls.contains name ||
@@ -8424,11 +8436,93 @@ private def storeTitlePart (name : String) (content : Array Inline)
     | "institute" => { st with institute := some content }
     | _ => { st with date := some content }
 
+/-- Does a separator's text break the line before the tabular it opens. -/
+private def separatorBreaks : List Raw → Bool
+  | [] => false
+  | .ctrl "linebreak" _ :: .sym '[' _ :: .word "4" _ :: _ => true
+  | .ctrl "newline" _ :: _ | .ctrl "\\" _ :: _ | .ctrl "par" _ :: _ | .par _ :: _ => true
+  | .env "tabular" _ _ :: _ => false
+  | _ :: rest => separatorBreaks rest
+
+/-- The author separators a title body defines, expanding user commands below `bound`: each control
+`\def` gives a text opening a tabular, with whether it breaks the line; `pend` holds a definer seen
+and the name it defines. -/
+private def titleSeparators (user : Array UserCmd) (bound : Nat) (pend : Option (Option String))
+    (acc : Array (String × Bool)) : List Raw → Array (String × Bool)
+  | [] => acc
+  | .ctrl n _ :: rest =>
+    if ["def", "gdef", "define"].contains n then titleSeparators user bound (some none) acc rest
+    else match pend with
+      | some none => titleSeparators user bound (some (some n)) acc rest
+      | _ =>
+        let acc := match latestNamed (·.name) user n bound with
+          | some (k, cmd) =>
+            if _h : k < bound then titleSeparators user k none acc cmd.body.toList else acc
+          | none => acc
+        titleSeparators user bound none acc rest
+  | .group body _ :: rest =>
+    match pend with
+    | some (some x) =>
+      let acc := if body.any (· matches .env "tabular" _ _) then
+          acc.push (x, separatorBreaks body.toList) else acc
+      titleSeparators user bound none acc rest
+    | _ => titleSeparators user bound none (titleSeparators user bound none acc body.toList) rest
+  | .env _ body _ :: rest =>
+    titleSeparators user bound none (titleSeparators user bound none acc body.toList) rest
+  | _ :: rest => titleSeparators user bound pend acc rest
+termination_by l => (bound, sizeOf l)
+decreasing_by all_goals raws_dec
+
+/-- The author separators the style's title defines: in `\@maketitle`, or a refused `\maketitle`. -/
+private def authorSeparators (ctx : Ctx) (st : ESt) : Array (String × Bool) :=
+  let own := match latestNamed (·.name) ctx.user "@maketitle" ctx.limit with
+    | some (k, cmd) => titleSeparators ctx.user k none #[] cmd.body.toList
+    | none => #[]
+  match st.refusedTitleBody with
+  | some body => titleSeparators ctx.user ctx.limit none own body.toList
+  | none => own
+
+/-- An author argument parted by a style's separators into rows of names, each name's closing row
+break dropped; `none` where it holds no separator. -/
+private def authorRowsOf (ctx : Ctx) (seps : Array (String × Bool)) (body : Array Raw) :
+    Option (Array (Array (Array Raw))) := Id.run do
+  if seps.isEmpty then return none
+  let kernelAnd := (lookupUser ctx "and").isNone
+  let sepOf : Raw → Option Bool
+    | .ctrl n _ => (seps.find? (·.1 == n)).map (·.2) <|> (if kernelAnd && n == "and" then some false
+        else none)
+    | _ => none
+  unless body.any (sepOf · |>.isSome) do return none
+  let mut rows : Array (Array (Array Raw)) := #[#[#[]]]
+  for r in body do
+    match sepOf r with
+    | some true => rows := rows.push #[#[]]
+    | some false => rows := rows.modify (rows.size - 1) (·.push #[])
+    | none => rows := rows.modify (rows.size - 1) fun row => row.modify (row.size - 1) (·.push r)
+  -- A cell's row ends with no space, as the `c` column's `\unskip` ends it.
+  let close (cell : Array Raw) : Array Raw :=
+    let cell := trimRawEdges cell
+    let cell := if cell.back? matches some (.ctrl "\\" _) then cell.pop else cell
+    let cell := trimRawEdges cell
+    cell.zipIdx.filterMap fun (r, i) =>
+      if r matches .space && (cell[i + 1]? matches some (.ctrl "\\" _)) then none else some r
+  return some (rows.map (·.map close))
+
 /-- An author argument's names apart at each `\and` the document leaves latex.ltx's: on a page each
 an unbreakable box a space, 1em and two `\tabcolsep` from the next, names of several lines on lines
 of their own; on a slide, beamer's `\quad`; the metadata reads them apart by commas. -/
 private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : Pos) :
     EM (Array Inline) := do
+  modify fun st => { st with authorRows := none }
+  if let some rows := authorRowsOf ctx (authorSeparators ctx (← get)) body then
+    unless slides do
+      let cells ← rows.mapM (·.mapM (elabInlines ctx))
+      let words := cells.flatten.map (fun c => Ir.metaText (c.takeWhile (!· matches .linebreak _)))
+        |>.filter (!·.isEmpty)
+      modify fun st => { st with authorRows := some cells
+                                 authorMeta := some (", ".intercalate words.toList) }
+      return cells.flatten.foldl (init := #[]) fun out xs =>
+        if out.isEmpty then xs else out.push (.linebreak {}) ++ xs
   if (lookupUser ctx "and").isSome then
     modify fun st => { st with authorMeta := none }
     return ← elabInlines ctx body
@@ -8467,6 +8561,11 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
   let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
+    -- premise: anonymousTitleChecks — a style setting its own author block takes no later author
+    if name == "author" && (← get).styleAuthor.isSome then
+      warnOnce ctx "ctrl:author:style" .N0100 (Diag.translated "\\author") pos
+        (detail := some "nothing: the style's title sets its own block in the author's place")
+      return (⟨j + 1, by omega⟩, junk)
     let short ← (bracketArgRaws? raws start pos).mapM (elabInlines ctx)
     storeTitlePart name
       (← if name == "author" then authorInlines ctx ctx.slides body pos else elabInlines ctx body) short
@@ -8557,7 +8656,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
         (Ir.Sourced.bare { width := Dim.SymLength.ofLength (Dim.pt 1 / 2) })
       inner := push inner (ctx.tokens.findSourced? "separatorgap") (.rule c nm th)
       pending := ctx.tokens.findSourced? "separatorgap"
-  if let some xs := part st.author then
+  let authorLines (xs : Array Inline) : Array Inline :=
     let xs := match tps.authorFont with
       | some tpl =>
         if tps.authorFontFirstLine == some true then
@@ -8566,10 +8665,19 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
           | none => Ir.fillTemplate tpl xs
         else Ir.fillTemplate tpl xs
       | none => xs
-    let xs := match tps.authorStrut with
+    match tps.authorStrut with
       | some h => #[Ir.Inline.strut h] ++ xs
       | none => xs
-    inner := push inner pending (.para xs)
+  if let some xs := part st.author then
+    match st.authorRows with
+    | some rows =>
+      -- Each name a centred box of its natural width, as a one-column tabular, side by side.
+      for row in rows do
+        let cols := row.map fun cell =>
+          (({ size := .share, natural := true } : Ir.BoxWidth), #[.center #[.para (authorLines cell)]])
+        inner := push inner pending (.columns cols)
+        pending := none
+    | none => inner := push inner pending (.para (authorLines xs))
     pending := (ctx.tokens.findSourced? "authorgap").orElse fun _ =>
       flowGap (if titled then 1000 else 1500)
   if let some xs := part st.institute then
@@ -9262,8 +9370,8 @@ termination_by raws.size - k
 /-- A declarative title-styling construct read from a refused `\maketitle`
 body. -/
 private inductive BarEvent where
-  /-- A `\vskip`; its length is not read. -/
-  | gap
+  /-- A `\vskip`, with its length where it reads as one. -/
+  | gap (len : Option Dim.SymGlue)
   /-- An `\hrule`; `none` when its declared height cannot be read. -/
   | bar (w : Option Dim.SymGlue)
   /-- `\@title`, with the size, weight and alignment in force. -/
@@ -9484,7 +9592,8 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     if n == "vskip" then
       let events := match barLength rest with
         | .cancel => events
-        | _ => events.push .gap
+        | .len g => events.push (.gap (some g))
+        | .unread => events.push (.gap none)
       barScanList user bound st events rest
     else if n == "hrule" then
       barScanList user bound st (events.push (.bar (barRuleWeight rest))) rest
@@ -9527,10 +9636,11 @@ public theorem barCtrlName_alias_resolves :
       barCtrlName r.1 == r.2 && barCtrlName r.2 == r.2) = true := by
   decide +kernel
 
-/-- The element style a refused title body's events declare: the weights of
-the bars nearest the title, its font and alignment, and the author's weight
-and strut; `none` without a `\@title`. -/
-private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := Id.run do
+/-- The element style a refused title body's events declare under the paragraph skip `parskip`:
+the bars nearest the title and the skips after them, its font and alignment, and the author's
+weight and strut; `none` without a `\@title`. -/
+private def barInterpret (parskip : Dim.SymGlue) (events : Array BarEvent) :
+    Option Ir.ElementStyle := Id.run do
   let some t := events.findIdx? (· matches .title _ _ _) | return none
   let mut st : Ir.ElementStyle := {}
   if let some (.title size bold align) := events[t]? then
@@ -9553,8 +9663,20 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
     if h : j < events.size then
       if let .bar (some w) := events[j] then
         st := { st with ruleBelow := some w }
-  -- The author's strut and trailing gap are the engine's, not the body's.
-  if let some ai := events.findIdx? (· matches .author _ _ _) then
+      -- The skips declared after the bar, and the `\parskip` the paragraph after them opens with.
+      let after := (events.toList.drop (j + 1)).takeWhile (· matches .gap _)
+      let lens := after.filterMap fun | .gap l => l | _ => none
+      if !after.isEmpty && lens.length == after.length &&
+          ((events.toList.drop (j + 1 + after.length)).head?.any fun
+            | .content | .author .. => true
+            | _ => false) then
+        st := { st with ruleBelowSkip := some (lens.foldl Dim.SymGlue.add parskip) }
+  -- The author's strut and trailing gap are the engine's, not the body's; a body reading no
+  -- author sets its block from its first ink after the title to the gap closing it.
+  let firstInk := (List.range events.size).find? fun i => t < i && events[i]? matches some .content
+  let anchor := ((events.findIdx? (· matches .author _ _ _)).map (·, false)).orElse fun _ =>
+    firstInk.map (·, true)
+  if let some (ai, inkRuns) := anchor then
     if h : ai < events.size then
       if let .author bold strutDeclared firstRow := events[ai] then
         if bold then
@@ -9562,16 +9684,17 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
           if firstRow then st := { st with authorFontFirstLine := some true }
         if strutDeclared then
           st := { st with authorStrut := some Ir.titleAuthorStrut }
-        let trailing := Id.run do
-          for k in [ai + 1:events.size] do
-            if hk : k < events.size then
-              match events[k] with
-              | .gap => return true
-              | .content | .author _ _ _ => return false
-              | _ => pure ()
-          return false
-        if trailing then
-          st := { st with after := some Ir.titleBlockAfter }
+      let trailing := Id.run do
+        for k in [ai + 1:events.size] do
+          if hk : k < events.size then
+            match events[k] with
+            | .gap _ => return true
+            | .content => if !inkRuns then return false
+            | .author _ _ _ => return false
+            | _ => pure ()
+        return false
+      if trailing then
+        st := { st with after := some Ir.titleBlockAfter }
   return if st == ({} : Ir.ElementStyle) then none else some st
 
 mutual
@@ -9602,10 +9725,135 @@ public theorem declarativeTitleList_toList (acc : Array Raw) (rs : List Raw) :
   | nil => simp [declarativeTitleList]
   | cons r rs ih => simp [declarativeTitleList, ih, List.append_assoc]
 
+/-- Does a refused title body reach the control `target`, expanding user commands below `bound`. -/
+private def titleReaches (user : Array UserCmd) (bound : Nat) (target : String) : List Raw → Bool
+  | [] => false
+  | .ctrl n _ :: rest =>
+    barCtrlName n == target || (target == "@author" && n == "theauthor") ||
+      (match latestNamed (·.name) user n bound with
+       | some (k, cmd) => if _h : k < bound then titleReaches user k target cmd.body.toList else false
+       | none => false) ||
+      titleReaches user bound target rest
+  | .group body _ :: rest | .env _ body _ :: rest =>
+    titleReaches user bound target body.toList || titleReaches user bound target rest
+  | _ :: rest => titleReaches user bound target rest
+termination_by l => (bound, sizeOf l)
+decreasing_by all_goals raws_dec
+
+/-- The body of the first tabular a refused title body sets after `\@title`, expanding
+user commands below `bound`, with whether the title stood before it. -/
+private def tabularAfterTitle (user : Array UserCmd) (bound : Nat) (seen : Bool) :
+    List Raw → Bool × Option (Array Raw)
+  | [] => (seen, none)
+  | .ctrl n _ :: rest =>
+    if n == "@title" then tabularAfterTitle user bound true rest
+    else match latestNamed (·.name) user n bound with
+      | some (k, cmd) =>
+        if _h : k < bound then
+          match tabularAfterTitle user k seen cmd.body.toList with
+          | (s, some b) => (s, some b)
+          | (s, none) => tabularAfterTitle user bound s rest
+        else tabularAfterTitle user bound seen rest
+      | none => tabularAfterTitle user bound seen rest
+  | .env e body _ :: rest =>
+    if seen && e == "tabular" then (true, some body)
+    else match tabularAfterTitle user bound seen body.toList with
+      | (s, some b) => (s, some b)
+      | (s, none) => tabularAfterTitle user bound s rest
+  | .group body _ :: rest =>
+    match tabularAfterTitle user bound seen body.toList with
+    | (s, some b) => (s, some b)
+    | (s, none) => tabularAfterTitle user bound s rest
+  | _ :: rest => tabularAfterTitle user bound seen rest
+termination_by l => (bound, sizeOf l)
+decreasing_by all_goals raws_dec
+
+/-- Whether a tabular's body declares one column: its preamble one `l`, `c` or `r`, or one `p`. -/
+private def oneColumn (body : Array Raw) : Bool :=
+  let i := skipSpaces body 0
+  let i := if body[i]? matches some (.sym '[' _) then
+      (((body.extract i body.size).findIdx? (· matches .sym ']' _)).map (i + · + 1)).getD body.size
+    else i
+  match body[skipSpaces body i]? with
+  | some (.group spec _) =>
+    match (spec.toList.filter (· != .space)) with
+    | [.word w _] => ["l", "c", "r"].contains w
+    | [.word "p" _, .group _ _] => true
+    | _ => false
+  | _ => false
+
+/-- A one-column tabular's text: its placement and column preamble dropped, its first row grouped
+so the declarations opening the cell reach that row only, its closing row break dropped. -/
+private def cellText (pos : Pos) (body : Array Raw) : Array Raw :=
+  let i := skipSpaces body 0
+  let i := if body[i]? matches some (.sym '[' _) then
+      (((body.extract i body.size).findIdx? (· matches .sym ']' _)).map (i + · + 1)).getD body.size
+    else i
+  let i := skipSpaces body i
+  let i := if body[i]? matches some (.group _ _) then i + 1 else i
+  let cell := (body.extract i body.size).popWhile fun r => r matches .space | .par _
+  let cell := if cell.back? matches some (.ctrl "\\" _) then cell.pop else cell
+  let cell := cell.popWhile fun r => r matches .space | .par _
+  let k := (cell.findIdx? (· matches .ctrl "\\" _)).getD cell.size
+  #[Raw.group (cell.extract 0 k) pos] ++ cell.extract k cell.size
+
+/-- The block a refused title body sets in place of the author when it sets the title and reads no
+`\@author`: the cell of its first tabular after the title, or nothing. -/
+public def refusedTitleAuthor (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
+    Option (Array Raw) :=
+  let view := (declarativeTitleList #[] body.toList).toList
+  if titleReaches user bound "@title" view && !titleReaches user bound "@author" view
+  then some ((((tabularAfterTitle user bound false view).2.filter oneColumn).map (cellText {})).getD #[])
+  else none
+
+/-- The text a refused title body sets in a bottom float (`\@float{...}[b] ... \end@float`),
+expanding user commands below `bound`. -/
+private def titleNotice (user : Array UserCmd) (bound : Nat) : List Raw → Option (Array Raw)
+  | [] => none
+  | .ctrl "@float" _ :: .group _ _ :: .sym '[' _ :: .word w _ :: .sym ']' _ :: rest =>
+    if w == "b" then
+      some ((rest.takeWhile fun r => !(r matches .ctrl "end@float" _)).toArray)
+    else titleNotice user bound rest
+  | .ctrl n _ :: rest =>
+    (match latestNamed (·.name) user n bound with
+     | some (k, cmd) => if _h : k < bound then titleNotice user k cmd.body.toList else none
+     | none => none) <|> titleNotice user bound rest
+  | .group body _ :: rest | .env _ body _ :: rest =>
+    titleNotice user bound body.toList <|> titleNotice user bound rest
+  | _ :: rest => titleNotice user bound rest
+termination_by l => (bound, sizeOf l)
+decreasing_by all_goals raws_dec
+
+/-- The baselines a refused title body's `\enlargethispage{n\baselineskip}` adds to its page,
+expanding user commands below `bound`. -/
+private def titleEnlarge (user : Array UserCmd) (bound : Nat) : List Raw → Option Nat
+  | [] => none
+  | .ctrl "enlargethispage" _ :: .group g _ :: rest =>
+    match g.toList.filter (· != .space) with
+    | [.word w _, .ctrl "baselineskip" _] => w.toNat? <|> titleEnlarge user bound rest
+    | [.ctrl "baselineskip" _] => some 1
+    | _ => titleEnlarge user bound rest
+  | .ctrl n _ :: rest =>
+    (match latestNamed (·.name) user n bound with
+     | some (k, cmd) => if _h : k < bound then titleEnlarge user k cmd.body.toList else none
+     | none => none) <|> titleEnlarge user bound rest
+  | .group body _ :: rest | .env _ body _ :: rest =>
+    titleEnlarge user bound body.toList <|> titleEnlarge user bound rest
+  | _ :: rest => titleEnlarge user bound rest
+termination_by l => (bound, sizeOf l)
+decreasing_by all_goals raws_dec
+
+/-- The text a refused title body sets as its page's notice, and the baselines it enlarges that
+page by. -/
+public def refusedTitleNotice (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
+    Option (Array Raw × Nat) :=
+  let view := (declarativeTitleList #[] body.toList).toList
+  (titleNotice user bound view).map (·, (titleEnlarge user bound view).getD 0)
+
 /-- The element style a refused `\maketitle` body still declares. -/
-public def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Array Raw) :
-    Option Ir.ElementStyle :=
-  barInterpret (barScanList user bound {} #[]
+public def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (parskip : Dim.SymGlue)
+    (body : Array Raw) : Option Ir.ElementStyle :=
+  barInterpret parskip (barScanList user bound {} #[]
     (declarativeTitleList #[] body.toList).toList)
 
 private def referencesParam (name : String) : List Raw → Bool
@@ -11416,6 +11664,16 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
   if (← get).titleDone then
     warnOnce ctx "ctrl:maketitle2" .W0322 (Diag.say .W0322 .command s!"\\{n}") pos
     return blocks
+  -- premise: anonymousTitleChecks — the style's own block stands in the author's place
+  if let some cell := (← get).styleAuthor then
+    let xs ← elabInlines ctx cell
+    warnOnce ctx "ctrl:maketitle:author" .N0100 (Diag.translated "\\@maketitle") pos
+      (detail := some (if xs.isEmpty then "nothing in the author's place, as the style's title sets none"
+        else "the block the style's title sets in the author's place"))
+    modify fun st => { st with author := if xs.isEmpty then none else some xs
+                               shortTitles := st.shortTitles.filter (·.1 != .author)
+                               authorMeta := some (Ir.metaText (xs.takeWhile (!· matches .linebreak _)))
+                               authorRows := none }
   let inner := titleBlocks ctx (← get)
   if inner.isEmpty then
     warnOnce ctx "ctrl:maketitle" .W0309
@@ -11447,6 +11705,12 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
         else content.push (.spaced (Ir.Sourced.bare { width := { em := 1500 } }) #[])
     let titlePage := blocks.back? == some (.role Ir.titlePageBeginRole #[])
     blocks := (if titlePage then blocks else blocks.push (.role Ir.plainPageRole #[])) ++ content
+    if let some (raws, lines) := (← get).styleNotice then
+      let xs ← elabInlines ctx raws
+      let enlarge : Dim.SymGlue :=
+        { width := .ofLength (Ir.baselineSkipOf ctx.page * (lines : Int)) }
+      unless xs.isEmpty do
+        blocks := blocks.push (.role Ir.noticeRole #[.spaced (Ir.Sourced.bare enlarge) #[.para xs]])
   return blocks
 
 /-- A frame, flattened into the lone frame it holds when neither carries a
@@ -12067,7 +12331,7 @@ or absolute lengths")
   rows := Ir.padTableRows rows cols.size
   let table := Block.table cols padL padR rows rules spans
   blocks := blocks.push (match valign with
-    | some p => .columns #[(⟨.share, p, none, false⟩, #[table])]
+    | some p => .columns #[(⟨.share, p, none, false, false⟩, #[table])]
     | none => table)
   return blocks
 
@@ -14084,6 +14348,20 @@ private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
   ctx.tokens.entries ++ ctx.engineTokens ++
     #["smallskipamount", "medskipamount", "bigskipamount"].map fun n => (n, Ir.skipAmount ctx.tokens n)
 
+/-- The skip a redefined abstract declares between a heading set as a bare line (`\centerline`) and
+the quotation it opens: the `\block` a `\vspace` there reads as. -/
+private def abstractHeadGap (ctx : Ctx) (pos : Pos) (b : Array Raw) : Option Dim.SymGlue := do
+  let h ← b.findIdx? (· matches .ctrl "centerline" _)
+  let k ← (b.extract h b.size).findIdx? (· matches .ctrl "block" _)
+  guard (opensQuotation (b.extract (h + k) b.size).toList)
+  let (opt, _) := Compat.takeRawOpt b (h + k + 1)
+  let (opts, _) := Decl.parseBlock ctx.file (Entries.texts .native (← opt)) pos "block"
+    (blockSkipTokens ctx)
+  opts.findSome? fun e => match e.key, e.value with
+    | "before", .glue g => some g
+    | "before", .dim d => some { width := Dim.SymLength.ofLength d }
+    | _, _ => none
+
 /-- How a `\block`'s skip stands: as `\vspace`, a primitive `\vskip`, or `\addvspace`'s larger of it
 and the skip before. -/
 private inductive SkipKind where
@@ -14306,6 +14584,8 @@ mutual
 under probe arguments, elaborates non-empty with no dropped, pending or
 degraded loss. -/
 private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
+  if sizeCtrlNames.contains cmd.name && cmd.name != "normalsize" then
+    modify fun st => { st with sizeBodies := st.sizeBodies.push (cmd.name, cmd.body, cmd.span) }
   if !renderedBuiltins.contains cmd.name then return true
   let saved ← get
   set saved.freshReport
@@ -14335,9 +14615,6 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
     refuseRedef cmd (.refused d) ((lookupUser ctx cmd.name).map (·.2.span))
     if cmd.name == "maketitle" then
       modify fun st => { st with refusedTitleBody := some cmd.body }
-    if sizeCtrlNames.contains cmd.name && cmd.name != "normalsize" then
-      modify fun st => { st with refusedSizeBodies :=
-        st.refusedSizeBodies.push (cmd.name, cmd.body, cmd.span) }
     return false
   | none =>
     if nonEmpty then return true
@@ -18255,7 +18532,8 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
         let est := if envName == "abstract" then
             beginB.map fun b =>
               let body := { ({} : Ir.ElementStyle) with
-                bodySize := some ((envBodySizeList none b.toList).getD "normalsize") }
+                bodySize := some ((envBodySizeList none b.toList).getD "normalsize")
+                headGap := abstractHeadGap s.ctx npos b }
               Theme.styleMerge body (heading.getD {})
           else none
         let word := s.info.locale.abstract
@@ -18268,8 +18546,11 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
           (Diag.say .W0303 .definition envName)
           (some ⟨s.ctx.file, npos⟩)
           (detail := match est, heading, quoted with
-           | some _, some _, true => some s!"its heading, body size and quotation margins are \
-read; the built-in's body font and vertical skips stand{replaced}"
+           | some e, some _, true =>
+             if e.headGap.isSome then some s!"its heading, body size and quotation margins are read, \
+and the skip under its heading; the built-in's body font and the skips around it stand{replaced}"
+             else some s!"its heading, body size and quotation margins are read; the built-in's \
+body font and vertical skips stand{replaced}"
            | some _, some _, false => some s!"its heading and body size are read; the built-in's \
 margins, body font and vertical skips stand{replaced}"
            | some _, none, true => some s!"only its body size and quotation margins are read; the \
@@ -19040,7 +19321,7 @@ public def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
     Option Ir.ElementStyle := do
   let body ← body
   if (lookupUser s.ctx "maketitle").isSome then none
-  else refusedTitleReadout s.ctx.user s.ctx.limit body
+  else refusedTitleReadout s.ctx.user s.ctx.limit (Ir.texParskipOf s.page) body
 
 /-- Merges a refused title body's styling under the document's own
 `titlepage` style. -/
@@ -19080,33 +19361,50 @@ private def titleStyleDiagState (st : ESt) : ESt := Id.run do
 diagnostic. -/
 public def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
   let fragment := refusedTitleFragment s st.refusedTitleBody
-  let st := { st with refusedTitleBody := none }
+  let author := if (lookupUser s.ctx "maketitle").isSome then none
+    else st.refusedTitleBody.bind (refusedTitleAuthor s.ctx.user s.ctx.limit)
+  let notice := if (lookupUser s.ctx "maketitle").isSome then none
+    else st.refusedTitleBody.bind (refusedTitleNotice s.ctx.user s.ctx.limit)
+  let st := { st with refusedTitleBody := none, styleAuthor := author, styleNotice := notice }
   (titleStyleMerge s fragment, if fragment.isSome then titleStyleDiagState st else st)
 
 public theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
     ((applyRefusedTitleStyle s).run st).1 = titleStyleApply s st.refusedTitleBody := by rfl
 
-/-- Reads each refused size-command redefinition opening with
-`\@setfontsize` as a size step and leading of the body, keeping the
-built-in where the step would put the named sizes out of order. -/
-private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
-  let stash := (← get).refusedSizeBodies
+/-- A size in points, from a size macro or a decimal with or without `pt`, in milli-points. -/
+private def sizeSrcPoints (src : String) : Option Nat :=
+  let src := src.trimAscii.toString
+  Compat.ptMacroArg #[.word (if src.endsWith "pt" then (src.dropEnd 2).toString else src) {}]
+
+/-- The size and skip a size command's body opening with `\@setfontsize\X{size}{skip}` or
+`\fontsize{size}{skip}` sets, in milli-points. -/
+private def sizeBodyPoints (body : Array Raw) : Option (Nat × Option Nat) :=
+  let b := skipSpaces body 0
+  match body[b]? with
+  | some (.ctrl "@setfontsize" _) =>
+    let (args, _) := Compat.takeGroups body (b + 1) 3
+    (args[1]?.bind Compat.ptMacroArg).map (·, args[2]?.bind Compat.ptMacroArg)
+  | some (.ctrl n _) => do
+    let (size, skip) ← (Marker.value? .fontSize n).bind Marker.fontSizeParts
+    return (← sizeSrcPoints size, sizeSrcPoints skip)
+  | _ => none
+
+/-- Reads each size-command redefinition opening with `\@setfontsize` or `\fontsize` as a
+size step and leading of the body, the last redefinition of a name winning, keeping the built-in
+where the step would put the named sizes out of order. -/
+private def applySizeLadder (s : PreState) : EM PreState := do
+  let stash := (← get).sizeBodies
   if stash.isEmpty then return s
-  modify fun st => { st with refusedSizeBodies := #[] }
+  modify fun st => { st with sizeBodies := #[] }
   let mut steps : Array (String × Nat × Option Nat × Span) := #[]
-  for (name, body, span) in stash do
-    if (lookupUser s.ctx name).isSome then continue
-    let b := skipSpaces body 0
-    unless body[b]? matches some (.ctrl "@setfontsize" _) do continue
-    let (fsArgs, _) := Compat.takeGroups body (b + 1) 3
-    if fsArgs.size < 3 then continue
-    let some a1 := fsArgs[1]? | continue
-    let some sz := Compat.ptMacroArg a1 | continue
+  let last := stash.foldl (fun acc (e : String × Array Raw × Span) => Ir.redeclare acc e.1 e.2) #[]
+  for (name, body, span) in last do
+    let some (sz, ld) := sizeBodyPoints body | continue
     let bodySp := s.page.fontSize
     if sz == 0 || bodySp ≤ 0 then continue
     -- `sz` is milli-points, so the quotient is already per mille.
     let factor : Nat := ((Dim.pt (Int.ofNat sz) + bodySp / 2) / bodySp).toNat
-    let skip := (fsArgs[2]?.bind Compat.ptMacroArg).filter (0 < ·) |>.map fun ld =>
+    let skip := ld.filter (0 < ·) |>.map fun ld =>
       Ir.skipRowOf (Dim.pt (Int.ofNat ld)) bodySp
     steps := Ir.redeclare steps name (factor, skip, span)
   if steps.isEmpty then return s
@@ -19718,7 +20016,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         (name, Ir.skipRowOf (Ir.sizeFileLeading page.fontSize 1000 name * 1000) page.fontSize)
       page := composeLeading { page with bodySkip := some skip, skips := some ladder }
   -- A declared size is absolute, so its step is read against the body size the class settles.
-  page := (← applyRefusedSizeLadder { s with page }).page
+  page := (← applySizeLadder { s with page }).page
   -- The flow class's modular scale, each size's line a whole number of body leadings.
   if let some d := record.design then
     if page.sizes.isNone then
@@ -20037,7 +20335,9 @@ the .bib file"
     info := { info with
       title := fallback info.title st.title
       author := (fallback info.author none).orElse fun _ =>
-        st.authorMeta.orElse fun _ => fallback none st.author }
+        -- A style setting its own author block never names the declared author.
+        if st.styleAuthor.isSome && !st.titleDone then none
+        else st.authorMeta.orElse fun _ => fallback none st.author }
     -- A profile l3pdfmeta describes takes its description where the document gives none.
     info := { info with intent := info.intent.map OutputIntent.described }
     let doc : Doc := {

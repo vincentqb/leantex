@@ -1,10 +1,10 @@
 % A refused \maketitle redefinition still declares the built-in's styling
 % (rule (b)'s remainder): the bar weights around \@title land on the
-% built-in's title block. Weights only: the \vskips beside the bars are
-% deliberately present and deliberately unread — the gaps are the engine's
-% rhythm (Ir.titleBarGap/titleBarSkip, three quanta to the type and one
-% outside), and the census asserts those. Fixture-only numbers -- 3pt/2pt
-% bars and \Large -- differ from the NeurIPS lineage's 4pt/1pt and from
+% built-in's title block. The \vskips about the title are present and unread:
+% those gaps are the engine's rhythm (Ir.titleBarGap/titleBarSkip, three
+% quanta to the type), which the census asserts; the skip under the bottom bar
+% is read, with the \parskip the author's paragraph opens with. Fixture-only
+% numbers -- 3pt/2pt bars and \Large -- differ from the NeurIPS lineage's 4pt/1pt and from
 % every engine default, so the census can tell a declared weight from a
 % default. The definition order matches the venue's: \maketitle is
 % redefined before the internals it names exist, which is why extraction

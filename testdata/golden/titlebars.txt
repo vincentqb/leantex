@@ -12,7 +12,7 @@ role trivlist-env
       text "Bars Probe Title"
     block before 1800/1000em
     rule #000000 2pt
-    block before 600/1000em
+    block before 7.227pt plus 1pt
     para
       strut
       styled bold

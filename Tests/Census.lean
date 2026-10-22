@@ -597,7 +597,7 @@ def censusRows1 :
        bars.map (·.2) == #[Dim.pt 3, Dim.pt 2]),
      ("the top bar stands above the title line, the bottom below",
        (bars.map fun s => decide (s.1 < titleY)) == #[true, false]),
-     -- The gaps are the engine's rhythm; the fixture's own `\vskip`s are deliberately unread.
+     -- The gaps about the title are the engine's rhythm; the fixture's own `\vskip`s there are unread.
      ("the top bar stands three quanta above the title's cap line",
        (bars[0]?.map fun s => decide (3 * Ir.rhythmQuantum geom.fontSize ≤ titleY - s.1 ∧
          titleY - s.1 ≤ 3 * Ir.rhythmQuantum geom.fontSize + geom.fontSize * 1440 / 1000)).getD false),
@@ -611,12 +611,12 @@ def censusRows1 :
      ("the title sets at the body's declared \\Large, not the LARGE default",
        lineSizeOf c 0 "Bars Probe Title" ==
          some (geom.fontSize * 1440 / 1000)),
-     -- The author line's 2u strut: 24pt plus one quantum under the bottom bar.
+     -- The author line's 2u strut under the bar's declared 0.1in skip and the article's zero parskip.
      ("the author line carries its 2u strut under the bottom bar",
        ((pageRuleSegs c 0)[1]?.map fun s =>
          let d := (lineYOf c 0 "An Invented Author").getD 0 - s.1
-         decide (Dim.pt 24 + Ir.rhythmQuantum geom.fontSize ≤ d ∧
-           d ≤ Dim.pt 24 + Ir.rhythmQuantum geom.fontSize + 2 * geom.fontSize)).getD false),
+         decide (Dim.pt 24 + Dim.inch 1 / 10 - Dim.pt 1 / 2 ≤ d ∧
+           d ≤ Dim.pt 24 + Dim.inch 1 / 10 + Dim.pt 1 / 2)).getD false),
      -- The rhythm gap after the block, 2u at the body size, plus the interline.
      ("the 2u gap after the title block stands before the body text",
        let d := (lineYOf c 0 "Body text follows").getD 0 -

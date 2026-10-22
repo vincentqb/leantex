@@ -1057,6 +1057,8 @@ public structure PageOpening where
   folio : Option Nat := none
   empty : Bool := false
   style : Option NumStyle := none
+  /-- The page carries the document's title notice at its foot. -/
+  notice : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- The logical folio, its numeral style and the running style of the page being built. -/
@@ -1066,6 +1068,8 @@ public structure PageState where
   style : NumStyle := .arabic
   /-- Whether the page is set in the plain style, as a chapter's opening page is. -/
   plain : Bool := false
+  /-- Whether the page carries the document's title notice at its foot. -/
+  notice : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Apply only the opening's declarations; a reset keeps an empty style that has not yet shipped. -/
@@ -1073,7 +1077,8 @@ public def PageState.applyOpening (s : PageState) (opening : PageOpening) : Page
   { folio := opening.folio.getD s.folio
     furniture := s.furniture && !opening.empty
     style := opening.style.getD s.style
-    plain := s.plain }
+    plain := s.plain
+    notice := s.notice || opening.notice }
 
 /-- Ship one physical page: advance its logical folio and restore the ordinary
 running style, as `\@outputpage` does. -/
@@ -1106,9 +1111,14 @@ public def pageNumberingRole (style : NumStyle) : String :=
     | .gobble => "gobble"
   "pagenumbering " ++ name
 
+/-- The role a title notice's text stands in: a line its page's enlargement below the text block of
+the title's page, as a style's bottom float on that page sets it. -/
+public def noticeRole : String := "titlepage notice"
+
 /-- The page opening a titlepage boundary or a page numbering role declares. -/
 public def pageOpeningOfRole? (n : String) : Option PageOpening :=
-  if n == titlePageBeginRole then some { folio := some 1, empty := true }
+  if n == noticeRole then some { notice := true }
+  else if n == titlePageBeginRole then some { folio := some 1, empty := true }
   else if n == titlePageEndRole then some { folio := some 1 }
   else if n.startsWith "pagenumbering " then
     (NumStyle.ofPageName? (n.drop "pagenumbering ".length).toString).map fun s =>
@@ -1117,7 +1127,8 @@ public def pageOpeningOfRole? (n : String) : Option PageOpening :=
 
 public theorem titlepage_empty_exact (s : PageState) :
     (s.applyOpening { folio := some 1, empty := true }).applyOpening
-        { folio := some 1 } = { folio := 1, furniture := false, style := s.style, plain := s.plain } := by
+        { folio := some 1 } =
+      { folio := 1, furniture := false, style := s.style, plain := s.plain, notice := s.notice } := by
   simp [PageState.applyOpening]
 
 /-- The role an empty marker rides in after an environment whose paragraph goes on past it, as
@@ -4831,15 +4842,18 @@ public structure BoxWidth where
   /-- Whether the box opens as a minipage does, its first list spending no `\topsep` (latex.ltx
   `\@setminipage`). -/
   minipage : Bool := false
+  /-- Whether a box of no declared width takes its content's width, as a tabular sets it; a row of
+  such boxes spreads its slack evenly around them, as `\hfil` between centred boxes does. -/
+  natural : Bool := false
   deriving Repr, BEq, Inhabited
 
-@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none, false⟩
+@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none, false, false⟩
 @[match_pattern, expose] public def BoxWidth.sized (width : Affine Measure) : BoxWidth :=
-  ⟨.sized width, .top, none, false⟩
+  ⟨.sized width, .top, none, false, false⟩
 @[match_pattern, expose] public def BoxWidth.frac (permille : Nat) : BoxWidth :=
-  ⟨.frac permille, .top, none, false⟩
+  ⟨.frac permille, .top, none, false, false⟩
 @[match_pattern, expose] public def BoxWidth.abs (w : Length) : BoxWidth :=
-  ⟨.abs w, .top, none, false⟩
+  ⟨.abs w, .top, none, false, false⟩
 
 /-- The declared width against a known measure: the width the box is set at. -/
 public def BoxWidth.resolve (w : BoxWidth) (measure : Length) : Option Length :=
@@ -5775,6 +5789,13 @@ deriving_structural_beq Block
   | [.para xs] => some xs
   | _ => none
 
+/-- The title notice: the first top-level notice role's enlargement of its page and its text. -/
+public def noticeText? (blocks : Array Block) : Option (Length × Array Inline) :=
+  blocks.findSome? fun
+    | .role n #[.spaced g #[.para xs]] =>
+      if n == noticeRole then some (g.value.width.fixed, xs) else none
+    | _ => none
+
 /-- A cell's inline content, empty for a cell holding blocks. -/
 @[expose] public def cellLine (cell : Array Block) : Array Inline :=
   (cellLine? cell).getD #[]
@@ -6119,7 +6140,7 @@ public theorem pageOpening_runsOn (n : String) (opening : PageOpening)
   have hn : n ≠ parRunsOnRole := by
     intro e
     subst e
-    simp [pageOpeningOfRole?, parRunsOnRole, titlePageBeginRole, titlePageEndRole] at h
+    simp [pageOpeningOfRole?, parRunsOnRole, noticeRole, titlePageBeginRole, titlePageEndRole] at h
   simp [Block.runsOn, hn]
 
 /-- Whether a paragraph opens on a run-in heading (`runInHeadRole`). -/
@@ -6157,7 +6178,7 @@ public theorem pageOpening_continuesPar (n : String) (opening : PageOpening)
   have hn : n ≠ parContinuesRole := by
     intro e
     subst e
-    simp [pageOpeningOfRole?, parContinuesRole, titlePageBeginRole, titlePageEndRole] at h
+    simp [pageOpeningOfRole?, parContinuesRole, noticeRole, titlePageBeginRole, titlePageEndRole] at h
   simp [Block.continuesPar, hn]
 
 public theorem pageOpening_parContAfter (n : String) (opening : PageOpening) (c : Bool)
@@ -7624,6 +7645,8 @@ public structure ElementStyle where
   /-- A list's label template, each item's label its number set in it, read where the list's
   items elaborate. -/
   label : Option (Array LabelPart) := none
+  /-- Space between the element's heading and its body, beyond the body's own opening. -/
+  headGap : Option SymGlue := none
   deriving Repr, BEq, Inhabited
 
 /-- The part of the `titlepage` style the title heading itself takes: every
@@ -11839,7 +11862,8 @@ private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) :
       | .sized (.ref _) => s!"{ind}column 1000/1000{pos}\n"
       | .sized (.lit g) => s!"{ind}column {g.width.fixed.toPtString}pt{pos}\n"
       | .sized e => s!"{ind}column {Track.css (.affine e)}{pos}\n"
-      | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
+      | .share => s!"{ind}column{if w.natural then " natural" else ""}{pos}\n") ++
+        dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
     self ++ tail
 

@@ -9416,8 +9416,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let inner := if (Block.role n body).keepsParIndent then cfg.within else cfg.into
     let kids := blockNodesInto
       { inner with continues := cfg.continues || (Ir.thmSpaceOf? n).isSome } #[] body.toList
-    -- a page-model mark has no meaning in a continuous medium
-    if Ir.pageMarkerRole n then Html.text "" else
+    -- a page-model mark has no meaning in a continuous medium; a title notice is text after the title
+    if Ir.pageMarkerRole n && n != Ir.noticeRole then Html.text "" else
     match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
         kids.toList with
     | true, [k] => withClass (roleClass n) k
@@ -9529,7 +9529,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- an `<h2>`, so a declared `\style{section}` reaches the abstract's heading
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "section"
-        (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
+        (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center" ++
+            (((cfg.styles.find? "abstract").bind (·.headGap)).map fun g =>
+              s!"; margin-bottom: {cssLength g.width}").getD "")]] ++
           blockNodesInto cfg.inAbstract #[] body.toList)
         #[("class", abstractClass cfg.styles ++ abstractFormClass cfg.abstractForm)])
   | .columns cols =>
@@ -9538,10 +9540,12 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let declared := cols.foldl (fun s c => s + (c.1.resolve total).getD 0) 0
     let unspecified : Int := cols.foldl (fun n c => if c.1.declared then n else n + 1) 0
     let share := if unspecified > 0 then max 0 (total - declared) / unspecified else 0
+    -- A row of natural boxes wraps as TeX's line of them does, each line's slack spread evenly.
+    let layout := if cols.all (·.1.natural) then
+        "display: flex; flex-wrap: wrap; justify-content: space-evenly"
+      else s!"display: grid; grid-template-columns: {gridTracks cols}; justify-content: {justify}"
     Html.elem "div" (columnNodesInto cfg.into total share #[] cols.toList)
-      #[("class", "columns"),
-        ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
-          s!"justify-content: {justify}")]
+      #[("class", "columns"), ("style", layout)]
   | .onSteps spec body =>
     -- a step is grouping: the paragraph state before it reaches its first block
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
@@ -9799,8 +9803,9 @@ private def columnNodesInto (cfg : Config) (total share : Length) (acc : Array N
       | .first => "align-self: baseline"
       | .center => "align-self: center"
       | .last => "align-self: last baseline"
-    -- every box is the query container its content's `cqi` reads
-    let style := if align.isEmpty then "container-type: inline-size"
+    -- every box is the query container its content's `cqi` reads, but one its content sizes
+    let style := if w.natural then align
+      else if align.isEmpty then "container-type: inline-size"
       else "container-type: inline-size; " ++ align
     -- a box command's box paints as the PDF's does, one of no declared width sized by its content
     let style := match w.box with

@@ -176,7 +176,7 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
      Compat.blueprintSiteMark, Compat.linkedBoxRowMark, Compat.alertMark true,
      Compat.alertMark false, BeamerColor.marker, BeamerColor.starMarker,
      BeamerColor.standoutMarker, BeamerColor.siteMarker, Ir.titlePageBeginRole,
-     Ir.titlePageEndRole, Picture.scopeCtrl] ++
+     Ir.titlePageEndRole, Ir.noticeRole, Picture.scopeCtrl] ++
     [Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl
   let names := markers ++ others
   for n in names do

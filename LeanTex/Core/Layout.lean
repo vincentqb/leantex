@@ -13990,6 +13990,39 @@ private def naturalWidth? (r : Rd) (a : Acc) (body : Array Block) (total : Lengt
       else none
     else none
 
+/-- The width a centred paragraph sets at unbroken, as a one-column tabular sets its cell: its
+widest line and a `\tabcolsep` on each side. -/
+private def cellNaturalWidth? (r : Rd) (a : Acc) (body : Array Block) : Option Length :=
+  match body.toList.filter (!·.epoch) with
+  | [.center #[.para xs]] | [.para xs] =>
+    let (items, _, _, _) := itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
+      { color := a.fg, ground := a.ground } xs a.hyphCache (.fixed .unattributed) r.imgs
+      r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
+    let colsep := tableLength ((a.tokens.find? "tabcolsep").map fun g => (r.resolve g).width)
+      r.preamble "tabcolsep"
+    some (itemsLinesWidth items + 2 * colsep)
+  | _ => none
+
+/-- Natural boxes of widths `ws` set on lines of the measure `total`, each line as many as fit and
+its slack spread evenly before, between and after them: each box's left edge and whether it opens
+a line after the first. -/
+private def evenRows (total : Length) (ws : List Length) : List (Length × Bool) := Id.run do
+  let mut lines : Array (Array Length) := #[]
+  for w in ws do
+    match lines.back? with
+    | some line =>
+      if line.foldl (· + ·) 0 + w > total then lines := lines.push #[w]
+      else lines := lines.pop.push (line.push w)
+    | none => lines := lines.push #[w]
+  let mut out : Array (Length × Bool) := #[]
+  for (line, k) in lines.zipIdx do
+    let gap := max 0 (total - line.foldl (· + ·) 0) / (line.size + 1)
+    let mut x := gap
+    for (w, i) in line.zipIdx do
+      out := out.push (x, k > 0 && i == 0)
+      x := x + w + gap
+  return out.toList
+
 /-- The point a box opening an item stands on its label's line by: its own, an unpositioned one
 centred as latex.ltx's default `c` sets it; `none` for any block but a table or a lone box. -/
 private def boxItemPos? : Block → Option Ir.BoxPos
@@ -14449,15 +14482,24 @@ private def holdsPicture (cols : Array (BoxWidth × Array Block)) : Bool :=
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
 private def collectColumns (r : Rd) (a : Acc)
-    (cols : List (BoxWidth × Array Block)) (x0 shareW gutter total : Length) : Acc :=
+    (cols : List (BoxWidth × Array Block)) (naturals : List (Option Length))
+    (places : List (Length × Bool)) (reopen : Op) (base x0 shareW gutter total : Length) : Acc :=
   match cols with
   | [] => a
   | (w, body) :: rest =>
-    let wi := (w.resolve total).getD shareW + innerPaint r a (w, body) total
+    let natural := naturals.head?.join
+    let x0 := match places.head? with
+      | some (x, _) => base + x
+      | none => x0
+    let wi := ((w.resolve total).orElse fun _ => natural).getD shareW + innerPaint r a (w, body) total
     let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt, boxTop := w.minipage }
     let a := a.absorb (collectBlocks r sub body x0)
-    let a := if rest.isEmpty then a else a.pushOp .colNext
-    collectColumns { r with labels := #[] } a rest (x0 + wi + gutter) shareW gutter total
+    -- The next box opening a line of a wrapped row closes this line and opens its own.
+    let a := if rest.isEmpty then a
+      else if (places.tail.head?.map (·.2)).getD false then (a.pushOp .colClose).pushOp reopen
+      else a.pushOp .colNext
+    collectColumns { r with labels := #[] } a rest naturals.tail places.tail reopen base
+      (x0 + wi + gutter) shareW gutter total
 
 /-- A standout frame's content: paragraphs centre and
 set Large bold in the page's inverted text colour. -/
@@ -14746,11 +14788,15 @@ private def collectBlock (r : Rd) (a : Acc)
     let rs := { (r.within blk) with geom := { r.geom with fontSize := small, lead := lead } }
     match r.abstractForm with
     | .quotation =>
-      -- article.cls's: the head in a `center` ending with `\vspace{-.5em}\vspace{\z@}`, then
-      -- `\quotation` at `\small`, or `quote` where a redefinition opens one.
-      let (rt, a, og) := a.trivOpen r
-      let a := (collectAbstractHead rt a indent).vspace (rs.resolve { width := { em := -500 } })
-      let a := a.trivClose r og
+      -- article.cls's: the head in a `center` ending with `\vspace{-.5em}\vspace{\z@}`, or a
+      -- redefinition's head line with the skip it declares under it; then `\quotation` at `\small`,
+      -- or `quote` where a redefinition opens one.
+      let a := match (r.style "abstract").headGap with
+        | some g => { collectAbstractHead r a indent with wantDefault := false }.vspace (r.resolve g)
+        | none =>
+          let (rt, a, og) := a.trivOpen r
+          let a := (collectAbstractHead rt a indent).vspace (rs.resolve { width := { em := -500 } })
+          a.trivClose r og
       let kind := if (r.style "abstract").indent == some {} then Ir.QuoteKind.quote else .quotation
       let lv := a.listDepth + 1
       -- Its list takes the `\@listi` the size step's command redefines, at the class's size.
@@ -14781,16 +14827,25 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Declared widths resolve against the measure; the rest goes to widthless boxes or gutters.
     let a := a.flushGap r
     let total := (a.measure.getD r.geom.textWidth) - indent
-    let declared := cols.foldl (fun s (c : BoxWidth × Array Block) =>
-      s + ((c.1.resolve total).getD 0) + innerPaint r a c total) 0
-    let unspecified := cols.foldl (fun c (col : BoxWidth × Array Block) =>
-      if col.1.declared then c else c + 1) 0
+    let naturals := cols.map fun (c : BoxWidth × Array Block) =>
+      if c.1.natural && !c.1.declared then
+        (naturalWidth? r a c.2 total).orElse fun _ => cellNaturalWidth? r a c.2
+      else none
+    let sized := cols.zip naturals
+    let declared := sized.foldl (fun (s : Length) ((c : BoxWidth × Array Block), n) =>
+      s + (((c.1.resolve total).orElse fun _ => n).getD 0) + innerPaint r a c total) 0
+    let unspecified := sized.foldl (fun (c : Nat) ((col : BoxWidth × Array Block), n) =>
+      if col.1.declared || n.isSome then c else c + 1) 0
+    -- A row of natural boxes spreads its slack evenly before, between and after them.
+    let evenly := !cols.isEmpty && unspecified == 0 && naturals.all (·.isSome)
     let rem := max 0 (total - declared)
-    let a := if declared > total then
+    let a := if declared > total && !evenly then
         { a with diags := a.diags.push (columnsOverfull r a cols (declared - total)) }
       else a
+    let places := if evenly then evenRows total (naturals.toList.map (·.getD 0)) else []
     let shareW := if unspecified > 0 then rem / unspecified else 0
-    let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
+    let gutter := if evenly then rem / (cols.size + 1)
+      else if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
     -- A lone declared box leaves its slack to its scope's side; several spend it on gutters.
     let side : Ir.HAlign := if r.centreBoxes then .center
       else if r.geom.flushRight then .right else .left
@@ -14800,7 +14855,8 @@ private def collectBlock (r : Rd) (a : Acc)
     let inset := (boxed.map fun (w, b, _) => (boxSpecOf r a b 0 none w.pos total).inset).getD 0
     let natural := boxed.bind fun (w, _, body) =>
       if w.declared then none else naturalWidth? r a body (total - 2 * inset)
-    let off := if cols.size == 1 && (unspecified == 0 || natural.isSome) then
+    let off := if evenly then gutter
+      else if cols.size == 1 && (unspecified == 0 || natural.isSome) then
         side.boxOffset (max 0 (rem - 2 * inset - natural.getD 0))
       else 0
     let spec := boxed.map fun (w, b, _) => boxSpecOf r a b (r.geom.hmargin + indent + off)
@@ -14812,14 +14868,15 @@ private def collectBlock (r : Rd) (a : Acc)
       | some k => { (a.pushOp .floatOpen).pushOp (.regionOpen (.box k)) with
           ground := k.ground.or a.ground }
       | none => a
-    let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos)) (r.texRows && !holdsPicture cols)) }
+    let opening : Op := .colOpen (cols.map (·.1.pos)) (r.texRows && !holdsPicture cols)
+    let a := { a with ops := a.ops.push opening }
     -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage, and the page's own
     -- `\parskip` stands there over a list's `\parsep`.
     let inner := { (r.within blk) with
       centreBoxes := false, texRows := true
       geom := { r.geom with flushRight := false, texParskip := r.pageParskip } }
-    let a := collectColumns inner a cols.toList (indent + off + inset)
-      (natural.getD (shareW - 2 * inset)) gutter total
+    let a := collectColumns inner a cols.toList naturals.toList places opening (indent + inset)
+      (indent + off + inset) (natural.getD (shareW - 2 * inset)) gutter total
     let a := { a with ops := a.ops.push .colClose }
     if spec.isSome then { (a.pushOp .regionClose).pushOp .floatClose with ground := saved } else a
   | .bibliography _ _ items => collectBibliography r a items indent
@@ -20828,6 +20885,10 @@ public def runPost (sh : Shipped) : Out := Id.run do
   -- Margin line numbers: muted furniture at the footnotesize step, left of the measure.
   let lineNumbersOn := doc.lineNumbersOn
   let lineModulo := doc.lineModulo
+  -- A title notice's baseline: the page's enlargement below the text block, a strut's depth above.
+  let notice := Ir.noticeText? doc.body
+  let noticeY := geom.bodyBottom + ((notice.map (·.1)).getD 0) -
+    3 * Ir.leadingFor (Ir.scaleStepIn geom.scale geom.fontSize "footnotesize") / 10
   let numSize := Ir.scaleStepIn geom.scale geom.fontSize "footnotesize"
   let numRight := match doc.page.furnitureGap with
     | some g => geom.hmargin - g
@@ -20925,7 +20986,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     -- KOMA-Script's `\cleardoublepage` leaves its blank verso empty.
     let furnished := page.pageState.furniture && !(koma && page.blank)
     let headOn := furnished && doc.headFrom ≤ i + 1
-    let footOn := furnished && doc.footFrom ≤ i + 1
+    let footOn := furnished && doc.footFrom ≤ i + 1 || page.pageState.notice && notice.isSome
     let verso := doc.page.twoside && page.pageState.folio % 2 == 0
     let (left, right) := marked[i]?.getD (#[], #[])
     -- A plain page (a chapter's opening, `\maketitle`'s) carries no running field but the folio.
@@ -20944,8 +21005,11 @@ public def runPost (sh : Shipped) : Out := Id.run do
           else if verso then #[.pageNumber, .fill, .styled .italic left]
           else #[.styled .italic right, .fill, .pageNumber])
       else (if verso then doc.headEven.orElse fun _ => doc.head else doc.head).map (fillMarks left right)
+    -- A title notice stands in its page's foot, which shows no folio.
+    let noticeHere := if page.pageState.notice then notice.map (·.2) else none
     let footContent : Option (Array Inline) :=
-      if plainHere then none
+      if noticeHere.isSome then noticeHere
+      else if plainHere then none
       else if headings && koma && doc.foot.isNone && doc.footEven.isNone then some komaFolio
       else (if verso then doc.footEven.orElse fun _ => doc.foot else doc.foot).map
         (fillMarks left right)
@@ -20966,7 +21030,8 @@ public def runPost (sh : Shipped) : Out := Id.run do
           if let some r := r? then head := head.push r
     if footOn then
       if let some content := footContent then
-        let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) footY geom.fontSize {} cache
+        let y := if noticeHere.isSome then noticeY else footY
+        let (l?, ds, c) := runLine content (ListMark.folioText page.pageState) y geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
