@@ -1,0 +1,30 @@
+# The licences of this corpus's sets, as each set's template.yml declares them.
+# Each main.tex here adapts its template's template.tex: mystmd 1.11.0 filled the
+# template with the invented paper.md, myst.yml and refs.bib beside this file.
+#
+# plain_latex        CC-BY-4.0  https://creativecommons.org/licenses/by/4.0/
+#                    template by Steve Purves, github.com/myst-templates/plain_latex
+#                    at a2a8b78f7980e536208fb3b75a83fcc87827b23b; adapted.
+# plain_latex_book   CC-BY-4.0  https://creativecommons.org/licenses/by/4.0/
+#                    template by Rowan Cockett, github.com/myst-templates/plain_latex_book
+#                    at 2939222ccb79b64fb8ee32da9d2b88bca92b3ea1; adapted.
+# arxiv_two_column   CC-BY-4.0  https://creativecommons.org/licenses/by/4.0/
+#                    template by Brenhin Keller, github.com/myst-templates/arxiv_two_column
+#                    at 5e04af6d5f42f46b7b14eb58050834f7e0bafb41; main.tex adapted,
+#                    preprint.sty unmodified.
+# curvenote          CC-BY-4.0  https://creativecommons.org/licenses/by/4.0/
+#                    template by Steve Purves, github.com/myst-templates/curvenote
+#                    at 814fe3758e98f45339a4ac3ee667ab82576b1b5a; main.tex adapted,
+#                    curvenote.sty and curvenote.def unmodified.
+# cageo              LPPL-1.2   https://www.latex-project.org/lppl/lppl-1-2/
+#                    template by Leandro Passos de Figueiredo, github.com/myst-templates/cageo
+#                    at ff553f53181e7a5271070e948a02d57b00b20eda; main.tex adapted.
+#                    cas-sc.cls, cas-dc.cls and cas-common.sty are unmodified single
+#                    files of Elsevier's CAS bundle (LPPL 1.2 or later), its complete
+#                    Work obtainable from CTAN (ctan.org/pkg/els-cas-templates) and
+#                    TeX Live.
+#
+# curvenote.png (plain_latex, curvenote) is Curvenote's logo as the templates
+# ship it; it stays its owner's mark. main.bbl in each set is bibtex's or
+# biber's output from main.bib when the set was imported, kept so that lualatex
+# alone reproduces the reference.

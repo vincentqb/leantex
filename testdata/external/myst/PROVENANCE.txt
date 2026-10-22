@@ -1,0 +1,38 @@
+# MyST's LaTeX template renderings, vendored as an external corpus.
+#
+# source:   five LaTeX templates of the myst-templates organisation, each its repository's
+#           default branch downloaded on 2026-10-20 (no git history), the commit each was
+#           checked against on 2026-10-22 named in LICENSES.txt: every template file taken
+#           here is byte-identical to raw.githubusercontent.com/myst-templates/<set>/<commit>.
+# rendered: `myst build --tex` (mystmd 1.11.0) of paper.md, myst.yml and refs.bib, which
+#           this repository wrote: invented content (a title, two invented authors at
+#           example.org, an abstract, a citation, a footnote, a labelled equation, a table,
+#           a note admonition, a list and a code block), each set's template given as a
+#           local path; main.bbl is bibtex's or biber's output from main.bib.
+# license:  each set's own, as its template.yml beside its rendering declares it, with the
+#           attribution and change notices in LICENSES.txt. A set is taken where its
+#           licence's terms can be met here and its bundled files are the template authors'
+#           own or carry a licence of their own:
+#
+#   set                licence     bundled files
+#   plain_latex        CC-BY-4.0   the template's own
+#   plain_latex_book   CC-BY-4.0   the template's own
+#   arxiv_two_column   CC-BY-4.0   preprint.sty, the template's own
+#   curvenote          CC-BY-4.0   curvenote.sty, curvenote.def, the template's own
+#   cageo              LPPL-1.2    cas-sc.cls, cas-dc.cls, cas-common.sty (LPPL 1.2+)
+#
+# Not taken, so measured only in local acceptance runs: arxiv_nips, lapreprint and
+# physical_review_journals (MIT, whose copyright notice no upstream file states, and
+# revtex4-2.cls's README restrictions), agu2019 (GPL-3.0), frontiers and volcanica (no
+# licence declared), isprs, mdpi and spie_proceedings (a publisher's class whose header
+# names no licence) and springer (sn-jnl.cls asks to travel with the LaTeX base system);
+# egu_copernicus, physiome and eartharxiv fail mystmd 1.11's own template validation.
+#
+# checked:  every file taken is listed in SHA256SUMS with the sha256 of its bytes;
+#           `sha256sum -c SHA256SUMS` run from this directory verifies them.
+#
+# lualatex (TeX Live 2026, latexmk -lualatex with bibtex or biber) built every document
+# when it was imported, to these page counts; `--report` rebuilds them with lualatex
+# alone over the vendored main.bbl:
+#
+#   plain_latex 2, plain_latex_book 4, arxiv_two_column 1, curvenote 2, cageo 4

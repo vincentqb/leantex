@@ -1,0 +1,142 @@
+% Created with jtex v.1.0.22
+\documentclass[twocolumn, switch]{article}
+\usepackage{preprint}
+\usepackage{hyperref}
+\usepackage[numbers,square]{natbib}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%  imports  %%%%%%%%%%%%%%%%%%%
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{framed}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% colors for hyperlinks
+\hypersetup{colorlinks=true, linkcolor=purple, urlcolor=blue, citecolor=cyan, anchorcolor=black}
+
+\usepackage[utf8]{inputenc}	% allow utf-8 input
+\usepackage[T1]{fontenc}
+\usepackage{xcolor}
+\usepackage{lineno}					% Line numbers
+\usepackage{tikz} 					% ORCiD insertion
+
+%% Bibliography options
+\bibliographystyle{unsrtnat}
+
+ %% Special figure caption options
+\usepackage{newfloat}
+\DeclareFloatingEnvironment[name={Supplementary Figure}]{suppfigure}
+\usepackage{sidecap}
+\sidecaptionvpos{figure}{c}
+
+% Section title spacing  options
+\usepackage{titlesec}
+\titlespacing\section{0pt}{12pt plus 3pt minus 3pt}{1pt plus 1pt minus 1pt}
+\titlespacing\subsection{0pt}{10pt plus 3pt minus 3pt}{1pt plus 1pt minus 1pt}
+\titlespacing\subsubsection{0pt}{8pt plus 3pt minus 3pt}{1pt plus 1pt minus 1pt}
+
+\definecolor{lime}{HTML}{A6CE39}
+\DeclareRobustCommand{\orcidicon}{
+	\begin{tikzpicture}
+	\draw[lime, fill=lime] (0,0)
+	circle [radius=0.16]
+	node[white] {{\fontfamily{qag}\selectfont \tiny ID}};
+	\draw[white, fill=white] (-0.0625,0.095)
+	circle [radius=0.007];
+	\end{tikzpicture}
+	\hspace{-2mm}
+}
+
+%%%%%%%%%%%%%%%%   Title   %%%%%%%%%%%%%%%%
+\title{A Note on Placeholder Flows}
+
+% Add watermark with submission status
+% Awaiting watermark support
+% \usepackage{xwatermark}
+% % Left watermark
+% \newwatermark[firstpage,color=gray!60,angle=90,scale=0.32, xpos=-4.05in,ypos=0]{\href{https://doi.org/}{\color{gray}{Publication doi}}}
+% % Right watermark
+% \newwatermark[firstpage,color=gray!60,angle=90,scale=0.32, xpos=3.9in,ypos=0]{\href{https://doi.org/}{\color{gray}{Preprint doi}}}
+% % Bottom watermark
+% \newwatermark[firstpage,color=gray!90,angle=0,scale=0.28, xpos=0in,ypos=-5in]{*correspondence: \texttt{}}
+
+%%%%%%%%%%%%%%%  Author list  %%%%%%%%%%%%%%%
+\usepackage{authblk}
+\renewcommand*{\Authfont}{\bfseries}
+
+\author[1\thanks{\texttt{ada@example.org}}]{Ada Example}
+\author[2]{Bo Sample}
+\affil[1]{Example Institute}
+\affil[2]{Sample University}
+
+%%%%%%%%%%%%%%    Front matter    %%%%%%%%%%%%%%
+\begin{document}
+
+\twocolumn[\begin{@twocolumnfalse}
+
+\maketitle
+
+\begin{abstract}
+We study an invented flow and show that a placeholder quantity is conserved.
+The result is illustrative only.\\
+\end{abstract}
+
+\keywords{placeholders, flows}
+
+\vspace{0.5cm}
+
+\end{@twocolumnfalse}]
+
+%%%%%%%%%%%%%%%  Main text   %%%%%%%%%%%%%%%
+
+\section{Introduction}
+
+Placeholder flows were introduced by \cite{doe2020} and studied further \citep{doe2020}.
+A footnote follows here\footnote{An invented remark.}.
+
+\section{Method}
+
+The conserved quantity is
+
+\begin{equation}
+\label{eq:energy}
+E = \int_\Omega \frac{1}{2} |u|^2 \, \mathrm{d}x .
+\end{equation}
+
+Equation (\ref{eq:energy}) holds for every $t > 0$.
+
+\bigskip\noindent
+\begin{tabular}{p{\dimexpr 0.500\linewidth-2\tabcolsep}p{\dimexpr 0.500\linewidth-2\tabcolsep}}
+\toprule
+Case & Value \\
+\hline
+A & 1.0 \\
+B & 2.5 \\
+\bottomrule
+\end{tabular}
+
+\bigskip
+
+\begin{framed}
+\textbf{Note}\\
+An admonition with invented text.
+\end{framed}
+
+\section{Conclusion}
+
+\begin{itemize}
+\item First point.
+\item Second point.
+\end{itemize}
+
+\begin{verbatim}
+print("hello")
+\end{verbatim}
+
+
+
+%%%%%%%%%%%%%%   Bibliography   %%%%%%%%%%%%%%
+\bibliography{main.bib}
+
+\end{document}

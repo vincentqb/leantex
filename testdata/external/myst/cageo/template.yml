@@ -1,0 +1,161 @@
+jtex: v1
+title: Computers & Geosciences
+description: >
+  Latex template for the Computers & Geosciences journal by Elsevier
+
+  Please confirm that your submission follows all the requirements of the
+  guidelines, including the submission checklist:
+    - Cover letter
+    - Highlights
+    - Authorship statement
+    - The manuscript must be single column and double spaced
+    - Reference must be in the author-date format
+    - Code availability section 
+  The manuscripts that do meet the requirement guidelines will be desk-rejected.
+version: 1.0.0
+license: LPPL-1.2
+source: https://github.com/cageo/CAGEO_LaTeXTemplate
+thumbnail: ./thumbnail.png
+authors:
+  - name: Leandro Passos de Figueiredo
+    website: https://github.com/leandrofgr
+tags:
+  - paper
+  - single_column
+  - two_column
+parts:
+  - id: abstract
+    required: true
+    description: >
+      A good abstract will begin with a short description of the problem being
+      addressed, briefly describe the new data or analyses, then briefly states
+      the main conclusion(s) and how they are supported and uncertainties.
+  - id: cover_letter_description
+    required: true
+    description: >
+      Sample cover letter content is shown, <cover_letter_description> will be
+      replaced with the content from this part. <title> will be inserted automatically:
+
+
+      "please find the enclosed manuscript "<title>" which we are submitting for
+
+      exclusive consideration for publication in Computers & Geosciences. We
+      confirm that
+
+      the submission follows all the requirements and includes all the items of
+      the
+
+      submission checklist.
+
+
+      The manuscript presents:
+
+
+      <cover_letter_description>
+
+
+      We provide the source codes in a public repository with details listed in 
+
+      the section "Code availability".
+
+
+      Thanks for your consideration.""
+  - id: highlights
+    required: true
+    description: Highlights should be provided as an itemized (bullet) list
+  - id: acknowledgments
+    required: false
+    description: The authors would like to acknowledge ...
+  - id: code_availability
+    required: true
+    description: |
+      Name of the code/library
+
+      Contact: e-mail and phone number
+
+      Hardware requirements: ...
+
+      Program language: ...
+
+      Software required: ...
+
+      Program size: ...
+
+      The source codes are available for downloading at the link:
+      https://github.com/ . . . .
+doc:
+  - id: title
+    required: true
+  - id: bibliography
+  - id: short_title
+    required: true
+  - id: authors
+    required: true
+  - id: keywords
+    required: true
+options:
+  - id: paper_size
+    type: choice
+    description: |
+      Set the paper size for the document
+      (a4paper, a5paper, b5paper, letterpaper, legalpaper, executivepaper)
+    default: a4paper
+    choices:
+      - a4paper
+      - a5paper
+      - b5paper
+      - letterpaper
+      - legalpaper
+      - executivepaper
+  - type: boolean
+    id: two_column
+    description: >-
+      When true used the "cas-dc" two column format, otherwise the "cas-sc"
+      single column is used
+  - id: doublespacing
+    type: boolean
+    description: Apply double line spacing
+    default: true
+files:
+  - cas-common.sty
+  - cas-dc.cls
+  - cas-sc.cls
+  - template.tex
+packages:
+  - algorithm
+  - algpseudocode
+  - amsfonts
+  - amsmath
+  - amssymb
+  - array
+  - balance
+  - booktabs
+  - cas-common
+  - charis
+  - color
+  - colortbl
+  - dcolumn
+  - endfloat
+  - etoolbox
+  - expl3
+  - float
+  - fontenc
+  - footmisc
+  - graphicx
+  - hyperref
+  - inconsolata
+  - l3regex
+  - lineno
+  - makecell
+  - moreverb
+  - multirow
+  - natbib
+  - setspace
+  - stfloats
+  - stix
+  - wrapfig
+  - xcolor
+  - xparse
+  - xspace
+  - xstring
+myst: v1

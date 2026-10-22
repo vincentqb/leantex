@@ -1,6 +1,6 @@
 /-
-The external tier: each vendored flashtex document elaborated in-process, 2 clean, 1 with an
-unknown construct, 0 with an error; `--report` also builds with lualatex.
+The external tier: each vendored document (flashtex's, MyST's renderings) elaborated in-process,
+2 clean, 1 with an unknown construct, 0 with an error; `--report` also builds with lualatex.
 Usage: lake build ScriptsModules && lake env lean --run scripts/external.lean [--check | --selftest | --report <work> [<list>]]
 -/
 import LeanTex
@@ -14,6 +14,17 @@ namespace External
 
 def corpusDir : String := "testdata/external/flashtex"
 def documentsPath : String := corpusDir ++ "/documents.txt"
+
+/-- The files this repository wrote beside the vendored ones; every other file is
+upstream's, pinned in `SHA256SUMS`. -/
+def ownFiles : List String := ["SHA256SUMS", "documents.txt", "PROVENANCE.txt"]
+
+/-- The vendored corpora: each directory, the prefix its documents' rows take, and the files this
+repository wrote there beside the vendored ones. -/
+def corpora : List (String × String × List String) :=
+  [(corpusDir, "", ownFiles),
+   ("testdata/external/myst", "myst/",
+     ownFiles ++ ["LICENSES.txt", "paper.md", "myst.yml", "refs.bib"])]
 
 /-- The unknown-construct codes, raised where the engine meets a name nothing answers; the
 blocker ranking reads the same two. -/
@@ -67,30 +78,31 @@ def unknownsIn (ds : Array Diag) : Array String := Id.run do
         unless s.any (fun c => Char.toNat c < 32) || out.contains s do out := out.push s
   return out.qsort (· < ·)
 
-/-- The files this repository wrote beside the vendored ones; every other file is
-upstream's, pinned in `SHA256SUMS`. -/
-def ownFiles : List String := ["SHA256SUMS", "documents.txt", "PROVENANCE.txt"]
 
 def measureTier : IO (Array String × Array Row) := do
-  let faults ← sumFaults corpusDir ownFiles
-  unless faults.isEmpty do
-    throw (IO.userError s!"external: {faults.size} fault(s) in the vendored bytes:\n  \
-{"\n  ".intercalate faults.toList}")
-  let docs ← match parseList (← IO.FS.readFile documentsPath) with
-    | .ok ds => pure ds
-    | .error e => throw (IO.userError s!"{documentsPath}: {e}")
   let mut rows : Array Row := #[]
   let mut at2 := 0
   let mut at1 := 0
-  for d in docs do
-    let v := standing (← elaborate (corpusDir ++ "/" ++ d.path))
-    if v == 2 then at2 := at2 + 1 else if v == 1 then at1 := at1 + 1
-    rows := rows.push { item := d.path, value := v }
-  return (#[s!"# corpus: {documentsPath}, {docs.size} documents, each built by lualatex \
-under -halt-on-error when it was imported (testdata/external/flashtex/PROVENANCE.txt)",
+  let mut lists : Array String := #[]
+  for (dir, stem, own) in corpora do
+    let faults ← sumFaults dir own
+    unless faults.isEmpty do
+      throw (IO.userError s!"external: {faults.size} fault(s) in the vendored bytes of {dir}:\n  \
+{"\n  ".intercalate faults.toList}")
+    let path := dir ++ "/documents.txt"
+    let docs ← match parseList (← IO.FS.readFile path) with
+      | .ok ds => pure ds
+      | .error e => throw (IO.userError s!"{path}: {e}")
+    lists := lists.push s!"{path} ({docs.size})"
+    for d in docs do
+      let v := standing (← elaborate (dir ++ "/" ++ d.path))
+      if v == 2 then at2 := at2 + 1 else if v == 1 then at1 := at1 + 1
+      rows := rows.push { item := stem ++ d.path, value := v }
+  return (#[s!"# corpus: {", ".intercalate lists.toList} documents, each built by lualatex \
+when it was imported (each corpus's PROVENANCE.txt)",
     "# value: elaboration alone, through the driver's input splice — 2 no error and no \
 unknown construct (W0301/W0302), 1 no error, 0 an error",
-    s!"# counts: {at2} at 2, {at1} at 1, {docs.size - at2 - at1} at 0"], rows)
+    s!"# counts: {at2} at 2, {at1} at 1, {rows.size - at2 - at1} at 0"], rows)
 
 /-- Root-mean-square grey difference in thousandths of full scale, both
 rasters padded to the larger with white. -/

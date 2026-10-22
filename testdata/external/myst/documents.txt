@@ -1,0 +1,9 @@
+# The MyST corpus's documents: <set><TAB><path>, each path relative to this
+# directory. scripts/external.lean reads it: the `external` tier elaborates every
+# document, and `--report` builds every document with both engines. Each one
+# built with lualatex when it was imported (PROVENANCE.txt).
+plain_latex	plain_latex/main.tex
+plain_latex_book	plain_latex_book/main.tex
+arxiv_two_column	arxiv_two_column/main.tex
+curvenote	curvenote/main.tex
+cageo	cageo/main.tex

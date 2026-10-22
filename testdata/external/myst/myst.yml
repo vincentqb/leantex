@@ -1,0 +1,18 @@
+version: 1
+project:
+  title: A Note on Placeholder Flows
+  authors:
+    - name: Ada Example
+      email: ada@example.org
+      corresponding: true
+      affiliations: [inst1]
+    - name: Bo Sample
+      affiliations: [inst2]
+  affiliations:
+    - id: inst1
+      institution: Example Institute
+    - id: inst2
+      institution: Sample University
+  keywords: [placeholders, flows]
+  date: 2026-01-15
+  bibliography: [refs.bib]
