@@ -20792,8 +20792,8 @@ public def preparedPreamble (file : String) (p : Prepared)
 public def preparedBody (file : String) (p : Prepared)
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : DocBodyPlan × ESt :=
-  let (preamble, initial) := preparedPreamble file p picMetric picWithdrawn
-  (prepareDocBody file preamble).run initial
+  let phase := preparedPreamble file p picMetric picWithdrawn
+  (prepareDocBody file phase.1).run phase.2
 
 /-- Finishes a preamble and runs the document judges. -/
 public def runPreamble (file : String) (p : Prepared) (earlier : Array Diag)
@@ -20806,8 +20806,8 @@ boundary requests. -/
 public def runPrepared (file : String) (p : Prepared) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[]) : Doc × Array Diag × ReqSpans :=
-  let (preamble, st) := preparedPreamble file p picMetric picWithdrawn
-  runPreamble file p earlier preamble st
+  let phase := preparedPreamble file p picMetric picWithdrawn
+  runPreamble file p earlier phase.1 phase.2
 
 attribute [local irreducible] preparedPreamble prepareDocBody runDocBody completePrepared
   settleDocMargins in
