@@ -44,13 +44,11 @@ public structure Token where
 @[expose] public def isWs (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
-private def scanWhile (cs : Array Char) (start : Nat) (p : Char → Bool) : Nat := Id.run do
-  let mut j := start
-  for _ in [start:cs.size] do
-    if h : j < cs.size then
-      if p cs[j] then j := j + 1 else break
-    else break
-  return j
+private def scanWhile (cs : Array Char) (j : Nat) (p : Char → Bool) : Nat :=
+  if h : j < cs.size then
+    if p cs[j] then scanWhile cs (j + 1) p else j
+  else j
+termination_by cs.size - j
 
 private def posOver (cs : Array Char) (a b : Nat) (p : Pos) : Pos := Id.run do
   let mut pos := p
@@ -82,27 +80,26 @@ public def midlineWs (prevLbrace nextRbrace : Bool) (n : Nat) : List Tok :=
   if n = 1 ∧ (prevLbrace = true ∨ nextRbrace = true) then []
   else wsTokens false n
 
-private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool := Id.run do
-  if i + ps.size > cs.size then
-    return false
-  for k in [0:ps.size] do
-    if cs[i + k]! != ps[k]! then
-      return false
-  return true
+private def matchFrom (cs ps : Array Char) (i k : Nat) : Bool :=
+  if h : k < ps.size then
+    match cs[i + k]? with
+    | some c => c == ps[k] && matchFrom cs ps i (k + 1)
+    | none => false
+  else true
+termination_by ps.size - k
 
-private def findSub (cs : Array Char) (start : Nat) (pat : Array Char) : Option Nat := Id.run do
-  for k in [start:cs.size] do
-    if matchAt cs k pat then
-      return some k
-  return none
+private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool :=
+  i + ps.size ≤ cs.size && matchFrom cs ps i 0
+
+private def findSub (cs : Array Char) (k : Nat) (pat : Array Char) : Option Nat :=
+  if k < cs.size then
+    if matchAt cs k pat then some k else findSub cs (k + 1) pat
+  else none
+termination_by cs.size - k
 
 /-- The string over `[a, b)`. -/
-private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
-  let mut s := ""
-  for j in [a:b] do
-    if h : j < cs.size then
-      s := s.push cs[j]
-  return s
+private def strFrom (cs : Array Char) (a b : Nat) : String :=
+  cs.foldl String.push "" a b
 
 /-- A line end at `k`: where the next line starts, a CRLF one unit. -/
 private def lineEndAt (cs : Array Char) (k : Nat) : Option Nat :=
@@ -113,7 +110,7 @@ private def lineEndAt (cs : Array Char) (k : Nat) : Option Nat :=
 
 /-- The index past the spaces at `k` and at most one line end, as TeX's argument
 reader skips them; `none` at a blank line. -/
-private def argGap (cs : Array Char) (k : Nat) (comments : Bool := true) : Option Nat := Id.run do
+public def argGap (cs : Array Char) (k : Nat) (comments : Bool := true) : Option Nat := Id.run do
   let blank (c : Char) := c == ' ' || c == '\t'
   let mut a := scanWhile cs k blank
   let mut ends := 0
@@ -241,11 +238,10 @@ private def writtenControl (source : Array Char) (i : Nat) : Option String := do
 /-- url.sty's commands, which read their argument verbatim. -/
 @[expose] public def urlCommands : List String := ["url", "nolinkurl", "path"]
 
-/-- A url.sty command's delimited argument, read from just past the command name to its
-delimiter's next copy on the line; none where a brace, a letter, a TeX special or what opens a TikZ
-path's operation stands there (`(`, `[`, `;`, `<`, `:`, `+(`, `++`, `--`, `-|`, `|-`). -/
-private def urlDelimited (cs : Array Char) (j : Nat) : Option (Nat × Bool × String) := do
-  let k ← argGap cs j (comments := false)
+/-- A url.sty argument from its delimiter at `k` to the delimiter's next copy on the line; none
+where a brace, a letter, a TeX special or what opens a TikZ path's operation stands there (`(`, `[`,
+`;`, `<`, `:`, `+(`, `++`, `--`, `-|`, `|-`). -/
+public def urlFrom (cs : Array Char) (k : Nat) : Option (Nat × Bool × String) := do
   let d ← cs[k]?
   guard (!d.isAlphanum && !d.isWhitespace && !"{}\\%$&#^_~([;<:".contains d)
   let next := cs[k + 1]?
@@ -255,6 +251,77 @@ private def urlDelimited (cs : Array Char) (j : Nat) : Option (Nat × Bool × St
   let e := scanWhile cs (k + 1) (fun c => c != d && c != '\n' && c != '\r')
   let stop := if cs[e]? == some d then e + 1 else e
   return (stop, cs[e]? == some d, strFrom cs k stop)
+
+/-- A url.sty command's delimited argument, read from just past the command name. -/
+public def urlDelimited (cs : Array Char) (j : Nat) : Option (Nat × Bool × String) := do
+  urlFrom cs (← argGap cs j (comments := false))
+
+/-- `\verb`'s argument from just past its name: a star showing spaces, blanks skipped, then the text
+to its delimiter's next copy on the line. -/
+public def verbRead (cs : Array Char) (j : Nat) : Nat × Bool × String :=
+  let star := cs[j]? == some '*'
+  let k := scanWhile cs (if star then j + 1 else j) (fun c => c == ' ' || c == '\t')
+  let d := (cs[k]?).getD '\n'
+  let e := if d == '\n' || d == '\r' then k
+    else scanWhile cs (k + 1) (fun c => c != d && c != '\n' && c != '\r')
+  let closed := d != '\n' && d != '\r' && cs[e]? == some d
+  let body := if d == '\n' || d == '\r' then "" else strFrom cs (k + 1) e
+  let shown := if star then body.map (fun c => if c == ' ' then '␣' else c) else body
+  (if closed then e + 1 else e, closed, shown)
+
+/-- A lexically blind environment's body from `start` to its closer's first copy, or to the end. -/
+public def envRead (cs : Array Char) (start : Nat) (closer : Array Char) : Nat × Bool × String :=
+  match findSub cs start closer with
+  | some k => (k + closer.size, true, strFrom cs start k)
+  | none => (cs.size, false, strFrom cs start cs.size)
+
+/-- A form whose argument the lexer reads raw: a blind environment's body up to its closer, `\verb`'s
+text between two copies of its delimiter, and a url.sty argument with its delimiters. -/
+public inductive Capture where
+  | env (closer : Array Char)
+  | verb
+  | url
+
+/-- A line end, which no one-line capture crosses. -/
+@[expose] public def lineEnd (c : Char) : Bool := c == '\n' || c == '\r'
+
+/-- The characters of `p` stand in `cs` from `m`. -/
+@[expose] public def occursAt (cs p : Array Char) (m : Nat) : Prop :=
+  ∀ t (h : t < p.size), cs[m + t]? = some p[t]
+
+/-- Every character strictly between `a` and `b` is neither `d` nor a line end. -/
+@[expose] public def plainBetween (cs : Array Char) (d : Char) (a b : Nat) : Prop :=
+  ∀ m, a < m → m < b → ∃ c, cs[m]? = some c ∧ c ≠ d ∧ lineEnd c = false
+
+/-- What a capture read from `j` owes: its text is the source characters it spans, `\verb*` showing
+each space as `␣`, ending at its closer's first copy, or where none stands on its line or in the input. -/
+@[expose] public def Capture.Exact : Capture → Array Char → Nat → Nat × Bool × String → Prop
+  | .env closer, cs, start, (stop, closed, s) =>
+    ∃ k, s.toList = (cs.extract start k).toList ∧
+      (∀ m, start ≤ m → m < k → ¬ occursAt cs closer m) ∧
+      (if closed then start ≤ k ∧ occursAt cs closer k ∧ stop = k + closer.size
+        else k = cs.size ∧ stop = cs.size)
+  | .verb, cs, j, (stop, closed, s) =>
+    let star := cs[j]? == some '*'
+    let k₀ := if star then j + 1 else j
+    ∃ k, k₀ ≤ k ∧ (∀ m, k₀ ≤ m → m < k → cs[m]? = some ' ' ∨ cs[m]? = some '\t') ∧
+      (∀ c, cs[k]? = some c → c ≠ ' ' ∧ c ≠ '\t') ∧
+      match cs[k]? with
+      | some d =>
+        if lineEnd d then stop = k ∧ closed = false ∧ s = ""
+        else ∃ e, k < e ∧ plainBetween cs d k e ∧
+          s.toList = (cs.extract (k + 1) e).toList.map
+            (fun c => if star && c == ' ' then '␣' else c) ∧
+          (closed = true ↔ cs[e]? = some d) ∧
+          (closed = false → ∀ c, cs[e]? = some c → lineEnd c = true) ∧
+          stop = (if closed then e + 1 else e)
+      | none => stop = k ∧ closed = false ∧ s = ""
+  | .url, cs, k, (stop, closed, s) =>
+    ∃ d e, cs[k]? = some d ∧ lineEnd d = false ∧ k < e ∧ plainBetween cs d k e ∧
+      s.toList = (cs.extract k stop).toList ∧
+      (closed = true ↔ cs[e]? = some d) ∧
+      (closed = false → ∀ c, cs[e]? = some c → lineEnd c = true) ∧
+      stop = (if closed then e + 1 else e)
 
 private structure SourceChunk where
   first : Nat
@@ -531,38 +598,24 @@ verbatim package spells it"))
             else if let some (env, written, opener, closer) :=
                 (if name == "begin" then verbs.find? (fun e => matchAt cs j e.2.2.1) else none) then
               -- verbatim and the listing environments capture raw content in one token.
-              let start := j + opener.size
-              match findSub cs start closer with
-              | some k =>
-                let stop := k + closer.size
-                let body := strFrom cs start k
+              let (stop, closed, body) := envRead cs (j + opener.size) closer
+              if closed then
                 let body := match (fancy.find? (·.1 == written)).map (·.2) with
                   | some given => if env == "minted" then fancyBody given body else body
                   | none => body
                 toks := toks.push ⟨.verb env body, here⟩
-                pos := posOver cs i stop pos
-                i := stop
-              | none =>
+              else
                 diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .environment written)
                   (some ⟨file, here⟩))
-                toks := toks.push ⟨.verb env (strFrom cs start cs.size), here⟩
-                pos := posOver cs i cs.size pos
-                i := cs.size
+                toks := toks.push ⟨.verb env body, here⟩
+              pos := posOver cs i stop pos
+              i := stop
             else if name == "verb" then
-              -- `\verb<d>…<d>`: the text up to the delimiter's next copy on the line is code.
-              let star := cs[j]? == some '*'
-              let k := scanWhile cs (if star then j + 1 else j) (fun c => c == ' ' || c == '\t')
-              let d := (cs[k]?).getD '\n'
-              let e := if d == '\n' || d == '\r' then k
-                else scanWhile cs (k + 1) (fun c => c != d && c != '\n' && c != '\r')
-              let closed := d != '\n' && d != '\r' && cs[e]? == some d
-              let body := if d == '\n' || d == '\r' then "" else strFrom cs (k + 1) e
-              let shown := if star then body.map (fun c => if c == ' ' then '␣' else c) else body
+              let (stop, closed, shown) := verbRead cs j
               unless closed do
                 diags := diags.push (Diag.of .E0102 (Diag.say .E0102 .command "\\verb")
                   (some ⟨file, here⟩) (detail := some "no second delimiter on its line"))
               toks := toks.push ⟨.verb "verb" shown, here⟩
-              let stop := if closed then e + 1 else e
               pos := posOver cs i stop pos
               i := stop
             else if let some (stop, closed, call) :=

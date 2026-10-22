@@ -686,7 +686,6 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/Hyphen.lean", 4),
   ("LeanTex/Core/Ir.lean", 2),
   ("LeanTex/Core/Layout.lean", 41),
-  ("LeanTex/Core/Lex.lean", 2),
   ("LeanTex/Core/MathParse.lean", 1),
   ("LeanTex/Core/Pdf.lean", 5)]
 

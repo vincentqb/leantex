@@ -24,6 +24,7 @@ public import LeanTex.Core.NfcData
 public import LeanTex.Core.Nfc
 public import LeanTex.Core.Definer
 public import LeanTex.Core.Lex
+public import LeanTex.Core.LexContract
 public import LeanTex.Core.Parse
 public import LeanTex.Core.MdParse
 public import LeanTex.Core.MdDesugar
