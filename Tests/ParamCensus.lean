@@ -202,10 +202,13 @@ def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) (inert : Bo
   let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md
   let shows := w.pdf != base.pdf || w.body != base.body || w.css != base.css
   let warned := fresh.filter (warnsKeyed key)
+  -- a declaration the setting adds that nothing uses names the setting, whatever its key
+  let unused (ds : Array Diag) : Nat := (ds.filter (·.code == "W0449")).foldl (· + ·.sites) 0
   let noted := if inert then fresh.filter (notesInert key) else #[]
   let unread := warned.any (fun d => unreadCodes.contains d.code && !inPart d) ||
     (warned.isEmpty && !noted.isEmpty)
-  (changed, !warned.isEmpty || !noted.isEmpty, shows && unread)
+  (changed, !warned.isEmpty || !noted.isEmpty || unused w.diags > unused base.diags,
+    shows && unread)
 
 /-- Each setting of a row with its verdict in each document, every build spawned at once. -/
 def rowJudged (fonts : Font.FontSet) (row : Row) : List (String × List (Task (Bool × Bool × Bool))) :=

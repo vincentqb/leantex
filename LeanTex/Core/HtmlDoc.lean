@@ -846,7 +846,8 @@ styling (CSS Pseudo-Elements 4 §4.1); a link, an image or an overlay step does 
 
 /-- `\style` declarations as CSS rules, with a diagnostic for each marker `::marker` cannot
 express. -/
-public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : String × Array Diag :=
+public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor)
+    (shows : String → Bool := fun _ => true) : String × Array Diag :=
   let sel : String → Option String
     | "titlepage" => some "h1:not(.body-heading)"
     | "heading1" => some "h1.body-heading"
@@ -878,6 +879,7 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
     | .error d => diags := diags.push d
   for (element, st) in doc.styles.entries do
     let some tag := sel element | continue
+    unless shows tag do continue
     -- the title block's `after` is a skip of its own, not the heading's margin
     let st := if element == "titlepage" then { Ir.titleHeadingStyle st with after := none }
       else st
@@ -2785,6 +2787,30 @@ private def nodeRefs : Html.Walk Unit (Array String × Array (String × Array St
       let (r, e) := styleRefs st
       (r.foldl Array.push acc.1, e.foldl Array.push acc.2)
     | none => acc
+
+/-- What an emitted tree holds for a style rule's selector to match: each tag, each class alone and
+on its tag, an `h1` outside the body headings, and each list tag at its nesting depth up to four. -/
+private def selectorKeys : Html.Walk (Nat × Nat) (Std.HashSet String) where
+  inner ctx tag _ :=
+    some (if tag == "ul" then (ctx.1 + 1, ctx.2) else if tag == "ol" then (ctx.1, ctx.2 + 1) else ctx)
+  enter ctx acc tag attrs _ :=
+    let classes := (((attrs.find? (·.1 == "class")).map (·.2.splitOn " ")).getD []).filter
+      (!·.isEmpty)
+    let acc := classes.foldl (fun a c => (a.insert ("." ++ c)).insert (tag ++ "." ++ c)) (acc.insert tag)
+    let acc := if tag == "h1" && !classes.contains "body-heading" then
+      acc.insert "h1:not(.body-heading)" else acc
+    if tag == "ul" then acc.insert s!"ul{min ctx.1 4}"
+    else if tag == "ol" then acc.insert s!"ol{min ctx.2 4}" else acc
+
+/-- Whether a style rule's selector matches some element of a tree's keys: a list selector by its
+depth, any other by itself. -/
+private def selectorShown (keys : Std.HashSet String) (sel : String) : Bool :=
+  match sel.splitOn " " with
+  | tag :: rest =>
+    if (tag == "ul" || tag == "ol") && rest.all (· == tag) then
+      keys.contains s!"{tag}{rest.length + 1}"
+    else keys.contains sel
+  | [] => keys.contains sel
 
 /-- Whether some table gives a role a value in a shipped scheme. -/
 private def roleDeclarable (tables : List (Ir.Scheme × Ir.Palette)) (r : Ir.Role) : Bool :=
@@ -10377,7 +10403,7 @@ private def marginMarks (nodes : Array Node) : Array Node :=
 
 /-- A document as its typed tree, head and body, with the backend's own diagnostics. -/
 private def emitTreeCore (cfg : Config) (doc : Doc)
-    (styles : (Ir.Color → String) → String × Array Diag) :
+    (styles : (Ir.Color → String) → (String → Bool) → String × Array Diag) :
     Array Node × Array Node × Array Diag := Id.run do
   -- backend conditionals resolve here, so every walk below sees only this page's content
   let doc := { doc with body := Ir.keepFor "html" doc.body }
@@ -10467,7 +10493,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     head := head.push (Node.script #[("type", "application/ld+json")]
       ("{\n" ++ String.intercalate ",\n" fields ++ "\n}"))
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
-  let (styled, styleDiags) := styles cfg.literal
+  let (styled, styleDiags) := styles cfg.literal fun _ => true
   diags := diags ++ styleDiags
   -- the `@font-face` rules join this sheet once the page shows which faces its text selects
   let faceRules := match cfg.fonts with
@@ -10842,6 +10868,8 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
     let tokens := tokenRules doc
     let base := baseRules doc ex (chMilli cssCfg.fonts) pairs ++
       schemeRules cssCfg ++ tokens
+    let keys := selectorKeys.list (0, 0) {} body.toList
+    let styled := (styles cssCfg.literal (selectorShown keys)).1
     let rules := base ++ "\n" ++ theme ++ styled
     let (bodyReads, bodyDecls) := nodeRefs.list () (#[], #[]) body.toList
     let sheetReads := varReads rules
@@ -10864,8 +10892,14 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
       let (r, d) := nodeRefs.list () (#[], #[]) shipped.toList
       used := sheetReads.toList ++ r.toList ++
         d.toList.flatMap (fun (d : String × Array String) => d.2.toList)
+    -- an author colour nothing on the page reads is not declared
+    let read (p : Ir.Palette) : Ir.Palette := { p with entries := p.entries.filter fun (n, _) =>
+      match n with
+      | .color _ => used.contains n.property
+      | .role _ => true }
+    let sheetCfg := { cssCfg with pal := read cssCfg.pal, views := cssCfg.views.map read }
     head := head.modify styleAt fun _ => Node.style (faceRules ++ resolveRoleVars roles.contains
-      (baseCss cssCfg doc pairs (roles := some roles) (taken := sheetReads.toList)
+      (baseCss sheetCfg doc pairs (roles := some roles) (taken := sheetReads.toList)
         (rules := some base)
         (epochVars := { cssCfg with cssRoles := roles }.epochVarBlocks
           (used.filter (·.startsWith "--ltx--"))) ++ "\n" ++ theme ++ styled))
@@ -10888,7 +10922,7 @@ private def emitTreeWith (cfg : Config) (u : PageResources) (doc : Doc) :
   -- locations erased, so they hide nothing from the structural classifiers
   let tree := emitTreeCore
     { cfg with mathRenderer := none, captured := u, everyFace := cfg.everyFace || cfg.mathRenderer.isSome }
-    (Ir.eraseLocations resolved.1) (fun lit => styleRules resolved.1 lit)
+    (Ir.eraseLocations resolved.1) (fun lit shows => styleRules resolved.1 lit shows)
   -- projections, not a destructuring `let`, keep `emitTree_resolve_agree` cheap to check
   (tree.1, tree.2.1 ++ mathBoundaryNodes cfg.mathRenderer, resolved.2 ++ tree.2.2)
 

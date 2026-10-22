@@ -22,7 +22,7 @@ private def pageFills (doc : Ir.Doc) (out : Layout.Out) : Array Ir.Color :=
 colours apart from palette roles, while a colour expression reads the author's colour first. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let (doc, ds) := elabStr (article "\\definecolor{bg}{rgb}{.9,.9,.9}\n" "Probe text.")
+  let (doc, ds) := elabStr (article "\\definecolor{bg}{rgb}{.9,.9,.9}\n" "\\textcolor{bg}{Probe text.}")
   let out := layoutOf fonts doc
   t "author colours: \\definecolor{bg} elaborates clean"
     (!ds.any (·.severity == .error))
@@ -90,7 +90,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "minted bgcolor: the HTML panel takes the colour, the body the page role"
     (panels.any (hasStr · s!"background: {HtmlDoc.cssColor grey}") &&
       hasStr mCss "background: var(--ltx-bg);" &&
-      hasStr (treeCssList "" mHead.toList) s!"--ltx-c-bg: {HtmlDoc.cssColor grey};")
+      !hasStr (treeCssList "" mHead.toList) "--ltx-c-bg:")
   let (pageDoc, _) := elabStr (article "\\definecolor{paper}{HTML}{F4F0E6}\n\\pagecolor{paper}\n"
     "Probe page.")
   t "author colours: \\pagecolor names the page role explicitly"

@@ -457,7 +457,8 @@ def literalChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("a list marker", styled "\\style{itemize}{ marker = {\\textcolor[HTML]{1A2433}{>}} }"
         "\\begin{itemize}\\item a\\end{itemize}"),
       ("a heading rule", styled "\\style{section}{ rule = red!50!black }" "\\section{A}b"),
-      ("a link hover", styled "\\style{nav}{ hover = red!50!black }" "x")] do
+      ("a link hover", styled "\\style{nav}{ hover = red!50!black }"
+        "\\begin{nav}\\href{https://example.org}{Link}\\end{nav}")] do
     let (doc, _) := elabStr src
     let (offences, seen) := literalOffences doc
     t s!"literals: {name} rides its schemes ({seen} colours read): {offences.toList}"

@@ -4425,7 +4425,7 @@ def listMarginChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       hasStr sheet "\nul { padding-left: 4rem; }" &&
       hasStr sheet ":where(ul, ol, dd) { padding-left: var(--leftmargini, 2.5rem); }")
   let typed := html (doc "\\style{itemize}{ indent = 30pt }\n\\style{itemize2}{ indent = 15pt }\n"
-    "\\begin{itemize}\n\\item Alpha.\n\\end{itemize}")
+    "\\begin{itemize}\n\\item Alpha.\n\\begin{itemize}\n\\item Bravo.\n\\end{itemize}\n\\end{itemize}")
   t "a first level's declared indent reaches every level no deeper declaration takes, as the page's"
     (hasStr typed "\nul { padding-left: 3rem; }" &&
       hasStr typed "\nul ul:not(ul ul ul) { padding-left: 1.5rem; }" &&

@@ -1483,7 +1483,8 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a heading rule's literal colour is carried to the dark screen"
     (ruleIn ruleCss "h2" "--rule-color" .light == some "#800000" &&
       legibleOnDark (ruleIn ruleCss "h2" "--rule-color" .dark))
-  let hoverCss := schemeCss {} (styled "\\style{nav}{ hover = red!50!black }" "x")
+  let hoverCss := schemeCss {} (styled "\\style{nav}{ hover = red!50!black }"
+    "\\begin{nav}\\href{https://example.org}{Link}\\end{nav}")
   t "a link hover's literal colour is carried to the dark screen"
     (ruleIn hoverCss "a:hover" "color" .light == some "#800000" &&
       legibleOnDark (ruleIn hoverCss "a:hover" "color" .dark))
