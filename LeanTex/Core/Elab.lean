@@ -12627,7 +12627,7 @@ private def itemLabelSpec (ctx : Ctx) (n : String) (kd : Nat) (body : Array Raw)
         match e.key, e.value with
         | "label", some v => template := some (.raws v)
         | "start", some v => start := (rawSrc v).trimAscii.toString.toNat?
-        | "resume", none | "resume*", none => resume := true
+        | "resume", none => resume := true
         | _, _ => pure ()
   if template.isSome then return (template, start, resume)
   let level := if 1 < kd then (ctx.styles.find? s!"{n}{kd}").orElse fun _ => ctx.styles.find? n
@@ -12668,7 +12668,7 @@ private def itemSeriesSpec (body : Array Raw) (pos : Pos) : Option String × Opt
       for e in Entries.read .keyval (body.extract (j + 1) (k' - 1)) do
         match e.key, e.value with
         | "series", some v => series := some (rawSrc v).trimAscii.toString
-        | "resume", some v | "resume*", some v => resumed := some (rawSrc v).trimAscii.toString
+        | "resume", some v => resumed := some (rawSrc v).trimAscii.toString
         | _, _ => pure ()
   return (series, resumed)
 
@@ -13854,7 +13854,7 @@ private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) 
             (detail := some s!"unreadable length '{value.getD ""}'")
             (help := "give a length such as 2pt, 0.5em or a token name")
       else unless key.isEmpty || (key == "label" && n != "description") ||
-          ((key == "start" || key == "resume" || key == "resume*" || key == "ref") &&
+          ((key == "start" || key == "resume" || key == "ref") &&
             n == "enumerate") || key == "series" do
         warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
           (Diag.say .W0104 .option key (some (some .environment, n))) pos

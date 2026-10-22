@@ -14716,7 +14716,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         let text := ((body'.extract j body'.size).toList.reverse.dropWhile
           (fun r => r matches .space || r matches .par _)).reverse.toArray
         let tail : Array Raw := (punct.getD #[]) ++ (match cite with
-          | some c => #[.space, .word "(" p] ++ c ++ #[.word ")" p]
+          | some c => if c.all (· matches .space) then #[] else #[.space, .word "(" p] ++ c ++ #[.word ")" p]
           | none => #[])
         return .env "quote" (text ++ tail) p
       -- premise: listTablePackageChecks — a starred list is inline only where enumitem loads

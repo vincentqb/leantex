@@ -61,12 +61,17 @@ def listTablePackageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         d.code == "W0104" && hasStr d.message "mode").size == 1)
   t "a starred list is no inline list unless enumitem defines one"
     (!hasStr (page "" "Kinds: \\begin{itemize*}\\item red \\item blue\\end{itemize*}.") "• red • blue")
-  t "resume* continues a series, and a series on an itemize is no unread key"
-    (hasStr (page "\\usepackage{enumitem}\n"
-      ("\\begin{enumerate}[series=s]\n\\item One\n\\end{enumerate}\n" ++
-       "\\begin{enumerate}[resume*=s]\n\\item Two\n\\end{enumerate}")) "2. Two" &&
-      !(elabStr (dvDoc "\\usepackage{enumitem}\n"
+  t "resume*, whose list would take the resumed list's options, is named, never silently numbered"
+    (((elabStr (dvDoc "\\usepackage{enumitem}\n"
+      ("\\begin{enumerate}[label=(\\roman*), series=t]\n\\item One\n\\end{enumerate}\n" ++
+       "\\begin{enumerate}[resume*=t]\n\\item Two\n\\end{enumerate}"))).2.filter fun d =>
+        d.code == "W0104" && hasStr d.message "resume*").size == 1)
+  t "a series on an itemize is no unread key"
+    (!(elabStr (dvDoc "\\usepackage{enumitem}\n"
         "\\begin{itemize}[series=b]\n\\item x\n\\end{itemize}")).2.any (·.code == "W0104"))
+  t "a blank displayed citation sets no parentheses"
+    (!hasStr (page "\\usepackage{csquotes}\n"
+      "\\begin{displayquote}[][;]Quoted words\\end{displayquote}") "(")
   t "a displayed quotation's citation follows it and its punctuation, in parentheses"
     (hasStr (page "\\usepackage{csquotes}\n"
       "\\begin{displayquote}[Some One][.]Quoted words\\end{displayquote}") "Quoted words. (Some One)")
