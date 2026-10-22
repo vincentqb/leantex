@@ -7,6 +7,7 @@ public import LeanTex.Core.MdDesugarContract
 public import LeanTex.Core.BibElab
 
 import all LeanTex.Core.Elab
+import LeanTex.Core.ControlContract
 import all LeanTex.Core.Compat
 import all LeanTex.Core.Parse
 import all LeanTex.Core.BibElab
@@ -192,7 +193,7 @@ public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
     rw [settleSplits_package_exact file command names pos groupPos namePos]
     simp only [Compat.packageEnvsLowered_package_exact]
     exact Compat.executeInputs_package_refusal_contract reader file command names
-      pos groupPos namePos _ #[] _ hc (by rcases hc with rfl | rfl <;> rfl) hnames hr
+      pos groupPos namePos _ #[] _ hc (ctrlRow?_package command hc) hnames hr
   refine ⟨hproducer.1, ?_⟩
   intro part hpart
   have hname : request.name = names.trimAscii.toString :=

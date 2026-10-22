@@ -2487,7 +2487,7 @@ def reports : List Report := [
     accept := ["main's binary at b75023de on the Lean prose fixture: For every n : ℕ, [n mod 2 = 0, (n + 2) mod 2 = 0, ∀ k : ℕ, k = n → k mod 2 = 0].TFAE, the guards failing there; this tree says For every n : ℕ, the following are equivalent: and the three statements as a numbered list, the third in words, in the PDF, on the web page and in the twin",
       "the corpus built by main's binary at b75023de and by this tree's: every PDF, web page and twin byte-identical but the Lean prose fixture's"]
     state := .guarded "b75023de" .before .author },
-  { id := "R287", date := "2026-10-21"
+  { id := "R288", date := "2026-10-21"
     what := "a Lean statement's math view could not break inside a negation, a quantifier or a named hypothesis, so a negated conjunction or a quantified hypothesis wider than the measure ran past the margin"
     pins := [check% Tests.LeanStatements.leanStatementChecks]
     accept := ["main's binary at 0a9241e0 on an invented statement with a negated disjunction and a quantified hypothesis: an overfull line (W0005) at an 8.5cm measure and at the article's, the guards failing there; this tree breaks inside the parentheses after their operators, the negation's sign and the quantifiers' heads, with no overfull line, in the PDF and on the web page",

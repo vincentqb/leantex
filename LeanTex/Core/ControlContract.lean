@@ -41,6 +41,20 @@ public theorem ctrlRows_sound : Compat.CtrlRowsSound := by
   unfold Compat.CtrlRowsSound
   decide +kernel
 
+/-- A package load, `\usepackage` or `\RequirePackage`, is answered by the package row. -/
+public theorem ctrlRow?_package (command : String)
+    (hc : command = "usepackage" ∨ command = "RequirePackage") :
+    Compat.ctrlRow? command = some (Compat.packageRow command) := by
+  have hmem : Compat.packageRow command ∈ Compat.ctrlRows := by
+    unfold Compat.ctrlRows
+    refine List.mem_flatten.mpr ?_
+    rcases hc with rfl | rfl
+    · exact ⟨_, List.getElem_mem (n := 9) (by decide),
+        List.mem_of_find?_eq_some (p := (·.name == "usepackage")) rfl⟩
+    · exact ⟨_, List.getElem_mem (n := 2) (by decide),
+        List.mem_of_find?_eq_some (p := (·.name == "RequirePackage")) rfl⟩
+  exact (Compat.ctrlRow_names ctrlRows_sound _ hmem).1
+
 /-- At every cursor a row no leave keeps consumes exactly what its signature reads and one lacking a
 standing argument or kept is left to elaboration; at a body cursor a quiet row of groups consumes
 exactly its group prefix. -/
