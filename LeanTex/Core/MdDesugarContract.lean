@@ -1061,8 +1061,8 @@ private theorem frontRaws_adm (file : String) (m : MetaRead) : Adm d (m.frontRaw
 
 public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
-    (known : Option (Std.HashSet String) := none) :
-    ∀ r ∈ (desugar file input dialect role citing known false).1,
+    (known : Option (Std.HashSet String) := none) (titled : Bool := true) :
+    ∀ r ∈ (desugar file input dialect role citing known false titled).1,
       (vocabularyFor dialect).admits r = true := by
   unfold desugar bodyRaws
   refine adm_append (adm_append (adm_append (adm_append (layout_adm _) (prelude_adm _)) ?_)
@@ -1216,9 +1216,9 @@ private theorem tail_starts (file : String) (dialect : Dialect) (m : MetaRead) (
 
 public theorem desugar_blockStart_contract (file input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
-    (known : Option (Std.HashSet String) := none)
-    (h : (desugar file input dialect role citing known false).1 ≠ #[]) :
-    ∃ r ∈ (desugar file input dialect role citing known false).1, BlockStart r := by
+    (known : Option (Std.HashSet String) := none) (titled : Bool := true)
+    (h : (desugar file input dialect role citing known false titled).1 ≠ #[]) :
+    ∃ r ∈ (desugar file input dialect role citing known false titled).1, BlockStart r := by
   unfold desugar bodyRaws at h ⊢
   refine (starts_append (starts_append (starts_append (starts_append (layout_starts _)
     (prelude_starts _)) ?_) (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))

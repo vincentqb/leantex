@@ -28,6 +28,7 @@ public import LeanTex.Core.MdDesugar
 public import LeanTex.Core.MdDesugarContract
 public import LeanTex.Core.Jtex
 public import LeanTex.Core.MystTemplate
+public import LeanTex.Core.MystRender
 public import LeanTex.Core.CodeLink
 public import LeanTex.Core.CodeDoc
 public import LeanTex.Core.CodeDocContract

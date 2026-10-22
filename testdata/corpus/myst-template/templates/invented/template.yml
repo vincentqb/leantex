@@ -1,0 +1,13 @@
+jtex: v1
+title: Invented Template
+parts:
+  - id: abstract
+    required: true
+options:
+  - id: draft
+    type: boolean
+doc:
+  - id: title
+    required: true
+  - id: authors
+    required: true

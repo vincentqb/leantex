@@ -7,6 +7,8 @@ public import LeanTex.Core.Ir
 public import LeanTex.Core.Encoding
 import LeanTex.Core.Elab
 import LeanTex.Core.Surface
+import LeanTex.Core.MdDesugar
+import LeanTex.Core.MystRender
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
 public import LeanTex.Core.BibText
@@ -417,18 +419,33 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
           handled := true
     return if handled then (some out, current) else (none, context)
 
+/-- A template's reader: a splice request answered with its raws as a markdown input's, any other
+request by `inner`. -/
+private def spliceReader (splices : List (String × Array Parse.Raw)) (inner : Compat.InputReader ReadM) :
+    Compat.InputReader ReadM := fun request context => do
+  if request.command == "markdownInput" then
+    if let some n := MystRender.spliceOf? request.name then
+      let raws := ((splices.find? (·.1 == n)).map (·.2)).getD #[]
+      let (answer, context) ← Elab.markdownAnswer inner context request.file raws false request.pos
+      return (some answer, context)
+  inner request context
+
 /-- Execute macros and fulfil input requests in source order, from what the run already knows of
-its files; markdown and a code file execute nothing. -/
+its files; markdown and a code file execute nothing, a markdown document set through its template
+executing as the template's TeX with its splices. -/
 private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog)
-    (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
+    (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".")
+    (template : Option (System.FilePath × List (String × Array Parse.Raw)) := none) :
     IO (Compat.Executed × InputLog) :=
-  (match Ir.Surface.ofPath file with
-    | .markdown => do
+  (match template, Ir.Surface.ofPath file with
+    | some (tdir, splices), _ =>
+      Elab.executeInputs (spliceReader splices (readAt tdir file 8)) file (Compat.applyClassSource raws)
+    | none, .markdown => do
       let (raws, ds) ← includeDivisions dir file raws
       modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
       return Compat.kept file (Code.joinBibliography raws (← get).joins)
-    | .code _ => return Compat.kept file raws
-    | .tex => Elab.executeInputs (readAt dir file 8) file (Compat.applyClassSource raws)).run
+    | none, .code _ => return Compat.kept file raws
+    | none, .tex => Elab.executeInputs (readAt dir file 8) file (Compat.applyClassSource raws)).run
       { log with surface := Ir.Surface.ofPath file }
 
 /-- Execute macros and fulfil input requests in source order, resolving beside the
@@ -538,6 +555,37 @@ public structure Source where
   ledger : Encoding.Ledger
   reads : Array String
 
+/-- A markdown document's template, where its front matter declares one: the template's raws, its
+directory and splices, the reads, and what its reading names in place of the document's; the
+document's own raws where it declares none or its template cannot be set, the loss named. -/
+private def templated (file text : String) (raws : Array Parse.Raw) :
+    IO (Array Parse.Raw × Array Diag × Array String ×
+      Option (System.FilePath × List (String × Array Parse.Raw))) := do
+  let fields := Md.metadataOf file text
+  match MystRender.declared fields with
+  | none => return (raws, MystRender.unreadDiags file fields, #[], none)
+  | some d =>
+    let parts := MystRender.unreadDiags file (fields.filter (·.key == "parts"))
+    match MystRender.resolve d.path with
+    | .error why => return (raws, #[MystRender.lossDiag file d why] ++ parts, #[], none)
+    | .ok rel =>
+      let tdir := (System.FilePath.mk file).parent.getD "." / rel
+      let ymlPath := (tdir / "template.yml").toString
+      let texPath := (tdir / "template.tex").toString
+      match ← Host.runIO (World.ask (.readFile ymlPath)), ← Host.runIO (World.ask (.readFile texPath)) with
+      | .ok y, .ok t =>
+        let yml := (Encoding.readMarkdown ymlPath y).text
+        let tex := (Encoding.readMarkdown texPath t).text
+        let (body, bodyDs) := Surface.readBody file text
+        -- the template reads the front matter, so a key the markdown title block leaves is not unread
+        let bodyDs := bodyDs.filter fun d => !(d.code == "W0307" && d.subject.any (·.startsWith "md:meta:"))
+        match MystRender.render file texPath yml tex fields d body with
+        | (.ok (traws, splices), ds) => return (traws, bodyDs ++ ds, #[ymlPath, texPath], some (tdir, splices))
+        | (.error why, ds) =>
+          return (raws, ds.push (MystRender.lossDiag file d why) ++ parts, #[ymlPath, texPath], none)
+      | _, _ => return (raws, #[MystRender.lossDiag file d
+          s!"its template.yml and template.tex are not both in {rel}"] ++ parts, #[], none)
+
 /-- The front door: a document's bytes to its executed source, decoded under the
 declaration its preamble makes and read again under the one execution settles on; `phase`
 hears each stage's name, detail and milliseconds. -/
@@ -588,10 +636,14 @@ public def readDocument (file : String) (bytes : ByteArray)
       if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)
       return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags, factsRead.toArray ++ bibRead)
   let (raws, frontDiags, surfaceReads) ← surface first.text true
+  let (raws, templateDiags, templateReads, template) ← if Ir.Surface.ofPath file == .markdown then
+      templated file first.text raws else pure (raws, #[], #[], none)
+  let frontDiags := if template.isSome then templateDiags else frontDiags ++ templateDiags
+  let surfaceReads := surfaceReads ++ templateReads
   let t ← IO.monoMsNow
   let seeded (read : Encoding.FileText) (under : Option Encoding.Declared) : Encoding.Ledger :=
     if tex then { reads := #[read.read file under] } else {}
-  let (executed, log) ← executeWith file raws { guess, ledger := seeded first guess }
+  let (executed, log) ← executeWith file raws { guess, ledger := seeded first guess } (template := template)
   let settled := log.ledger.declared
   let firstReads := log.reads
   let (read, frontDiags, executed, log) ← if !log.ledger.stale then

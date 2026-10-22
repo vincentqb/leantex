@@ -152,7 +152,12 @@ wherever each citation reads back so in one list; otherwise it sets every
 citation as its marks, linked to the entries it writes. The title block reads
 `title`, `subtitle`, `author` or `authors` (names, or MyST's mappings with their
 `affiliations` by id or name), `affiliations`, `date` and `abstract`, set as
-LaTeX's `\maketitle` and abstract; an undated document gets no date. Every other
+LaTeX's `\maketitle` and abstract; an undated document gets no date. A MyST
+template an `exports` entry of format `pdf` or `tex` names by `template:` (a path
+inside the document's tree, a bare name under `templates/`, never a URL, which is
+never fetched) sets the document instead: its `template.tex` rendered over the
+front matter, its options and parts, the body standing at `[-CONTENT-]`; a
+template absent or unreadable is named and the document sets as itself. Every other
 metadata key but `web` (under Output and diagnostics) is named as not read, `csl` among
 them, since no CSL processor runs; an included file's `web` is named, its page
 taking the including document's layout. A

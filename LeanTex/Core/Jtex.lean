@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.CaseFold
+import LeanTex.Core.DeriveBEq
 import LeanTex.Core.Hex
 
 public section
@@ -22,7 +23,9 @@ inductive Value where
   | arr (items : List Value)
   | obj (fields : List (String × Value))
   | splice (name : String)
-  deriving Repr, Inhabited, BEq
+  deriving Repr, Inhabited
+
+deriving_structural_beq Value
 
 /-- A text's length in UTF-16 units, as JavaScript counts it. -/
 def utf16Len (s : String) : Nat :=

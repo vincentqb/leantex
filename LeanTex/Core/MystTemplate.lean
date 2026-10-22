@@ -431,7 +431,9 @@ private def textOf : Value → Option String
 
 /-- A text's pieces apart at any of `seps`, trimmed, the empty ones dropped. -/
 private def splitAt (seps : List Char) (s : String) : List String :=
-  ((s.split fun c => seps.contains c).toList.map fun t => t.toString.trimAscii.toString).filter (!·.isEmpty)
+  let (pieces, last) := s.foldl (fun (acc : Array String × String) c =>
+    if seps.contains c then (acc.1.push acc.2, "") else (acc.1, acc.2.push c)) (#[], "")
+  ((pieces.push last).toList.map (·.trimAscii.toString)).filter (!·.isEmpty)
 
 /-- A value as a list: a list itself, a text apart at `seps`, nothing for none, else alone. -/
 private def listOf (seps : List Char) : Value → List Value

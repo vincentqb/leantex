@@ -131,6 +131,7 @@ import Tests.FrameClass
 import Tests.PageOverrun
 import Tests.Jtex
 import Tests.MystTemplate
+import Tests.MystRender
 import Tests.PageTurns
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
@@ -614,6 +615,7 @@ def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   journalClassChecks ref oneFace
   Tests.PageOverrun.checks ref oneFace
   Tests.PageTurns.checks ref oneFace
+  Tests.MystRender.checks ref oneFace
   listTablePackageChecks ref oneFace
   Tests.TexBodies.checks ref oneFace
   Tests.TitleNames.checks ref oneFace

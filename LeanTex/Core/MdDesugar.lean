@@ -1145,6 +1145,10 @@ private def authorOf (n : Yaml) : Option (String × Array String) :=
     affs.bind fun affs => (n.get? "name" |>.bind Yaml.text?).map (·, affs)
   | .seq _ => none
 
+/-- The keys a MyST template declaration reads, which the template's renderer names where nothing
+reads them. -/
+public def templateKeys : List String := ["exports", "export", "parts"]
+
 /-- The keys only a document's citations read. -/
 private def citationKeys : List String :=
   ["bibliography", "biblio-style", "natbiboptions", "nocite", "reference-section-title",
@@ -1154,7 +1158,7 @@ private def citationKeys : List String :=
 public def metaKeys : List (String × Role) :=
   citationKeys.map (·, Role.document) ++
     [("nocite", .included), ("link-citations", .included), (Parse.markdownWebKey, .document)] ++
-    frontKeys.map (·, Role.document)
+    (frontKeys ++ templateKeys).map (·, Role.document)
 
 /-- What a metadata block's fields declare for citations, read as Pandoc reads them, and for the
 web layout; every other key is named, as is a key written twice, which takes its last value, and in
@@ -1284,6 +1288,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
       match named with
       | some named => out := { out with front := { out.front with affiliations := named } }
       | none => out := { out with diags := out.diags.push (unread f "an affiliation is not a name or a mapping with its name") }
+    | "exports", _ | "export", _ | "parts", _ => pure ()
     | "web", .scalar v =>
       let v := v.trimAscii.toString
       let help := "write " ++ " or ".intercalate (Ir.WebLayout.names.map fun (n, _) =>
@@ -1428,6 +1433,10 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
   | some (Blk.metadata fs _) => (fs, bs.extract 1 bs.size)
   | _ => (#[], bs)
 
+/-- A markdown document's metadata fields, as its reading takes them. -/
+public def metadataOf (file input : String) : Array MetaField :=
+  (splitMetadata (blocksIn .document file input).1).1
+
 /-- Text with each abbreviation joined to the word after it by a non-breaking space where spaces
 follow it, as Pandoc's smart punctuation joins it, unless a citation or a note's reference follows
 the spaces ending it. -/
@@ -1512,7 +1521,8 @@ own diagnostics carrying `.md` spans; its metadata opens it, and its reference l
 its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
 public def desugar (file : String) (input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
-    (known : Option (Std.HashSet String) := none) (tex : Bool := false) : Array Raw × Array Diag :=
+    (known : Option (Std.HashSet String) := none) (tex : Bool := false) (titled : Bool := true) :
+    Array Raw × Array Diag :=
   let read := blocksIn dialect file (if tex then stripTexComments input else input)
     (included := role == .included && citing) (known := known) (tex := tex)
     (notes := role == .document)
@@ -1540,8 +1550,8 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
         #[route file "refs" (Diag.say .W0307 .division "{#refs}") p
           (detail := some "no bibliography is declared")] else #[]
     | none => #[]
-  let front := if role == .document then m.frontRaws file dialect else #[]
-  let frontDs := if role == .document then m.frontDiags file dialect else #[]
+  let front := if role == .document && titled then m.frontRaws file dialect else #[]
+  let frontDs := if role == .document && titled then m.frontDiags file dialect else #[]
   (m.layout ++ m.prelude ++ front ++ body.1 ++ m.tail file dialect cited placed.isSome,
     read.2 ++ m.diags ++ unused ++ frontDs ++ body.2 ++ unplaced)
 

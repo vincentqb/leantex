@@ -1,0 +1,21 @@
+\documentclass{article}
+[-IMPORTS-]
+\title{[-doc.title-]}
+\author{[-doc.authors|join(" \\and ", "name")-]}
+[# if doc.date #]
+\date{[-doc.date.year-]}
+[# else #]
+\date{}
+[# endif #]
+\begin{document}
+\maketitle
+[# if parts.abstract #]
+\begin{abstract}
+[-parts.abstract-]
+\end{abstract}
+[# endif #]
+[# if options.draft #]
+Draft copy.
+[# endif #]
+[-CONTENT-]
+\end{document}
