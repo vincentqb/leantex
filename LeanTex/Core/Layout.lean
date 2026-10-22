@@ -14664,6 +14664,11 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Alone, the space is a `\vspace`; carrying a body, it is the element's `\addvspace`.
     let g := r.resolve before.value
     let g := if r.boxed then { g with fil := false } else g
+    -- A document's `\addvspace` after a paragraph adds before the next paragraph's `\parskip`.
+    if body == #[.role Ir.addvspaceRole #[]] then
+      if a.owed.back?.all (·.width == 0) then { a.addvspace g with declaredSkip := true }
+      else a.addvspace g
+    else
     let a := if body.isEmpty then a.vspace g
       else { a.vskip g with declaredSkip := false }
     collectBlocks (if body.isEmpty then { r with labels := #[] } else r) a body indent
@@ -14845,7 +14850,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩, hpp⟩, hsp⟩, hmk⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, -⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, hre⟩, hti⟩, -⟩, hpp⟩, hsp⟩, hmk⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   have hmk' : Ir.markRole? n = none :=

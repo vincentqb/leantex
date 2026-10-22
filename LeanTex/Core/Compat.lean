@@ -8579,7 +8579,7 @@ public inductive Lowering where
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
-  | texOrPdf | changeFontSizes
+  | texOrPdf | changeFontSizes | addvspace
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8704,6 +8704,7 @@ private def ctrlRows2 : List CtrlRow :=
    packageRow "RequirePackage",
    ⟨"addbibresource", [.opt, .needed], .lower .addBibResource {}⟩,
    ⟨"addtocounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
+   ⟨"addvspace", [.needed], .lower .addvspace {}⟩,
    beamerConfigRow "beamertemplatenavigationsymbolsempty" 0,
    ⟨"bibliography", [.needed], .lower .bibResources { leaves := [.inBody, .without "biblatex"] }⟩,
    ⟨"bibliographystyle", [.needed], .lower .bibliographyStyle { leaves := [.inBody, .inSeam] }⟩,
@@ -12191,6 +12192,8 @@ declare the furniture directly")
       became "\\vspace*" s!"a page-top anchor, then {native.note?.getD "nothing"}" c.pos
       return #[.ctrl vspaceAnchorMark c.pos] ++ (← carry native c.pos)
     setting "\\vspace" native c.pos
+  -- latex.ltx's `\addvspace` after a paragraph, where the space before it is the paragraph's own.
+  | .addvspace => setting "\\addvspace" (skipNative (skipSrc (lengthSrc (c.arg 0))) "addvspace") c.pos
   | .pageBreak => do
     -- Every `\pagebreak` is taken whole; the demand level is not weighed.
     if (c.given 0).isSome then
@@ -12473,6 +12476,7 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .komaOptions => some { args := [some "fontsize=12pt"], inDoc := false }
   | .komaOption => some { args := [some "fontsize", some "12pt"], inDoc := false }
   | .changeFontSizes => some { args := [none, some "12pt"], inDoc := false }
+  | .addvspace => some { args := [some "1em"], inDoc := true }
   | .thisPageStyle => some { args := [some "plain"], inDoc := true }
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .addBibResource | .bibResources | .natbibStyle

@@ -6769,6 +6769,11 @@ when it is empty — '{}'")
     have _ : sliceWeight raws jr.1 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
+  else if name == "ignorespaces" then
+    -- TeX's `\ignorespaces`: the spaces after it set nothing.
+    have _ : sliceWeight raws (skipSpaces raws (i + 1)) < sliceWeight raws i :=
+      sliceWeight_lt raws h (by have := skipSpaces_ge raws (i + 1); omega)
+    elabInlinesFrom ctx raws (skipSpaces raws (i + 1)) acc sb
   else if name == "tokens" then
     let (tk, ⟨k, hk⟩) ← inlineTokens ctx raws (i + 1) pos
     have _ : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h (by omega)
@@ -6902,7 +6907,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   !declaresScope name && !isPageGround name && (ctx.palette.resolve name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
-  !(name == "tokens") && (Compat.lengthRestoreKeys? name).isNone &&
+  !(name == "ignorespaces") && !(name == "tokens") && (Compat.lengthRestoreKeys? name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
   !(blockOnly.contains name || bodyDefiner name) &&
   !(Compat.nativeReadCtrls.contains name ||
@@ -13939,21 +13944,27 @@ private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
   ctx.tokens.entries ++ ctx.engineTokens ++
     #["smallskipamount", "medskipamount", "bigskipamount"].map fun n => (n, Ir.skipAmount ctx.tokens n)
 
-/-- A `\block`'s option: its `before` skip, whether it stretches as `\fill`,
-and whether it is a primitive `\vskip`. -/
-private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymGlue × Bool) := do
+/-- How a `\block`'s skip stands: as `\vspace`, a primitive `\vskip`, or `\addvspace`'s larger of it
+and the skip before. -/
+private inductive SkipKind where
+  | vspace | vskip | addvspace
+  deriving BEq
+
+/-- A `\block`'s option: its `before` skip, whether it stretches as `\fill`, and its kind. -/
+private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymGlue × SkipKind) := do
   let (opts, ds) := Decl.parseBlock ctx.file (Entries.texts .native optSrc) pos "block"
     (blockSkipTokens ctx)
   modify fun st => { st with diags := st.diags ++ ds }
   let mut before : SymGlue := {}
-  let mut primitive := false
+  let mut primitive := SkipKind.vspace
   let mut fill := false
   for e in opts do
     match e.key, e.value with
     | "before", .glue g => before := g
     | "before", .dim d => before := { width := Dim.SymLength.ofLength d }
-    | "kind", .ident "vskip" => primitive := true
-    | "kind", .ident "vspace" => primitive := false
+    | "kind", .ident "vskip" => primitive := .vskip
+    | "kind", .ident "vspace" => primitive := .vspace
+    | "kind", .ident "addvspace" => primitive := .addvspace
     | "stretch", .glue g =>
       if g == { fil := true } then fill := true
       else
@@ -13966,19 +13977,21 @@ private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymG
         (help := "write \\vfill or \\vspace{\\fill} for the page's leftover")
     | key, v =>
       let d := if key == "before" then Decl.wrongType ctx.file "block" key "a length" v pos
-        else if key == "kind" then Decl.wrongType ctx.file "block" key "vspace or vskip" v pos
+        else if key == "kind" then Decl.wrongType ctx.file "block" key "vspace, vskip or addvspace" v pos
         else if key == "stretch" then Decl.wrongType ctx.file "block" key "fill or unranked" v pos
         else Decl.unknownKey ctx.file "block" key ["before", "kind", "stretch"] pos
       modify fun st => { st with diags := st.diags.push d }
   return ({ before with fil := before.fil || fill }, primitive)
 
-/-- Pushes a skip block, marked as the last skip when it is an empty
-primitive `\vskip`. -/
-private def pushSkipBlock (blocks : Array Block) (b : Block) (primitive : Bool) : Array Block :=
-  let empty := match b with
-    | .spaced _ inner => inner.isEmpty
-    | _ => false
-  if primitive && empty then (blocks.push b).push (.role Ir.primitiveSkipRole #[]) else blocks.push b
+/-- Pushes a skip block, marked as the last skip when it is an empty primitive `\vskip`, an empty
+`\addvspace` carrying its mark. -/
+private def pushSkipBlock (blocks : Array Block) (b : Block) (kind : SkipKind) : Array Block :=
+  match b, kind with
+  | .spaced g inner, .addvspace =>
+    if inner.isEmpty then blocks.push (.spaced g #[.role Ir.addvspaceRole #[]]) else blocks.push b
+  | .spaced _ inner, .vskip =>
+    if inner.isEmpty then (blocks.push b).push (.role Ir.primitiveSkipRole #[]) else blocks.push b
+  | b, _ => blocks.push b
 
 seal blockSkipTokens blockOptions pushSkipBlock
 
@@ -15205,7 +15218,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else if n == "block" then
         let j0 := skipSpaces raws (i + 1)
         have hj0 : i + 1 ≤ j0 := skipSpaces_ge raws (i + 1)
-        let ⟨((before, primitive), jf), hjf⟩ : { t : (SymGlue × Bool) × Nat // i + 1 ≤ t.2 } ←
+        let ⟨((before, primitive), jf), hjf⟩ : { t : (SymGlue × SkipKind) × Nat // i + 1 ≤ t.2 } ←
           if let some (.sym '[' _) := raws[j0]? then do
             let ⟨(optSrc, k), hk⟩ : { t : Array Raw × Nat // i + 1 ≤ t.2 } :=
               match hc : closeBracketFrom raws (j0 + 1) with
@@ -15218,7 +15231,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
               show i + 1 ≤ skipSpaces raws k
               omega⟩
           else
-            pure ⟨(({}, false), j0), hj0⟩
+            pure ⟨(({}, .vspace), j0), hj0⟩
         match hgf : raws[jf]? with
         | some (.group body _) =>
           have hbm := group_measures hgf (show i ≤ jf by omega)

@@ -985,6 +985,10 @@ public def noInterlineRole : String := "no-interline"
 which a following `\addvspace` combines with. -/
 public def primitiveSkipRole : String := "primitive vskip"
 
+/-- The role an `\addvspace` skip's body is: an empty marker by which the skip takes the larger of
+itself and the skip before. -/
+public def addvspaceRole : String := "addvspace skip"
+
 
 /-- The role a frame's `[squeeze]` rides in: an empty marker opening the body,
 for beamer's cramped list spacing. -/
@@ -1153,7 +1157,7 @@ public def rightMarkRole : String := "page rightmark"
 
 /-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
-  n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
+  n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole || n == addvspaceRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
     n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole || n == plainRole ||
     n == captionCloseRole || n == rectoRole || n == trivItemRole || n == captionAtRole ||

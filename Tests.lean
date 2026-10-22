@@ -101,6 +101,7 @@ import Tests.PrintColour
 import Tests.ItemLabels
 import Tests.WebMeasure
 import Tests.MarginNote
+import Tests.TexBodies
 import Tests.LabelLines
 import Tests.ListGaps
 import Tests.ListLabels
@@ -597,13 +598,14 @@ def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   Tests.PrintColour.driverChecks ref
 
 /-- The page blocks: the class a page is set on, what overruns a page, where a flow's pages turn,
-and the list and table packages' blocks. -/
+the list and table packages' blocks, and what a TeX body sets. -/
 def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   localClassChecks ref oneFace
   journalClassChecks ref oneFace
   Tests.PageOverrun.checks ref oneFace
   Tests.PageTurns.checks ref oneFace
   listTablePackageChecks ref oneFace
+  Tests.TexBodies.checks ref oneFace
 
 /-- The table blocks: a cell's side, leading, lengths, strut and column widths. -/
 def tableSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
