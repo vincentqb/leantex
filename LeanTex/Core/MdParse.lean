@@ -625,8 +625,8 @@ private def yamlClose (stack : Array YamlFrame) (ind : Nat) : Array YamlFrame :=
   return st
 
 /-- A block of YAML lines as a node, read over a subset: block mappings and sequences at any depth,
-a sequence item opening a mapping (`- key: value`), flow scalars and sequences, and `|` and `>` block
-scalars; `none` outside it. -/
+a sequence item opening a mapping (`- key: value`), flow scalars and sequences, plain scalars
+continued on more indented lines, and `|` and `>` block scalars; `none` outside it. -/
 public def yamlTree (lines : Array String) : Option Yaml := Id.run do
   let mut stack : Array YamlFrame := #[]
   -- a block scalar being collected: its key, whether literal, its key's indentation, its lines
@@ -668,7 +668,18 @@ public def yamlTree (lines : Array String) : Option Yaml := Id.run do
         | some top => stack := stack.pop.push { top with items := top.items.push v }
         | none => return none
         continue
-    let some (key, k) := yamlKeyAt t.toList.toArray | return none
+    let some (key, k) := yamlKeyAt t.toList.toArray |
+      -- a plain scalar continued on a line indented past its mapping's keys
+      match stack.back? with
+      | some top =>
+        match top.fields.back? with
+        | some (fk, .scalar v) =>
+          if top.seq || top.pending.isSome || ind ≤ top.ind || v.isEmpty then return none
+          let some w := yamlScalar? t | return none
+          stack := stack.pop.push { top with fields := top.fields.pop.push (fk, .scalar (v ++ " " ++ w)) }
+          continue
+        | _ => return none
+      | none => return none
     let v := (yamlFrom t (k + 1)).trimAscii.toString
     -- a sequence written at its key's indentation ends at that mapping's next key
     if let (some top, some below) := (stack.back?, stack.pop.back?) then
