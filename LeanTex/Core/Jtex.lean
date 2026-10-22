@@ -585,7 +585,19 @@ def filterApply (name : String) (v : Value) (args : List Value) : Except String 
       | some attr => if attr.truthy then items.map fun (x : Value) => x.get attr.prim.show else items
       | none => items
     .ok (.str (sep.intercalate (items.map fun (x : Value) => x.show)))
-  | "join", _ => .error "join over no array"
+  | "join", v =>
+    -- with an attribute nunjucks maps the value through lib.map first: a text's characters, else none
+    match args[1]? with
+    | some attr =>
+      if !attr.truthy then .error "join over no array" else
+      let sep := match args.head? with
+        | some s => if s.truthy then s.prim.show else ""
+        | none => ""
+      let n := match v with
+        | .str s => s.length
+        | _ => 0
+      .ok (.str (sep.intercalate (List.replicate n "")))
+    | none => .error "join over no array"
   | "length", .arr items => .ok (.num items.length)
   | "length", .str s => .ok (.num (utf16Len s))
   | "length", .obj fs => .ok (.num fs.length)
@@ -679,7 +691,7 @@ def printed (sc : Scope) (e : Expr) : Except String (Array Piece) := do
         | none => items
       return items.zipIdx.foldl (init := #[]) fun out (x, k) =>
         piecesInto (if k == 0 then out else out.append sep) x
-    | _ => throw "join over no array"
+    | _ => return piecesInto #[] (← e.eval sc)
   | _ => return piecesInto #[] (← e.eval sc)
 
 /-- A statement tag's words: its keyword and the rest of its source. -/

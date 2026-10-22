@@ -179,30 +179,66 @@ def context (tpl : TemplateYml) (fields : Array MetaField) (d : Declared) :
 stands in place of. -/
 def bibliographyCtrls : List String := ["bibliography", "bibliographystyle", "printbibliography"]
 
+/-- Where a bibliography command's arguments are being dropped: not, after the command, or inside
+its optional `[…]`. -/
+inductive BibSkip where
+  | none
+  | after (group : Bool)
+  | inOpt (group : Bool)
+  deriving BEq
+
+private theorem toList_sizeOf_lt (b : Array Parse.Raw) : sizeOf b.toList < sizeOf b := by
+  cases b; simp
+
+/-- Raws with the template's bibliography commands and their arguments taken out, at any depth of
+environments and groups, with whether any was. -/
+def dropBib : List Parse.Raw → BibSkip → Array Parse.Raw × Bool → Array Parse.Raw × Bool
+  | [], _, acc => acc
+  | r :: rest, skip, (out, d) =>
+    match skip, r with
+    | .inOpt g, .sym ']' _ => dropBib rest (.after g) (out, d)
+    | .inOpt g, _ => dropBib rest (.inOpt g) (out, d)
+    | .after g, .space => dropBib rest (.after g) (out, d)
+    | .after g, .sym '[' _ => dropBib rest (.inOpt g) (out, d)
+    | .after true, .group _ _ => dropBib rest .none (out, d)
+    | _, .ctrl n p =>
+      if bibliographyCtrls.contains n then dropBib rest (.after (n != "printbibliography")) (out, true)
+      else dropBib rest .none (out.push (.ctrl n p), d)
+    | _, .env n b p =>
+      let (b', d') := dropBib b.toList .none (#[], d)
+      dropBib rest .none (out.push (.env n b' p), d')
+    | _, .group b p =>
+      let (b', d') := dropBib b.toList .none (#[], d)
+      dropBib rest .none (out.push (.group b' p), d')
+    | _, r => dropBib rest .none (out.push r, d)
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals first | omega | (have := toList_sizeOf_lt b; omega)
+
+/-- A template's own `\graphicspath` entries, each read in its directory as well as beside the
+document. -/
+def rebased (dir : String) (entries : Array Parse.Raw) : Array Parse.Raw :=
+  entries.foldl (init := #[]) fun out e => match e with
+    | .group #[.word w q] p => (out.push e).push (.group #[.word (dir ++ "/" ++ w) q] p)
+    | _ => out.push e
+
 /-- A template document's top-level raws with its body read as the template file's and its own
 bibliography set aside, a `\graphicspath` after its class line resolving its images beside the
-document and then in `dir`; whether it set a bibliography aside. -/
+document and then in `dir`, its own paths rebased there too; whether it set a bibliography aside. -/
 def placed (tplFile dir : String) (raws : Array Parse.Raw) : Array Parse.Raw × Bool := Id.run do
   let mut out : Array Parse.Raw := #[]
   let mut dropped := false
+  let mut prev : Option Parse.Raw := none
   for r in raws do
-    match r with
-    | .env "document" b p =>
-      let mut body : Array Parse.Raw := #[]
-      let mut skip := false
-      for x in b do
-        if skip then
-          skip := false
-          if x matches .group _ _ then continue
-        match x with
-        | .ctrl n _ =>
-          if bibliographyCtrls.contains n then
-            dropped := true
-            skip := n != "printbibliography"
-          else body := body.push x
-        | _ => body := body.push x
+    match prev, r with
+    | some (.ctrl "graphicspath" _), .group g p => out := out.push (.group (rebased dir g) p)
+    | _, .env "document" b p =>
+      let (body, d) := dropBib b.toList .none (#[], false)
+      dropped := dropped || d
       out := out.push (.env "document" #[.env (Parse.inputEnv tplFile) body p] p)
-    | _ => out := out.push r
+    | _, _ => out := out.push r
+    unless r matches .space do prev := some r
   -- graphicx reads the last \graphicspath, so the template's own, set after this one, still wins
   let gp : Array Parse.Raw := #[.ctrl "graphicspath" {}, .group #[.group #[.word "./" {}] {},
     .group #[.word (dir ++ "/") {}] {}] {}]
@@ -246,7 +282,8 @@ def render (file tplFile dir : String) (yml tex : String) (fields : Array MetaFi
       let bibDs := if !dropped then #[] else
         #[Diag.of .W0392 (Diag.say .W0392 .bibliography none) (some ⟨file, d.pos⟩) none
           (detail := some "the template's own list set aside for the document's") (subject := some "md:template:bibliography")]
-      let read := texts.map fun (id, s) => (id, Surface.fragment .markdown file s d.pos (cites := true))
+      let cites := fields.any (·.key == "bibliography")
+      let read := texts.map fun (id, s) => (id, Surface.fragment .markdown file s d.pos (cites := cites))
       let parts := read.map fun (id, (rs, _)) => (id, rs)
       let partDs := read.foldl (init := #[]) fun acc (_, (_, ds)) => acc ++ ds
       let kept := #[Parse.Raw.env (Parse.keptInputEnv file) body d.pos]

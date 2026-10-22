@@ -439,6 +439,13 @@ private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog
     IO (Compat.Executed × InputLog) :=
   (match template, Ir.Surface.ofPath file with
     | some (tdir, splices), _ => do
+      -- the body's Lean divisions are read beside the document, their bibliographies joined
+      let splices ← splices.mapM fun (n, rs) => do
+        if n != "CONTENT" then return (n, rs)
+        let #[Parse.Raw.env e b p] := rs | return (n, rs)
+        let (b, ds) ← includeDivisions dir file b
+        modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
+        return (n, #[Parse.Raw.env e b p])
       -- the template executes as its own file, so what its execution names stands in it
       let tex := (tdir / "template.tex").toString
       Elab.executeInputs (spliceReader splices (readAt tdir tex 8)) tex (Compat.applyClassSource raws)
@@ -582,7 +589,6 @@ private def templated (file text : String) (raws : Array Parse.Raw) :
         let yml := (Encoding.readMarkdown ymlPath y).text
         let tex := (Encoding.readMarkdown texPath t).text
         let (body, bodyDs) := Surface.readBody file text
-        let ((body, divDs), _) ← (includeDivisions ((System.FilePath.mk file).parent.getD ".") file body).run {}
         -- premise: Tests.MystRender.checks — a key the template reads is not named unread, any other still is
         let reads := MystRender.keysRead tex
         let bodyDs := bodyDs.filter fun d =>
@@ -590,7 +596,7 @@ private def templated (file text : String) (raws : Array Parse.Raw) :
             d.subject != some "md:affiliations"
         match MystRender.render file texPath rel yml tex fields d body with
         | (.ok (traws, splices), ds) =>
-          return (traws, bodyDs ++ divDs ++ ds, #[ymlPath, texPath], some (tdir, splices))
+          return (traws, bodyDs ++ ds, #[ymlPath, texPath], some (tdir, splices))
         | (.error why, ds) =>
           return (raws, #[MystRender.lossDiag file d why] ++ ds ++ parts, #[ymlPath, texPath], none)
       | _, _ => return (raws, #[MystRender.lossDiag file d
