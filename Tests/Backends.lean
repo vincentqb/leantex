@@ -513,9 +513,9 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((plainPage.splitOn ":where(p, ul, ol, li, dl, dd, pre, blockquote, hr) { margin: 0; }").length == 2 &&
      (plainPage.splitOn ":where(figure.float) { margin: 0 auto; }").length == 2 &&
      !hasStr plainPage "\nli { margin")
-  t "html peer gap is the page's parskip over one screen quantum, top-owned"
+  t "html peer gap is the page's parskip over one screen quantum, top-owned, the article's none"
     ((plainPage.splitOn ":where(* + p) { margin-top: var(--parskip, 0.725rem); }").length == 2 &&
-     !hasStr plainPage "    --parskip:")
+     hasStr plainPage "    --parskip: 0.000rem;")
   -- A selector reaches what its rightmost compound matches, so both sides are read there.
   let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
     let ex := HtmlDoc.exAt none Ir.baseFontSize
@@ -562,7 +562,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, dispBody, _) := HtmlDoc.emitTree {} dispDoc
   t "html display formula is its own .display block between the paragraphs"
     (flowShapeList #[] dispBody.toList ==
-      #["p.", "p.display>math", "p.", "div.equation display>math"])
+      #["p.u-indent", "p.display>math", "p.u-indent", "div.equation display>math"])
   t "html display page has no centered wrapper around the formula"
     (!hasStr dispPage "class=\"centered\"")
   let (themedDoc, themedDs) := elabStr ("\\documentclass{beamer}\\usetheme{moloch}" ++
@@ -1968,7 +1968,7 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (oneRowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "left \\hfill right\\end{document}")
   t "unbroken stretched row stays one row"
-    (((HtmlDoc.emit {} oneRowDoc).1.splitOn "class=\"entry entry-pair\"").length == 2)
+    (((HtmlDoc.emit {} oneRowDoc).1.splitOn "class=\"entry entry-pair").length == 2)
 
   let (fillDoc, fillDs) := elabStr "a \\hfill b"
   t "hfill source clean" fillDs.isEmpty

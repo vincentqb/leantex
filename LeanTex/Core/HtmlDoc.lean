@@ -138,6 +138,8 @@ public structure Config where
   shaped : Option Ir.QuoteKind := none
   /-- The block before goes on with the paragraph the next one opens (`Ir.Block.continuesPar`). -/
   continues : Bool := false
+  /-- This walk's paragraphs open on the page's `\parindent` (`Ir.Block.keepsParIndent`). -/
+  indents : Bool := false
   /-- The paragraph before runs on into the next block, an overlay step (`Ir.Block.runsOn`). -/
   runsOn : Bool := false
   inset : Length := 0
@@ -1539,6 +1541,16 @@ public def quoteKindCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.Pr
     s!"p.verse-par.u-continues::before \{ content: \"\"; display: inline-block; width: {hang}; }\n" ++
     s!"blockquote.verse > :not(p, {carriers}):not(:first-child), \
 blockquote.verse > :is({carriers}) > :not(p) \{ margin-left: {hang}; }\n" else "")
+
+/-- The page's `\parindent` on the paragraphs that open on it, fixed in the preamble font, a body
+declaration's custom property over it; none on a flush page. -/
+public def parIndentCss (basis : LengthBasis) (face : Ir.PreambleFace)
+    (indent : Option Dim.SymLength) : String :=
+  match indent with
+  | none => ""
+  | some i =>
+    let fixed := tableLengthCss basis (.ofLength (face.resolve i))
+    s!"p.u-indent \{ text-indent: var(--parindent, {fixed}); }\n"
 
 /-- beamer's abstract inset as CSS on the abstract's own paragraphs, in the page's unit as the
 preamble's font fixes it. -/
@@ -6156,6 +6168,10 @@ public def baseRules (doc : Doc) (ex : Length) (ch : Nat) (pairs : List (Nat × 
   listIndentCss doc.docClass.record.htmlLists (lengthBasisOf doc) doc.preambleFace ++
   quoteKindCss doc.docClass.record.htmlLists (lengthBasisOf doc) doc.preambleFace
     doc.docClass.record.quotationIndent (Ir.quoteKindsOf doc.body) ++
+  parIndentCss (lengthBasisOf doc) doc.preambleFace doc.page.parindent ++
+  (if doc.abstractForm == .quotation && doc.body.any (· matches .abstract _) then
+    s!".abstract.quoted p.u-indent \{ text-indent: {cssLength doc.docClass.record.quotationIndent}; }\n"
+   else "") ++
   (if doc.abstractForm == .inset then abstractInsetCss (lengthBasisOf doc) doc.preambleFace
    else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
@@ -7521,7 +7537,22 @@ private def gridTracks (cols : Array (BoxWidth × Array Block)) : String :=
 /-- Children start their own sibling walk; the parent's epoch style already inherits into them. -/
 public def Config.into (cfg : Config) : Config :=
   { cfg with
-    epochStyle := "", epochPaint := "", epochGround := false, continues := false, runsOn := false }
+    epochStyle := "", epochPaint := "", epochGround := false, continues := false, runsOn := false
+    indents := false }
+
+/-- `Config.into` for a block whose paragraphs keep the `\parindent` around it
+(`Ir.Block.keepsParIndent`). -/
+public def Config.within (cfg : Config) : Config := { cfg.into with indents := cfg.indents }
+
+/-- The abstract's body config: a quotation's paragraphs each indented but where a redefinition
+declares none, a title page's under the page's indent and opening flush past its centred head. -/
+public def Config.inAbstract (cfg : Config) : Config :=
+  match cfg.abstractForm with
+  | .quotation =>
+    { (cfg.deeper true).into with
+      indents := ((cfg.styles.find? "abstract").bind (·.indent)) != some {} }
+  | .titlePage => { cfg.into with indents := cfg.indents, continues := true }
+  | .inset => cfg.into
 
 /-- The frame's numbered extent, for every part of its HTML frame. -/
 public def Config.inFrame (cfg : Config) (frame : Block) : Config :=
@@ -9054,7 +9085,8 @@ private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
     | some k =>
       let n := withClass s!"{k.name}-par" n
       if cfg.continues || Ir.opensRunIn content then withClass "u-continues" n else n
-    | none => n
+    | none =>
+      if cfg.indents && !cfg.continues && !Ir.opensFlush content then withClass "u-indent" n else n
   if hasFill content then
     let rows := splitAtBreaks content
     if rows.size == 1 then
@@ -9378,7 +9410,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- a title slot's content sets under the slot's template alone
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
       then { cfg with slotTitle := true } else cfg
-    let kids := blockNodesInto cfg.into #[] body.toList
+    -- a role is grouping, the paragraph state before it reaching its first block, and a theorem's
+    -- first paragraph opens on its head
+    let inner := if (Block.role n body).keepsParIndent then cfg.within else cfg.into
+    let kids := blockNodesInto
+      { inner with continues := cfg.continues || (Ir.thmSpaceOf? n).isSome } #[] body.toList
     -- a page-model mark has no meaning in a continuous medium
     if Ir.pageMarkerRole n then Html.text "" else
     match n == Ir.trivlistRole || n == Ir.inParagraphRole || (Ir.thmSpaceOf? n).isSome,
@@ -9394,7 +9430,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- an anchor's content model is transparent; elaboration refuses nested anchors
   | .link target body =>
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
-      (Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
+      (Html.elem "a" (blockNodesInto cfg.within #[] body.toList)
         #[("href", target), ("style", "display: block")])
   | .quote q body =>
     -- A quotation's kind and the spacing it declares read their rules by its classes.
@@ -9493,8 +9529,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "section"
         (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
-          blockNodesInto (if cfg.abstractForm == .quotation then cfg.deeper true else cfg).into #[]
-            body.toList)
+          blockNodesInto cfg.inAbstract #[] body.toList)
         #[("class", abstractClass cfg.styles ++ abstractFormClass cfg.abstractForm)])
   | .columns cols =>
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
@@ -9510,11 +9545,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- a step is grouping: the paragraph state before it reaches its first block
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
       (overlayNode "div" cfg.overlaySteps spec
-        (blockNodesInto { cfg.into with continues := cfg.continues } #[] body.toList))
+        (blockNodesInto { cfg.within with continues := cfg.continues } #[] body.toList))
   | .altSteps spec firstPage otherPage =>
     -- a group's fills grow nothing: the stage's flex column is shared by every step
-    let first := blockNodesInto { cfg.into with fillsInert := true } #[] firstPage.toList
-    let other := blockNodesInto { cfg.into with fillsInert := true } #[] otherPage.toList
+    let first := blockNodesInto { cfg.within with fillsInert := true } #[] firstPage.toList
+    let other := blockNodesInto { cfg.within with fillsInert := true } #[] otherPage.toList
     let groups := overlayChainAlternatives true "div" cfg.overlaySteps spec first other
     Html.elem "div" groups
       #[("class", if groupsEndAlike groups then "alt-pair alt-alike" else "alt-pair")]
@@ -9533,7 +9568,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let style := s!"margin-top: {if cfg.deck then sourcedIn (stageLengthCss cfg.page.height) before
       else cssSourced before}"
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
-      (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
+      (Html.elem "div" (blockNodesInto cfg.within #[] body.toList)
         #[("class", if grows then "spaced fill-before" else "spaced"), ("style", style)])
   | .verbatim covered s spec =>
     let lines := spec.tokenLines s
@@ -9679,7 +9714,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .only targets body =>
     -- `emit` already kept this node for HTML, so it is a transparent group
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
-      (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
+      (Html.elem "div" (blockNodesInto cfg.within #[] body.toList)
         #[("data-backend", String.intercalate "," targets.toList)])
   | .nav spec body =>
     let labelAttrs : Array (String × String) :=
@@ -9745,10 +9780,10 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
     blockNodesInto (cfg.advanceTokens tk) acc rest
   | b :: rest =>
     if Ir.pageMarkerBlock b then
-      blockNodesInto { cfg with continues := cfg.continues || b.continuesPar
+      blockNodesInto { cfg with continues := b.parContAfter cfg.continues
                                 runsOn := cfg.runsOn || b.runsOn } acc rest
     else blockNodesInto
-      { cfg.afterBlock b with continues := if b.isSkip then cfg.continues else b.continuesPar
+      { cfg.afterBlock b with continues := b.parContAfter cfg.continues
                               runsOn := false }
       (acc.push (cfg.applyEpoch
         (if cfg.runsOn then withClass "u-runs-on" (blockNode cfg b) else blockNode cfg b)) ++
@@ -9862,7 +9897,7 @@ private theorem pageOpening_projects (cfg : Config) (acc : Array Node)
     (h : Ir.pageOpeningOfRole? n = some opening) :
     blockNodesInto cfg acc (.role n #[] :: rest) = blockNodesInto cfg acc rest := by
   simp only [blockNodesInto, Ir.pageMarkerBlock, Array.isEmpty_empty,
-    Ir.pageOpening_marker_exact n opening h, Ir.pageOpening_continuesPar n opening h,
+    Ir.pageOpening_marker_exact n opening h, Ir.pageOpening_parContAfter n opening cfg.continues h,
     Ir.pageOpening_runsOn n opening h, Bool.true_and, Bool.or_false, ite_true]
 
 /-- Facts of the emitted tree the landmark and anchor checks judge, collected in one walk. -/
@@ -10120,6 +10155,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
     | .setTokens tk =>
       cfg := cfg.advanceTokens tk
     | .section 1 _ _ title =>
+      cfg := { cfg with continues := true }
       out := close out cur openId
       let text := Ir.firstPageText title
       let sa := (anchors[i]?.join).getD { base := slug title, id := slug title, clash := none }
@@ -10138,7 +10174,7 @@ retitle the sections apart, or link to the numbered anchor")
       unless Ir.pageMarkerBlock b do
         let asides := marginAsidesOf cfg b
         cur := cur.push (cfg.applyEpoch node) ++ asides
-      cfg := cfg.afterBlock b
+      cfg := { cfg.afterBlock b with continues := b.parContAfter cfg.continues }
   return (close out cur openId, diags)
 
 /-- Whether an element is a sequential-navigation tab stop (HTML §6.6.3). -/
@@ -10475,7 +10511,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                         listSets := (Ir.listSetsOf doc.body).zipIdx.foldl
                           (fun m (s, i) => m.insert s i) {}
                         abstractForm := doc.abstractForm
-                        preamble := doc.preambleFace }
+                        preamble := doc.preambleFace
+                        indents := doc.page.parindent.isSome }
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false

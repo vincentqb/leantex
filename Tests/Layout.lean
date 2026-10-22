@@ -240,10 +240,10 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
      firstX "alpha beta" == some geom.hmargin)
 
   let scOut := layoutOf oneFace (Elab.run "t" "\\scshape aB").1 geom
-  let scRuns := (bodyLines scOut).flatMap (·.segs.filterMap fun s =>
+  let scRuns := (bodyLines scOut).flatMap fun l => (unindented l).filterMap fun s =>
     match s with
     | .run _ _ _ _ glyphs size _ _ _ _ _ => some (glyphs.map (·.2.1), size)
-    | _ => none)
+    | _ => none
   t "synthesised small caps carry no lowercase form"
     (!scRuns.isEmpty && scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
   t "synthesised small caps are uniform: mixed case sets at one reduced size"
@@ -272,7 +272,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
     font.advance c * max 0 geom.fontSize / font.unitsPerEm
   let lp := scaledAdv 'A' * 50 / 1000
   let rp := scaledAdv '.' * 700 / 1000
-  let protDoc := (Elab.run "t" (String.intercalate " " (List.replicate 40 "Aaaa."))).1
+  let protDoc := (Elab.run "t" ("\\noindent " ++ String.intercalate " " (List.replicate 40 "Aaaa."))).1
   let protLines := bodyLines (layoutOf oneFace protDoc geom)
   let full := protLines.pop
   t "protrusion fixture wraps into full lines" (protLines.size ≥ 3)
@@ -410,9 +410,10 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let unrole : Option Ir.Block → Option Ir.Block
     | some (.role n #[b]) => if n == Ir.inParagraphRole then some b else some (.role n #[b])
     | b => b
+  let body := doc.body.filter (!Ir.pageMarkerBlock ·)
   t "quote and quotation elaborate to the one quote node, each of its kind"
-    (doc.body.size == 4 &&
-      (match unrole doc.body[1]?, doc.body[2]? with
+    (body.size == 4 &&
+      (match unrole body[1]?, body[2]? with
        | some (Ir.Block.quote s1 q1), some (Ir.Block.quote s2 q2) =>
          q1.size == 1 && q2.size == 2 && s1.kind == .quote && s2.kind == .quotation
        | _, _ => false))
@@ -1340,7 +1341,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       | .decoration .underline w th _ _ _ => some (w, th)
       | _ => none)
   let widthOf (fs : Font.FontSet) (src : String) : Dim.Length :=
-    (((outOf fs src).pages.flatMap (·.lines))[0]?.map (·.setWidth)).getD 0
+    (((outOf fs src).pages.flatMap (·.lines))[0]?.map fun l => l.setWidth - lineIndent l).getD 0
   let coverage (fs : Font.FontSet) (src : String) : Dim.Length × Dim.Length :=
     ((rulesOf fs src).foldl (fun acc (w, _) => acc + w) (0 : Dim.Length),
      widthOf fs src)
@@ -2199,16 +2200,23 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       then some l.y else none
   let deckYs := ownGeomYs (deck169Body
     "\\begin{frame}[t]\nAlpha beta gamma.\n\nDelta epsilon zeta.\n\\end{frame}")
-  let flowYs := ownGeomYs
+  let flowYs :=
+    let (doc, _) := elabMd "Alpha beta gamma.\n\nDelta epsilon zeta.\n"
+    (bodyLines (layoutOf oneFace doc (Layout.Geom.ofPage doc.page))).filterMap fun (l : Layout.LineOut) =>
+      if l.segs.any (fun s => match s with | .run .. => true | _ => false)
+      then some l.y else none
+  let articleYs := ownGeomYs
     "\\documentclass{article}\\begin{document}\nAlpha beta gamma.\n\nDelta epsilon zeta.\n\\end{document}"
   let deckFontSize := (elabStr (deck169Body "\\begin{frame}\nx\n\\end{frame}")).1.page.fontSize
   t "a deck's paragraphs advance by the body leading, spending no parskip"
     (deckYs.size == 2 &&
       deckYs[1]! - deckYs[0]! == Ir.leadingFor deckFontSize)
-  t "a flow page still spends its rhythm quantum between paragraphs"
+  t "a markdown page's flow still spends its rhythm quantum between paragraphs"
     (flowYs.size == 2 &&
       flowYs[1]! - flowYs[0]! ==
         Ir.leadingFor Ir.baseFontSize + Ir.rhythmQuantum Ir.baseFontSize)
+  t "an article's paragraphs stand one baselineskip apart, as its class's parskip sets them"
+    (articleYs.size == 2 && articleYs[1]! - articleYs[0]! == Ir.leadingFor Ir.baseFontSize)
 
 /-- With a top margin too small for the head line, body ink still starts `inkClearance` below the
 head's ink, and at the default margins the band is zero. -/
@@ -2583,7 +2591,7 @@ def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     let out := layoutOf oneFace d geom
     out.pages.flatMap fun p => p.lines.map fun l =>
       (lineText l,
-       (l.segs.findSome? fun seg => match seg with
+       ((unindented l).findSome? fun seg => match seg with
         | .run _ color _ _ _ _ _ _ _ _ _ => some color
         | _ => none).getD Ir.Color.black)
   let colorOf (runs : Array (String × Ir.Color)) (needle : String) : Option Ir.Color :=
@@ -4388,8 +4396,9 @@ def listMarginChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     "\\end{itemize}\n\\end{abstract}\nCharlie words."
   let bodySet := doc "" ("\\setlength{\\leftmargini}{3em}\n\\setlength{\\leftmarginii}{40pt}\n" ++
     inAbstract)
+  -- The abstract's quotation indents its paragraph by its 1.5em at `\small`.
   t "a body em margin is fixed as the page fixes it, and the stylesheet ships that value"
-    (place bodySet "Alpha" == some (Dim.pt 30) && place bodySet "Bravo" == some (Dim.pt 70) &&
+    (place bodySet "Alpha" == some (Dim.pt 435 / 10) && place bodySet "Bravo" == some (Dim.pt 70) &&
       hasStr (html bodySet) "--leftmargini: 3rem" && !hasStr (html bodySet) "--leftmargini: 3em")
   t "a body leftmargin both artifacts honour is not named as a loss"
     ((elabStr bodySet).2.all fun d => !(d.code == "W0104" && hasStr (saidText d) "leftmargin"))
@@ -4459,7 +4468,7 @@ def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let article := "\\documentclass{article}\\begin{document}" ++ inAbstract ++ "\n\\end{document}"
   let passed := "\\PassOptionsToClass{notitlepage}{report}\n" ++ report
   t "a notitlepage passed to report sets its abstract as the article's quotation"
-    (place article "Alpha" == some (Dim.pt 25) && place passed "Alpha" == some (Dim.pt 25) &&
+    (place article "Alpha" == some (Dim.pt 385 / 10) && place passed "Alpha" == some (Dim.pt 385 / 10) &&
       place passed "Bravo" == place article "Bravo")
   -- beamer's template, `\leftskip2em\rightskip2em plus 1fill` at the class's 10.95pt.
   let em2 := 2 * (Dim.pt 1095 / 100)

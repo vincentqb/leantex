@@ -155,14 +155,14 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t "flow class: tex/ltflowsource.tex is generated from the source leantex splices"
     ((← IO.FS.readFile "tex/ltflowsource.tex") == Ir.ltFlowSourceTex)
 
-/-- The flow class's first-line indents (`Ir.indentParagraphs`), against lualatex's. -/
+/-- The flow class's first-line indents (`Ir.PageSpec.parindent`), against lualatex's. -/
 def firstIndentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   -- lualatex, `{ltflow}`: size11.clo's 17pt, none past a heading, `\noindent` or `\@endpe`.
   let indentsOf (src : String) : Dim.Length × List (String × Dim.Length) :=
     let (d, out) := outOf fonts src
     let lines := out.pages.flatMap (·.lines)
-    (Ir.sizeFileParindent d.page.fontSize,
+    (if Ir.parIndentOf d.page == .ofLength (Dim.pt 17) then Dim.pt 17 else 0,
       ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet",
         "Kilo", "Lima"].filterMap
         fun w => (lines.find? fun l => (lineText l).trimAscii.toString.startsWith w).map fun l =>
@@ -189,10 +189,11 @@ def firstIndentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     "\\begin{document}\n" ++ indentBody ++ "\n\\end{document}\n")
   t "flow class: the preamble's \\parindent replaces the size file's"
     (wide.any fun (word, x) => word == "Bravo" && near x (d.page.fontSize * 2))
-  let (_, bodyDs) := elabStr ("\\documentclass{ltflow}\n\\begin{document}\n" ++
-    "\\setlength{\\parindent}{0pt}\nAlpha.\n\\end{document}\n")
-  t "flow class: a body \\parindent is named, the preamble's indent standing"
-    (bodyDs.any fun d => hasStr d.message "parindent")
+  let (_, bodyFlush) := indentsOf ("\\documentclass{ltflow}\n\\begin{document}\n" ++
+    "Alpha.\n\n\\setlength{\\parindent}{0pt}\nBravo.\n\\end{document}\n")
+  t "flow class: a body \\parindent sets the paragraphs after it"
+    (bodyFlush.length == 2 &&
+      bodyFlush.all fun (word, x) => near x (if word == "Alpha" then Dim.pt 17 else 0))
   -- lualatex: article.cls indents `\subparagraph` by `\parindent`; parskip.sty drops the indent.
   let runIns := "Alpha.\n\n\\label{q}\\paragraph{Papa head} Papa text.\n\n" ++
     "\\subparagraph{Sierra head} Sierra text.\n\nTango."
@@ -210,12 +211,16 @@ def firstIndentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   let html := (HtmlDoc.emit {} (elabStr ("\\documentclass{ltflow}\n\\begin{document}\n" ++ indentBody ++
     "\n\\end{document}\n")).1).1
   t "flow class: the web page opens the same paragraphs on the indent"
-    (hasStr html "</span>Bravo follows" && hasStr html "</span>India follows" &&
-      !hasStr html "</span>Charlie follows" && !hasStr html "</span>Echo goes")
+    (hasStr html "<p class=\"u-indent\">Bravo follows" &&
+      hasStr html "<p class=\"u-indent\">India follows" &&
+      !hasStr html "<p class=\"u-indent\">Charlie follows" &&
+      !hasStr html "<p class=\"u-indent\">Echo goes")
   let (_, article) := indentsOf ("\\documentclass{article}\n\\usepackage{amsthm}\n" ++
     "\\newtheorem{theorem}{Theorem}\n\\begin{document}\n" ++ indentBody ++ "\n\\end{document}\n")
-  t "flow class: the article class's paragraphs stay flush, the indent the flow class's own"
-    (article.length == 12 && article.all fun (_, x) => near x 0)
+  t "flow class: the article class's paragraphs indent as the flow class's, by size10.clo's 15pt"
+    (article.length == 12 && article.all fun (word, x) =>
+      near x (if ["Alpha", "Bravo", "Foxtrot", "Hotel", "India", "Lima"].contains word then Dim.pt 15
+        else 0))
 
 /-- `tex/ltdefaults.tex` written from `Ir.ltDefaultsTex` under `--update`. -/
 def update : IO Unit := do

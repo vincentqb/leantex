@@ -7,7 +7,8 @@ namespace LeanTex.Core.Native
 /-- The keys of `\page`. -/
 public inductive PageKey where
   | size | width | height | margin | vmargin | hmargin | textwidth | textheight | leading
-  | baselineskip | parskip | measure | fontsize | bleed | hyphenate | justify | protrusion
+  | baselineskip | parskip | parindent | measure | fontsize | bleed | hyphenate | justify
+  | protrusion
   | expansion | numbers | marks | markGap | markThickness | linenumbers | modulo | furnituregap
   | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom | tmargin
   | bmargin | vmarginratio | clubpenalty | widowpenalty | brokenpenalty | displaywidowpenalty
@@ -20,7 +21,8 @@ public def PageKey.names : List (String × PageKey) :=
   [("size", .size), ("width", .width), ("height", .height), ("margin", .margin),
    ("vmargin", .vmargin), ("hmargin", .hmargin), ("textwidth", .textwidth),
    ("textheight", .textheight), ("leading", .leading), ("baselineskip", .baselineskip),
-   ("parskip", .parskip), ("measure", .measure), ("fontsize", .fontsize), ("bleed", .bleed),
+   ("parskip", .parskip), ("parindent", .parindent), ("measure", .measure),
+   ("fontsize", .fontsize), ("bleed", .bleed),
    ("hyphenate", .hyphenate), ("justify", .justify), ("protrusion", .protrusion),
    ("expansion", .expansion), ("numbers", .numbers), ("marks", .marks), ("mark-gap", .markGap),
    ("mark-thickness", .markThickness), ("linenumbers", .linenumbers), ("modulo", .modulo),
@@ -43,7 +45,8 @@ public def PageKey.ofName? (n : String) : Option PageKey := PageKey.names.lookup
 
 /-- Whether an unknown key's help lists the key; LaTeX spellings and riders stay unlisted. -/
 public def PageKey.listed : PageKey → Bool
-  | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .markGap | .markThickness
+  | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .parindent | .markGap
+  | .markThickness
   | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom | .tmargin
   | .bmargin | .vmarginratio | .clubpenalty | .widowpenalty | .brokenpenalty | .displaywidowpenalty
   | .interlinepenalty | .predisplaypenalty | .hscale | .vscale | .lists | .textheightUnder

@@ -1,13 +1,16 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 meta title "An Invented Directory"
 meta author "Alex Doe"
 role page plain
-center
-  section* 0
-    text "An Invented Directory"
-  para
-    text "Alex Doe"
+role trivlist-env
+  center
+    section* 0
+      text "An Invented Directory"
+    block before 1500/1000em
+    para
+      text "Alex Doe"
+block before 1500/1000em
 nav
   para
     link "https://example.org/entries/1"

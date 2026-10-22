@@ -1,15 +1,19 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 meta title "An Invented Box Study"
 meta author "Pat Placeholder"
 role page plain
-center
-  section* 0
-    text "An Invented Box Study"
-  para
-    text "Pat Placeholder"
-  para
-    text "1 January 2099"
+role trivlist-env
+  center
+    section* 0
+      text "An Invented Box Study"
+    block before 1500/1000em
+    para
+      text "Pat Placeholder"
+    block before 1000/1000em
+    para
+      text "1 January 2099"
+block before 1500/1000em
 role trivlist-env
   center
     table c

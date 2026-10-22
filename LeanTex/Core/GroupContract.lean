@@ -47,7 +47,8 @@ private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Ra
     simp [Std.Legacy.Range.forIn_eq_forIn_range']
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
-  simp [hpar, hb, ha, groupPictureInSentence_alone, flushPara_empty ctx _ hm, elabBlocksNext_blank]
+  simp [hpar, hb, ha, groupPictureInSentence_alone, flushPara_empty ctx _ hm, elabBlocksNext_blank,
+    parContinues, textOpens, Parse.skipSpaces]
 
 private theorem closeBlockScope_scope (ctx : Ctx) (base : Option Nat) (bs : Array Block)
     (st : ESt) : ((closeBlockScope ctx #[] base bs).run st).2.scope = st.scope := by

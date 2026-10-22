@@ -132,7 +132,6 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
      ("german=quotes", .engineSets "German quotes are set as „…“, the style the option names"),
      ("english=american", .asWithout "English quotes take their American form, as without the option")]),
    ("babel", [("shorthands=off", .engineSets "the engine reads no shorthand characters, as the option asks")]),
-   ("parskip", [("indent=0pt", .asWithout "paragraphs are set flush, as without the option")]),
    ("graphicx", ("final", .asWithout "images are drawn, as without the option") ::
      drivers),
    ("xcolor", [("natural", .engineSets "colours ship in the model they are declared in"),
@@ -555,6 +554,7 @@ private def pageTokens : List String :=
 name is a length of the document's own. -/
 public def paramSites : List (String × ParamSite) :=
   [("parskip", .page .parskip),
+   ("parindent", .token "parindent"),
    ("textwidth", .page .textwidth),
    ("textheight", .page .textheight),
    ("headsep", .page .headsep),
@@ -586,7 +586,6 @@ public def paramSites : List (String × ParamSite) :=
       "sets the leading; the leading here is the page's")),
    ("leftmargin", .listReset), ("itemsep", .listReset), ("parsep", .listReset),
    ("itemindent", .listReset), ("listparindent", .listReset), ("rightmargin", .listReset),
-   ("parindent", .unmodelled "indents a paragraph's first line; paragraphs here are set flush"),
    ("partopsep", .token "partopsep"),
    ("labelsep", .unmodelled "separates a list label from its item; the gap here is half an em"),
    ("labelwidth", .unmodelled "boxes a list label; a label here sets at its own width"),
@@ -1098,6 +1097,8 @@ private structure St where
   /-- Inside a brace group of the walk, where a declaration
   ends with the group. -/
   inGroup : Bool := false
+  /-- The innermost group is a bare brace group of the flow, no argument and in no other group. -/
+  bareGroup : Bool := false
   /-- Inside a brace group holding no paragraph break: a paragraph's own text. -/
   parGroup : Bool := false
   /-- Inside a list environment's body, where a list
@@ -1139,8 +1140,9 @@ private structure St where
   /-- The declared class's page model is the flow model,
   whose text block is the engine's. -/
   flowPage : Bool := true
-  /-- The declared class indents its paragraphs' first lines (`Ir.ClassRecord.design`). -/
-  indents : Bool := false
+  /-- The declared class indents its paragraphs' first lines (`Ir.ClassRecord.parindent`), as a
+  page declaring none does on the article's. -/
+  indents : Bool := true
   /-- Constructs already warned about. -/
   warned : Array String := #[]
   /-- Every control word the conditional pass has seen bound, with its
@@ -6605,9 +6607,7 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     (strut : Option Int := none) : Option String :=
   -- premise: unreadableLengthChecks — a kernel parameter in a definition body stands by name
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
-  -- `\parindent` reads the engine's flush indent, which no declaration here moves.
-  let set (n : String) : Option String :=
-    if n == "parindent" then none else (lens.find? (·.1 == n)).map (·.2)
+  let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
   let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
   let raws := strutOperands raws
   let held (n : String) : Option String :=
@@ -6809,14 +6809,7 @@ again from its class's parameters" pos
 spaced per level, in the preamble"
     else
       nothing s!"the next list sets '\\{n}' again from its class's parameters, so no list reads it"
-  | .unmodelled why, false =>
-    -- premise: firstIndentChecks — an indenting class reads the preamble's `\parindent`
-    if n == "parindent" && st.indents then
-      if preamble && !st.inDef then emit (.tokens #[(n, src)])
-      else named "is read where the preamble sets it; the body leaves the page as declared"
-    else if n == "parindent" && Decl.parseGlue src == some {} then
-      nothing "paragraphs here are set flush, as declared"
-    else named why
+  | .unmodelled why, false => named why
 
 /-- The one warning for a length assignment the door cannot read, the length
 keeping what it held. -/
@@ -8879,6 +8872,7 @@ private def ctrlRows4 : List CtrlRow :=
      { declared with paramStands := some "hyperref's settings stand" }⟩,
    ⟨"ifoot", [.group], .lower .runningField {}⟩,
    ⟨"ihead", [.group], .lower .runningField {}⟩,
+   nothingRow "indent" 0 "a paragraph opens on the indent its place sets",
    ⟨"index", [.opt, .needed], .lower .indexing {}⟩,
    ⟨"inputencoding", [.group], .lower .inputEncoding {}⟩,
    oldFontRow "it" "itshape",
@@ -10874,14 +10868,17 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
     out := out ++ (← parskipLists (match skip, read with
       | some _, some src => src
       | _, _ => "0.6em plus 2pt") pos)
-    -- Under an indenting class its paragraphs go flush, unless `indent` keeps or sets one.
-    if (← get).indents then
-      match (own.map KeyVal.entry).lookup "indent" with
-      | none => out := out ++ (← setting "\\usepackage{parskip}" (.tokens #[("parindent", "0pt")]) pos)
-      | some (some v) => out := out ++ (← setting s!"\\usepackage[indent={v}]\{parskip}"
-          (.tokens #[("parindent", v)]) pos)
-      | some none => pure ()
-    out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
+    -- `indent` alone keeps the indent in force, `indent=` sets one, and no option drops it.
+    let indent := (given.filterMap fun o => match KeyVal.entry o with
+      | ("indent", v) => some v
+      | _ => none).getLast?
+    match indent with
+    | some none => pure ()
+    | some (some v) =>
+      out := out ++ (← setLength "parindent" v s!"\\usepackage[indent={v}]\{parskip}" pos)
+    | none => out := out ++ (← setting "\\usepackage{parskip}" (.page #[(.parindent, "0pt")]) pos)
+    out := out ++ (← packageOptions name p (given.filter fun o =>
+      (KeyVal.entry o).1 != "skip" && (KeyVal.entry o).1 != "indent") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
     let native := Native.Head.theoremStyle "plain"
@@ -11473,7 +11470,8 @@ the reader of the files around it does not see"
     let flow := ((Ir.DocClass.ofString? (classModelName cls)).map (·.record.model == .flow)).getD true
     write fun st => { st with
       flowPage := flow,
-      indents := ((Ir.DocClass.ofString? (classModelName cls)).bind (·.record.design)).isSome,
+      indents := cls != "letter" &&
+        (Ir.DocClass.ofString? (classModelName cls)).any (·.record.parindent != .flush),
       -- KOMA-Script's titlepage environment never resets the page counter (scrbook.cls), and memoir
       -- has none.
       titlepageReset := !twoside && !koma && cls != "memoir" }
@@ -11530,7 +11528,19 @@ the option" else "the page is one-sided, as without the option")) pos
       -- book.cls and memoir set their pages in the `headings` style.
       if cls == "book" || cls == "memoir" then write fun st => { st with headingsStyle := some true }
       let heads := if rightNamed then #[(Native.PageKey.openright, "on")] else #[]
-      let page : Native.Setting := .page (#[(.parskip, komaSkip.getD "0pt plus 1pt")] ++ heads)
+      -- letter.cls sets its paragraphs flush, `\parskip` 0.7em apart; amsart.cls, amsproc.cls and
+      -- acmart.cls (9pt under acmtog) state a fixed `\parindent` and `\parskip` 0pt.
+      let acmTog := keptItems.any fun kv => match KeyVal.entry kv with
+        | ("acmtog", none) | ("format", some "acmtog") => true
+        | _ => false
+      let paras : Array (Native.PageKey × String) := if cls == "letter" then
+          #[(.parskip, "0.7em"), (.parindent, "0pt")]
+        else if cls == "amsart" then #[(.parskip, "0pt"), (.parindent, "12pt")]
+        else if cls == "amsproc" then #[(.parskip, "0pt"), (.parindent, "18pt")]
+        else if cls == "acmart" then
+          #[(.parskip, "0pt"), (.parindent, if acmTog then "9pt" else "10pt")]
+        else #[(.parskip, komaSkip.getD "0pt plus 1pt")]
+      let page : Native.Setting := .page (paras ++ heads)
       became s!"\\documentclass\{{cls}}" (cls0.render ++ (page.note?.getD "")) pos
       -- memoir.cls numbers and lists headings down to the section (`\setsecnumdepth{section}`).
       let depths : Array Raw := if cls != "memoir" then #[] else
@@ -12629,7 +12639,8 @@ declare the furniture directly")
   | .noIndent => do
     -- premise: firstIndentChecks — an indenting class sets the paragraph after the mark flush
     let st ← get
-    if st.indents && st.topLevel && !st.inGroup && opensParagraph c.raws (c.start - 1) then
+    if st.indents && st.topLevel && !st.inDef && (!st.inGroup || st.bareGroup) &&
+        opensParagraph c.raws (c.start - 1) then
       became "\\noindent" "the paragraph it opens is set flush" c.pos
       return #[.ctrl Ir.parContinuesRole c.pos]
     discard "\\noindent" (if !st.indents then "no paragraph carries a first-line indent here"
@@ -15018,11 +15029,20 @@ private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
   | .env _ _ p, .group _ _ =>
     if Parse.endsInArgument out then (out.push (.env Parse.scopeEnv #[] p)).push r'
     else out.push r'
-  | .group _ _, .group body _ =>
+  | .group _ _, .group body gp =>
     match out.back? with
     | some (.env n head p) =>
       if n == parboxPending then out.pop.push (.env "minipage" (head ++ body) p) else out.push r'
-    | _ => out.push r'
+    | _ =>
+      -- `\noindent` where a group opens its paragraph opens the paragraph the group starts.
+      let isMark (x : Raw) : Bool := match x with
+        | .ctrl n _ => n == Ir.parContinuesRole
+        | _ => false
+      match body.find? isMark with
+      | some mark =>
+        if !Parse.endsInArgument out then (out.push mark).push (.group (body.filter (!isMark ·)) gp)
+        else out.push r'
+      | none => out.push r'
   | _, .env n body _ =>
     if n == modeSplice then out ++ body else out.push r'
   | .group _ _, _ =>
@@ -15081,6 +15101,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let saved := if inDefault then 0 else outer
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
+    let savedBare := (← get).bareGroup
     let savedLens := (← get).lens
     let savedSkip := (← get).bodySkip
     -- An argument a footnote or a heading reads sets at its own size.
@@ -15102,7 +15123,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let savedParGroup := (← get).parGroup
     write fun st => { st with parGroup := !body.any fun r => r matches .par _ || r matches .ctrl "par" _ }
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
-                              tableTop := false, defTop := saved > 0, localLengths := #[]
+                              bareGroup := !arg && !savedGroup, tableTop := false,
+                              defTop := saved > 0, localLengths := #[]
                               quietNext := false, envCode := st.envCode || envBody, envNext := 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
     -- A style command's block argument sets under its declaration, a footnote's lists and headings
@@ -15116,7 +15138,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let restores := restoreLengths (← get).localLengths p
     -- A group's assignments end with it.
     write fun st => { st with bodyNext := if inDefault then outer else saved - 1, inDef := savedDef,
-                              inGroup := savedGroup, parGroup := savedParGroup,
+                              inGroup := savedGroup, bareGroup := savedBare,
+                              parGroup := savedParGroup,
                               envCode := savedEnvCode,
                               envNext := if envBody then savedEnvNext - 1 else savedEnvNext,
                               lens := savedLens, bodySkip := savedSkip, localLengths := savedLengths,

@@ -44,7 +44,7 @@ def fontSizeAffineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "fontsize leading sets the baseline distance"
     (lines.size == 2 && lines[1]!.y - lines[0]!.y == Dim.pt 18)
   let zeroLines := bodyLines (metricOut oneFace
-    "{\\fontsize{12pt}{0pt}\\selectfont Alpha\\\\Bravo}")
+    "\\noindent{\\fontsize{12pt}{0pt}\\selectfont Alpha\\\\Bravo}")
   t "fontsize preserves an explicit zero baseline distance"
     (zeroLines.size == 2 && zeroLines[1]!.y - zeroLines[0]!.y == 0)
   let table := metricOut oneFace

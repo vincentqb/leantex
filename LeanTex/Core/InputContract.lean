@@ -377,7 +377,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
         let bs ← elabEnvArm ctx n body pos #[]
         elabBlocksNext ctx raws (i + 1)
           (parContinues ctx raws (i + 1)
-            (Ir.lastLeavesEndPe (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs))
+            (envLeavesEndPe ctx false (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs))
             (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs)) gen) :
         EM (Array Block)).run st := by
   subst hg

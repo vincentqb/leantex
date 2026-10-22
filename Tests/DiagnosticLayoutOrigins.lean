@@ -159,7 +159,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
           (DiagnosticLayoutOrigins.sourceAt "picture-shrink-origin.tex" 5 1 "\\begin") &&
         d.trigger.isNone)
   let shrinkSource :=
-    "\\documentclass{article}\\page{height=127pt,margin=20pt}" ++
+    "\\documentclass{article}\\page{height=127pt,margin=20pt,parskip=6pt plus 1pt}" ++
     "\\newcommand{\\firstline}{First.}\\newcommand{\\secondline}{Second.}" ++
     "\\newcommand{\\thirdline}{Third.}\\begin{document}\n" ++
     "\\firstline\n\n\\vspace{20pt minus 8pt}\n\\secondline\n\n" ++

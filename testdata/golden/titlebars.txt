@@ -1,22 +1,23 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 meta title "Bars Probe Title"
 meta author "An Invented Author"
 role page plain
-center
-  block before 600/1000em
-  rule #000000 3pt
-  block before 1800/1000em
-  section* 0
-    text "Bars Probe Title"
-  block before 1800/1000em
-  rule #000000 2pt
-  block before 600/1000em
-  para
-    strut
-    styled bold
-      text "An Invented Author"
-  block before 2400/1000em minus 600/1000em
+role trivlist-env
+  center
+    block before 600/1000em
+    rule #000000 3pt
+    block before 1800/1000em
+    section* 0
+      text "Bars Probe Title"
+    block before 1800/1000em
+    rule #000000 2pt
+    block before 600/1000em
+    para
+      strut
+      styled bold
+        text "An Invented Author"
+    block before 2400/1000em minus 600/1000em
 para
   text "Body text follows the styled built-in title."
 -- diagnostics

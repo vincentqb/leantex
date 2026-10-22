@@ -262,6 +262,9 @@ public structure PageSpec where
   bodySkip : Option Length := none
   /-- The gap between peer paragraphs, with its rubber; `none` is the engine's default. -/
   parskip : Option SymGlue := none
+  /-- A paragraph's first-line indent, `\parindent`, fixed in the preamble's font; `none` sets
+  paragraphs flush. -/
+  parindent : Option Dim.SymLength := none
   /-- Whether the measure is checked against the readable band;
   `\page{ measure = free }` turns the check off. -/
   measureChecked : Bool := true
@@ -465,6 +468,9 @@ public def boxDiags (spec : PageSpec) : Array Diag :=
     else some diag
 
 public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
+
+/-- The page's `\parindent`: what it declares or its class sets, else none. -/
+public def parIndentOf (spec : PageSpec) : Dim.SymLength := spec.parindent.getD {}
 
 public def baselineSkipOf (spec : PageSpec) : Length := leadingFor spec.fontSize spec.leading
 
@@ -1802,6 +1808,16 @@ public def leftMarginFor (l : ListLineage) (tokens : Tokens) (level : Nat) : Sym
 own rather than a multiple of the parskip. -/
 public def headingBeforeDefault (size : Length) : SymGlue :=
   { width := { fixed := 2 * rhythmQuantum size } }
+/-- `\@startsection`'s space above and below a heading level, in ex of the font in force, as
+article.cls and scrartcl.cls set them: `\section`'s 3.5ex plus 1ex minus .2ex and 2.3ex plus .2ex,
+`\subsection`'s and `\subsubsection`'s 3.25ex plus 1ex minus .2ex and 1.5ex plus .2ex. -/
+public def startSectionSkips : HeadingLevel → Option (SymGlue × SymGlue)
+  | .h2 => some ({ width := { ex := 3500 }, stretch := { ex := 1000 }, shrink := { ex := 200 } },
+      { width := { ex := 2300 }, stretch := { ex := 200 } })
+  | .h3 | .h4 => some ({ width := { ex := 3250 }, stretch := { ex := 1000 }, shrink := { ex := 200 } },
+      { width := { ex := 1500 }, stretch := { ex := 200 } })
+  | _ => none
+
 /-- The heading's default space below: the half-unit. -/
 public def headingAfterDefault (size : Length) : SymGlue :=
   { width := { fixed := rhythmQuantum size } }
@@ -6073,6 +6089,18 @@ public def Block.continuesPar (b : Block) : Bool :=
   | .section .. => true
   | _ => b.isDisplay
 
+/-- Whether a block's paragraphs stand under the `\parindent` around it: a role's but a trivlist's,
+a skip's, a link's and an overlay's carry no paragraph shape of their own, where `\list`,
+`\centering`, `\raggedright` and `\@parboxrestore` set every other container's to zero. -/
+@[expose] public def Block.keepsParIndent : Block → Bool
+  | .role n _ => n != trivlistRole
+  | .para _ | .section .. | .spaced .. | .link .. | .onSteps .. | .altSteps ..
+  | .only .. | .setPalette _ | .setTokens _ | .pagebreak => true
+  | .lines .. | .list .. | .center .. | .ragged .. | .quote .. | .abstract .. | .titled ..
+  | .disclosure .. | .equation .. | .verbatim .. | .algorithm .. | .columns .. | .note .. | .nav ..
+  | .logo .. | .frame .. | .framefoot .. | .rule .. | .picture .. | .table .. | .float ..
+  | .bibliography .. | .contents .. => false
+
 /-- Whether `b` is `parRunsOnRole`'s marker. -/
 public def Block.runsOn : Block → Bool
   | .role n body => body.isEmpty && n == parRunsOnRole
@@ -6092,11 +6120,29 @@ public def opensRunIn (content : Array Inline) : Bool :=
   | some (.role n _) => n == runInHeadRole
   | _ => false
 
+/-- Whether a paragraph opens on no indent of its own: on a run-in head past its labels, or holding
+images alone, which fit the measure as a picture does. -/
+public def opensFlush (content : Array Inline) : Bool :=
+  opensRunIn (content.toList.dropWhile anchorInline).toArray ||
+    (content.any (· matches .image ..) && content.all fun x => match x with
+    | .image .. | .label _ => true
+    | .text s => s.all Char.isWhitespace
+    | _ => false)
+
 /-- Whether `b` is a bare vertical skip, which leaves the paragraph state as TeX's vertical list
 does. -/
 public def Block.isSkip : Block → Bool
   | .spaced _ body => body.isEmpty
   | _ => false
+
+/-- Whether the paragraph after `b` opens with no indent, `before` saying whether one opening before
+it would: a declaration, a float, a page-model mark and a bare skip leave that, the mark of an environment
+going on setting it, and every other block says by `Block.continuesPar`. -/
+@[expose] public def Block.parContAfter (b : Block) (before : Bool) : Bool :=
+  match b with
+  | .setPalette _ | .setTokens _ | .float .. => before
+  | b => if pageMarkerBlock b then before || b.continuesPar
+    else if b.isSkip then before else b.continuesPar
 
 public theorem pageOpening_continuesPar (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : (Block.role n #[]).continuesPar = false := by
@@ -6105,6 +6151,11 @@ public theorem pageOpening_continuesPar (n : String) (opening : PageOpening)
     subst e
     simp [pageOpeningOfRole?, parContinuesRole, titlePageBeginRole, titlePageEndRole] at h
   simp [Block.continuesPar, hn]
+
+public theorem pageOpening_parContAfter (n : String) (opening : PageOpening) (c : Bool)
+    (h : pageOpeningOfRole? n = some opening) : (Block.role n #[]).parContAfter c = c := by
+  simp [Block.parContAfter, pageMarkerBlock, pageOpening_marker_exact n opening h,
+    pageOpening_continuesPar n opening h]
 
 /-- Record where the display an arm pushed past `k` stands in its paragraph (`DisplayCtx`). -/
 public def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
@@ -8442,14 +8493,6 @@ private def sizeFileLeadings : Nat → List (String × Nat)
       ("huge", 52000), ("Huge", 63000)]
   | _ => []
 
-/-- The `\parindent` the standard classes' size files set at a body size: 15pt, 17pt and 1.5em
-(size10.clo, size11.clo, size12.clo), 1.5em at a size they do not name. -/
-public def sizeFileParindent (body : Length) : Length :=
-  match displayOptions.find? fun o => Dim.pt o.1 == body || o.2 == body with
-  | some (10, _) => Dim.pt 15 -- size10.clo
-  | some (11, _) => Dim.pt 17 -- size11.clo
-  | _ => body * 3 / (2 : Int)
-
 /-- The `\baselineskip` a named size of the engine's ladder sets: the size file's where the
 body is an option's size, else the engine's leading of the size. -/
 public def sizeFileLeading (body : Length) (leading : Nat) (name : String) : Length :=
@@ -8690,6 +8733,25 @@ public def ltDefaultsTex : String := Id.run do
     out := out ++ s!"\\tl_const:cn \{ c_lt_paper_{name}_tl } \{ \{ {bp w} } \{ {bp h} } }\n"
   return out
 
+/-- Where a class's `\parindent` comes from: none; its size file's, size10.clo's 15pt, size11.clo's
+17pt, size12.clo's 1.5em and mem9.clo's 12pt; or a share of the body's em, as KOMA-Script's
+`parskip=false` sets 1em. -/
+public inductive IndentRule where
+  | flush
+  | sizeFile
+  | em (milli : Nat)
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The `\parindent` a class's rule sets at body size `size`, an em read in the preamble's font. -/
+public def IndentRule.at : IndentRule → Length → Dim.SymLength
+  | .flush, _ => {}
+  | .sizeFile, size =>
+    if size == Dim.pt 9 then .ofLength (Dim.pt 12)
+    else if size == Dim.pt 10 then .ofLength (Dim.pt 15)
+    else if size == Dim.pt 1095 / 100 || size == Dim.pt 11 then .ofLength (Dim.pt 17)
+    else { em := 1500 }
+  | .em m, _ => { em := m }
+
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/
 public structure ClassRecord where
@@ -8701,6 +8763,10 @@ public structure ClassRecord where
   sizeFileSkip : Bool := false
   /-- The class's paragraph-separation default, when it declares one. -/
   parskip : Option Dim.SymGlue := none
+  /-- Where the class's `\parindent` comes from. -/
+  parindent : IndentRule := .flush
+  /-- Whether the class's headings stand `\@startsection`'s skips apart (`startSectionSkips`). -/
+  startSections : Bool := false
   /-- Whether the class's `parskip` option sets the paragraph separation in lines of its
   `\baselineskip` (`classParskip?`). -/
   parskipOption : Bool := false
@@ -8824,6 +8890,9 @@ résumé's floor the fluent-reading x-height at hand-held distance. -/
   | .article =>
     { model := .flow
       sizeFileSkip := true
+      parskip := some texParskipDefault
+      parindent := .sizeFile
+      startSections := true
       area := .sizeFile
       numberHeadings := true
       measureBand := true
@@ -8882,6 +8951,8 @@ calibration reads fluently; declare \
       -- typearea's `paper=a4`, its default.
       trimDefault := some a4Page
       parskip := some texParskipDefault
+      parindent := .em 1000
+      startSections := true
       parskipOption := true
       listExtra := .koma
       -- scrkernel-listsandtabulars.dtx's quotation.
@@ -8897,6 +8968,7 @@ calibration reads fluently; declare \
       fontSize := some (classOptionSize flowOptionPt)
       sizeFileSkip := true
       parskip := some {}
+      parindent := if p.indents then .sizeFile else .flush
       numberHeadings := !cv
       measureBand := true
       lists := .grid
@@ -8938,6 +9010,13 @@ public def classParskip? (value : Option String) (skip : Length) : Option SymGlu
   | "full" | "full-" | "full+" | "full*" | "true" | "on" | "yes" => some (lines 10 1)
   | "half" | "half-" | "half+" | "half*" => some (lines 5 5)
   | _ => none
+
+/-- Whether a class's `parskip` option sets paragraphs flush, as `\setparsizes` sets `\parindent`
+to zero under a skip in lines and to 1em under `false` and `never`. -/
+public def classParskipFlush (value : Option String) : Bool :=
+  match value.getD "true" with
+  | "never" | "false" | "off" | "no" => false
+  | _ => true
 
 /-- The space a class's `parskip` option keeps free after a paragraph's last line, as
 `\setparsizes` sets `\parfillskip`; `none` where the line may run to the margin. -/
@@ -14266,71 +14345,6 @@ public theorem titleBars_text (st : ElementStyle) (ink : Color × Option ColorRe
   · rfl
   · rw [titleBarsList_text]
     simp [blocksText, blockTextList]
-
-/-- One top-level block under a `\parindent` of `w`, and whether text goes on past it
-(`Block.continuesPar`); skips, marks and anchor-only paragraphs keep the state. -/
-private def indentStep (w : SymGlue) (cont : Bool) (b : Block) : Block × Bool :=
-  match b with
-  | .para c =>
-    if anchorsOnly c then (b, cont)
-    else if cont || opensRunIn (c.toList.dropWhile anchorInline).toArray then (b, false)
-    else (.para (#[.hspace (.lit w) true] ++ c), false)
-  | .setPalette _ | .setTokens _ => (b, cont)
-  | b => (b, if b.continuesPar then true else if pageMarkerBlock b || b.isSkip then cont else false)
-
-public def indentParagraphsList (w : SymGlue) (out : Array Block) (cont : Bool) :
-    List Block → Array Block
-  | [] => out
-  | b :: rest =>
-    let (b', cont') := indentStep w cont b
-    indentParagraphsList w (out.push b') cont' rest
-
-/-- The top-level body with each paragraph's first line indented by `w` as TeX's `\everypar` sets
-it (`indentStep`). -/
-public def indentParagraphs (w : SymGlue) (body : Array Block) : Array Block :=
-  indentParagraphsList w #[] false body.toList
-
-private theorem indentStep_text (w : SymGlue) (cont : Bool) (acc : String) (b : Block) :
-    blockTextOne acc (indentStep w cont b).1 = blockTextOne acc b := by
-  unfold indentStep
-  split
-  · split
-    · rfl
-    · split
-      · rfl
-      · simp [blockTextOne, plainText, plainTextList, plainTextOne]
-  · rfl
-  · rfl
-  · rfl
-
-private theorem indentParagraphsList_text (w : SymGlue) (out : Array Block) (cont : Bool)
-    (l : List Block) :
-    blocksText (indentParagraphsList w out cont l) = blockTextList (blocksText out) l := by
-  induction l generalizing out cont with
-  | nil => rfl
-  | cons b rest ih =>
-    simp only [indentParagraphsList, ih, blocksText_push, indentStep_text, blockTextList]
-
-public theorem indentParagraphs_text (w : SymGlue) : Conserves blocksText (indentParagraphs w) := by
-  intro xs
-  unfold indentParagraphs
-  rw [indentParagraphsList_text]
-  simp [blocksText, blockTextList]
-
-/-- The document with its paragraphs on the `\parindent` its tokens hold (`firstIndentChecks`). -/
-public def Doc.withIndents (doc : Doc) : Doc :=
-  match doc.tokens.find? "parindent" with
-  | some g => if g == {} then doc else { doc with body := indentParagraphs g doc.body }
-  | none => doc
-
-public theorem Doc.withIndents_text (doc : Doc) :
-    blocksText doc.withIndents.body = blocksText doc.body := by
-  unfold Doc.withIndents
-  split
-  · split
-    · rfl
-    · exact indentParagraphs_text _ _
-  · rfl
 
 mutual
 
@@ -20199,6 +20213,9 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
       | none => "") ++
     (match doc.page.parskip with
       | some g => s!" parskip {dumpGlue g}"
+      | none => "") ++
+    (match doc.page.parindent with
+      | some l => s!" parindent {dumpGlue { width := l }}"
       | none => "") ++
     (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toBpString}" else "") ++
     String.join (doc.page.drawn.toList.map fun r =>

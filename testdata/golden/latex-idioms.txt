@@ -1,5 +1,5 @@
 class scrartcl [paper=a5,fontsize=11pt]
-page 419.528x595.276 vmargin 39.685 hmargin 48.189 fontsize 10.959 skip tiny 636 skip scriptsize 864 skip footnotesize 1000 skip small 1091 skip normalsize 1236 skip large 1273 skip Large 1636 skip LARGE 2000 skip huge 2273 skip Huge 2727 parskip 0 plus 1pt
+page 419.528x595.276 vmargin 39.685 hmargin 48.189 fontsize 10.959 skip tiny 636 skip scriptsize 864 skip footnotesize 1000 skip small 1091 skip normalsize 1236 skip large 1273 skip Large 1636 skip LARGE 2000 skip huge 2273 skip Huge 2727 parskip 0 plus 1pt parindent 10.95pt
 font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"
@@ -85,6 +85,7 @@ role boat
       text "Kestrel"
     italicCorr maybe
     text ": a coxed four rigged for bow side."
+role par continues
 para
   styled bold
     italicCorr maybe
@@ -140,7 +141,7 @@ info[N0100] 56:1 translated command \color{deepwater} | detail: \deepwater
 info[N0100] 60:5 translated command \vspace | detail: \block[before = 2 * stroke]{}
 info[N0100] 61:6 translated command \color{driftwood} | detail: \driftwood
 info[N0100] 72:1 translated command \vspace | detail: \block[before = 2 * stroke]{}
-info[N0100] 83:1 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
+info[N0100] 83:1 translated command \noindent | detail: the paragraph it opens is set flush
 info[N0100] 85:1 translated command \ul | detail: \underline
 info[N0100] 85:33 translated command \varul | detail: \underline
 info[N0100] 27:1 translated command '\ihead / \chead / \ohead' | detail: \runninghead[from = 2]{\itshape Harbour Rowing Club \hfill  \hfill \thepage}

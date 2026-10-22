@@ -1,10 +1,12 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 meta title "A Meaning Probe"
 role page plain
-center
-  section* 0
-    text "A Meaning Probe"
+role trivlist-env
+  center
+    section* 0
+      text "A Meaning Probe"
+block before 1500/1000em
 para
   text "Equal branch ships."
 para

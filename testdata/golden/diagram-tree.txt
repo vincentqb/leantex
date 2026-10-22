@@ -1,16 +1,19 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 font dir "fonts"
 font body "Source Serif Pro"
 palette leaf #2A6F4E
 meta title "Trees and Dots"
 meta author "Pat Placeholder"
 role page plain
-center
-  section* 0
-    text "Trees and Dots"
-  para
-    text "Pat Placeholder"
+role trivlist-env
+  center
+    section* 0
+      text "Trees and Dots"
+    block before 1500/1000em
+    para
+      text "Pat Placeholder"
+block before 1500/1000em
 section 1 number "1"
   text "A grown tree"
 picture 11 shapes

@@ -257,7 +257,7 @@ warning: substituted encoding 'Windows-1252 (Latin-1)' for 'UTF-8' [W0004]
   note: byte 0x92 at offset 83
 ── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
 warning: overfull line [W0005]
-  note: 160.215pt too wide
+  note: 175.215pt too wide
 warning: overfull column for frame [W0005]
   note: frame 2: 122.916pt too wide
 warning: overfull footnote for frame [W0005]

@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 para
   text "An invented line with a "
   box raise 3pt
@@ -31,10 +31,12 @@ para
               rel:∼
       text "probe"
   text " keeps its tilde low."
+role par continues
 columns
   column 120pt [c] in raise 0 frame ink pad 3pt rule 0.4pt
     para
       text "An invented framed block of words."
+role par continues
 columns
   column 1000/1000 [b] in raise \depth
     ragged left
@@ -46,6 +48,6 @@ columns
 info[N0100] 7:1 translated package xcolor | detail: nothing: the engine does this itself
 info[N0100] 8:1 translated package url | detail: nothing: the engine does this itself
 info[N0100] 8:1 translated package url | detail: \style{url}{ tilde = low }
-info[N0100] 17:1 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
-info[N0100] 19:1 translated command \noindent | detail: nothing: no paragraph carries a first-line indent here
+info[N0100] 17:1 translated command \noindent | detail: the paragraph it opens is set flush
+info[N0100] 19:1 translated command \noindent | detail: the paragraph it opens is set flush
 warning[W0110] 19:10 ignored size for \raisebox | detail: a lift or depth over a minipage or a table | help: space the box with \vspace or the gaps around it

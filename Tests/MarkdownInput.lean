@@ -266,8 +266,9 @@ def markdownInputHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     let html := docTreeOf
     t "markdown input: the PDF sets the note's break as the note alone does"
       (pdf host == pdf alone && (pdf host).extract 0 3 == #["Alder", "Birch", "H2O"])
+    -- The article host indents the note's paragraphs, as the markdown package's LaTeX does.
     t "markdown input: the typed HTML carries the note's break as the note alone does"
-      (hasStr (html host) "<p>Alder<br>Birch</p><p>H2O</p>"
+      (hasStr (html host) "<p class=u-indent>Alder<br>Birch</p><p class=u-indent>H2O</p>"
         && hasStr (html alone) "<p>Alder<br>Birch</p><p>H2O</p>")
     let refusals (ds : Array Diag) : Array (Nat × Nat) :=
       (ds.filter fun d => d.kind == .E0390 && d.subject == some "md:raw-html").map fun d =>

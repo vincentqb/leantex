@@ -1,5 +1,5 @@
 class article
-page 419.528x595.276 vmargin 13.948 hmargin 43.2
+page 419.528x595.276 vmargin 13.948 hmargin 43.2 parskip 0 plus 1pt parindent 15pt
 runninghead
   text "Invented Field Notes "
   fill

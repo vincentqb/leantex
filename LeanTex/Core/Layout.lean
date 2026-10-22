@@ -5712,13 +5712,14 @@ public theorem protrusionLR_covers (c : Char) :
   split <;> decide
 
 /-- How far the line `[a:j)` may hang left of the
-measure: its first glyph's left protrusion, as a length. -/
+measure: its first glyph's left protrusion, as a length; none past an indent's empty box. -/
 public def protrudeLeft (items : Array Item) (a j : Nat) : Length := Id.run do
   for k in [a:j] do
     match items[k]? with
-    | some (.box _ _ _ _ glyphs _ _ _ _ _ _) =>
+    | some (.box w _ _ _ glyphs _ _ _ _ _ _) =>
       if let some (_, c, adv) := glyphs[0]? then
         return adv * (protrusionLR c).1 / 1000
+      else if w != 0 then return 0
     | some (.img ..) | some (.rule ..) => return 0
     | _ => pure ()
   return 0
@@ -9992,6 +9993,13 @@ public structure Spacing.Context where
   private trivOpened : Ir.Tokens := {}
   /-- A quotation's `\listparindent`, from the class (`Ir.ClassRecord.quotationIndent`). -/
   private quotationIndent : Dim.SymLength := {}
+  /-- The `\parindent` this walk's paragraphs open on, a body one standing over it; `none` where the
+  container sets it to zero (`Ir.Block.keepsParIndent`). -/
+  private parIndent : Option Length := none
+  /-- The page's own `\parindent`, which a title page's abstract restores. -/
+  private bodyIndent : Length := 0
+  /-- Whether headings stand `\@startsection`'s skips apart (`Ir.ClassRecord.startSections`). -/
+  private startSections : Bool := false
   /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`). -/
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
@@ -10144,6 +10152,9 @@ public structure Spacing.Pending where
   /-- A display heading was the last thing set, so a list's first `\item`
   spends `\@nbitem` (latex.ltx); cleared by the next line's gap. -/
   private afterHeading : Bool := false
+  /-- The next paragraph opens with no indent: it goes on past an environment or a display, follows
+  a heading or opens on a theorem's head (`Ir.Block.continuesPar`). -/
+  private parCont : Bool := false
   /-- A heading was set and no paragraph since, so the next one takes no page break before its
   second line (latex.ltx `\@nobreak`, read by `\@afterheading` and `\@item`). -/
   private noBreakNext : Bool := false
@@ -10236,6 +10247,15 @@ private theorem Spacing.Context.underParskip_pats (r : Rd) (tk : Ir.Tokens) :
 private theorem Spacing.Context.underParskip_inFloat (r : Rd) (tk : Ir.Tokens) :
     (r.underParskip tk).inFloat = r.inFloat := by
   unfold Spacing.Context.underParskip; dsimp only; split <;> rfl
+
+/-- The reader inside `blk`: its paragraphs flush where it sets `\parindent` to zero
+(`Ir.Block.keepsParIndent`). -/
+private def Spacing.Context.inside (r : Rd) (blk : Block) : Rd :=
+  if blk.keepsParIndent then r else { r with parIndent := none }
+
+private theorem Spacing.Context.inside_keeps (r : Rd) (blk : Block)
+    (h : blk.keepsParIndent = true) : r.inside blk = r := by
+  simp [Spacing.Context.inside, h]
 
 /-- A colour resolved at layout, as the step being collected shows it. -/
 private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
@@ -10586,7 +10606,8 @@ private def columnsOverfull (r : Rd) (a : Acc) (cols : Array (BoxWidth × Array 
 /-- A paragraph's items with `box` before the first and, where `restart`, after each forced break
 but the last; with how many boxes stand before each original item. -/
 private def withKerns (items : Array Item) (first box : Item) (restart : Bool) :
-    Array Item × Array Nat := Id.run do
+    Array Item × Array Nat :=
+  if !restart then (#[first] ++ items, Array.replicate items.size 1) else Id.run do
   let mut out : Array Item := #[first]
   let mut shift : Array Nat := #[]
   for h : i in [0:items.size] do
@@ -10598,6 +10619,30 @@ private def withKerns (items : Array Item) (first box : Item) (restart : Bool) :
     if restart && forced && i + 1 < items.size then
       out := out.push box
   return (out, shift)
+
+/-- An indent's empty box `w` wide, as TeX's `\parindent` box: no height, no depth, never expanded. -/
+private def indentBox (fg : Ir.Color) (size : Length) (ground : Option Ir.Color) (w : Length) :
+    Item :=
+  Item.box w 0 fg none #[] size { extent := some (0, 0), fixed := true } {} 0 ground .unattributed
+
+private theorem indentBox_chars (fg : Ir.Color) (size : Length) (ground : Option Ir.Color)
+    (w : Length) : (indentBox fg size ground w).boxChars = [] := rfl
+
+/-- `items` opened by a hanging or first-line indent's kern, a restarting hang's after each forced
+break but the last, and how far each item moved; as they stand where there is no kern. -/
+private def openKern (items : Array Item) (kern restartKern : Length) (restart hangFirst : Bool)
+    (box : Length → Item) : Array Item × Option (Array Nat) :=
+  if kern == 0 then (items, none)
+  else
+    let k := withKerns items (box (if hangFirst then kern else 0)) (box restartKern) restart
+    (k.1, some k.2)
+
+private theorem openKern_flat (items : Array Item) (kern rk : Length) (hf : Bool)
+    (box : Length → Item) :
+    (openKern items kern rk false hf box).1 =
+      if kern == 0 then items else #[box (if hf then kern else 0)] ++ items := by
+  unfold openKern
+  split <;> simp [withKerns]
 
 private def labelSep (g : Geom) : Length := Ir.labelSepAt g.fontSize
 
@@ -10829,19 +10874,18 @@ private def collectPara (r : Rd) (a : Acc)
     | none => if hangIndent == 0 then firstIndent else -hangIndent
   let restartKern := if hangIndent == 0 then firstIndent else -hangIndent
   let restart := hangLines && hangIndent != 0
-  let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
-    if kern == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
-    else
-      let kernBox (w : Length) : Item :=
-        Item.box w 0 a.fg none #[] strutSize {} {} 0 a.ground .unattributed
-      let (items, shift) :=
-        withKerns items (kernBox (if hangFirst then kern else 0)) (kernBox restartKern) restart
-      let move (k : Nat) : Nat := k + shift.getD k (shift.back?.getD 1)
-      (items, extras.fold (fun m k v => m.insert (move k) v) {},
-        noteBlocks.map (fun (i, nb) => (move i, nb)),
-        wordOffsets.fold (fun m k v => m.insert (move k) v) {},
-        anchors.map (fun (n, i) => (n, move i)),
-        itemSources.map (fun (i, span) => (move i, span)))
+  let kerned := openKern items kern restartKern restart hangFirst (indentBox a.fg strutSize a.ground)
+  let moved := kerned.2.isSome
+  let move (k : Nat) : Nat := match kerned.2 with
+    | some shift => k + shift.getD k (shift.back?.getD 1)
+    | none => k
+  let items := kerned.1
+  let extras := if moved then extras.fold (fun m k v => m.insert (move k) v) {} else extras
+  let noteBlocks := if moved then noteBlocks.map (fun (i, nb) => (move i, nb)) else noteBlocks
+  let wordOffsets :=
+    if moved then wordOffsets.fold (fun m k v => m.insert (move k) v) {} else wordOffsets
+  let anchors := if moved then anchors.map (fun (n, i) => (n, move i)) else anchors
+  let itemSources := if moved then itemSources.map (fun (i, span) => (move i, span)) else itemSources
   { a with
     hyphCache := cache
     ops := a.ops.push (Op.ofPara {
@@ -12159,11 +12203,22 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
     | _ => none }
   (collectPicture r a pic indent true (display := some dj)).closeDisplay r
 
+/-- The first-line indent a paragraph of `content` opens on: the body `\parindent` token in force
+over the walk's own, none where it goes on (`Spacing.Pending.parCont`) or opens flush
+(`Ir.opensFlush`). -/
+private def Spacing.Context.firstIndent (r : Rd) (a : Acc) (content : Array Inline) : Length :=
+  match r.parIndent with
+  | none => 0
+  | some own =>
+    if a.parCont || Ir.opensFlush content then 0
+    else ((a.tokens.find? "parindent").map fun g => (r.resolve g).width).getD own
+
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Length) : Acc :=
   -- A paragraph of label anchors alone ships no line and no gap.
   if Ir.anchorsOnly content then
     { a with ops := a.ops ++ (Ir.labelKeys content).map (Op.anchor ∘ Ir.labelAnchor) }
   else
+    let first := r.firstIndent a content
     let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
     match r.labels.back? with
     | some m =>
@@ -12174,7 +12229,7 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
         (leaf := leaf) (span := Struct.leafCountInlines content)
     | none =>
       collectPara r a content indent false r.geom.fontSize
-        (leaf := leaf) (span := Struct.leafCountInlines content)
+        (leaf := leaf) (span := Struct.leafCountInlines content) (firstIndent := first)
 
 private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Length) : Acc := Id.run do
   -- A display sets its paragraph, which clears TeX's `\@nobreak`.
@@ -12366,10 +12421,14 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
   let title := match num with
     | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ marked
     | none => title
-  -- Undeclared, a heading stands a rhythm unit above its body and half below.
+  -- Undeclared, a heading stands its class's `\@startsection` skips apart, else a rhythm unit above
+  -- its body and half below.
+  let latex := if r.startSections then Ir.startSectionSkips level else none
   let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
   let two := r.parskip.add r.parskip
-  let before := (st.before.map r.resolve).getD (if two.width > hb.width then two else hb)
+  let before := (st.before.map r.resolve).getD (match latex with
+    | some (b, _) => r.resolve b
+    | none => if two.width > hb.width then two else hb)
   -- The flow class's heading is a paragraph: its `\parskip` stands as plain glue past the
   -- beforeskip's `\addvspace`, unless the gap already pays it on top of declared glue.
   let a := a.addvspace before
@@ -12382,8 +12441,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
       position := st.rulePosition.getD .xHeight
       color := rc.1 }
   let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
-  let after := (st.after.map r.resolve).getD
-    (if r.parskip.width > ha.width then r.parskip else ha)
+  let after := (st.after.map r.resolve).getD (match latex with
+    | some (_, f) => r.resolve f
+    | none => if r.parskip.width > ha.width then r.parskip else ha)
   -- A heading keeps its after-skip and two body lines with it, or opens the next page.
   let keep := after.width + 2 * Ir.leadingFor r.geom.fontSize r.geom.leading
   let savedFg := a.fg
@@ -13949,6 +14009,33 @@ private def floatTailSkip (r : Rd) (a : Acc) (b : Block) : Acc :=
     else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size } else a
   else a
 
+/-- A quotation's opening under the skips its lineage sets (`Ir.quoteSpacing`) at `\@listdepth`
+`lv`: its skip, the walk at its first line `lm` narrower, and the reader inside it. -/
+private def quoteOpen (r : Rd) (a : Acc) (blk : Block) (lv : Nat) (lm : Length) (sk : Ir.ListSkips)
+    (pts : SymGlue) : Glue × Acc × Rd :=
+  let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
+  -- In an item's label `\@noparlist` sets no skip above or below it.
+  let top := if a.afterHeading || r.inLabel then a.flushGap r
+    else if a.boxTop then a.boxGap r
+    else (a.openSpace r g).flushGap r
+  let sub := { top with measure := some ((a.measure.getD r.geom.textWidth) - lm)
+                        quoteDepth := a.quoteDepth + 1 }
+  let ri := { (r.within blk) with
+    inPar := false, inLabel := false
+    trivOpened := a.tokens
+    trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv sk pts (r.trivOuter a))
+    geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+  (g, sub, ri)
+
+/-- A quotation's close: `\endtrivlist`, a quotation closing on a nested list, quotation or trivlist
+re-skipping as an item does, then its skip `g` below, the walk back at `a`'s measure. -/
+private def quoteClose (r : Rd) (a sub : Acc) (body : Array Block) (sk : Ir.ListSkips) (g : Glue) :
+    Acc :=
+  let sub := if Ir.itemClosesOnSkip body then
+      sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
+    else sub
+  { (if r.inLabel then sub else sub.listSpace g) with measure := a.measure, quoteDepth := a.quoteDepth }
+
 mutual
 
 -- The block walk recurses through `List` companions, so every call is structural.
@@ -13976,13 +14063,15 @@ private def collectBlockList (r : Rd) (a : Acc)
   | [] => r.settleLabels a indent
   | blk :: rest =>
     if statefulBlock blk then
-      collectBlockList r (collectBlock r a blk indent) rest indent first prevRule
+      let a := collectBlock r a blk indent
+      collectBlockList r { a with parCont := blk.parContAfter a.parCont } rest indent first prevRule
     else
     -- Until a frame's body sets its first line no peer gap is owed (`Spacing.Pending.frameTop`).
     let a := if first || a.frameTop then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let (rb, a) := r.meetLabels a blk indent
     let a := collectBlock rb a blk indent
+    let a := { a with parCont := blk.parContAfter a.parCont }
     let a := if prevRule then { a with declaredSkip := false } else a
     let waits := match labelMeet blk with
       | .waits => true
@@ -14343,7 +14432,7 @@ private def collectLaid (r : Rd) (a : Acc) (lines : List LaidLine) (indent : Len
 
 private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Length) : Acc :=
-  let r := r.underParskip a.tokens
+  let r := (r.underParskip a.tokens).inside blk
   match blk with
   | .para content => collectParaBlock r a content indent
   | .lines ls => collectLaid r a ls.toList indent
@@ -14462,11 +14551,12 @@ private def collectBlock (r : Rd) (a : Acc)
         let above := r.resolve sk.above
         let a := if a.afterHeading then a
           else if sk.parskipAbove then a.listSpace above else a.addvspace above
-        (collectBlocks { r with inPar := false } a body indent).listSpace (r.resolve sk.below)
+        (collectBlocks { r with inPar := false } { a with parCont := true } body indent).listSpace
+          (r.resolve sk.below)
       | none =>
         let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
             (a.listDepth))
-        (collectBlocks r (a.trivSpace g) body indent).trivSpace g
+        (collectBlocks r { a.trivSpace g with parCont := true } body indent).trivSpace g
     else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size }
     else if n == Ir.trivItemRole then
       if r.lists.trivTexParskip then a.addvspace (r.resolve (r.trivOuter a).itemsep) else a
@@ -14495,25 +14585,9 @@ private def collectBlock (r : Rd) (a : Acc)
     let narrow := some ((a.measure.getD r.geom.textWidth) - lm)
     match Ir.quoteSpacing r.lists r.geom.fontSize lv a.tokens q with
     | some (sk, pts) =>
-      let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
-      -- In an item's label `\@noparlist` sets no skip above or below it.
-      let top := if a.afterHeading || r.inLabel then a.flushGap r
-        else if a.boxTop then a.boxGap r
-        else (a.openSpace r g).flushGap r
-      let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
-      let ri := { (r.within blk) with
-        inPar := false, inLabel := false
-        trivOpened := a.tokens
-        trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv sk pts
-          (r.trivOuter a))
-        geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
-      let sub := collectQuoteList ri sub q.kind body.toList (indent + lm) true false false false
-      -- `\endtrivlist`: a quotation closing on a nested list, quotation or trivlist re-skips as an
-      -- item does.
-      let sub := if Ir.itemClosesOnSkip body then
-          sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
-        else sub
-      { (if r.inLabel then sub else sub.listSpace g) with measure := saved, quoteDepth := a.quoteDepth }
+      let (g, sub, ri) := quoteOpen r a blk lv lm sk pts
+      quoteClose r a (collectQuoteList ri sub q.kind body.toList (indent + lm) true false false false)
+        body sk g
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
           (a.listDepth))
@@ -14599,18 +14673,38 @@ private def collectBlock (r : Rd) (a : Acc)
   | .abstract body =>
     -- A centred bold heading, then the body at its size in the class's form (`Ir.AbstractForm`).
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
-    let a := collectAbstractHead r a indent
     let lead := Ir.stepLead r.geom.skips (Ir.abstractBodySize r.styles) r.geom.fontSize
     let rs := { (r.within blk) with geom := { r.geom with fontSize := small, lead := lead } }
     match r.abstractForm with
     | .quotation =>
-      let saved := a.measure
-      let lm := r.leftMargin (a.listDepth + 1) a.tokens
-      let sub := { a with
-        measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
-      { collectBlocks rs sub body (indent + lm) with measure := saved, quoteDepth := a.quoteDepth }
-    | .titlePage => collectBlocks rs a body indent
+      -- article.cls's: the head in a `center` ending with `\vspace{-.5em}\vspace{\z@}`, then
+      -- `\quotation` at `\small`, or `quote` where a redefinition opens one.
+      let (rt, a, og) := a.trivOpen r
+      let a := (collectAbstractHead rt a indent).vspace (rs.resolve { width := { em := -500 } })
+      let a := a.trivClose r og
+      let kind := if (r.style "abstract").indent == some {} then Ir.QuoteKind.quote else .quotation
+      let lv := a.listDepth + 1
+      -- Its list takes the `\@listi` the size step's command redefines, at the class's size.
+      let q : Ir.QuoteSpec :=
+        { kind, spacing := Ir.stepListI r.lists r.geom.fontSize (some (Ir.abstractBodySize r.styles)) lv }
+      let lm := r.leftMargin lv a.tokens
+      match Ir.quoteSpacing r.lists r.geom.fontSize lv a.tokens q with
+      | some (sk, pts) =>
+        let (g, sub, ri) := quoteOpen r a blk lv lm sk pts
+        let ri := { ri with geom := { ri.geom with fontSize := small, lead := lead } }
+        quoteClose r a (collectQuoteList ri sub kind body.toList (indent + lm) true false false false)
+          body sk g
+      | none =>
+        let saved := a.measure
+        let sub := { a with
+          measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
+        { collectBlocks rs sub body (indent + lm) with measure := saved, quoteDepth := a.quoteDepth }
+    -- The text after the title page's centred head goes on past it, as `\@endpe` leaves it.
+    | .titlePage =>
+      let a := collectAbstractHead r a indent
+      collectBlocks { rs with parIndent := some r.bodyIndent } { a with parCont := true } body indent
     | .inset =>
+      let a := collectAbstractHead r a indent
       let g := { rs.geom with justify := false, flushRight := false, raggedFil := true }
       let ri := { rs with geom := g }
       collectInsetList rs ri a body.toList indent (r.preamble.resolve Ir.abstractInset) true false
@@ -14858,7 +14952,9 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hmk)
   have hst' : (r.underParskip a.tokens).styles.find? n = none := by
     rw [Spacing.Context.underParskip_styles]; exact hst
-  simp only [collectBlock, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
+  have hin := Spacing.Context.inside_keeps (r.underParskip a.tokens) (.role n body)
+    (by simp [Ir.Block.keepsParIndent, htl])
+  simp only [collectBlock, hin, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
     hdc, hop, hpic, hre, hti, hpp, hsp, hmk', Bool.false_or, Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
@@ -16713,6 +16809,27 @@ private theorem raggedItems_prose (items : Array Item) (hp : ItemsProse items) :
 private theorem raggedItems_paraItems (items : Array Item) :
     raggedItems (paraItems items) = paraItems (raggedItems items) := by
   simp [raggedItems, paraItems]
+
+private theorem indentBox_prose (fg : Ir.Color) (size : Length) (ground : Option Ir.Color)
+    (w : Length) : (indentBox fg size ground w).Prose := trivial
+
+private theorem openKern_prose (items : Array Item) (kern rk : Length) (hf : Bool)
+    (box : Length → Item) (hp : ItemsProse items) (hb : ∀ w, (box w).Prose) :
+    ItemsProse (openKern items kern rk false hf box).1 := by
+  rw [openKern_flat]
+  split
+  · exact hp
+  · intro it hi
+    rcases (by simpa using hi : it = box (if hf then kern else 0) ∨ it ∈ items) with rfl | hi
+    · exact hb _
+    · exact hp it hi
+
+private theorem openKern_paraItems (items : Array Item) (kern rk : Length) (hf : Bool)
+    (box : Length → Item) :
+    (openKern (paraItems items) kern rk false hf box).1 =
+      paraItems (openKern items kern rk false hf box).1 := by
+  rw [openKern_flat, openKern_flat]
+  split <;> simp [paraItems]
 
 private theorem kpTwoPass_unflagged (items : Array Item) (target : Length) (protrude expand : Bool)
     (bg : Length) (fil : Bool) {runt : Bool} (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
@@ -21105,7 +21222,7 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
       (page := Ir.standsOnPage doc.body[i + 1]?) (pageNext := doc.body[i + 1]?)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
-  return (acc, firstBlk)
+  return ({ acc with parCont := blk.parContAfter acc.parCont }, firstBlk)
 
 /-- The source loop, its state recording whether a real block has appeared. -/
 private def collectDocBody (rd : Rd) (doc : Doc)
@@ -21196,19 +21313,47 @@ private theorem raggedItems_noGlyph (items : Array Item)
   cases x <;> dsimp only at hg ⊢
   all_goals first | exact hg | split <;> trivial
 
+private theorem indentBox_noGlyph (fg : Ir.Color) (size : Length) (ground : Option Ir.Color)
+    (w : Length) : (indentBox fg size ground w).NoGlyph := rfl
+
+private theorem openKern_noGlyph (items : Array Item) (kern rk : Length) (hf : Bool)
+    (box : Length → Item) (h : ∀ it ∈ items, it.NoGlyph) (hb : ∀ w, (box w).NoGlyph) :
+    ∀ it ∈ (openKern items kern rk false hf box).1, it.NoGlyph := by
+  rw [openKern_flat]
+  split
+  · exact h
+  · intro it hi
+    rcases (by simpa using hi : it = box (if hf then kern else 0) ∨ it ∈ items) with rfl | hi
+    · exact hb _
+    · exact h it hi
+
+private theorem openKern_chars (items : Array Item) (kern rk : Length) (hf : Bool)
+    (box : Length → Item) (hb : ∀ w, (box w).boxChars = []) :
+    (openKern items kern rk false hf box).1.toList.flatMap Item.boxChars =
+      items.toList.flatMap Item.boxChars := by
+  rw [openKern_flat]
+  split
+  · rfl
+  · simp [hb]
+
+private theorem openKern_para_of {x items : Array Item} (kern rk : Length) (hf : Bool)
+    (box : Length → Item) (h : x = paraItems items) :
+    (openKern x kern rk false hf box).1 = paraItems (openKern items kern rk false hf box).1 := by
+  rw [h, openKern_paraItems]
+
 private theorem collectPara_leafNext (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat) :
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat) (first : Length) :
     (collectPara r a xs indent false r.geom.fontSize
-      (leaf := leaf) (span := span)).leafNext = a.leafNext := by
+      (leaf := leaf) (span := span) (firstIndent := first)).leafNext = a.leafNext := by
   simp only [collectPara]
   exact flushGap_leafNext a r
 
 private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat)
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat) (first : Length)
     (ha : a.SourceBound n) (hp : PlainInlines xs)
     (hs : (∃ k, leaf = some k ∧ k < n) ∨ xs = #[]) :
     (collectPara r a xs indent false r.geom.fontSize
-      (leaf := leaf) (span := span)).SourceBound n := by
+      (leaf := leaf) (span := span) (firstIndent := first)).SourceBound n := by
   have hn := itemsOfInlines_plainNotes r.pats r.geom.fontSize r.xHeight r.fs
     ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground
        urlBreaks := r.surface != .tex } : TextStyle)
@@ -21216,14 +21361,17 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
     ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
     r.geom.textHeight true r.geom.scale r.step r.roleMetrics r.steps hp
   simp only [collectPara, show (Color.blackInk == Color.black) = true from rfl,
-    BEq.rfl, Bool.false_eq_true, ↓reduceIte]
+    BEq.rfl, Bool.false_eq_true, Bool.false_and, ↓reduceIte]
   rw [hn]
   simp only [Array.isEmpty_empty, ↓reduceIte]
   intro op ho
   simp only [Array.mem_push] at ho
   rcases ho with ho | rfl
   · exact sourceBound_flushGap a r ha _ ho
-  · refine ⟨?_, rfl, rfl, rfl⟩
+  · refine ⟨?_, ?_, rfl, rfl⟩
+    rotate_left
+    · show (if _ then Array.map _ (#[] : Array (Nat × NoteBlock)) else #[]) = #[]
+      simp
     rcases hs with hs | rfl
     · exact Or.inl hs
     · apply Or.inr
@@ -21236,6 +21384,7 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
         intro it hi
         simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hi
         rcases hi with rfl | rfl <;> first | rfl | trivial
+      refine openKern_noGlyph _ _ _ _ _ ?_ (fun w => indentBox_noGlyph _ _ _ w)
       split
       · exact hi
       · exact raggedItems_noGlyph _ hi
@@ -21305,7 +21454,8 @@ private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
     (indent : Length) (hp : PlainInlines xs) (hl : r.labels = #[]) :
     collectParaBlock r a xs indent =
       collectPara r (a.leafRange (Struct.leafCountInlines xs)).1 xs indent false r.geom.fontSize
-        (leaf := (a.leafRange (Struct.leafCountInlines xs)).2) (span := Struct.leafCountInlines xs) := by
+        (leaf := (a.leafRange (Struct.leafCountInlines xs)).2) (span := Struct.leafCountInlines xs)
+        (firstIndent := r.firstIndent a xs) := by
   unfold collectParaBlock
   split
   · rename_i h
@@ -21351,8 +21501,8 @@ private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc)
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
-  rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp
-    (by rw [Spacing.Context.underParskip_labels]; exact hl)]
+  rw [collectBlock, Spacing.Context.inside_keeps _ (.para xs) rfl,
+    collectParaBlock_leafNext _ _ _ _ hp (by rw [Spacing.Context.underParskip_labels]; exact hl)]
   simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
   split <;> rfl
 
@@ -21366,7 +21516,7 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
-  rw [collectBlock]
+  rw [collectBlock, Spacing.Context.inside_keeps _ (.para xs) rfl]
   apply sourceBound_collectParaBlock
   · split <;> exact ha
   · exact hp
@@ -21465,10 +21615,11 @@ private theorem raggedItems_chars (items : Array Item) :
   all_goals first | rfl | (split <;> rfl)
 
 private theorem collectPara_prose (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat)
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat) (first : Length)
     (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) :
     ∃ j : ParaJob, Spacing.Pending.ops (collectPara r a xs indent false (Spacing.Context.geom r).fontSize
-        (leaf := leaf) (span := span)) = (Spacing.Pending.ops (a.flushGap r)).push (Op.ofPara j) ∧
+        (leaf := leaf) (span := span) (firstIndent := first)) =
+        (Spacing.Pending.ops (a.flushGap r)).push (Op.ofPara j) ∧
       j.Prose ∧ (Spacing.Paragraph.leaf j) = leaf ∧ (Spacing.Paragraph.inFloat j) = (Spacing.Context.inFloat r) ∧
       (GlyphClean (Spacing.Paragraph.diags j) →
         inkCensus ((Spacing.Paragraph.items j).toList.flatMap Item.boxChars) =
@@ -21488,19 +21639,23 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
     (Spacing.Context.geom r).textHeight (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs)
     style xs true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) (Spacing.Context.steps r) hp rfl
   simp only [collectPara, show (Color.blackInk == Color.black) = true from rfl,
-    BEq.rfl, Bool.false_eq_true, ↓reduceIte]
+    BEq.rfl, Bool.false_eq_true, Bool.false_and, ↓reduceIte]
   rw [hn]
   simp only [Array.isEmpty_empty, ↓reduceIte]
   refine ⟨_, rfl, ?_, rfl, rfl, ?_⟩
   · refine ⟨rfl, ?_⟩
     rcases hi with ⟨items, hi, he⟩
+    show ∃ items, ItemsProse items ∧ (openKern _ _ _ false _ _).1 = paraItems items
     split
-    · exact ⟨items, hi, by simpa only [hr] using he⟩
-    · exact ⟨raggedItems items, raggedItems_prose items hi, by
-        simpa only [hr] using
-          (congrArg raggedItems he).trans (raggedItems_paraItems items)⟩
+    · exact ⟨_, openKern_prose _ _ _ _ _ hi (fun w => indentBox_prose _ _ _ w),
+        openKern_para_of _ _ _ _ (by simpa only [hr] using he)⟩
+    · exact ⟨_, openKern_prose _ _ _ _ _ (raggedItems_prose items hi)
+          (fun w => indentBox_prose _ _ _ w),
+        openKern_para_of _ _ _ _ (by simpa only [hr] using
+          (congrArg raggedItems he).trans (raggedItems_paraItems items))⟩
   · intro hd
-    change inkCensus ((if _ then _ else raggedItems _).toList.flatMap _) = _
+    change inkCensus ((openKern (if _ then _ else raggedItems _) _ _ false _ _).1.toList.flatMap _) = _
+    rw [openKern_chars _ _ _ _ _ (fun w => indentBox_chars _ _ _ w)]
     split
     · simpa only [hr] using hc (by simpa only [hr, GlyphClean, Id.run, pure, Id] using hd)
     · rw [raggedItems_chars]
@@ -21599,16 +21754,16 @@ private theorem Spacing.Pending.GapAppend.census {a b : Acc} (h : a.GapAppend b)
 
 
 private theorem collectPara_census (r : Rd) (a : Acc)
-    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat)
+    (xs : Array Inline) (indent : Length) (leaf : Option Nat) (span : Nat) (first : Length)
     (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) (ha : a.Prose)
     (pick : Option Nat → Bool → Bool) :
     let out := collectPara r a xs indent false (Spacing.Context.geom r).fontSize
-      (leaf := leaf) (span := span)
+      (leaf := leaf) (span := span) (firstIndent := first)
     out.Prose ∧ (out.Clean → a.Clean ∧
       inkCensus (out.census pick) = inkCensus (a.census pick) ++
         if pick leaf (!(Spacing.Context.inFloat r)) then inkCensus (Ir.plainText xs).toList else []) := by
   dsimp only
-  obtain ⟨j, he, hj, hl, hf, hc⟩ := collectPara_prose r a xs indent leaf span hp hr
+  obtain ⟨j, he, hj, hl, hf, hc⟩ := collectPara_prose r a xs indent leaf span first hp hr
   have hg := flushGap_gapAppend a r
   constructor
   · intro op ho
@@ -21644,7 +21799,8 @@ private theorem collectParaBlock_census (r : Rd) (a : Acc) (xs : Array Inline)
   simpa only [Spacing.Pending.leafRange, plainInlines_leafCount xs hp,
     Spacing.Pending.Prose, Spacing.Pending.Clean, Spacing.Pending.census] using
     collectPara_census r (a.leafRange (Struct.leafCountInlines xs)).1 xs indent
-      (a.leafRange (Struct.leafCountInlines xs)).2 (Struct.leafCountInlines xs) hp hr ha pick
+      (a.leafRange (Struct.leafCountInlines xs)).2 (Struct.leafCountInlines xs)
+      (r.firstIndent a xs) hp hr ha pick
 
 private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
@@ -21660,7 +21816,7 @@ private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
-  rw [collectBlock]
+  rw [collectBlock, Spacing.Context.inside_keeps _ (.para xs) rfl]
   have hr' : ∀ tk, (rd.underParskip tk).pats = none := fun tk => by
     rw [Spacing.Context.underParskip_pats]; exact hr
   have hl' : ∀ tk, (rd.underParskip tk).labels = #[] := fun tk => by
@@ -21895,6 +22051,9 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    lists := doc.docClass.record.lists
                    listExtra := doc.listExtra
                    quotationIndent := doc.docClass.record.quotationIndent
+                   parIndent := some (doc.preambleFace.resolve (Ir.parIndentOf doc.page))
+                   bodyIndent := doc.preambleFace.resolve (Ir.parIndentOf doc.page)
+                   startSections := doc.docClass.record.startSections && doc.surface == .tex
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels
                    frameShown := doc.frameShown

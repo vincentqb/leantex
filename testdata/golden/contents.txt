@@ -1,13 +1,16 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 meta title "Kettles and Teapots"
 meta author "Pat Placeholder"
 role page plain
-center
-  section* 0
-    text "Kettles and Teapots"
-  para
-    text "Pat Placeholder"
+role trivlist-env
+  center
+    section* 0
+      text "Kettles and Teapots"
+    block before 1500/1000em
+    para
+      text "Pat Placeholder"
+block before 1500/1000em
 section* 1
   text "Contents"
 contents depth 3 current 0.0.0

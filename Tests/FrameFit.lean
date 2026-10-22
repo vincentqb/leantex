@@ -220,7 +220,7 @@ def breakableTitleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Unpenalised, a club and widow line costs less than moving the body whole, as in TeX; the lifts
   -- step the room a page's last paragraph leaves finer than a line.
   let splits := ((List.range 4).flatMap fun k => (List.range 8).map (k, 4 * ·)).filter fun (k, lift) =>
-    let out := (fittedOf fira (elabStr (article (16 + k) lift)).1).out
+    let out := (fittedOf fira (elabStr (article (19 + k) lift)).1).out
     match pageOf out "Alpha", pageOf out "Lima", pageOf out "Mike" with
     | some a, some l, some m => a == l && m == l + 1
     | _, _, _ => false

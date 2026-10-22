@@ -1,16 +1,19 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parskip 0 plus 1pt parindent 15pt
 font dir "fonts"
 font body "Source Serif Pro"
 palette wash #2A6F4E
 meta title "Scopes and Corners"
 meta author "Pat Placeholder"
 role page plain
-center
-  section* 0
-    text "Scopes and Corners"
-  para
-    text "Pat Placeholder"
+role trivlist-env
+  center
+    section* 0
+      text "Scopes and Corners"
+    block before 1500/1000em
+    para
+      text "Pat Placeholder"
+block before 1500/1000em
 section 1 number "1"
   text "Moved and turned"
 picture 7 shapes

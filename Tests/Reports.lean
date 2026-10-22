@@ -11,6 +11,7 @@ import Tests.ItemBoxes
 import Tests.Tabbing
 import Tests.ScrExtend
 import Tests.ItemRefs
+import Tests.ParIndent
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2498,7 +2499,13 @@ def reports : List Report := [
     pins := [check% censusChecks, check% Tests.LeanProseReading.readingChecks,
       check% Tests.LeanProse.leanProseChecks, thm% LeanProse.parse_render_exact]
     accept := ["main's binary at 590f187f on the Lean prose fixture: For every b : Barge, if b is moored, then 0 < b.draft, and There is b : Barge such that b is moored and b.hull = 0, the guards failing there; this tree says For every b : Barge that is moored, 0 < b.draft, and There is b : Barge that is moored such that b.hull = 0, in the PDF, on the web page and in the twin"]
-    state := .guarded "590f187f" .before .author }
+    state := .guarded "590f187f" .before .author },
+  { id := "R290", date := "2026-10-22"
+    what := "a standard class's paragraphs were set flush with half a line between them, where LaTeX indents each by its class's parindent and sets them a baselineskip apart, so a plain article page held four lines fewer than lualatex's; a declared parindent was never read, the noindent command did nothing and a letter's paragraphs stood touching where its class sets them 0.7em apart"
+    pins := [check% Tests.ParIndent.parIndentChecks]
+    accept := ["lualatex 1.24 on invented probes: article, report and book at 10, 11 and 12pt indent 15, 17 and 18pt, memoir alike, scrartcl 1em under parskip=false and never and none under half, letter none, the leantex class 17pt, amsart 12pt, amsproc 18pt, acmart 10pt and 9pt under acmtog; no indent after a heading or a starred one, where text goes on past a list, a display, a centre, a verbatim, a kernel theorem, an abstract or a float inside its paragraph, under the noindent command, in a list item, a minipage, a flushleft, a paragraph cell or a caption; an indent after a blank line past each, on a theorem's second paragraph and after an amsthm theorem; an abstract's paragraphs by 1.5em at the small size; a declared parindent in the preamble or the body to its group's end, a declared parskip keeping the indent and the parskip package dropping it but under its indent option; this tree sets each as lualatex does and the web page indents the same paragraphs, where main's binary at 75a8191e set every one flush; the guard fails there",
+      "a paragraphs-only article page: lualatex sets 46 text lines, main's binary 41 to 43, this tree 46"]
+    state := .guarded "75a8191e" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

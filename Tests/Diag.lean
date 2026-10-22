@@ -294,7 +294,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     dvE (w := w) (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x") ++
     dvE (w := w) (dvDoc "\\usepackage{booktabs}\n\\@ifpackageloaded{booktabs}{\\relax}{}\n" "x") ++
     dvE (w := w) (dvDoc "\\AtBeginDocument{\\IfPackageLoadedF{wideframe}{\\relax}}\n" "x")
-  | .N0200 => dvL (w := w) one (dvDoc "\\page{ height = 127pt, margin = 20pt }\n"
+  | .N0200 => dvL (w := w) one (dvDoc "\\page{ height = 127pt, margin = 20pt, parskip = 6pt plus 1pt }\n"
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
   | .N0016 => probed .N0016
   | .N0018 => dvL (w := w) withMath "$\\mathcal{L} + \\mathsf{A}$"

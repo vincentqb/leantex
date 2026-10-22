@@ -258,7 +258,7 @@ def runinChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match doc.body[0]? with
      | some (Ir.Block.para xs) =>
        (match xs[0]? with
-        | some (Ir.Inline.styled .bold ttl) => Ir.plainText ttl == "Setup"
+        | some (Ir.Inline.role _ #[Ir.Inline.styled .bold ttl]) => Ir.plainText ttl == "Setup"
         | _ => false) &&
        (Ir.plainText xs) == "Setup\u2003The details follow."
      | _ => false)
@@ -519,6 +519,7 @@ def listingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let body : Array Ir.Block := (elabStr (dvDoc "" ("\\begin{lstlisting}[caption={A}]\na\n\\end{lstlisting}\n" ++
       "\\begin{lstlisting}\nb\n\\end{lstlisting}\n" ++
       "\\begin{lstlisting}[caption={B}]\nc\n\\end{lstlisting}"))).1.body
+     let body := body.filter (!Ir.pageMarkerBlock ·)
      match body[0]?, body[1]?, body[2]? with
      | some (Ir.Block.verbatim _ _ s1), some (Ir.Block.verbatim _ _ s2),
          some (Ir.Block.verbatim _ _ s3) =>
@@ -1205,7 +1206,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}\\paragraph{P}\nx\\end{document}"
      warnCodes src == [] &&
        (elabStr src).1.body ==
-         #[.para #[.styled .bold #[.text "P"], .text "\u2003x"]])
+         #[.para #[.role Ir.runInHeadRole #[.styled .bold #[.text "P"]], .text "\u2003x"]])
   t "a run-in redefinition in a foreign font is named, skipped"
     (warnCodes ("\\documentclass{article}\\renewcommand{\\paragraph}{" ++
       "\\@startsection{paragraph}{4}{\\z@}{1.5ex}{-1em}{\\normalsize\\it}}" ++
@@ -1231,8 +1232,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.width.em)) == some 600)
   t "compat setlength parskip"
     ((elabStr (pre "\\setlength{\\parskip}{4pt}")).1.page.parskip == some { width := Dim.SymLength.ofLength (Dim.pt 4) })
-  t "a native article keeps the engine's parskip"
-    ((elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.page.parskip == none)
+  t "a native article takes the class's parskip and size file's parindent"
+    (let p := (elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.page
+     p.parskip == some Ir.texParskipDefault && p.parindent == some (.ofLength (Dim.pt 15)))
   let (ndc, ndcDs) := elabStr ("\\documentclass{article}" ++
     "\\NewDocumentCommand{\\role}{m o}{\\textbf{#1}\\IfValueT{#2}{ (#2)}}" ++
     "\\begin{document}\\role{A}[B] \\role{C}\\end{document}")
@@ -1316,16 +1318,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   t "compat expl3 is skipped whole"
     (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
-  -- A dropped command is a note when the drop is its meaning, else the guard's W0387.
+  -- A dropped command is a note when the drop is its meaning, else the guard's W0387; `\noindent`
+  -- inside a paragraph does nothing, as TeX's does.
   t "compat inert commands vanish, accounted"
     (let ds := (elabStr "a\\noindent\\relax\\thispagestyle{plain} b").2
      ds.all (fun d => d.code == "N0100" || d.code == "W0387") &&
      ds.any (fun d => d.code == "W0387") &&
      (ds.filter (·.code == "N0100")).size == 2)
-  t "compat noindent is agreement, never the guard's W0387"
-    (let ds := (elabStr (dvDoc "" "\\noindent x")).2
-     ds.all (·.code != "W0387") &&
-     ds.any (fun d => d.code == "N0100" && hasStr (saidText d) "noindent"))
+  t "compat noindent opens its paragraph flush, never the guard's W0387"
+    (let (d, ds) := elabStr (dvDoc "" "\\noindent x")
+     ds.all (·.code != "W0387") && d.body[0]? == some (.role Ir.parContinuesRole #[]))
   t "compat raggedright maps mid-flow instead of naming a loss"
     ((elabStr "a\\raggedright b").1.body ==
       #[.para #[.text "a"], .ragged .left #[.para #[.text "b"]]])
@@ -2236,7 +2238,7 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let (doc, ds) := elabStr "\\title[junk words {Kept Title}\n\\maketitle"
      !ds.any (·.severity == .error) &&
        (match doc.body with
-        | #[.para junk, .role n #[], .center _] =>
+        | #[.para junk, .role n #[], .role _ #[.center _], .spaced _ #[]] =>
           n == Ir.plainPageRole && (Ir.plainText junk).endsWith "junk words"
         | _ => false))
   t "a section with no group after its unclosed bracket warns, never fatally"
@@ -6479,7 +6481,7 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let italIdx (i : Nat) : Bool := i == 2 || i == 3
   let doc (inner : String) : String :=
     (if hasStr inner "rose" then "\\palette{ rose = #B03060 }" else "") ++
-    "\\begin{document}\n" ++ inner ++ "\n\\end{document}"
+    "\\begin{document}\n\\noindent " ++ inner ++ "\n\\end{document}"
   let node (body : String) : String :=
     doc ("\\begin{tikzpicture}\n\\node (a) at (0,0) {" ++ body ++ "};\n\\end{tikzpicture}")
   -- A line as its runs, each run's face, glyphs and colour, and each gap's width.

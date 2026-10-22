@@ -425,7 +425,7 @@ artifacts, a record of their own ({(said "overfull column" "").map (·.detail)})
   let zeds := String.ofList (List.replicate 90 'z')
   let protruded := layoutOf fs (located (String.intercalate "\n" [
     "\\documentclass{article}", "\\usepackage{microtype}", "\\page{ width = 220pt, margin = 20pt }",
-    "\\begin{document}", "Opening.", "", "``" ++ zeds ++ " and more words after it.",
+    "\\begin{document}", "Opening.", "", "\\noindent``" ++ zeds ++ " and more words after it.",
     "\\end{document}"]))
   let hung := (bodyLines protruded).filter fun l => hasStr (lineText l) zeds
   let ran := hung.foldl (fun m l => max m (l.x + l.setWidth - flowRight)) 0

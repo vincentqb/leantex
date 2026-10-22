@@ -60,6 +60,7 @@ def paramProbes : List (String × String × String × String) :=
    ("fboxsep", "\\setlength{\\fboxsep}{7pt}", "\\tokens{ fboxsep = 7pt }", "boxes"),
    ("fboxrule", "\\setlength{\\fboxrule}{2pt}", "\\tokens{ fboxrule = 2pt }", "boxes"),
    ("textwidth", "\\setlength{\\textwidth}{4in}", "\\page{ textwidth = 4in }", "paras"),
+   ("parindent", "\\setlength{\\parindent}{25pt}", "\\tokens{ parindent = 25pt }", "paras"),
    ("headsep", "\\runninghead{Alpha head}\\setlength{\\headsep}{40pt}",
      "\\runninghead{Alpha head}\\page{ headsep = 40pt }", "paras"),
    ("footskip", "\\setlength{\\footskip}{50pt}", "\\page{ footskip = 50pt }", "paras"),
@@ -163,11 +164,10 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       t s!"'{n}' named as unread sets nothing on the page"
         (pagesOf oneFace (doc s!"\\setlength\{\\{n}}\{7pt}" every) ==
           pagesOf oneFace (doc "" every))
-  -- A zero indent is what the engine does: honoured, said so, never named.
-  let flush := dvE (doc "\\setlength{\\parindent}{0pt}" "Alpha words.")
+  -- A zero indent sets the paragraphs flush: honoured, never named.
+  let flush := doc "\\setlength{\\parindent}{0pt}" "Alpha words."
   t "a zero '\\parindent' is honoured, not named"
-    (!flush.any (·.code == "W0104") &&
-      flush.any (·.subject == some "ctrl:nothing:setlength:parindent"))
+    (!(dvE flush).any (·.code == "W0104") && (elabStr flush).1.page.parindent == some {})
 
 
 /-- Raws with each run of words and spaces one word of its text and every group's body alike, every
@@ -557,7 +557,7 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   -- A body assignment between two lists reaches the second only where the level's macro leaves it be.
   let between (set : String) : String :=
     "Alpha words.\n\\begin{itemize}\n\\item One.\n\\item Two.\n\\end{itemize}\n" ++ set ++
-      "\nBravo words.\n\\begin{itemize}\n\\item Three.\n\\item Four.\n\\end{itemize}\nCharlie."
+      "\n\nBravo words.\n\\begin{itemize}\n\\item Three.\n\\item Four.\n\\end{itemize}\nCharlie."
   for (set, names) in [("\\setlength{\\topsep}{9pt}", #["topsep"]),
       ("\\setlength{\\itemsep}{0pt}\\setlength{\\parsep}{0pt}", #["itemsep", "parsep"])] do
     let kds := dvE (doc (keep ++ listi) (between set))
@@ -606,7 +606,7 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
      ("\\parskip=5pt", "\\setlength{\\parskip}{5pt}"),
      ("\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{\\parskip}",
        "\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{7pt}"),
-     ("\\makeatletter\\setlength{\\parskip}{\\z@}\\makeatother", "\\setlength{\\parskip}{0pt}"),
+     ("\\makeatletter\\setlength{\\parindent}{\\z@}\\makeatother", "\\setlength{\\parindent}{0pt}"),
      ("\\makeatletter\\newlength{\\@probegap}\\setlength{\\@probegap}{7pt}" ++
         "\\setlength{\\parskip}{\\@probegap}\\makeatother", "\\setlength{\\parskip}{7pt}"),
      -- The preamble's `\baselineskip` is the class's `\normalsize` one, 12pt at 10pt.
@@ -857,14 +857,14 @@ def texEdgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let classRule (cls opt w : String) := pagesOf oneFace ("\\documentclass[" ++ opt ++ "]{" ++ cls ++
     "}\n\\begin{document}\n\\noindent\\rule{" ++ w ++ "}{2pt}\n\\end{document}")
   let rule (pre body : String) := pagesOf oneFace (dvDoc pre ("\\noindent\\rule{" ++ body ++ "}{2pt}"))
-  t "\\parindent reads the engine's indent, flush here as its paragraphs are, and never stops the build"
-    (rule "\\newlength\\lenC\n\\setlength\\lenC{\\parindent}\n" "\\lenC" == rule "" "0pt" &&
-      rule "" "\\parindent" == rule "" "0pt" &&
-      classRule "scrartcl" "" "\\parindent" == classRule "scrartcl" "" "0pt" &&
+  t "\\parindent reads the class's indent, and never stops the build"
+    (rule "\\newlength\\lenC\n\\setlength\\lenC{\\parindent}\n" "\\lenC" == rule "" "15pt" &&
+      rule "" "\\parindent" == rule "" "15pt" &&
+      classRule "scrartcl" "" "\\parindent" == classRule "scrartcl" "" "10.95pt" &&
       pagesOf oneFace (dvDoc "" "\\hspace*{-\\parindent}Alpha words.") ==
-        pagesOf oneFace (dvDoc "" "\\hspace*{0pt}Alpha words."))
-  t "a declared \\parindent, which the flush page does not take, reads as the page's"
-    (rule "\\setlength{\\parindent}{40pt}\n" "\\parindent" == rule "\\setlength{\\parindent}{40pt}\n" "0pt")
+        pagesOf oneFace (dvDoc "" "\\hspace*{-15pt}Alpha words."))
+  t "a declared \\parindent reads as the page's"
+    (rule "\\setlength{\\parindent}{40pt}\n" "\\parindent" == rule "\\setlength{\\parindent}{40pt}\n" "40pt")
   let wrapped := dvDoc "\\newlength\\mylen\n\\newcommand\\setw{\\mylen=2in}\n"
     "\\setw\\noindent\\rule{\\mylen}{2pt}\n\n{\\mylen=1in}\\noindent\\rule{\\mylen}{2pt}"
   t "an assignment with = ending its group or a definition's body still assigns"

@@ -1282,7 +1282,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
         match seg with
         | .run idx color _ w glyphs size _ _ raise _ _ =>
           px := px + w
-          runSize := max runSize size
+          unless glyphs.isEmpty do runSize := max runSize size
           runFonts := runFonts.push idx
           unless glyphs.isEmpty do runRaises := runRaises.push raise
           if coveredColors.contains color then
@@ -1677,8 +1677,19 @@ def hasGlyphRun (l : Layout.LineOut) : Bool :=
 def noDroppedGlyph (out : Layout.Out) : Bool :=
   !out.diags.any fun d => d.kind == .E0405 || d.kind == .W0009
 
+/-- The paragraph indent a line opens on: its leading empty box of no extent's width, else zero. -/
+def lineIndent (l : Layout.LineOut) : Dim.Length :=
+  match (l.segs[0]? : Option Layout.Seg) with
+  | some (.run _ _ _ w glyphs _ metrics _ _ _ _) =>
+    if glyphs.isEmpty && metrics.extent == some (0, 0) then w else 0
+  | _ => 0
+
+/-- A line's segments past the paragraph indent it opens on. -/
+def unindented (l : Layout.LineOut) : Array Layout.Seg :=
+  if lineIndent l == 0 then l.segs else l.segs.extract 1 l.segs.size
+
 /-- A line's text as a reader sees it: `lineText`, a glyphless tie read as a space. -/
-def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match seg with
+def lineInk (l : Layout.LineOut) : String := (unindented l).foldl (fun s seg => match seg with
   | .run _ _ _ _ glyphs _ _ _ _ _ _ =>
     if glyphs.isEmpty then s.push ' ' else glyphs.foldl (fun s (_, c, _) => s.push c) s
   | .gap _ _ | .decoratedGap _ _ _ => s.push ' '
@@ -2513,7 +2524,10 @@ def elabMeasured (fonts : Font.FontSet) (s : String) : Ir.Doc × Array Diag :=
 /-- Does a block of the document's title block, or one inside its `.center` wrapper, satisfy `p`? -/
 def inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
   doc.body.any fun b => p b ||
-    (match b with | .center xs => xs.any p | _ => false)
+    (match b with
+     | .center xs => xs.any p
+     | .role _ #[.center xs] => xs.any p
+     | _ => false)
 
 /-- Diagnostics after layout too, through the same alphabet resolution. -/
 def dvL (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=

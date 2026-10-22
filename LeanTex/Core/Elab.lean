@@ -4123,11 +4123,9 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
   let st ← get
   let level : Int := if name == "paragraph" then 4 else 5
   -- premise: counterChecks — numbered only within secnumdepth
+  -- `\paragraph` opens its paragraph at no indent; `\subparagraph` at the paragraph's own.
   let shaped (head : Inline) : Inline :=
-    -- article.cls indents `\subparagraph`'s head by `\parindent`, `\paragraph`'s by none.
-    if ctx.listNest.shaped.isSome || ((ctx.tokens.find? "parindent").isSome && level == 4) then
-      .role Ir.runInHeadRole #[head]
-    else head
+    if ctx.listNest.shaped.isSome || level == 4 then .role Ir.runInHeadRole #[head] else head
   -- hyperref's `\@currentlabelname`: a label after the head names it.
   let name := Ir.nameOf title
   if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
@@ -8515,15 +8513,24 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       unless blks.isEmpty do
         out := out.push (.role (Ir.titleSlotRole i) blks)
     return out
+  -- A flow page's skip stands as a `\vskip` of its own, which its centred lines read past.
   let push (inner : Array Block) (before : Option (Sourced SymGlue)) (b : Block) : Array Block :=
     match before, inner.isEmpty with
-    | some g, false => inner.push (.spaced g #[b])
+    | some g, false => if ctx.slides then inner.push (.spaced g #[b])
+      else (inner.push (.spaced g #[])).push b
     | _, _ => inner.push b
   let mut inner : Array Block := #[]
   let mut pending : Option (Sourced SymGlue) := none
+  -- A flow class's own `\@maketitle` skips, article.cls's 1.5em under its title and 1em under its
+  -- authors, report.cls's title page's 3em and 1.5em, yield to a redefinition's title bars.
+  let flowGap (em : Int) : Option (Sourced SymGlue) :=
+    if ctx.slides || ctx.surface != .tex || tps.ruleAbove.isSome || tps.ruleBelow.isSome then none
+    else some (Ir.Sourced.bare { width := { em } })
+  let titled := ctx.abstractNests
   if let some xs := part st.title then
     -- The title is the outline's one level-0 heading, never numbered.
     inner := push inner none (.section 0 true none xs)
+    pending := flowGap (if titled then 1500 else 3000)
   if let some xs := part st.subtitle then
     inner := push inner (ctx.tokens.findSourced? "subtitlegap") (.para #[.styled (.size "large") xs])
   if let some (c, nm) := tps.separator then
@@ -8548,7 +8555,8 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       | some h => #[Ir.Inline.strut h] ++ xs
       | none => xs
     inner := push inner pending (.para xs)
-    pending := ctx.tokens.findSourced? "authorgap"
+    pending := (ctx.tokens.findSourced? "authorgap").orElse fun _ =>
+      flowGap (if titled then 1000 else 1500)
   if let some xs := part st.institute then
     inner := push inner pending (.para #[.styled (.size "small") xs])
     pending := ctx.tokens.findSourced? "institutegap"
@@ -8577,6 +8585,18 @@ private def tableLengthTokens (face : Ir.PreambleFace) : Array (String × Dim.Sy
 private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlue) :=
   (List.range 6).toArray.map fun k => (Ir.leftMarginName (k + 1), Ir.leftMarginFor l {} (k + 1))
 
+/-- The `\parindent` a class sets under its options at body size `size`, fixed in its preamble's
+font: a KOMA-Script skip in lines sets paragraphs flush, as its `\setparsizes` does. -/
+private def classParIndent (record : Ir.ClassRecord) (opts : List String) (size : Length) :
+    Dim.SymLength :=
+  let flush := (opts.filterMap fun o => match KeyVal.entry o with
+    | ("parskip", v) =>
+      if record.parskipOption && (Ir.classParskip? v 0).isSome then some (Ir.classParskipFlush v)
+      else none
+    | _ => none).getLast?.getD false
+  if flush then {} else
+    .ofLength ((Ir.PreambleFace.ofClass record size).resolve (record.parindent.at size))
+
 private def engineLengthTokensOfPage (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
   #[("paperwidth", { width := Dim.SymLength.ofLength page.width }),
@@ -8586,8 +8606,7 @@ private def engineLengthTokensOfPage (page : PageSpec) :
     ("columnsep", { width := Ir.columnSep }),
     ("baselineskip", { width := Dim.SymLength.ofLength (Ir.baselineSkipOf page) }),
     ("parskip", Ir.texParskipOf page),
-    -- Every class here sets its paragraphs flush.
-    ("parindent", {})]
+    ("parindent", { width := Ir.parIndentOf page })]
 
 /-- A class's abstract form under its options: `titlepage` moves a quotation onto a title page,
 `notitlepage` winning as the classes declare it last. -/
@@ -8629,6 +8648,8 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | "baselineskip" | "parskip" => false
     | _ => false
   let settled := (settledPage (area (classPageDefaults record opts page))).1
+  let settled := if settled.parindent.isSome then settled
+    else { settled with parindent := some (classParIndent record opts settled.fontSize) }
   (engineLengthTokensOfPage settled).filter (fun kv => offered kv.1) ++ classMarginTokens record.lists ++
     tableLengthTokens (Ir.PreambleFace.ofClass record settled.fontSize)
 
@@ -9367,6 +9388,17 @@ private def opensQuotation : List Raw → Bool
     ["quote", "quotation"].any (some · == Parse.splitOpen? n) || opensQuotation rest
   | .ctrl n _ :: rest => n == "quote" || n == "quotation" || opensQuotation rest
   | _ :: rest => opensQuotation rest
+
+/-- Whether the first quotation kind a body opens is `quote`, whose paragraphs open flush. -/
+private def opensQuote : List Raw → Bool
+  | [] => false
+  | .env n _ _ :: rest =>
+    if some "quote" == Parse.splitOpen? n then true
+    else if some "quotation" == Parse.splitOpen? n then false
+    else opensQuote rest
+  | .ctrl n _ :: rest =>
+    if n == "quote" then true else if n == "quotation" then false else opensQuote rest
+  | _ :: rest => opensQuote rest
 
 /-- latex.ltx commands that set no ink, with how many argument groups each
 takes. -/
@@ -11388,8 +11420,14 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     -- The flow classes centre the title block, as `\@maketitle` does.
     modify fun st => { st with titleDone := true }
     let tps := (ctx.styles.find? "titlepage").getD {}
-    let content := if tps.align == some .left then inner else #[.center inner]
-    -- `\maketitle` sets its page in the plain style, a class's title page in the empty one.
+    -- `\@maketitle`'s centre is a trivlist, `\vskip 1.5em` after it.
+    let content := if ctx.surface != .tex then
+        (if tps.align == some .left then inner else #[.center inner])
+      else
+        let content := if tps.align == some .left then inner
+          else #[.role Ir.trivlistRole #[.center inner]]
+        if tps.after.isSome then content
+        else content.push (.spaced (Ir.Sourced.bare { width := { em := 1500 } }) #[])
     let titlePage := blocks.back? == some (.role Ir.titlePageBeginRole #[])
     blocks := (if titlePage then blocks else blocks.push (.role Ir.plainPageRole #[])) ++ content
   return blocks
@@ -11668,6 +11706,8 @@ page ground's palette, or a page numbering's opening. -/
 private def midParaMark (ctx : Ctx) (n : String) (pos : Pos) (blocks : Array Block) :
     EM (Option Ir.Palette × Array Block) := do
   if numberingRole n then return (none, blocks.push (.role n #[]))
+  -- `\noindent` inside a paragraph does nothing.
+  if n == Ir.parContinuesRole then return (none, blocks)
   match ← pageGround ctx n pos with
   | some pal =>
     modify fun st =>
@@ -13674,8 +13714,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark || n == Ir.captionCloseRole
-    || n == Ir.trivItemRole || n == Ir.captionAtRole
-    || n == Ir.parContinuesRole
+    || n == Ir.trivItemRole || n == Ir.captionAtRole || (n == Ir.parContinuesRole && cur.isEmpty)
     || (Ir.pageOpeningOfRole? n).isSome || n == Ir.rectoRole || ((n == Ir.plainPageRole || n == Ir.styledPageRole) && cur.isEmpty)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
@@ -13734,9 +13773,18 @@ private def pastSkips (raws : Array Raw) (k : Nat) : Nat := Id.run do
     | _ => break
   return k
 
-/-- `blocks` with `Ir.parContinuesRole`'s marker after an environment leaving `\@endpe` (`endPe`) in a
-quotation, a verse or an indenting class's top level, where text follows it past any bare skip,
-unless it opened in a label, which `\@noparlist` leaves without one. -/
+/-- Whether the environment `blocks` ends on leaves `\@endpe`: a trivlist's, a quotation's abstract,
+a bibliography's list and a float inside the paragraph its text goes on with. -/
+private def envLeavesEndPe (ctx : Ctx) (inPar : Bool) (blocks : Array Block) : Bool :=
+  Ir.lastLeavesEndPe blocks || match Ir.lastContent? blocks with
+    | some (.abstract _) => ctx.abstractNests
+    | some (.float ..) => inPar
+    | some (.bibliography ..) => true
+    | _ => false
+
+/-- `blocks` with `Ir.parContinuesRole`'s marker after an environment leaving `\@endpe` (`endPe`) on a
+tex page whose paragraphs indent or in a quotation or a verse, where text follows it past any bare
+skip, unless it opened in a label, which `\@noparlist` leaves without one. -/
 private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (endPe : Bool)
     (blocks : Array Block) : Array Block :=
   let k := skipSpaces raws j
@@ -13747,14 +13795,12 @@ private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (endPe : Bool)
     !Ir.pageMarkerBlock b && !(b matches .setPalette _ | .setTokens _) &&
       !(match b with | .para c => Ir.anchorsOnly c | _ => false)
   let labelled := 0 < ctx.listNest.depth && content.size ≤ 1
-  -- An indenting class's text going on at the top level, its abstract a list, sets it flush.
-  let indents := ctx.listNest.depth == 0 && (ctx.tokens.find? "parindent").isSome
-  let endPe := endPe || (indents && (Ir.lastContent? blocks matches some (.abstract _)))
+  let indents := ctx.surface == .tex && !ctx.kept && ctx.page.parindent.isSome
   if text && (ctx.listNest.shaped.isSome || indents) && !labelled && endPe then
     blocks.push (.role Ir.parContinuesRole #[])
   else blocks
 
-seal textOpens pastSkips parContinues
+seal textOpens pastSkips envLeavesEndPe parContinues
 
 /-- The `\begin{frame}` options the frame model reads; a standout frame is
 centred whatever its options say. -/
@@ -15036,14 +15082,16 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A restoring scope stays whole so its snapshot predates every assignment.
         let inner ← restoringGroup ctx' cur
           (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur))
-        elabBlocksNext ctx' raws (i + 1) (blocks ++ inner) gen'
+        elabBlocksNext ctx' raws (i + 1)
+          (parContinues ctx' raws (i + 1) (envLeavesEndPe ctx' false inner) (blocks ++ inner)) gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
         groupPictureInSentence ctx' body cur raws i
         let (⟨ctx', _⟩, blocks) ← flushPara ctx' blocks cur
         let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx' blocks
         let inner ← groupBlocks ctx'.palette
           (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body))
-        elabBlocksNext ctx' raws (i + 1) (blocks ++ inner) gen'
+        elabBlocksNext ctx' raws (i + 1)
+          (parContinues ctx' raws (i + 1) (envLeavesEndPe ctx' false inner) (blocks ++ inner)) gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .par _ =>
@@ -15105,11 +15153,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv
           flushed.size (elabEnvArm ctx' n body epos flushed)
         elabBlocksNext ctx' raws (i + 1)
-          (parContinues ctx' raws (i + 1) (Ir.lastLeavesEndPe blocks) blocks) gen'
+          (parContinues ctx' raws (i + 1) (envLeavesEndPe ctx' inPar blocks) blocks) gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
-      if !cur.isEmpty && (isPageGround n || numberingRole n) then
+      if !cur.isEmpty && (isPageGround n || numberingRole n || n == Ir.parContinuesRole) then
         let (pal?, blocks) ← midParaMark ctx' n cpos blocks
         let ⟨palCtx, _⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
@@ -15395,7 +15443,7 @@ unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray
 unseal parFollows parPrecedes endPeAt displayAtBlock
-unseal textOpens pastSkips parContinues
+unseal textOpens pastSkips envLeavesEndPe parContinues
 unseal scanBracketArg
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal texGroup groupBlocks restoringGroup envGroup
@@ -16359,6 +16407,8 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         else evs := wrong key v evs
       | .parskip, .glue g => spec := { spec with parskip := some g }
       | .parskip, .dim d => spec := { spec with parskip := some { width := Dim.SymLength.ofLength d } }
+      | .parindent, .glue g => spec := { spec with parindent := some g.width }
+      | .parindent, .dim d => spec := { spec with parindent := some (Dim.SymLength.ofLength d) }
       | .fontsize, .dim d =>
         -- From 1pt the default ladder's headings stand in order (`Layout.heading_hierarchy`).
         if d ≥ Dim.pt 1 then
@@ -18197,6 +18247,10 @@ margins stand{replaced}"
            | none, _, _ => none)
           (help := "the built-in already does this; \\define it under another name")) }
         let s := if quoted then { s with abstractForm := some .quotation } else s
+        -- A body on quote's margins sets its paragraphs flush.
+        let est := if envName == "abstract" && beginB.any (opensQuote ·.toList) then
+            est.map ({ · with indent := some {} })
+          else est
         match est with
         | some est =>
           let merged := Theme.styleMerge ((s.styles.find? "abstract").getD {}) est
@@ -19341,7 +19395,7 @@ public def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
   let st ← get
   let blocks := Ir.anchorReferents (referentKeys plan.ctx st) (Ir.numberFloats blocks st.ctr.chapters)
   let completion ← plan.finish blocks
-  return ((completion.attach blocks).withIndents, completion.table, completion.pictureReport)
+  return (completion.attach blocks, completion.table, completion.pictureReport)
 
 public def runDocBody (plan : DocBodyPlan) : EM (Doc × Ir.RefTable × PictureReportContext) := do
   finishDocBody plan (← elabBlocks plan.ctx plan.raws)
@@ -19423,8 +19477,8 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
       ((elabBlocks plan.ctx plan.raws).run st).2).1.attach
         (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
           (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1
-            ((elabBlocks plan.ctx plan.raws).run st).2.ctr.chapters))).withIndents.body) = _
-  rw [Ir.Doc.withIndents_text, hbs, numbered_recovered_para, referent_recovered_para, attach_paraUnder,
+            ((elabBlocks plan.ctx plan.raws).run st).2.ctr.chapters))).body) = _
+  rw [hbs, numbered_recovered_para, referent_recovered_para, attach_paraUnder,
     BodyCompletion.resolved_body_exact]
   split
   · rw [resolve_recovered_para]
@@ -19534,18 +19588,15 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   return { state := s, decls, body, trailing }
 
 /-- The flow class's grid as the tokens and heading styles it sets where the document declares
-none: `\topskip` and the footnote gap one leading, an indenting preset's size-file `\parindent`,
-and heading spaces whole leadings (`tex/ltflow.cls`). -/
-private def flowDesignDecls (body : Length) (indents : Bool) (tokens : Ir.Tokens)
-    (styles : Ir.Styles) : Ir.Tokens × Ir.Styles :=
+none: `\topskip` and the footnote gap one leading, and heading spaces whole leadings
+(`tex/ltflow.cls`). -/
+private def flowDesignDecls (body : Length) (tokens : Ir.Tokens) (styles : Ir.Styles) :
+    Ir.Tokens × Ir.Styles :=
   let lead := Ir.sizeFileLeading body 1000 "normalsize"
   let g (k : Nat) : SymGlue := { width := Dim.SymLength.ofLength (lead * (k : Int)) }
   let tok (t : Ir.Tokens) (n : String) (v : SymGlue) : Ir.Tokens :=
     if (t.find? n).isSome then t else t.declare n v
   let tokens := tok (tok tokens "topskip" (g 1)) "footins" (g 1)
-  let tokens := if indents then
-      tok tokens "parindent" { width := Dim.SymLength.ofLength (Ir.sizeFileParindent body) }
-    else tokens
   let head (st : Ir.Styles) (name : String) (b : Nat) (a : Option Nat) : Ir.Styles :=
     let e := (st.find? name).getD {}
     st.declare name { e with before := e.before <|> some (g b), after := e.after <|> a.map g }
@@ -19593,8 +19644,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         | _ => pal
     | _ => pal) basePalette
   let (tokens, styles) := match docClass.record.design with
-    | some _ => flowDesignDecls (classSized docClass.record classOptions page).fontSize
-        (match docClass with | .flow p => p.indents | _ => true) themedDs.tokens themedDs.styles
+    | some _ => flowDesignDecls (classSized docClass.record classOptions page).fontSize themedDs.tokens
+        themedDs.styles
     | none => (themedDs.tokens, themedDs.styles)
   let chrome := themedDs.chrome
   ctx := { ctx with palette := palette, basePalette := openingInk, tokens := tokens, styles := styles
@@ -19650,9 +19701,15 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         Ir.classParskip? v (Ir.sizeFileLeading page.fontSize page.spread "normalsize")
       else none
     | _ => none
+  -- A markdown or code page keeps the engine's own paragraphs.
+  let tex := Ir.Surface.ofPath file == .tex
   if page.parskip.isNone then
-    if let some g := (classOpts.filterMap optionSkip).getLast? <|> record.parskip then
+    if let some g := (classOpts.filterMap optionSkip).getLast? <|>
+        (if tex then record.parskip else none) then
       page := { page with parskip := some g }
+  if page.parindent.isNone && tex then
+    let indent := classParIndent record classOpts page.fontSize
+    if indent != {} then page := { page with parindent := some indent }
   -- A measure in characters sets a flow page's text block; a frame or a face keeps its own.
   if record.model != .flow && page.measureChars.isSome then
     diag ctx .W0104 s!"'\\page\{ measure = {page.measureChars.getD 0} }' sets a flow page's text block; \
@@ -19727,6 +19784,10 @@ the {docClass.name} class's page keeps its own" none
     output := { output with md := record.mdName }
   let face := Ir.PreambleFace.ofClass record page.fontSize
   let tokens := face.fixLoadLengths tokens
+  -- A preamble `\parindent` is the page's, fixed in the preamble's font.
+  if let some g := tokens.find? "parindent" then
+    page := { page with parindent := some (.ofLength (face.resolve g.width)) }
+  let tokens := tokens.erase "parindent"
   -- The size file's margin-note column at the class's own text block, within the declared page's
   -- margin, a declared `\marginparwidth` and its kin replacing it.
   if record.model == .flow then

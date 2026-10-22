@@ -852,8 +852,9 @@ def bodyParskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   let value := String.ofList ((((root.splitOn "--parskip: ")[1]?).getD "").toList.takeWhile (· != ';'))
   let shown := html (doc "" body)
   t s!"body parskip: the web page's paragraphs after it carry the page's screen gap ({value})"
-    (!value.isEmpty && hasStr shown s!"<p style=\"--parskip: {value}\">Charlie" &&
-      hasStr shown "<p>Bravo" && hasStr shown s!"<p style=\"--parskip: {value}\">Golf")
+    (!value.isEmpty && hasStr shown s!"<p class=\"u-indent\" style=\"--parskip: {value}\">Charlie" &&
+      hasStr shown "<p class=\"u-indent\">Bravo" &&
+      hasStr shown s!"<p class=\"u-indent\" style=\"--parskip: {value}\">Golf")
   -- What the body's value spaces is what the preamble's spaces: headings, lists, quotes, centred
   -- and theorem text, each with the list and box gaps the classes set inside them.
   let rest := "\n\n\\section{Heading}\nCharlie.\n\nDelta.\n\\begin{itemize}\n\\item India.\n\n" ++

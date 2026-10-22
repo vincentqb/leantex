@@ -1,5 +1,5 @@
 class article
-page 419.528x298.879 vmargin 71.731 hmargin 72
+page 419.528x298.879 vmargin 71.731 hmargin 72 parskip 0 plus 1pt parindent 15pt
 section 1 number "1"
   text "Numbered galley"
 para
@@ -17,6 +17,7 @@ float figure 1
     text "A floated caption carries no number."
   para
     text "A synthetic float body line."
+role par continues
 para
   text "A third paragraph continues the invented prose so that the galley runs past the first page boundary and the count is seen to continue rather than restart."
 para

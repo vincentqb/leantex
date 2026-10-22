@@ -384,7 +384,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
   let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char × Dim.Length) × Dim.Length) :=
     (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
-      (·.segs.filterMap fun s =>
+      (fun l => (unindented l).filterMap fun s =>
         match s with
         | .run _ _ _ _ glyphs size _ _ _ _ _ => some (glyphs, size)
         | _ => none)
@@ -422,7 +422,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let withFallback : Font.FontSet := { set sans with fonts := #[sans, fira], fallback := #[('Ƒ', 1)] }
   let runsOf (fs : Font.FontSet) (src : String) : Array (Nat × Array Nat) :=
     (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
-      (·.segs.filterMap fun s =>
+      (fun l => (unindented l).filterMap fun s =>
         match s with
         | .run idx _ _ _ glyphs _ _ _ _ _ _ => some (idx, glyphs.map (·.1))
         | _ => none)
@@ -1627,7 +1627,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lineOf (src : String) : Layout.LineOut :=
     let (d, _) := Elab.run "t" src
     (((layoutOf mfs d geom).pages.flatMap (·.lines))[0]?).getD default
-  let widthOf (src : String) : Dim.Length := (lineOf src).setWidth
+  let widthOf (src : String) : Dim.Length := (lineOf src).setWidth - lineIndent (lineOf src)
   t "box is a box: a+b is two medium spaces"
     (widthOf "$a+b$" ==
       adv mbase '𝑎' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝑏')
@@ -1787,7 +1787,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runXOf (src : String) (pick : Array (Nat × Char × Dim.Length) → Bool) : Option Dim.Length := Id.run do
     let l := lineOf src
     let mut x : Dim.Length := 0
-    for s in l.segs do
+    for s in unindented l do
       match s with
       | .run _ _ _ w glyphs _ _ _ _ _ _ =>
         if pick glyphs then return some x
@@ -1954,7 +1954,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     for page in (layoutOf mfs d geom).pages do
       for l in page.lines.filter (!·.furniture) do
         let mut x := l.x
-        for s in l.segs do
+        for s in unindented l do
           match s with
           | .gap w _ | .decoratedGap w _ _ => x := x + w
           | .rule w _ _ _ _ | .decoration _ w _ _ _ _ => x := x + w

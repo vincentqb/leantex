@@ -9,7 +9,7 @@ open LeanTex.Core
 namespace Tests.Tabbing
 
 private def linesOf (oneFace : Font.FontSet) (body : String) : Array Layout.LineOut :=
-  bodyLines (layoutOf oneFace (elabStr ("\\documentclass{article}\n\\begin{document}\nLead.\n\n" ++
+  bodyLines (layoutOf oneFace (elabStr ("\\documentclass{article}\n\\begin{document}\n\\noindent Lead.\n\n" ++
     body ++ "\nTail.\n\\end{document}\n")).1)
 
 /-- The x of the first glyph of the first word `w` on the line holding it. -/

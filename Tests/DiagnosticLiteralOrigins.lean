@@ -84,7 +84,8 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
           sources.atSource file token.pos explicit == explicit)
 
   let shrinkSource :=
-    "\\documentclass{article}\\page{height=127pt,margin=20pt}\\begin{document}\n" ++
+    "\\documentclass{article}\\page{height=127pt,margin=20pt,parskip=6pt plus 1pt}" ++
+    "\\begin{document}\n" ++
     "First.\n\n\\vspace{20pt minus 8pt}\nSecond.\n\n" ++
     "\\vspace{20pt minus 8pt}\nThird.\n\\end{document}"
   let prepared := Elab.prepare file (literalRaws file shrinkSource)

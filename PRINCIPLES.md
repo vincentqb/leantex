@@ -42,7 +42,8 @@ colours it derives (`DeclaredColors.checks`).
 Every class declares a coherent default independent of what the host ranks first: a superfamily
 (text, sans, mono, math) chosen as data and resolved by design size, a fixed-pitch mono, literal
 text never hyphenated or smartened, code that wraps on paper, images that fit the measure, ragged
-slides (`testdata/scoreboard/typeset.tsv`, `monoCompanion_contract`; owed (U35): `slotFill_mem`).
+slides, LaTeX's paragraphs but blocks in markdown and code (`testdata/scoreboard/typeset.tsv`,
+`monoCompanion_contract`, `parIndentChecks`; owed (U35): `slotFill_mem`).
 
 ## One fact in one IR value
 
@@ -123,8 +124,7 @@ lives in commit messages, never in a comment or a dated rule (`datedLines`, `nar
 The user owns these; until answered, the unit named builds the default given (review).
 - Discarded list parameters are honoured with a note (U55); an unknown class takes the article
   model with a warning (U37); an undated build is a named loss (U76) (review).
-- Faces: Latin Modern for LaTeX classes and Libertinus for markdown (U35); native article takes
-  LaTeX's indent (U08); markdown smart typography on and definition lists off (U58), attributes
-  and citations as pandoc where GFM is silent (U109); css = bulma becomes a neutral container
-  class with bulma a deprecated alias for one cycle (U62) (review).
+- Faces: Latin Modern for LaTeX classes and Libertinus for markdown (U35), its smart typography on
+  and definition lists off (U58), attributes and citations as pandoc where GFM is silent (U109);
+  css = bulma becomes a neutral container class, bulma its alias deprecated a cycle (U62) (review).
 - Keep or delete the theme sketch `testdata/corpus/theme-modern.tex`: it stays (review).

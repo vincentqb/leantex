@@ -198,7 +198,7 @@ after its last pair, got {spMilli (g - base)}"
     dvDoc "" s!"$\\begin\{smallmatrix}{cells}\\end\{smallmatrix}$"
   let near (a b : Int) : Bool := (a - b).natAbs ≤ 1
   let runsOf (src : String) : Array (Dim.Length × Bool × Dim.Length) :=
-    (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => l.segs.filterMap fun s =>
+    (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l => (unindented l).filterMap fun s =>
       match s with
       | .run _ _ _ w glyphs sz _ _ _ _ _ => some (w, !glyphs.isEmpty, sz)
       | _ => none
