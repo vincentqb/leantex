@@ -32,7 +32,8 @@ process.stdout.write(JSON.stringify(out));
 
 /-- A value as the JSON nunjucks reads. -/
 def toJson : Value → Json
-  | .null => .null
+  | .undef | .null => .null
+  | .splice n => .str ("⟦" ++ n ++ "⟧")
   | .bool b => .bool b
   | .num n => .num (Lean.JsonNumber.fromInt n)
   | .str s => .str s
@@ -77,16 +78,19 @@ def pathsUnder (root : String) (src : String) : List (String × List String) := 
     else i := i + 1
   return out
 
+/-- Whether `pat` stands in `s`. -/
+def hasStr (s pat : String) : Bool := (s.splitOn pat).length > 1
+
 /-- An invented author, `k` of the document's. -/
 def author (k : Nat) (corresponding : Bool) : Value :=
-  let names := #[("Kilo", "Lima"), ("Mike", "Oscar"), ("Papa", "Quebec")]
+  let names := #[("Kilo", "Lima & Co"), ("Éva", "Ölund_50%"), ("Papa", "Quebec")]
   let (g, s) := names.getD k ("Romeo", "Sierra")
   .obj [("name", .str s!"{g} {s}"), ("given_name", .str g), ("surname", .str s),
     ("email", .str s!"{g.toLower}@example.org"), ("orcid", .str "0000-0000-0000-0000"),
     ("corresponding", .bool corresponding), ("roles", .arr [.str "Writing"]),
-    ("index", .num (k + 1)),
+    ("index", .num (k + 1)), ("letter", .str (String.singleton (Char.ofNat (65 + k)))),
     ("affiliations", .arr [.obj [("value", .obj [("name", .str s!"Institute {k + 1}")]),
-      ("index", .num (k % 2 + 1))]])]
+      ("index", .num (k % 2 + 1)), ("letter", .str (if k % 2 == 0 then "A" else "B"))]])]
 
 /-- The invented document: bare, of one author, or rich. -/
 def doc (kind : Nat) : Value :=
@@ -99,29 +103,31 @@ def doc (kind : Nat) : Value :=
     ("affiliations", .arr <| [1, 2].map fun (i : Nat) =>
       .obj [("value", .obj [("name", .str s!"Institute {i}"), ("department", .str "Department"),
         ("institution", .str s!"Institute {i}"), ("city", .str "Town"), ("country", .str "Land")]),
-        ("index", .num i)]),
+        ("index", .num i), ("letter", .str (if i == 1 then "A" else "B"))]),
     ("date", .obj [("day", .str "3"), ("month", .str "4"), ("year", .str "2001")]),
     ("keywords", .arr [.str "alpha", .str "bravo"]),
     ("bibliography", .arr [.str "main.bib"])]
 
-/-- The contexts one template is judged over: its options absent, all true, and each compared option
-at each of its literals with the rest true, over the bare document without parts, the one-author
-document with its parts as text, and the rich document with its parts as lists. -/
+/-- The contexts one template is judged over: its options absent, all true, all one, all null, and
+each compared option at each of its literals with the rest true, over the bare document without
+parts, the one-author document with its parts as splices, and the rich one with them as lists. -/
 def contexts (src : String) : List Value :=
   let opts := pathsUnder "options" src
   let parts := pathsUnder "parts" src
   let optSets : List (List (String × Value)) :=
-    [[], opts.map fun (n, _) => (n, .bool true)] ++
+    [[], opts.map (fun (n, _) => (n, .bool true)), opts.map (fun (n, _) => (n, .num 1)),
+      opts.map (fun (n, _) => (n, .null))] ++
       ((opts.map (·.2.length)).foldl max 0 |> List.range).map fun k =>
         opts.map fun (n, ls) => (n, match ls[k]? with
           | some l => .str l
           | none => .bool true)
   let partSet (kind : Nat) : List (String × Value) := if kind == 0 then [] else
-    parts.map fun (n, _) => (n, if kind == 1 then Value.str s!"The {n} part."
-      else .arr [.str s!"One {n}.", .str s!"Two {n}."])
+    parts.map fun (n, _) => (n, if kind == 1 then
+        (if hasStr src s!"in parts.{n}" then .arr [.splice s!"parts.{n}.0"] else Value.splice s!"parts.{n}")
+      else .arr [.str s!"One {n} & 10%.", .splice s!"parts.{n}.1"])
   optSets.flatMap fun os => [0, 1, 2].map fun kind =>
     .obj [("doc", doc kind), ("options", .obj os), ("parts", .obj (partSet kind)),
-      ("CONTENT", .str "⟦CONTENT⟧"), ("IMPORTS", .str "⟦IMPORTS⟧")]
+      ("CONTENT", .splice "CONTENT"), ("IMPORTS", .splice "IMPORTS")]
 
 /-- The first line two texts differ at, with both lines. -/
 def firstDiff (a b : String) : Option (Nat × String × String) :=
@@ -133,7 +139,7 @@ def firstDiff (a b : String) : Option (Nat × String × String) :=
 def selftest : IO UInt32 := do
   let src := "[#- if options.style == \"two\" #]x[# endif #][- parts.abstract -][- options.flag -]"
   let ok := pathsUnder "options" src == [("style", ["two"]), ("flag", [])] &&
-    pathsUnder "parts" src == [("abstract", [])] && (contexts src).length == 9 &&
+    pathsUnder "parts" src == [("abstract", [])] && (contexts src).length == 15 &&
     firstDiff "a\nb" "a\nc" == some (2, "b", "c") && firstDiff "a" "a" == none
   IO.println (if ok then "jtex-diff: selftest ok" else "jtex-diff: selftest FAILED")
   return if ok then 0 else 1
@@ -176,7 +182,7 @@ def main (args : List String) : IO UInt32 := do
   let mut shown : List String := []
   for ((name, src, ctx), k) in cases.zipIdx do
     let theirs := reply[k]?.getD .null
-    let ours := (render src ctx ["CONTENT", "IMPORTS"]).map fun ps => String.join (ps.toList.map (·.spelled))
+    let ours := (render src ctx).map fun ps => String.join (ps.toList.map (·.spelled))
     let verdict : Option String := match ours, theirs.getObjValAs? String "text", theirs.getObjValAs? String "error" with
       | .ok o, .ok t, _ => (firstDiff o t).map fun (l, a, b) => s!"line {l}: ours {a.quote}, nunjucks {b.quote}"
       | .error e, .ok _, _ => some s!"ours refuses ({e}), nunjucks renders"

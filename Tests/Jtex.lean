@@ -10,7 +10,7 @@ namespace Tests.Jtex
 
 /-- A template's rendering as text, each splice its name in brackets, or its refusal. -/
 private def out (t : String) (ctx : Value) : String :=
-  match render t ctx ["CONTENT"] with
+  match render t ctx with
   | .ok ps => String.join (ps.toList.map (·.spelled))
   | .error e => "error: " ++ e
 
@@ -20,7 +20,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let doc : Value := .obj [("doc", .obj [("title", .str "Kilo"), ("authors", .arr [
       .obj [("name", .str "Lima"), ("index", .num 1)], .obj [("name", .str "Mike"), ("index", .num 2)]])]),
-    ("options", .obj [("flag", .bool true), ("style", .str "two")])]
+    ("options", .obj [("flag", .bool true), ("style", .str "two")]), ("CONTENT", .splice "CONTENT")]
   t "jtex: variables print, a missing one prints nothing, a splice stands as itself"
     (out "[-doc.title-]|[- doc.missing -]|[-CONTENT-]" doc == "Kilo||⟦CONTENT⟧")
   t "jtex: a block's end drops one newline after it, and a dash strips its side's whitespace"
@@ -43,6 +43,21 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "jtex: a value the document chose is escaped as TeX, the template's own text kept"
     ((render "\\title{[-doc.title-]}" titled).toOption.map (fun ps => String.join (ps.toList.map (Piece.tex id))) ==
       some "\\title{50\\% of a\\_b \\& \\{c\\}}")
+  let tex (t : String) (ctx : Value) : Option String :=
+    (render t ctx).toOption.map fun ps => String.join (ps.toList.map (Piece.tex id))
+  let named : Value := .obj [("doc", .obj [("authors", .arr [.obj [("name", .str "A & B")],
+    .obj [("name", .str "C_D")]])]), ("parts", .obj [("abstract", .splice "parts.abstract")])]
+  t "jtex: a join's separator is the template's own TeX and its items the document's, escaped"
+    (tex "\\author{[-doc.authors|join(\" \\\\and \", \"name\")-]}[# set s = ', ' #][-s-]" named ==
+      some "\\author{A \\& B \\and C\\_D}, ")
+  t "jtex: a part stands as its typed splice, never as text"
+    ((render "[# if parts.abstract #]\\abstract{[-parts.abstract-]}[# endif #]" named).toOption ==
+      some #[.text "\\abstract{", .splice "parts.abstract", .text "}"])
+  t "jtex: two loop names, words after a closing tag and a misplaced not are refused"
+    (["[# for k, v in doc #]x[# endfor #]", "[# if true #]x[# endif x #]", "[- 1 == not 2 -]",
+      "[- doc.authors|join(', ' 'name') -]"].all fun t => (render t named).toOption.isNone)
+  t "jtex: True is a variable, a string's \\n a newline, and .length JavaScript's"
+    (out "[# if True #]y[# else #]n[# endif #][- \"a\\nb\" -][- doc.authors.length -]" named == "na\nb2")
   t "jtex: a tag outside the subset is refused by name"
     (out "[# include 'x' #]" doc == "error: a tag outside the subset: 'include'" &&
       (out "[# if true #]open" doc).startsWith "error:")

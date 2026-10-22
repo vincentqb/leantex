@@ -1,48 +1,64 @@
 module
 
+public import LeanTex.Core.CaseFold
+
 public section
 
 namespace LeanTex.Core.Jtex
 
 /-! The jtex template language MyST's LaTeX templates are written in: nunjucks 3.2.4 under jtex's
 configuration (blocks `[# #]`, variables `[- -]`, comments `%# #%`, `trimBlocks`, no escaping, the
-`len` filter), over the subset the templates use. -/
+`len` filter), over the subset the templates use, refusing what lies outside it. -/
 
-/-- A template value, as the JSON nunjucks reads: null, a boolean, a number, a string, an array or
-an object of keys in order. -/
+/-- A template value, as the JSON nunjucks reads, with JavaScript's undefined for what a lookup
+misses and a typed splice standing for content the caller sets. -/
 inductive Value where
+  | undef
   | null
   | bool (b : Bool)
   | num (n : Int)
   | str (s : String)
   | arr (items : List Value)
   | obj (fields : List (String × Value))
+  | splice (name : String)
   deriving Repr, Inhabited, BEq
 
-/-- An object's value under `key`, null where it holds none. -/
+/-- A text's length in UTF-16 units, as JavaScript counts it. -/
+def utf16Len (s : String) : Nat :=
+  s.foldl (fun n c => n + if c.val > 0xFFFF then 2 else 1) 0
+
+/-- A value's member `key` as JavaScript reads it: an object's field, an array's or a text's item
+or `length`, undefined otherwise. -/
 def Value.get (v : Value) (key : String) : Value :=
-  match v with
-  | .obj fields => ((fields.find? (·.1 == key)).map (·.2)).getD .null
-  | _ => .null
+  match v, key.toNat? with
+  | .obj fields, _ => ((fields.find? (·.1 == key)).map (·.2)).getD .undef
+  | .arr items, some i => items.getD i .undef
+  | .arr items, none => if key == "length" then .num items.length else .undef
+  | .str s, some i => match s.toList[i]? with
+    | some c => .str c.toString
+    | none => .undef
+  | .str s, none => if key == "length" then .num (utf16Len s) else .undef
+  | _, _ => .undef
 
 /-- JavaScript's truthiness, which nunjucks's `if` reads: an empty array or object is true. -/
 def Value.truthy : Value → Bool
-  | .null => false
+  | .undef | .null => false
   | .bool b => b
   | .num n => n != 0
   | .str s => !s.isEmpty
-  | .arr _ | .obj _ => true
+  | .arr _ | .obj _ | .splice _ => true
 
 mutual
 
-/-- A value as nunjucks prints it: null as nothing, an array as JavaScript joins it. -/
+/-- A value as JavaScript's `String` prints it, nunjucks printing undefined and null as nothing. -/
 def Value.show : Value → String
-  | .null => ""
+  | .undef | .null => ""
   | .bool b => if b then "true" else "false"
   | .num n => toString n
   | .str s => s
   | .arr items => Value.showList "" items
   | .obj _ => "[object Object]"
+  | .splice _ => ""
 
 /-- The items printed after `acc`, a comma after each but the last. -/
 def Value.showList (acc : String) : List Value → String
@@ -51,17 +67,63 @@ def Value.showList (acc : String) : List Value → String
 
 end
 
-/-- JavaScript's loose equality over the values a template compares. -/
-def Value.looseEq : Value → Value → Bool
-  | .null, .null => true
-  | .str a, .str b => a == b
-  | .num a, .num b => a == b
-  | .bool a, .bool b => a == b
-  | .num a, .str b => toString a == b
-  | .str a, .num b => a == toString b
-  | .bool a, .num b => (if a then 1 else 0) == b
-  | .num a, .bool b => a == (if b then 1 else 0)
+/-- The characters JavaScript's `\s` and `trim` read as white space. -/
+def jsSpace (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0b' || c == '\x0c' ||
+    c.val == 0xA0 || c.val == 0x1680 || (0x2000 ≤ c.val && c.val ≤ 0x200A) || c.val == 0x2028 ||
+    c.val == 0x2029 || c.val == 0x202F || c.val == 0x205F || c.val == 0x3000 || c.val == 0xFEFF
+
+/-- A text as JavaScript's `Number` reads it over integers, none for NaN or a fraction. -/
+def numberOf (s : String) : Option Int :=
+  let t := ((s.dropWhile jsSpace).copy.dropEndWhile jsSpace).copy
+  if t.isEmpty then some 0 else
+  let (neg, body) := if t.startsWith "-" then (true, (t.drop 1).copy)
+    else if t.startsWith "+" then (false, (t.drop 1).copy) else (false, t)
+  if body.isEmpty || !body.all Char.isDigit then none else
+    body.toNat?.map fun n => if neg then -(n : Int) else n
+
+/-- A value as JavaScript's `ToPrimitive` leaves it: an array or object as its text. -/
+def Value.prim : Value → Value
+  | .arr items => .str (Value.showList "" items)
+  | .obj _ => .str "[object Object]"
+  | .undef => .undef
+  | .null => .null
+  | .bool b => .bool b
+  | .num n => .num n
+  | .str s => .str s
+  | .splice n => .splice n
+
+/-- A primitive as JavaScript's `ToNumber` reads it, none for NaN. -/
+def Value.number : Value → Option Int
+  | .null => some 0
+  | .bool b => some (if b then 1 else 0)
+  | .num n => some n
+  | .str s => numberOf s
+  | _ => none
+
+/-- JavaScript's loose equality: undefined and null alike, booleans as numbers, an array or object
+against a primitive as its text, a text against a number as its number, two arrays or objects never. -/
+def Value.looseEq (a b : Value) : Bool :=
+  let nullish (v : Value) := v matches .undef | .null
+  if nullish a || nullish b then nullish a && nullish b else
+  let objy (v : Value) := v matches .arr _ | .obj _ | .splice _
+  if objy a && objy b then false else
+  let num (v : Value) : Value := if let .bool x := v then .num (if x then 1 else 0) else v
+  match num a.prim, num b.prim with
+  | .num m, .num n => m == n
+  | .str s, .str t => s == t
+  | .num m, .str t => numberOf t == some m
+  | .str s, .num n => numberOf s == some n
   | _, _ => false
+
+/-- JavaScript's relational comparison: two texts by their characters, else both as numbers, NaN
+answering false; `f` reads the sign of the first's difference from the second. -/
+def Value.compare (a b : Value) (f : Int → Bool) : Bool :=
+  match a.prim, b.prim with
+  | .str s, .str t => f (if s < t then -1 else if s == t then 0 else 1)
+  | x, y => match x.number, y.number with
+    | some m, some n => f (m - n)
+    | _, _ => false
 
 /-- A filter's argument: a literal or a variable's path. -/
 inductive Arg where
@@ -97,7 +159,7 @@ inductive Node where
   deriving Repr, Inhabited
 
 /-- One piece of a rendered template: the template's own text, a value the document chose, or the
-content a reserved name splices in typed. -/
+content a splice value names. -/
 inductive Piece where
   | text (s : String)
   | value (s : String)
@@ -136,7 +198,7 @@ private def findTag (cs : Array Char) (i : Nat) (pat : String) (code : Bool) : O
 
 /-- A template's tokens under jtex's tags: `[# #]` blocks, `[- -]` variables, `%# #%` comments, a
 `-` beside a tag stripping the whitespace on its side, and `trimBlocks`' newline after a block tag
-dropped; an unclosed tag is an error. -/
+dropped; an unclosed tag or a comment's end in text is an error. -/
 def lex (src : String) : Except String (Array Tok) := Id.run do
   let cs := src.toList.toArray
   let mut out : Array Tok := #[]
@@ -144,6 +206,7 @@ def lex (src : String) : Except String (Array Tok) := Id.run do
   let mut i := 0
   for _ in [0:cs.size + 1] do
     if i ≥ cs.size then break
+    if at? cs i "#%" then return .error s!"a comment's end with no comment open at character {i}"
     let opens := [("[#", 0), ("[-", 1), ("%#", 2)].find? fun (t, _) => at? cs i t
     match opens with
     | none => buf := buf.push (cs.getD i ' '); i := i + 1
@@ -176,14 +239,15 @@ private def Tok.strips : Tok → Bool × Bool
   | .data _ => (false, false)
   | .block _ l r | .var _ l r | .comment l r => (l, r)
 
-/-- The tokens with each text's whitespace stripped where the tag before or after it asks. -/
+/-- The tokens with each text's whitespace, as JavaScript's `\s` reads it, stripped where the tag
+before or after it asks. -/
 def stripped (toks : Array Tok) : Array Tok :=
   toks.zipIdx.map fun (t, k) => match t with
     | .data s =>
       let before := k > 0 && (toks[k - 1]?.map (·.strips.2)).getD false
       let after := (toks[k + 1]?.map (·.strips.1)).getD false
-      let s := if before then (s.dropWhile Char.isWhitespace).copy else s
-      .data (if after then (s.dropEndWhile Char.isWhitespace).copy else s)
+      let s := if before then (s.dropWhile jsSpace).copy else s
+      .data (if after then (s.dropEndWhile jsSpace).copy else s)
     | .block src l r => .block src l r
     | .var src l r => .var src l r
     | .comment l r => .comment l r
@@ -196,7 +260,8 @@ inductive ETok where
   | punct (s : String)
   deriving Repr, Inhabited, BEq
 
-/-- An expression's tokens; a character outside the subset is an error. -/
+/-- An expression's tokens, a string's `\n`, `\t` and `\r` read as nunjucks reads them and any other
+escaped character as itself; a character outside the subset is an error. -/
 def elex (src : String) : Except String (Array ETok) := Id.run do
   let cs := src.toList.toArray
   let mut out : Array ETok := #[]
@@ -204,7 +269,7 @@ def elex (src : String) : Except String (Array ETok) := Id.run do
   for _ in [0:cs.size + 1] do
     if i ≥ cs.size then break
     let c := cs.getD i ' '
-    if c.isWhitespace then i := i + 1; continue
+    if jsSpace c then i := i + 1; continue
     if c.isAlpha || c == '_' then
       let mut j := i
       for _ in [i:cs.size] do
@@ -216,16 +281,25 @@ def elex (src : String) : Except String (Array ETok) := Id.run do
       let mut j := i
       for _ in [i:cs.size] do
         if (cs.getD j ' ').isDigit then j := j + 1 else break
-      out := out.push (.num ((String.ofList (cs.extract i j).toList).toInt?.getD 0))
+      if cs[j]? == some '.' && (cs[j + 1]?.any Char.isDigit) then
+        return .error "a fractional number, outside the subset"
+      out := out.push (.num ((String.ofList (cs.extract i j).toList).toNat?.getD 0))
       i := j
     else if c == '"' || c == '\'' then
       let mut j := i + 1
       let mut v := ""
       let mut closed := false
       for _ in [i:cs.size] do
-        let d := cs.getD j ' '
         if j ≥ cs.size then break
-        if d == '\\' then v := v.push (cs.getD (j + 1) ' '); j := j + 2; continue
+        let d := cs.getD j ' '
+        if d == '\\' then
+          v := v.push (match cs.getD (j + 1) ' ' with
+            | 'n' => '\n'
+            | 't' => '\t'
+            | 'r' => '\r'
+            | e => e)
+          j := j + 2
+          continue
         if d == c then closed := true; j := j + 1; break
         v := v.push d
         j := j + 1
@@ -258,18 +332,26 @@ private def apply (vals : Array Expr) (op : Op) : Option (Array Expr) :=
   | .bin name _ =>
     match vals.back?, vals.pop.back? with
     | some b, some a =>
-      let e : Expr := match name with
-        | "and" => .and a b
-        | "or" => .or a b
-        | "==" => .cmp .eq a b
-        | "!=" => .cmp .ne a b
-        | "<" => .cmp .lt a b
-        | ">" => .cmp .gt a b
-        | "<=" => .cmp .le a b
-        | _ => .cmp .ge a b
-      some (vals.pop.pop.push e)
+      let e : Option Expr := match name with
+        | "and" => some (.and a b)
+        | "or" => some (.or a b)
+        | "==" => some (.cmp .eq a b)
+        | "!=" => some (.cmp .ne a b)
+        | "<" => some (.cmp .lt a b)
+        | ">" => some (.cmp .gt a b)
+        | "<=" => some (.cmp .le a b)
+        | ">=" => some (.cmp .ge a b)
+        | _ => none
+      e.map fun e => vals.pop.pop.push e
     | _, _ => none
   | .paren => none
+
+/-- The keywords nunjucks 3.2.4 reads as literals. -/
+private def keyword : String → Option Value
+  | "true" => some (.bool true)
+  | "false" => some (.bool false)
+  | "none" | "null" => some .null
+  | _ => none
 
 /-- A literal or a path where a filter's argument stands, and the index past it. -/
 private def argAt (ts : Array ETok) (i : Nat) : Option (Arg × Nat) := Id.run do
@@ -277,22 +359,28 @@ private def argAt (ts : Array ETok) (i : Nat) : Option (Arg × Nat) := Id.run do
   | some (.str s) => return some (.lit (.str s), i + 1)
   | some (.num n) => return some (.lit (.num n), i + 1)
   | some (.name n) =>
+    if let some v := keyword n then return some (.lit v, i + 1)
+    if n == "not" || n == "and" || n == "or" || n == "in" || n == "is" then return none
     let mut p := #[n]
     let mut j := i + 1
     for _ in [i:ts.size] do
-      match ts[j]?, ts[j + 1]? with
-      | some (.punct "."), some (.name m) => p := p.push m; j := j + 2
-      | _, _ => break
+      match ts[j]?, ts[j + 1]?, ts[j + 2]? with
+      | some (.punct "."), some (.name m), _ => p := p.push m; j := j + 2
+      | some (.punct "["), some (.str s), some (.punct "]") => p := p.push s; j := j + 3
+      | some (.punct "["), some (.num m), some (.punct "]") => p := p.push (toString m); j := j + 3
+      | _, _, _ => break
     return some (.path p.toList, j)
   | _ => return none
 
 /-- An expression of the subset from its tokens, as the JavaScript nunjucks compiles it to binds:
-`or` below `and` below equality below order below `not`, filters and paths binding tightest; none
-outside the subset. -/
+`or` below `and` below equality below order below `not`, filters and paths binding tightest, `not`
+only where an operand may start; none outside the subset. -/
 def parseExpr (ts : Array ETok) : Option Expr := Id.run do
   let mut vals : Array Expr := #[]
   let mut ops : Array Op := #[]
   let mut i := 0
+  -- whether an operand may stand next, rather than an operator
+  let mut operand := true
   let binPrec : String → Option Nat
     | "or" => some 1
     | "and" => some 2
@@ -301,42 +389,33 @@ def parseExpr (ts : Array ETok) : Option Expr := Id.run do
     | _ => none
   for _ in [0:ts.size + 1] do
     if i ≥ ts.size then break
+    let binary : Option String := match ts[i]? with
+      | some (.name n) => if (binPrec n).isSome then some n else none
+      | some (.punct o) => if (binPrec o).isSome then some o else none
+      | _ => none
+    if let some o := binary then
+      if operand then return none
+      let p := (binPrec o).getD 0
+      for _ in [0:ops.size] do
+        match ops.back? with
+        | some op => if op != .paren && op.prec ≥ p then
+                       let some v := apply vals op | return none
+                       vals := v; ops := ops.pop
+                     else break
+        | none => break
+      ops := ops.push (.bin o p); i := i + 1; operand := true
+      continue
     match ts[i]? with
-    | some (.name "not") => ops := ops.push .not; i := i + 1
-    | some (.name n) =>
-      if let some p := binPrec n then
-        for _ in [0:ops.size] do
-          match ops.back? with
-          | some o => if o != .paren && o.prec ≥ p then
-                        let some v := apply vals o | return none
-                        vals := v; ops := ops.pop
-                      else break
-          | none => break
-        ops := ops.push (.bin n p); i := i + 1
-      else
-        let lit : Option Value := match n with
-          | "true" | "True" => some (.bool true)
-          | "false" | "False" => some (.bool false)
-          | "none" | "None" | "null" => some .null
-          | _ => none
-        match lit with
-        | some v => vals := vals.push (.lit v); i := i + 1
-        | none =>
-          let some (.path p, j) := argAt ts i | return none
-          let mut path := p
-          let mut k := j
-          -- a subscript by a literal: `a["b"]` or `a[0]`
-          for _ in [0:ts.size] do
-            match ts[k]?, ts[k + 1]?, ts[k + 2]? with
-            | some (.punct "["), some (.str s), some (.punct "]") => path := path ++ [s]; k := k + 3
-            | some (.punct "["), some (.num m), some (.punct "]") => path := path ++ [toString m]; k := k + 3
-            | some (.punct "."), some (.name m), _ => path := path ++ [m]; k := k + 2
-            | _, _, _ => break
-          vals := vals.push (.path path); i := k
-    | some (.str s) => vals := vals.push (.lit (.str s)); i := i + 1
-    | some (.num n) => vals := vals.push (.lit (.num n)); i := i + 1
-    | some (.punct "(") => ops := ops.push .paren; i := i + 1
+    | some (.name "not") =>
+      -- nunjucks reads `not` only where a test starts: first, or after `(`, `and`, `or` or `not`
+      let starts := i == 0 || [ETok.punct "(", .name "and", .name "or", .name "not"].contains (ts.getD (i - 1) (.punct ""))
+      if !operand || !starts then return none
+      ops := ops.push .not; i := i + 1
+    | some (.punct "(") =>
+      if !operand then return none
+      ops := ops.push .paren; i := i + 1
     | some (.punct ")") =>
+      if operand then return none
       for _ in [0:ops.size] do
         match ops.back? with
         | some .paren => break
@@ -346,29 +425,31 @@ def parseExpr (ts : Array ETok) : Option Expr := Id.run do
       unless ops.back? == some .paren do return none
       ops := ops.pop; i := i + 1
     | some (.punct "|") =>
+      if operand then return none
       let some (.name f) := ts[i + 1]? | return none
       let mut args : Array Arg := #[]
       let mut k := i + 2
       if ts[k]? == some (.punct "(") then
         k := k + 1
+        if ts[k]? == some (.punct ")") then k := k + 1 else
         for _ in [0:ts.size] do
-          if ts[k]? == some (.punct ")") then k := k + 1; break
           let some (a, j) := argAt ts k | return none
           args := args.push a
-          k := if ts[j]? == some (.punct ",") then j + 1 else j
+          match ts[j]? with
+          | some (.punct ",") => k := j + 1
+          | some (.punct ")") => k := j + 1; break
+          | _ => return none
       let some e := vals.back? | return none
       vals := vals.pop.push (.filter e f args.toList); i := k
-    | some (.punct o) =>
-      let some p := binPrec o | return none
-      for _ in [0:ops.size] do
-        match ops.back? with
-        | some op => if op != .paren && op.prec ≥ p then
-                       let some v := apply vals op | return none
-                       vals := v; ops := ops.pop
-                     else break
-        | none => break
-      ops := ops.push (.bin o p); i := i + 1
+    | some _ =>
+      if !operand then return none
+      let some (a, j) := argAt ts i | return none
+      vals := vals.push (match a with
+        | .lit v => .lit v
+        | .path p => .path p)
+      i := j; operand := false
     | none => break
+  if operand then return none
   for _ in [0:ops.size] do
     match ops.back? with
     | some o => let some v := apply vals o | return none
@@ -376,66 +457,104 @@ def parseExpr (ts : Array ETok) : Option Expr := Id.run do
     | none => break
   return if vals.size == 1 then vals[0]? else none
 
+/-- A variable bound in a frame: its value, and whether it holds only the template's own text. -/
+structure Binding where
+  name : String
+  value : Value
+  own : Bool
+  deriving Inhabited
+
 /-- The variables in scope: nunjucks' frames, a loop's innermost first, over the template's context. -/
 structure Scope where
-  frames : List (List (String × Value)) := [[]]
+  frames : List (List Binding) := [[]]
   context : Value := .obj []
 
-/-- A path's value: its first name a frame's or the context's, each next name a field, or an
-array's item by its index. -/
+/-- The binding a frame holds for `n`, innermost first. -/
+def Scope.find? (sc : Scope) (n : String) : Option Binding :=
+  sc.frames.findSome? fun f => f.find? (·.name == n)
+
+/-- A path's value: its first name a frame's or the context's, each next name a member. -/
 def Scope.lookup (sc : Scope) : List String → Value
-  | [] => .null
+  | [] => .undef
   | n :: rest =>
-    let base := ((sc.frames.findSome? fun f => (f.find? (·.1 == n)).map (·.2)).getD (sc.context.get n))
-    rest.foldl (fun v k => match v, k.toNat? with
-      | .arr items, some i => items.getD i .null
-      | v, _ => v.get k) base
+    let base := ((sc.find? n).map (·.value)).getD (sc.context.get n)
+    rest.foldl Value.get base
 
 /-- The scope with `name` bound in the innermost frame. -/
-def Scope.bind (sc : Scope) (name : String) (v : Value) : Scope :=
+def Scope.bind (sc : Scope) (name : String) (v : Value) (own : Bool := false) : Scope :=
   match sc.frames with
-  | f :: fs => { sc with frames := ((name, v) :: f.filter (·.1 != name)) :: fs }
-  | [] => { sc with frames := [[(name, v)]] }
+  | f :: fs => { sc with frames := ({ name, value := v, own } :: f.filter (·.name != name)) :: fs }
+  | [] => { sc with frames := [[{ name, value := v, own }]] }
 
 /-- The scope after `set name`: the innermost frame holding `name` rebinds it, as nunjucks' write
 resolves up, else the innermost frame binds it. -/
-def Scope.assign (sc : Scope) (name : String) (v : Value) : Scope :=
-  if sc.frames.any (·.any (·.1 == name)) then
-    let rec go : List (List (String × Value)) → List (List (String × Value))
+def Scope.assign (sc : Scope) (name : String) (v : Value) (own : Bool) : Scope :=
+  if sc.frames.any (·.any (·.name == name)) then
+    let rec go : List (List Binding) → List (List Binding)
       | [] => []
-      | f :: fs => if f.any (·.1 == name) then f.map (fun b => if b.1 == name then (name, v) else b) :: fs
+      | f :: fs => if f.any (·.name == name) then
+          f.map (fun b => if b.name == name then { name, value := v, own } else b) :: fs
         else f :: go fs
     { sc with frames := go sc.frames }
-  else sc.bind name v
+  else sc.bind name v own
 
 /-- An argument's value. -/
 def Arg.eval (sc : Scope) : Arg → Value
   | .lit v => v
   | .path p => sc.lookup p
 
-/-- A filter of the subset applied: `join` with its separator and an item's attribute, `length`,
-jtex's `len`, `first`, `lower` and `upper`; none for another. -/
-def filterApply (name : String) (v : Value) (args : List Value) : Option Value :=
+/-- A text in lower case as JavaScript's `toLowerCase` sets it: a character with an upper case
+mapping is lower already, any other its single folded form, `İ` its two. -/
+def lowerText (s : String) : String :=
+  s.foldl (fun out c =>
+    if CaseFold.upperChar c != #[c] then out.push c
+    else if c == 'İ' then out ++ "i̇"
+    else match CaseFold.foldChar c with
+      | #[d] => out.push d
+      | _ => out.push c) ""
+
+/-- A filter of the subset applied, as nunjucks 3.2.4 applies it: `join` with its separator and an
+item's attribute, `length`, jtex's `len`, `first`, `lower` and `upper`; the reason where nunjucks
+throws or the filter is outside the subset. -/
+def filterApply (name : String) (v : Value) (args : List Value) : Except String Value :=
+  let text (v : Value) : Option String := match v with
+    | .undef | .null | .bool false => some ""
+    | .str s => some s
+    | _ => none
   match name, v with
   | "join", .arr items =>
     let sep := match args.head? with
-      | some (.str s) => s
-      | _ => ""
+      | some (.undef) | none => ""
+      | some s => s.prim.show
     let items := match args[1]? with
-      | some (.str attr) => items.map fun (v : Value) => v.get attr
-      | _ => items
-    some (.str (sep.intercalate (items.map fun (v : Value) => v.show)))
-  | "length", .arr items | "len", .arr items => some (.num items.length)
-  | "length", .str s | "len", .str s => some (.num s.length)
-  | "length", .obj fs => some (.num fs.length)
-  | "length", .null | "len", .null => some (.num 0)
-  | "first", .arr items => some (items.head?.getD .null)
-  | "first", .str s => some (.str (s.take 1).copy)
-  | "lower", v => some (.str v.show.toLower)
-  | "upper", v => some (.str v.show.toUpper)
-  | _, _ => none
+      | some attr => if attr.truthy then items.map fun (x : Value) => x.get attr.prim.show else items
+      | none => items
+    .ok (.str (sep.intercalate (items.map fun (x : Value) => x.show)))
+  | "join", _ => .error "join over no array"
+  | "length", .arr items => .ok (.num items.length)
+  | "length", .str s => .ok (.num (utf16Len s))
+  | "length", .obj fs => .ok (.num fs.length)
+  | "length", .undef | "length", .null | "length", .bool false => .ok (.num 0)
+  | "length", _ => .ok .undef
+  | "len", .arr items => .ok (.num items.length)
+  | "len", .str s => .ok (.num (utf16Len s))
+  | "len", .undef | "len", .null => .error "len of no value"
+  | "len", _ => .ok .undef
+  | "first", .arr items => .ok (items.head?.getD .undef)
+  | "first", .str s => .ok (match s.toList.head? with
+    | some c => .str c.toString
+    | none => .undef)
+  | "first", .undef | "first", .null => .error "first of no value"
+  | "first", _ => .ok .undef
+  | "lower", v => match text v with
+    | some s => .ok (.str (lowerText s))
+    | none => .error "lower of no text"
+  | "upper", v => match text v with
+    | some s => .ok (.str (CaseFold.upper s))
+    | none => .error "upper of no text"
+  | n, _ => .error s!"the filter '{n}', outside the subset"
 
-/-- An expression's value; a filter outside the subset is an error naming it. -/
+/-- An expression's value; what nunjucks throws on is an error. -/
 def Expr.eval (sc : Scope) : Expr → Except String Value
   | .lit v => .ok v
   | .path p => .ok (sc.lookup p)
@@ -449,28 +568,59 @@ def Expr.eval (sc : Scope) : Expr → Except String Value
   | .cmp op a b => do
     let x ← a.eval sc
     let y ← b.eval sc
-    let num (v : Value) : Option Int := match v with
-      | .num n => some n
-      | .str s => s.toInt?
-      | .bool b => some (if b then 1 else 0)
-      | _ => none
-    let ord (f : Int → Int → Bool) : Bool := match num x, num y with
-      | some m, some n => f m n
-      | _, _ => match x, y with
-        | .str s, .str t => f (if s < t then -1 else if s == t then 0 else 1) 0
-        | _, _ => false
     return .bool (match op with
       | .eq => x.looseEq y
       | .ne => !x.looseEq y
-      | .lt => ord (· < ·)
-      | .gt => ord (· > ·)
-      | .le => ord (· ≤ ·)
-      | .ge => ord (· ≥ ·))
+      | .lt => x.compare y (· < 0)
+      | .gt => x.compare y (· > 0)
+      | .le => x.compare y (· ≤ 0)
+      | .ge => x.compare y (· ≥ 0))
   | .filter e name args => do
-    let v ← e.eval sc
-    match filterApply name v (args.map (·.eval sc)) with
-    | some r => return r
-    | none => throw s!"the filter '{name}' on this value"
+    filterApply name (← e.eval sc) (args.map (·.eval sc))
+
+/-- A value printed after `out`: a splice as itself, an array its items apart by commas, nothing for
+undefined or null, any other as a value the document chose. -/
+def piecesInto (out : Array Piece) (v : Value) : Array Piece :=
+  match v with
+  | .splice n => out.push (.splice n)
+  | .arr items => items.attach.zipIdx.foldl (init := out) fun out (⟨x, _⟩, k) =>
+      piecesInto (if k == 0 then out else out.push (.text ",")) x
+  | .undef | .null => out
+  | .bool _ | .num _ | .str _ | .obj _ => out.push (.value v.show)
+decreasing_by
+  rename_i h
+  have := List.sizeOf_lt_of_mem h
+  simp_all
+  omega
+
+/-- Whether an expression holds only the template's own text: a string literal, or a variable a
+`set` bound to one. -/
+def Expr.own (sc : Scope) : Expr → Bool
+  | .lit (.str _) => true
+  | .path [n] => (sc.find? n).any (·.own)
+  | _ => false
+
+/-- A printed expression's pieces: the template's own text as text, a join's items each as printed
+with its separator the template's where it writes it, and any other value by `piecesInto`. -/
+def printed (sc : Scope) (e : Expr) : Except String (Array Piece) := do
+  if e.own sc then return #[.text (← e.eval sc).show]
+  match e with
+  | .filter inner "join" args =>
+    match ← inner.eval sc with
+    | .arr items =>
+      let vals := args.map (·.eval sc)
+      let sep : Array Piece := match args.head?, vals.head? with
+        | some (.lit (.str s)), _ => #[.text s]
+        | _, some Value.undef => #[]
+        | _, none => #[]
+        | _, some s => #[.value s.prim.show]
+      let items := match vals[1]? with
+        | some attr => if attr.truthy then items.map fun (x : Value) => x.get attr.prim.show else items
+        | none => items
+      return items.zipIdx.foldl (init := #[]) fun out (x, k) =>
+        piecesInto (if k == 0 then out else out.append sep) x
+    | _ => throw "join over no array"
+  | _ => return piecesInto #[] (← e.eval sc)
 
 /-- A statement tag's words: its keyword and the rest of its source. -/
 private def tagWords (src : String) : String × String :=
@@ -478,15 +628,20 @@ private def tagWords (src : String) : String × String :=
   let kw := (t.takeWhile fun c => !c.isWhitespace).toString
   (kw, (t.drop kw.length).toString.trimAscii.toString)
 
+/-- Whether a text is one name a variable takes. -/
+private def isName (s : String) : Bool :=
+  !s.isEmpty && (s.front.isAlpha || s.front == '_') && s.all (fun c => c.isAlphanum || c == '_') &&
+    (keyword s).isNone && !["not", "and", "or", "in", "is"].contains s
+
 /-- An open block of the template being parsed: an `if` chain's branches so far and the branch being
 read, or a `for` loop's variable and sequence. -/
 private inductive Frame where
-  | cond (done : List (Expr × List Node)) (test : Option Expr) (nodes : Array Node)
+  | cond (done : Array (Expr × List Node)) (test : Option Expr) (nodes : Array Node)
   | loop (var : String) (seq : Expr) (body : Option (List Node)) (nodes : Array Node)
 
 /-- A template's nodes from its stripped tokens: `if`/`elif`/`else`/`endif`, `for x in e`/`else`/
-`endfor` and `set x = e` blocks, variables and text; a tag outside the subset or an unbalanced block
-is an error. -/
+`endfor` and `set x = e` blocks, variables and text; a tag outside the subset, trailing words after
+a closing tag or an unbalanced block is an error. -/
 def parseNodes (toks : Array Tok) : Except String (List Node) := Id.run do
   let mut stack : Array Frame := #[]
   let mut top : Array Node := #[]
@@ -506,36 +661,40 @@ def parseNodes (toks : Array Tok) : Except String (List Node) := Id.run do
       | .error e => return .error e
     | .block src _ _ =>
       let (kw, rest) := tagWords src
+      if ["else", "endif", "endfor"].contains kw && !rest.isEmpty then
+        return .error s!"words after '{kw}': '{rest}'"
       match kw with
       | "if" =>
         match expr rest with
-        | .ok e => stack := stack.push (.cond [] (some e) top); top := #[]
+        | .ok e => stack := stack.push (.cond #[] (some e) top); top := #[]
         | .error e => return .error e
       | "elif" =>
         match stack.back?, expr rest with
         | some (.cond done (some test) outer), .ok e =>
-          stack := stack.pop.push (.cond (done ++ [(test, top.toList)]) (some e) outer); top := #[]
+          stack := stack.pop.push (.cond (done.push (test, top.toList)) (some e) outer); top := #[]
         | _, .error e => return .error e
         | _, _ => return .error "an elif outside an if"
       | "else" =>
         match stack.back? with
         | some (.cond done (some test) outer) =>
-          stack := stack.pop.push (.cond (done ++ [(test, top.toList)]) none outer); top := #[]
+          stack := stack.pop.push (.cond (done.push (test, top.toList)) none outer); top := #[]
         | some (.loop v e none outer) => stack := stack.pop.push (.loop v e (some top.toList) outer); top := #[]
         | _ => return .error "an else outside an if or a for"
       | "endif" =>
         match stack.back? with
         | some (.cond done test outer) =>
           let node := match test with
-            | some e => Node.cond (done ++ [(e, top.toList)]) []
-            | none => Node.cond done top.toList
+            | some e => Node.cond (done.push (e, top.toList)).toList []
+            | none => Node.cond done.toList top.toList
           stack := stack.pop; top := outer.push node
         | _ => return .error "an endif outside an if"
       | "for" =>
         match rest.splitOn " in " with
         | [v, seqSrc] =>
+          let v := v.trimAscii.toString
+          unless isName v do return .error s!"a for over '{v}', not one name"
           match expr seqSrc with
-          | .ok e => stack := stack.push (.loop v.trimAscii.toString e none top); top := #[]
+          | .ok e => stack := stack.push (.loop v e none top); top := #[]
           | .error err => return .error err
         | _ => return .error s!"a for outside the subset: '{src}'"
       | "endfor" =>
@@ -549,8 +708,10 @@ def parseNodes (toks : Array Tok) : Except String (List Node) := Id.run do
       | "set" =>
         match rest.splitOn "=" with
         | v :: vals@(_ :: _) =>
+          let v := v.trimAscii.toString
+          unless isName v do return .error s!"a set of '{v}', not one name"
           match expr ("=".intercalate vals) with
-          | .ok e => top := top.push (.set v.trimAscii.toString e)
+          | .ok e => top := top.push (.set v e)
           | .error err => return .error err
         | _ => return .error s!"a set outside the subset: '{src}'"
       | _ => return .error s!"a tag outside the subset: '{kw}'"
@@ -565,59 +726,55 @@ def loopValue (i n : Nat) : Value :=
 
 mutual
 
-/-- The pieces nodes render to after `out` under a scope, with the scope their `set`s leave; a name
-in `splices` printed is a typed splice. -/
-def renderNodes (splices : List String) (sc : Scope) (out : Array Piece) :
-    List Node → Except String (Array Piece × Scope)
+/-- The pieces nodes render to after `out` under a scope, with the scope their `set`s leave. -/
+def renderNodes (sc : Scope) (out : Array Piece) : List Node → Except String (Array Piece × Scope)
   | [] => .ok (out, sc)
   | n :: rest => do
-    let (out, sc) ← renderNode splices sc out n
-    renderNodes splices sc out rest
+    let (out, sc) ← renderNode sc out n
+    renderNodes sc out rest
 termination_by l => sizeOf l
 
-def renderNode (splices : List String) (sc : Scope) (out : Array Piece) :
-    Node → Except String (Array Piece × Scope)
+def renderNode (sc : Scope) (out : Array Piece) : Node → Except String (Array Piece × Scope)
   | .text s => .ok (out.push (.text s), sc)
-  | .out e =>
-    match e with
-    | .path [n] => if splices.contains n then .ok (out.push (.splice n), sc) else
-        do return (out.push (.value (← e.eval sc).show), sc)
-    | _ => do return (out.push (.value (← e.eval sc).show), sc)
+  | .out e => do return (out ++ (← printed sc e), sc)
   | .set v e => do
     let x ← e.eval sc
-    return (out, sc.assign v x)
-  | .cond branches otherwise => renderBranches splices sc out otherwise branches
+    return (out, sc.assign v x (e.own sc))
+  | .cond branches otherwise => renderBranches sc out otherwise branches
   | .loop v seq body otherwise => do
-    let items := match ← seq.eval sc with
-      | .arr items => items
-      | .str s => s.toList.map fun (c : Char) => Value.str c.toString
-      | _ => []
-    if items.isEmpty then renderNodes splices sc out otherwise else
+    let items ← match ← seq.eval sc with
+      | .arr items => pure items
+      | .str s => pure (s.toList.map fun (c : Char) => Value.str c.toString)
+      | .splice n => throw s!"a loop over the typed content '{n}'"
+      | _ => pure []
     let mut out := out
     let mut inner : Scope := { sc with frames := [] :: sc.frames }
+    if items.isEmpty then
+      let (o, after) ← renderNodes inner out otherwise
+      out := o
+      inner := after
     for (item, i) in items.zipIdx do
-      let (o, after) ← renderNodes splices ((inner.bind "loop" (loopValue i items.length)).bind v item) out body
+      let (o, after) ← renderNodes ((inner.bind "loop" (loopValue i items.length)).bind v item) out body
       out := o
       inner := after
     return (out, { inner with frames := inner.frames.drop 1 })
 termination_by n => sizeOf n
 
-def renderBranches (splices : List String) (sc : Scope) (out : Array Piece) (otherwise : List Node) :
+def renderBranches (sc : Scope) (out : Array Piece) (otherwise : List Node) :
     List (Expr × List Node) → Except String (Array Piece × Scope)
-  | [] => renderNodes splices sc out otherwise
+  | [] => renderNodes sc out otherwise
   | (test, body) :: rest => do
-    if (← test.eval sc).truthy then renderNodes splices sc out body
-    else renderBranches splices sc out otherwise rest
+    if (← test.eval sc).truthy then renderNodes sc out body
+    else renderBranches sc out otherwise rest
 termination_by bs => sizeOf otherwise + sizeOf bs
 
 end
 
-/-- A jtex template rendered over its context, the names in `splices` set as typed splices. -/
-def render (template : String) (context : Value) (splices : List String := []) :
-    Except String (Array Piece) := do
+/-- A jtex template rendered over its context, `.splice` values standing for typed content. -/
+def render (template : String) (context : Value) : Except String (Array Piece) := do
   let toks ← lex template
   let nodes ← parseNodes (stripped toks)
-  let (out, _) ← renderNodes splices { context } #[] nodes
+  let (out, _) ← renderNodes { context } #[] nodes
   return out
 
 /-- The pieces as nunjucks prints them, each splice its name between `⟦` and `⟧`. -/
@@ -625,8 +782,15 @@ def Piece.spelled : Piece → String
   | .text s | .value s => s
   | .splice n => "⟦" ++ n ++ "⟧"
 
-/-- The characters TeX reads as other than themselves in running text. -/
-def texSpecials : List Char := ['\\', '{', '}', '$', '&', '#', '^', '_', '%', '~']
+/-- The characters TeX reads as other than themselves in running text, and the line ends that would
+end an argument's paragraph. -/
+def texSpecials : List Char := ['\\', '{', '}', '$', '&', '#', '^', '_', '%', '~', '\n', '\r']
+
+/-- The spellings a special character takes: each a control TeX reads as setting that character, or
+a space for a line end. -/
+def escapeSpellings : List String :=
+  ["\\textbackslash{}", "\\{", "\\}", "\\$", "\\&", "\\#", "\\textasciicircum{}", "\\_", "\\%",
+   "\\textasciitilde{}", " "]
 
 /-- A character as running text spells it: a special one as the control that sets it. -/
 def escapeChar (c : Char) : String :=
@@ -641,20 +805,20 @@ def escapeChar (c : Char) : String :=
   | '_' => "\\_"
   | '%' => "\\%"
   | '~' => "\\textasciitilde{}"
+  | '\n' | '\r' => " "
   | c => c.toString
 
-/-- A value the document chose, as TeX source setting its characters. -/
+/-- A value the document chose, as TeX source: each character's spelling in order. -/
 def escapeTex (s : String) : String := String.join (s.toList.map escapeChar)
 
-/-- A special character never spells itself: each is escaped. -/
-theorem escapeChar_special (c : Char) (h : c ∈ texSpecials) : escapeChar c ≠ c.toString := by
+/-- A special character spells one of the escape spellings. -/
+theorem escapeChar_special (c : Char) (h : c ∈ texSpecials) : escapeChar c ∈ escapeSpellings := by
   simp only [texSpecials, List.mem_cons, List.not_mem_nil, or_false] at h
-  rcases h with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+  rcases h with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
 
 /-- Any other character spells itself. -/
 theorem escapeChar_plain (c : Char) (h : c ∉ texSpecials) : escapeChar c = c.toString := by
   simp only [texSpecials, List.mem_cons, List.not_mem_nil, or_false, not_or] at h
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10⟩ := h
   unfold escapeChar
   split <;> simp_all
 
