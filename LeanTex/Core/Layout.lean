@@ -8557,7 +8557,7 @@ private theorem sourceBound_finishPage {n : Nat} (b : B) (owed : Length) (flush 
 
 /-- Reopen the frame's page-top chrome on a fresh page: the pinned title lines and bar fills repeat,
 or on a page an earlier column's flow drew them on only their offset stands, and content resumes
-below them. -/
+below them, the body open even where the chrome pins no ink. -/
 private def Spacing.Page.reopenChrome (b : B) : B :=
   match b.chrome with
   | some c =>
@@ -8578,7 +8578,7 @@ private def Spacing.Page.reopenChrome (b : B) : B :=
              inkFilsAbove := #[]
              stretchAbove := .replicate ink.lines.size 0
              filsAbove := .replicate ink.lines.size 0
-             opened := b.opened || drawn
+             opened := true
              y := c.y
              prevDepth := c.depth
              prevBelow := c.below
@@ -9243,7 +9243,8 @@ private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Optio
   -- A spill discards pending glue, so the frame's opening skip is kept in the resume origin; a grid
   -- frame's spill page resumes from its title's baseline, its first line a leading below.
   { opened with chrome := b.chrome.map fun c =>
-      { c with y := (if b.geom.gridFrame then b.y else opened.y) + opened.skip.width
+      { c with y := (if b.geom.gridFrame && !b.cur.lines.isEmpty then b.y else opened.y) +
+                      opened.skip.width
                depth := opened.prevDepth
                below := opened.prevBelow
                band := opened.prevBand
@@ -9260,6 +9261,14 @@ private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : G
     resumed.prevBand = opened.prevBand ∧
     resumed.curBand = opened.curBand := by
   simp [Spacing.Page.openBody, Spacing.Page.reopenChrome, Spacing.Page.finishPage, hc, hg]
+
+/-- A grid frame's spill page resumes from where its title's last line stood, its opening skip on. -/
+private theorem Spacing.Page.openBody_resume_grid (b : B) (fs : FontSet) (g : Glue)
+    (box : Option Length) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Length) (flush : Bool)
+    (hg : b.geom.gridFrame = true) (hl : b.cur.lines.isEmpty = false) :
+    let opened := b.openBody fs g box
+    ((opened.finishPage owed flush).reopenChrome).y = b.y + opened.skip.width := by
+  simp [Spacing.Page.openBody, Spacing.Page.reopenChrome, Spacing.Page.finishPage, hc, hg, hl]
 
 /-- The pending skip a fresh page keeps: all of it after `\vspace*`'s
 zero rule or a fil, else none, as TeX discards glue at a page top. -/
@@ -10976,8 +10985,10 @@ private def collectDisplay (r : Rd) (a : Acc)
     (paintPadding : Option Length := none) (inserted : Bool := false)
     (strut : Option Length := none) (texBox : Option TexBox := none)
     (gridLead : Option Length := none) : Acc :=
-  -- On a grid a heading justifies, as `\@startsection` sets it; elsewhere display lines stay ragged.
-  collectPara { r with pats := none, geom := { r.geom with justify := r.geom.classLead.isSome && !center } }
+  -- On a justified grid a heading justifies, as `\@startsection` sets it; elsewhere display lines
+  -- stay ragged.
+  let justify := r.geom.classLead.isSome && !center && r.geom.justify
+  collectPara { r with pats := none, geom := { r.geom with justify := justify } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
     (display := true) (leaf := leaf) (span := span) (keepNext := keepNext)
     (paintPadding := paintPadding) (inserted := inserted) (strut := strut)
@@ -14132,15 +14143,29 @@ private def walkTransparent : Block → Bool
   | b => statefulBlock b
 
 /-- A grid frame's title page as `tex/ltframe.cls`'s `title page` template sets it: the title at
-`\Large` in bold, flush left, a blank line after it, every other part on its own line. -/
-private def collectGridTitle (r : Rd) (a : Acc) (blocks : List Block) (indent : Length) : Acc :=
+`\Large` in bold, a subtitle on the next line, a blank line, then each other part on its own line
+at the body's size; `gap` owes the blank line. -/
+private def collectGridTitle (r : Rd) (a : Acc) (blocks : List Block) (indent : Length)
+    (gap : Bool) : Acc :=
+  let lead : Glue := { width := r.geom.grid.getD 0 }
   match blocks with
   | [] => a
-  | .center inner :: rest => collectGridTitle r (collectGridTitle r a inner.toList indent) rest indent
+  | .center inner :: rest =>
+    collectGridTitle r (collectGridTitle r a inner.toList indent gap) rest indent gap
+  | .spaced _ inner :: rest =>
+    collectGridTitle r (collectGridTitle r a inner.toList indent gap) rest indent gap
   | .section 0 _ _ title :: rest =>
     let a := collectParaBlock r a #[.styled (.size Ir.gridTitlePageStep) #[.styled .bold title]] indent
-    collectGridTitle r (a.vskip { width := r.geom.grid.getD 0 }) rest indent
-  | b :: rest => collectGridTitle r (collectBlock r a b indent) rest indent
+    collectGridTitle r a rest indent true
+  | .para #[.styled (.size n) xs] :: rest =>
+    -- The subtitle is the title's next line; every other part stands below the blank line.
+    let sub := gap && n == "large"
+    let a := if gap && !sub then a.vskip lead else a
+    let a := collectParaBlock r a xs indent
+    collectGridTitle r (if sub then a.vskip lead else a) rest indent false
+  | b :: rest =>
+    let a := if gap then a.vskip lead else a
+    collectGridTitle r (collectBlock r a b indent) rest indent false
 
 /-- A quotation's body as `collectBlockList` walks it: a list opening it stands in its item's label,
 quotation's first lines take the class's `\listparindent`, verse's lines hang (`Ir.verseHang`), and
@@ -14941,9 +14966,13 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectFrameTitle r a title titleLeaf titleSpan
     -- The title is pinned chrome; the content opens below its box with no peer gap.
     let a := if title.isEmpty then
-        -- A grid frame keeps its title band, its body from the band's next line.
-        let a := if r.geom.gridFrame then a.vskip { width := r.geom.grid.getD 0 } else a
-        openFrameBody r a false valign area
+        if r.geom.gridFrame then
+          -- A grid frame keeps its title band, its body (and a spill page's) from the band's next line.
+          -- The body opens from the paper's top: the band and half a leading above the first line.
+          { a with ops := (a.ops.push .pin).push
+                     (.bodyOpen { width := r.geom.grid.getD 0 * (3 : Int) / (2 : Int) } none)
+                   wantDefault := false, frameTop := true }
+        else openFrameBody r a false valign area
       else if r.geom.gridFrame then
         -- On a grid the body's first line stands one leading below the title's, two below a band.
         let g : Glue := if (Ir.Design.ofPalette a.pal).frametitle.isSome then
@@ -14962,7 +14991,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A golden frame is the title page, all display furniture: never hyphenated or justified.
     let a := if gridTitle then
         -- Three blank lines stand above the title (`tex/ltframe.cls`).
-        collectGridTitle r (a.vskip { width := 3 * r.geom.grid.getD 0 }) body.toList indent
+        collectGridTitle r (a.vskip { width := 3 * r.geom.grid.getD 0 }) body.toList indent false
       else if valign matches .golden then
         let rd := { r with pats := none, geom := { r.geom with justify := false } }
         let slots := (r.style "titlepage").slots

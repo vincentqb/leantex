@@ -2370,11 +2370,18 @@ private def classSourceIn : Raw → Raw
   | .math d body p => .math d body p
   | .verb e s p => .verb e s p
 
-/-- `applyClassSourceAt` over a file's raws, or over an input file's wrapper where the declaration
-stands in the file it inputs. -/
+/-- An input file's wrapper whose file declares the document's class. -/
+private def declaresClassIn : Raw → Bool
+  | .env n body _ => (Parse.inputEnvFile? n).isSome && body.any (· matches .ctrl "documentclass" _)
+  | _ => false
+
+/-- `applyClassSourceAt` over a file's raws, or over the first input file's wrapper declaring the
+class, a later file's declaration (a standalone part's) taking no class source. -/
 public def applyClassSource (raws : Array Raw) : Array Raw :=
   if raws.any (· matches .ctrl "documentclass" _) then applyClassSourceAt raws
-  else raws.map classSourceIn
+  else match raws.findIdx? declaresClassIn with
+    | some i => raws.mapIdx fun k r => if k == i then classSourceIn r else r
+    | none => raws
 
 /-- The filename, read from the executed call the local-style reader sees. -/
 @[expose] public def InputRequest.name (request : InputRequest) : String :=

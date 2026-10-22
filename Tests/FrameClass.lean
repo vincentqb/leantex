@@ -111,6 +111,19 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
     ((lineY edgeOut 2 "Foxtrot").any (near · (lineAt 3)))
   t "frame class: a broken frame's next page resumes on its third line"
     ((lineY edgeOut 4 "Golf").any (near · (lineAt 3)) && (lineY edgeOut 3 "Golf0").any (near · (lineAt 3)))
+  -- lualatex: a subtitle a leading below the title, the institute a line below the author.
+  let (full, _) := elabStr ("\\documentclass{ltframe}\n\\title{Invented Lattices}\\subtitle{A subtitle}" ++
+    "\\author{Pat Placeholder}\\institute{Example Institute}\\date{20 October 2026}\n" ++
+    "\\begin{document}\n\\begin{frame}\n\\titlepage\n\\end{frame}\n\\begin{frame}[allowframebreaks]\n" ++
+    String.intercalate "\\par " ((List.range 18).map fun i => s!"Golf{i} line.") ++
+    "\n\\end{frame}\n\\end{document}\n")
+  let fullOut := layoutOf fonts full
+  t "frame class: a title page's subtitle and institute keep the grid"
+    ((lineY fullOut 0 "Invented").any (near · (lineAt 7)) && (lineY fullOut 0 "A").any (near · (lineAt 8)) &&
+      (lineY fullOut 0 "Pat").any (near · (lineAt 10)) && (lineY fullOut 0 "Example").any (near · (lineAt 11)) &&
+      (lineY fullOut 0 "20").any (near · (lineAt 12)))
+  t "frame class: an untitled broken frame's next page resumes on its third line"
+    ((lineY fullOut 1 "Golf0").any (near · (lineAt 3)) && (lineY fullOut 2 "Golf").any (near · (lineAt 3)))
   let (band, _) := elabStr ("\\documentclass{ltframe}\n\\setbeamercolor{frametitle}{fg=white,bg=black}\n" ++
     "\\begin{document}\n\\begin{frame}{Kilo}\nAlpha below a band.\n\\end{frame}\n\\end{document}\n")
   let bandOut := layoutOf fonts band
@@ -131,10 +144,15 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       (Ir.footlineOf beamerGrid.docClass.record.gridFrame beamerGrid.page).step == Ir.footline.step)
   let head := (Parse.parse "head.tex" (Lex.lex "head.tex" "\\documentclass{ltframe}\n").1).1
   let spliced := Compat.applyClassSource #[.env (Parse.inputEnv "head.tex") head {}]
+  let classed (r : Parse.Raw) : Bool := match r with
+    | .env _ body _ => body.any (· matches .env "input ltframe.cls" _ _)
+    | _ => false
   t "frame class: a class declared in an input file takes its source there"
-    (spliced.any fun r => match r with
-      | .env _ body _ => body.any (· matches .env "input ltframe.cls" _ _)
-      | _ => false)
+    (spliced.any classed)
+  let twice := Compat.applyClassSource #[.env (Parse.inputEnv "head.tex") head {},
+    .env (Parse.inputEnv "part.tex") head {}]
+  t "frame class: a later input file's class declaration takes no class source"
+    ((twice.filter classed).size == 1 && twice[0]?.any classed)
   let html := (HtmlDoc.emit {} doc).1
   t "frame class: its web page is a deck of slides with its title page"
     (hasStr html "<section class=\"slide title-page\"" && hasStr html "<section class=\"slide\"")

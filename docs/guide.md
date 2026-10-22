@@ -552,16 +552,17 @@ there.
 
 `\documentclass{ltframe}` sets a talk on beamer's 16:9 stage (`[aspect=43]` or beamer's
 `aspectratio` for another) as a grid of sixteen lines, each a sixteenth of the stage's height: the
-body is Latin Modern Sans a line over the scale's step, two lines in from either side, the title
-on the second line in bold at the step above (a long title wraps line by line, a
-`\framesubtitle` on the line after it), the body from the line after the title, ragged right, and the frame number at the right margin on the last line. Every frame stands
-top-aligned (`[c]` and `[b]` are named), and a frame with no title keeps its title's band. Every
-text line stands on the grid; a display stands half a line off its text so the line after it
-returns to the grid, a block, alerted or not, is its bold title over its body with a blank line
-around it, and a broken frame resumes on its third line. The title page sets the title below three
-blank lines with the author and date after a gap. The stage is the aspect's: a size option or a
-declared paper is named, while equal `text margin left` and `text margin right` in
-`\setbeamersize`, or `\page{ hmargin = ... }`, set the side margins.
+body is Latin Modern Sans a line over the scale's step, two lines in from either side, the title on
+the second line in bold at the step above (a long title wraps line by line, ragged right, a
+`\framesubtitle` on the line after it), the body from the line after the title, and the frame number
+at the right margin on the last line. Every frame stands top-aligned (`[c]` and `[b]` are named),
+and a frame with no title keeps its title's band. Every text line stands on the grid; a display
+stands half a line off its text so the line after it returns to the grid, a block, alerted or not,
+is its bold title over its body with a blank line around it, and a broken frame's next page resumes
+on its third line. The title page sets the title below three blank lines, its subtitle on the next,
+and the author, institute and date after a gap. The stage is the aspect's: a size option or a
+declared paper is named, while equal `text margin left` and `text margin right` in `\setbeamersize`,
+or `\page{ hmargin = ... }`, set the side margins.
 
 ## Fonts and themes
 

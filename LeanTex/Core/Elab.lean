@@ -10227,9 +10227,11 @@ private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
       frameRestGo ctx body (j + 1) title subtitle (rest.push r') bound pbound (hf.keep h hj)
   else
     -- Beamer's frame-title template sets the subtitle only under a title.
+    -- tex/ltframe.cls sets its subtitle at the body's size.
     let title := if title.isEmpty || subtitle.isEmpty then title else
       title ++ #[.linebreak {}, .colored (Design.ofPalette ctx.palette).framesubtitle
-        (some (.role .frameSubtitleInk)) #[.styled (.size "small") subtitle]]
+        (some (.role .frameSubtitleInk))
+        #[.styled (.size (if ctx.gridFrame then "normalsize" else "small")) subtitle]]
     return (title, ⟨rest, hf.bounds.1, hf.bounds.2.1⟩)
 termination_by body.size - j
 
@@ -13884,6 +13886,12 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
       warnUnclosed ctx "'\\begin{frame}'" bpos
       break
     | .content => break
+  -- premise: Tests.FrameClass.checks — the grid class has no standout frame
+  if ctx.gridFrame && o.standout then
+    warnOnce ctx "frame:opt:grid:standout" .N0102
+      (Diag.say .N0102 .option "standout" (some (some .environment, "frame"))) pos
+      (detail := some "the class sets it as any frame")
+    o := { o with standout := false }
   if o.standout then
     for a in o.aligns do
       unless a == "c" do

@@ -32,6 +32,7 @@
 \setbeamertemplate{headline}{}
 \setbeamersize{text~margin~left=2\l_lt_frameL_dim, text~margin~right=2\l_lt_frameL_dim}
 % Titles set at the step above the body, solid on the grid's leading; a break fills the frame.
+\setbeamerfont{framesubtitle}{ size = \normalsize }
 \setbeamerfont{frametitle}
   { size = \fontsize { \dim_use:N \l_lt_frameL_dim } { \dim_use:N \l_lt_frameL_dim } , series = \bfseries }
 \define@key { beamerframe } { allowframebreaks } [ 1 ]
@@ -90,6 +91,9 @@
 \define@key { beamerframe } { t } [ true ] { \lt_frame_topskip: }
 \define@key { beamerframe } { c } [ true ] { \lt_frame_topskip: }
 \define@key { beamerframe } { b } [ true ] { \lt_frame_topskip: }
+\define@key { beamerframe } { standout } [ true ] { }
+\msg_new:nnn { ltframe } { size } { class~option~#1~sets~nothing;~the~ltframe~class's~body~follows~its~stage }
+\tl_if_empty:NF \l_lt_fontsize_tl { \msg_warning:nnV { ltframe } { size } \l_lt_fontsize_tl }
 % The frame number stands on the last line, at the right margin.
 \setbeamertemplate{footline}
   {

@@ -74,7 +74,7 @@ error: invalid value for key vmargin [E0323]
   note: \page expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
 error: undefined page size quarto [E0324]
-  note: known sizes: letter, legal, a4, a5, b5, executive, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2
+  note: known sizes: letter, legal, a4, a5, b5, executive, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2, 20:13
 ── E0325 (dropped) unreadable \assert expression
 error: invalid assertion 'pages =~ 1' [E0325]
   note: '=~' is not a comparison (== != <= < >= >)

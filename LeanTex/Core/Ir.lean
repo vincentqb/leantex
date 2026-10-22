@@ -491,7 +491,8 @@ public def articleTextBlock : Length := pt 312
     ("14:9", Dim.mm 140, Dim.mm 90),
     ("141", Dim.mm100 14850, Dim.mm 105),
     ("5:4", Dim.mm 125, Dim.mm 100),
-    ("3:2", Dim.mm 135, Dim.mm 90)]
+    ("3:2", Dim.mm 135, Dim.mm 90),
+    ("20:13", Dim.mm 140, Dim.mm 91)]
 
 /-- The stage a ratio name selects, colon elided on both sides. -/
 public def slidesStageNamed (name : String) : Option (Length × Length) :=
