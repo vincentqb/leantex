@@ -459,7 +459,14 @@ several, a second for one constant, for a connective, with other slots than the
 explicit arguments, with a comma, a colon, a parenthesis, a brace, a quote or a
 full stop standing alone, or words that would
 not read back) and each no sentence on the page uses, as on a page that says
-nothing in words. Views combine in the order given, as `show = prose, code`,
+nothing in words. A constant neither the table nor a directive says takes its
+words from its documentation comment's opening clause, up to the first full
+stop, comma, semicolon or colon, each backticked explicit argument its slot:
+`` /-- `b` is moored, its draft positive. -/ `` says `Moored b` as b is moored,
+and `` /-- The label of `b`. -/ `` says `nameOf b` as the label of b. A clause
+opening on neither an argument nor an article, holding other code or no
+argument, or one the directive's rules refuse gives none, silently; a constant
+an imported file declares takes its comment's words the same way. Views combine in the order given, as `show = prose, code`,
 `show = code, prose` or `show = math, prose, code`.
 
 Two more options shape a Lean file's page. `proofs = collapse` folds each

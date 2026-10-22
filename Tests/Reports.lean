@@ -2511,6 +2511,12 @@ def reports : List Report := [
     pins := [check% censusChecks, check% Tests.LeanProse.leanProseChecks,
       thm% LeanProse.proseOf_parse_exact]
     accept := ["main's binary at a90d1669 on the Lean prose fixture: Definition (Ebb.Moored). Moored : Barge → Prop, the guards failing there; this tree says For every b : Barge, b is moored if and only if 0 < b.draft, and with glossary = where follows each theorem using it with where for every b : Barge, b is moored means 0 < b.draft, the quantifier kept where the theorem binds b too, in the PDF, on the web page and in the twin"]
+    state := .guarded "a90d1669" .before .author },
+  { id := "R291", date := "2026-10-22"
+    what := "a Lean constant's documentation comment, saying in words what it means, never gave its words to the statements using it: each needed a phrase directive repeating it"
+    pins := [check% censusChecks, check% Tests.LeanProse.leanProseChecks,
+      thm% LeanProse.tableFor_contract]
+    accept := ["main's binary at a90d1669 on the Lean prose fixture, its Moored phrase directive gone: For every b : Barge, if Moored b, then 0 < b.draft, the guards failing there; this tree says For every b : Barge, b is moored if and only if 0 < b.draft, and For every b : Barge that is moored, from the comment `b` is moored, its draft positive, while the name of b still follows the directive over the comment's the label of b, in the PDF, on the web page and in the twin"]
     state := .guarded "a90d1669" .before .author }
 ]
 

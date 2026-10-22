@@ -332,6 +332,12 @@ verbatim language lean4
   "structure Barge where"
   "  hull : Nat"
   "  draft : Nat"
+para
+  styled mono
+    italicCorr maybe
+    text "b"
+  italicCorr maybe
+  text " is moored, its draft positive."
 role trivlist-env
   ragged left
     lines
@@ -361,6 +367,12 @@ role trivlist-env
         text "."
 verbatim language lean4
   "def Moored (b : Barge) : Prop := 0 < b.draft"
+para
+  text "The label of "
+  styled mono
+    italicCorr maybe
+    text "b"
+  text ", its hull number."
 role trivlist-env
   ragged left
     para
@@ -738,4 +750,4 @@ verbatim language lean4
   ""
   "end Ebb"
 -- diagnostics
-warning[W0415] 47:1 unsupported statement Ebb.nameOf | detail: it is no proposition
+warning[W0415] 48:1 unsupported statement Ebb.nameOf | detail: it is no proposition

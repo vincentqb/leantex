@@ -297,8 +297,20 @@ run_cmd do
       let fieldPart := match field with
         | some i => s!",\"field\":{i}"
         | none => ""
+      let docPart ← match ← findDocString? env c with
+        | some d => do
+          let names ← liftTermElabM do
+            try
+              Meta.forallTelescope ci.type fun xs _ => xs.filterMapM fun x => do
+                let decl ← x.fvarId!.getDecl
+                let n := jstr decl.userName.eraseMacroScopes.toString
+                pure (if decl.binderInfo.isExplicit then some n else none)
+            catch _ => pure #[]
+          let first := ((d.splitOn "\n").find? fun (l : String) => l.any fun (ch : Char) => !ch.isWhitespace).getD ""
+          pure s!",\"doc\":{jstr first},\"names\":[{",".intercalate names.toList}]"
+        | none => pure ""
       lines := lines.push
-        s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"{fieldPart}}"
+        s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"{fieldPart}{docPart}}"
   for (a, b) in read do
     lines := lines.push s!"\{\"command\":{spanText (some (a, b))},\"text\":{jstr (between textLines a b)}}"
   lines := lines.push s!"\{\"leantex-lean-export-end\":{decls}}"

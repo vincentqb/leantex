@@ -40,72 +40,72 @@
 {"name":"Tide.depth","module":"testdata.codedoc.lean.statements","kind":"def","range":[46,0,46,28],"head":[46,0],"signature":[46,18,46,23],"proof":[46,24,46,28],"proved":true,"prop":false,"doc":null,"type":[["const","Nat"]]}
 {"failed":"refused","kind":"theorem","range":[101,0,101,55],"head":[101,0],"proof":[101,49,101,55]}
 {"const":"instPowNat","binders":"ic"}
-{"const":"Unit.unit","binders":""}
-{"const":"False","binders":""}
-{"const":"Nat.one_pos","binders":""}
-{"const":"Dvd.dvd","binders":"icdd"}
+{"const":"Unit.unit","binders":"","doc":"The only element of the unit type.","names":[]}
+{"const":"False","binders":"","doc":"`False` is the empty proposition. Thus, it has no introduction rules.","names":[]}
+{"const":"Nat.one_pos","binders":"","doc":"Alias for `Nat.zero_lt_one`. ","names":[]}
+{"const":"Dvd.dvd","binders":"icdd","doc":"Divisibility. `a ∣ b` (typed as `\\|`) means that there is some `c` such that `b = a * c`. ","names":["a","a"]}
 {"const":"instHDiv","binders":"ic"}
-{"const":"HMul.hMul","binders":"iiicdd"}
+{"const":"HMul.hMul","binders":"iiicdd","doc":"`a * b` computes the product of `a` and `b`.","names":["a","a"]}
 {"const":"Zero.ofOfNat0","binders":"ic"}
-{"const":"HSub.hSub","binders":"iiicdd"}
-{"const":"Membership.mem","binders":"iicdd"}
-{"const":"Exists","binders":"id"}
-{"const":"sorryAx","binders":"dd"}
-{"const":"Tide.height","binders":"dd"}
-{"const":"GE.ge","binders":"icdd"}
-{"const":"Fin.mk","binders":"idd"}
-{"const":"HDiv.hDiv","binders":"iiicdd"}
+{"const":"HSub.hSub","binders":"iiicdd","doc":"`a - b` computes the difference of `a` and `b`.","names":["a","a"]}
+{"const":"Membership.mem","binders":"iicdd","doc":"The membership relation `a ∈ s : Prop` where `a : α`, `s : γ`. ","names":["a","a"]}
+{"const":"Exists","binders":"id","doc":"Existential quantification. If `p : α → Prop` is a predicate, then `∃ x : α, p x`","names":["p"]}
+{"const":"sorryAx","binders":"dd","doc":"Auxiliary axiom used to implement the `sorry` term and tactic.","names":["α","synthetic"]}
+{"const":"Tide.height","binders":"dd","doc":"The height a tide reaches after `n` steps of `rise`. ","names":["rise","n"]}
+{"const":"GE.ge","binders":"icdd","doc":"`a ≥ b` is an abbreviation for `b ≤ a`. ","names":["a","b"]}
+{"const":"Fin.mk","binders":"idd","doc":"Creates a `Fin n` from `i : Nat` and a proof that `i < n`. ","names":["val","isLt"]}
+{"const":"HDiv.hDiv","binders":"iiicdd","doc":"`a / b` computes the result of dividing `a` by `b`.","names":["a","a"]}
 {"const":"Nat.instMod","binders":""}
 {"const":"instHMod","binders":"ic"}
 {"const":"Int.instNegInt","binders":""}
 {"const":"instSubNat","binders":""}
-{"const":"Ne","binders":"idd"}
+{"const":"Ne","binders":"idd","doc":"`a ≠ b`, or `Ne a b` is defined as `¬ (a = b)` or `a = b → False`,","names":["a","b"]}
 {"const":"instMulNat","binders":""}
 {"const":"instOfNatNat","binders":"d"}
-{"const":"Int","binders":""}
-{"const":"Lean.Name.num","binders":"dd","field":0}
-{"const":"LE.le","binders":"icdd"}
+{"const":"Int","binders":"","doc":"The integers.","names":[]}
+{"const":"Lean.Name.num","binders":"dd","field":0,"doc":"A numerical name. This kind of name is used, for example, to create hierarchical names for","names":["pre","i"]}
+{"const":"LE.le","binders":"icdd","doc":"The less-equal relation: `x ≤ y` ","names":["a","a"]}
 {"const":"instLENat","binders":""}
-{"const":"Fin.val","binders":"id","field":1}
-{"const":"Lean.Name.str","binders":"dd","field":0}
-{"const":"List.cons","binders":"idd"}
-{"const":"Lean.Name.anonymous","binders":""}
+{"const":"Fin.val","binders":"id","field":1,"doc":"The number that is strictly less than `n`.","names":["self"]}
+{"const":"Lean.Name.str","binders":"dd","field":0,"doc":"A string name. The name `Lean.Meta.run` is represented as","names":["pre","str"]}
+{"const":"List.cons","binders":"idd","doc":"The list whose first element is `head`, where `tail` is the rest of the list.","names":["head","tail"]}
+{"const":"Lean.Name.anonymous","binders":"","doc":"The \"anonymous\" name. ","names":[]}
 {"const":"instNatPowNat","binders":""}
-{"const":"Bool.true","binders":""}
-{"const":"GT.gt","binders":"icdd"}
-{"const":"List","binders":"d"}
+{"const":"Bool.true","binders":"","doc":"The Boolean value `true`, not to be confused with the proposition `True`. ","names":[]}
+{"const":"GT.gt","binders":"icdd","doc":"`a > b` is an abbreviation for `b < a`. ","names":["a","b"]}
+{"const":"List","binders":"d","doc":"Linked lists: ordered lists, in which each element has a reference to the next element.","names":["α"]}
 {"const":"instHAdd","binders":"ic"}
-{"const":"HMod.hMod","binders":"iiicdd"}
-{"const":"And","binders":"dd"}
-{"const":"Unit","binders":""}
-{"const":"Iff","binders":"dd"}
+{"const":"HMod.hMod","binders":"iiicdd","doc":"`a % b` computes the remainder upon dividing `a` by `b`.","names":["a","a"]}
+{"const":"And","binders":"dd","doc":"`And a b`, or `a ∧ b`, is the conjunction of propositions. It can be","names":["a","b"]}
+{"const":"Unit","binders":"","doc":"The canonical type with one element. This element is written `()`.","names":[]}
+{"const":"Iff","binders":"dd","doc":"If and only if, or logical bi-implication. `a ↔ b` means that `a` implies `b` and vice versa.","names":["a","b"]}
 {"const":"instHSub","binders":"ic"}
-{"const":"HPow.hPow","binders":"iiicdd"}
-{"const":"Nat.instDvd","binders":""}
+{"const":"HPow.hPow","binders":"iiicdd","doc":"`a ^ b` computes `a` to the power of `b`.","names":["a","a"]}
+{"const":"Nat.instDvd","binders":"","doc":"Divisibility of natural numbers. `a ∣ b` (typed as `\\|`) says that","names":[]}
 {"const":"List.instMembership","binders":"i"}
-{"const":"HAdd.hAdd","binders":"iiicdd"}
+{"const":"HAdd.hAdd","binders":"iiicdd","doc":"`a + b` computes the sum of `a` and `b`.","names":["a","a"]}
 {"const":"Tide.holds","binders":"d"}
-{"const":"Nat","binders":""}
-{"const":"LT.lt","binders":"icdd"}
-{"const":"True","binders":""}
+{"const":"Nat","binders":"","doc":"The natural numbers, starting at zero.","names":[]}
+{"const":"LT.lt","binders":"icdd","doc":"The less-than relation: `x < y` ","names":["a","a"]}
+{"const":"True","binders":"","doc":"`True` is a proposition and has only an introduction rule, `True.intro : True`.","names":[]}
 {"const":"Nat.instDiv","binders":""}
-{"const":"String.length","binders":"d","field":0}
-{"const":"Function.const","binders":"iddd"}
-{"const":"Nonempty","binders":"d"}
+{"const":"String.length","binders":"d","field":0,"doc":"Returns the length of a string in Unicode code points.","names":["b"]}
+{"const":"Function.const","binders":"iddd","doc":"The constant function that ignores its argument.","names":["β","a","a"]}
+{"const":"Nonempty","binders":"d","doc":"`Nonempty α` is a typeclass that says that `α` is not an empty type,","names":["α"]}
 {"const":"instAddNat","binders":""}
-{"const":"Lean.Name","binders":""}
-{"const":"Inhabited","binders":"d"}
+{"const":"Lean.Name","binders":"","doc":"Hierarchical names consist of a sequence of components, each of","names":[]}
+{"const":"Inhabited","binders":"d","doc":"`Inhabited α` is a typeclass that says that `α` has a designated element,","names":["α"]}
 {"const":"Tide.depth","binders":""}
-{"const":"Or","binders":"dd"}
+{"const":"Or","binders":"dd","doc":"`Or a b`, or `a ∨ b`, is the disjunction of propositions. There are two","names":["a","b"]}
 {"const":"instHPow","binders":"iic"}
 {"const":"instLTNat","binders":""}
-{"const":"NeZero","binders":"icd"}
-{"const":"OfNat.ofNat","binders":"idc"}
-{"const":"Nat.succ","binders":"d","field":0}
-{"const":"Eq","binders":"idd"}
-{"const":"Not","binders":"d"}
-{"const":"Neg.neg","binders":"icd"}
-{"const":"Add","binders":"d"}
+{"const":"NeZero","binders":"icd","doc":"A type-class version of `n ≠ 0`.  ","names":["n"]}
+{"const":"OfNat.ofNat","binders":"idc","doc":"The `OfNat.ofNat` function is automatically inserted by the parser when","names":["x"]}
+{"const":"Nat.succ","binders":"d","field":0,"doc":"The successor of a natural number `n`.","names":["n"]}
+{"const":"Eq","binders":"idd","doc":"The equality relation. It has one introduction rule, `Eq.refl`.","names":["a","a"]}
+{"const":"Not","binders":"d","doc":"`Not p`, or `¬p`, is the negation of `p`. It is defined to be `p → False`,","names":["a"]}
+{"const":"Neg.neg","binders":"icd","doc":"`-a` computes the negative or opposite of `a`.","names":["a"]}
+{"const":"Add","binders":"d","doc":"The homogeneous version of `HAdd`: `a + b : α` where `a b : α`. ","names":["α"]}
 {"const":"instHMul","binders":"ic"}
 {"command":[6,0,6,14],"text":"namespace Tide"}
 {"command":[8,0,9,43],"text":"/-- The height a tide reaches after `n` steps of `rise`. -/\ndef height (rise n : Nat) : Nat := rise * n"}

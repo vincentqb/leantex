@@ -2471,10 +2471,55 @@ private def declareStep (facts : LeanFacts.Facts) (acc : Declared) (e : String �
     { acc with table := tb, taken := c :: acc.taken, phrases := acc.phrases.push (e.1, t) }
   | .error r => { acc with refused := acc.refused.push (e.1, r) }
 
+/-- A documentation comment's opening clause as its constant's phrase, each backticked explicit
+binder its slot and an opening article lowered; none without a slot, with other code, or opening on
+neither. -/
+public def docPhrase? (doc : String) (names : Array String) : Option String := Id.run do
+  let mut out := ""
+  let mut code := ""
+  let mut inCode := false
+  for c in doc.trimAscii.toString.toList do
+    if inCode then
+      if c == '`' then
+        match names.toList.findIdx? (· == code) with
+        | some k => out := out ++ s!"#{k + 1}"
+        | none => return none
+        code := ""
+        inCode := false
+      else code := code.push c
+    else if c == '`' then inCode := true
+    else if c == '.' || c == ',' || c == ';' || c == ':' || c == '\n' then break
+    else out := out.push c
+  if inCode then return none
+  let said := out.trimAscii.toString
+  let first := (said.splitOn " ").headD ""
+  if !said.contains '#' then return none
+  if first.startsWith "#" then return some said
+  if ["the", "a", "an"].contains first.decapitalize then return some said.decapitalize
+  return none
+
+/-- A type's explicit binders' names, outermost first. -/
+def explicitNames : LeanFacts.Term → Array String → Array String
+  | .pi n b _ _ rest, acc => explicitNames rest (if b == .explicit then acc.push n else acc)
+  | _, acc => acc
+
+/-- Every constant's phrase its documentation gives, as the facts carry it: a declaration's own,
+its explicit binders named by its type, and every other constant's. -/
+public def docPhrases (facts : LeanFacts.Facts) : List (String × String) :=
+  let own := facts.decls.toList.filterMap fun d => d.doc.bind fun doc => d.type.bind fun t =>
+    (docPhrase? doc (explicitNames t #[])).map (d.name, ·)
+  let others := facts.docs.toList.filterMap fun (c, doc, ns) => (docPhrase? doc ns).map (c, ·)
+  own ++ others
+
 /-- What a page says its statements through: the core table, then each declared phrase it takes,
-with each refused one and why. -/
+with each refused one and why, then each constant's its documentation gives where neither the core
+table nor a declared phrase says it, none of those refused or counted. -/
 public def tableFor (facts : LeanFacts.Facts) (declared : List (String × String)) : Declared :=
-  declared.foldl (declareStep facts) ⟨coreTable facts.collectionFirst, [], #[], #[]⟩
+  let core := coreTable facts.collectionFirst
+  let d := declared.foldl (declareStep facts) ⟨core, [], #[], #[]⟩
+  let said (c : String) := d.taken.contains c || core.rels.any (·.1 == c) || core.phrases.any (·.1 == c)
+  let fromDocs := ((docPhrases facts).filter fun (c, _) => !said c).foldl (declareStep facts) d
+  { fromDocs with refused := d.refused, phrases := d.phrases }
 
 private theorem lookup_mem {β : Type} : ∀ {l : List (String × β)} {c : String} {v : β},
     l.lookup c = some v → v ∈ l.map (·.2)

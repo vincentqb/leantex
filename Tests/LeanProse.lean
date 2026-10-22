@@ -218,6 +218,28 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "prose: a phrase is refused for a connective or a quantifier"
     (declare #[("And", #[.explicit, .explicit])] [("And", "#1 as well as #2")] == #[.connective] &&
       declare #[("Exists", #[.implicit, .explicit])] [("Exists", "some #1 exists")] == #[.connective])
+  -- Phrases a documentation comment gives.
+  t "prose: a documentation comment's opening clause is its constant's phrase, each backticked explicit binder its slot, an opening article lowered"
+    (docPhrase? "`b` is moored, its draft positive." #["b"] == some "#1 is moored" &&
+      docPhrase? "The label of `b`. Its hull." #["b"] == some "the label of #1" &&
+      docPhrase? "The span from `x` to `y`; long" #["x", "y"] == some "the span from #1 to #2")
+  t "prose: a documentation comment gives no phrase where its opening clause holds other code, no slot, or opens on neither a slot nor an article"
+    (docPhrase? "`b.draft` is positive" #["b"] == none &&
+      docPhrase? "`b` is `moored`" #["b"] == none && docPhrase? "`b is moored" #["b"] == none &&
+      docPhrase? "The length of a list" #["l"] == none &&
+      docPhrase? "Removes the first `n` elements" #["n"] == none)
+  let docFacts : LeanFacts.Facts := { factsWith (#[("Tide.Calm", #[.explicit]), ("Tide.rise", #[.explicit]),
+      ("Tide.Odd", #[.explicit, .explicit])] ++ eqBinders) with
+    docs := #[("Tide.Calm", "`x` is calm", #["x"]), ("Tide.rise", "The rise of `x`", #["x"]),
+      ("Tide.Odd", "`x` is odd", #["x", "y"]), ("Eq", "`a` matches `b`", #["a", "b"])] }
+  let fromDocs := tableFor docFacts []
+  t "prose: a constant's documentation gives its phrase where none is declared, its refusal unreported and its phrase uncounted"
+    ((fromDocs.table.rels.lookup "Tide.Calm").isSome && (fromDocs.table.phrases.lookup "Tide.rise").isSome &&
+      (fromDocs.table.rels.lookup "Tide.Odd").isNone && fromDocs.refused.isEmpty && fromDocs.phrases.isEmpty)
+  t "prose: a declared phrase and the core table's each win over a constant's documentation"
+    ((tableFor docFacts [("Calm", "#1 is still")]).table.rels.lookup "Tide.Calm" ==
+        (tableFor (factsWith #[("Tide.Calm", #[.explicit])]) [("Calm", "#1 is still")]).table.rels.lookup "Tide.Calm" &&
+      fromDocs.table.rels.lookup "Eq" == (coreRels true).lookup "Eq")
   -- Only a proposition is said in words.
   let leafTex (l : Leaf) : String :=
     " ".intercalate (l.map fun m => Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList))
