@@ -697,7 +697,11 @@ public def yamlTree (lines : Array String) : Option Yaml := Id.run do
     match stack.back? with
     | some top => stack := stack.pop.push { top with fields := top.fields.push (key, .scalar (yamlBlockScalar lit body)) }
     | none => return none
-  stack := yamlClose stack 0
+  -- every frame left, a sequence at the root mapping's indentation among them, placed below it
+  for _ in [0:stack.size] do
+    match stack.back?, stack.pop.back? with
+    | some top, some parent => stack := stack.pop.pop.push (parent.add top.under top.node)
+    | _, _ => break
   return stack[0]?.map (·.node)
 
 /-- A field's value: the flat subset's reading, else a nested block of mappings and sequences. -/

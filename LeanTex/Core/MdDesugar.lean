@@ -1091,6 +1091,8 @@ public structure FrontMatter where
   abstractPos : Pos := {}
   /-- Whether the authors name different affiliations, which the title block lists unmarked. -/
   unmarked : Bool := false
+  /-- Each key read, at its position, the last one for the authors. -/
+  keyPos : Array (String × Pos) := #[]
   deriving Inhabited
 
 /-- What a markdown file's metadata declares for its citations and its web layout, and the keys it
@@ -1257,9 +1259,9 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         | .unread => none
       match entries with
       | some es =>
-        if !out.front.authors.isEmpty then
-          out := { out with diags := out.diags.push (routeDegraded file ("meta-twice:" ++ f.key)
-            (Diag.say .W0392 .key f.key) f.pos (detail := some "the authors written again, under the other key")) }
+        if let some (k, q) := out.front.keyPos.find? (fun (k, _) => k == "author" || k == "authors") then
+          out := { out with diags := out.diags.push (routeDegraded file ("meta-twice:" ++ k)
+            (Diag.say .W0392 .key k) q (detail := some s!"the authors written again below, under '{f.key}'")) }
         let refs := es.foldl (fun acc (_, as) => as.foldl (fun acc a =>
           if acc.contains a then acc else acc.push a) acc) #[]
         let unmarked := es.any fun (_, as) => as != (es[0]?.map (·.2)).getD #[]
@@ -1290,18 +1292,23 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         out := { out with diags := out.diags.push (unread f "its value is empty" (some help)) }
       else out := { out with web := some (v, f.pos) }
     | _, _ => out := { out with diags := out.diags.push (unread f "its value is not one the key takes") }
+    if frontKeys.contains f.key && out.diags.size == before then
+      out := { out with front := { out.front with keyPos :=
+        (out.front.keyPos.filter fun (k, _) => !(["author", "authors"].contains k && ["author", "authors"].contains f.key)).push (f.key, f.pos) } }
     if out.diags.size == before && f.key != "nocite" && citationKeys.contains f.key then
       out := { out with taken := out.taken.push (f.key, f.pos) }
   if out.front.title.isSome && out.front.unmarked then
-    if let some f := fields.find? (fun f => f.key == "author" || f.key == "authors") then
+    if let some (_, q) := out.front.keyPos.find? (fun (k, _) => k == "author" || k == "authors") then
       out := { out with diags := out.diags.push (routeDegraded file "affiliations"
-        (Diag.say .W0392 .key "affiliations") f.pos
+        (Diag.say .W0392 .key "affiliations") q
         (detail := some "the title block lists every affiliation, unmarked by whose each is")) }
-  if out.front.title.isNone then
+  if role == .document && out.front.title.isNone then
+    let titled := fields.any (·.key == "title")
     for f in fields do
-      if ["subtitle", "author", "authors", "affiliations", "date"].contains f.key then
-        out := { out with diags := out.diags.push (unread f "no title declares a title block to set it in"
-          (some "declare 'title:' beside it")) }
+      if frontKeys.contains f.key && f.key != "title" && f.key != "abstract" then
+        out := { out with diags := out.diags.push (unread f
+          (if titled then "the title is not text, so no title block is set" else "no title declares a title block to set it in")
+          (if titled then none else some "declare 'title:' beside it")) }
   return out
 
 /-- natbib loaded with the declared options, where a bibliography is declared. -/
@@ -1378,10 +1385,13 @@ public def MetaRead.frontRaws (file : String) (dialect : Dialect) (m : MetaRead)
 /-- What reading the front matter's values names. -/
 public def MetaRead.frontDiags (file : String) (dialect : Dialect) (m : MetaRead) : Array Diag :=
   let f := m.front
-  let texts := if f.title.isNone then [] else f.title.toList ++ f.subtitle.toList ++ f.authors.toList ++
-    [", ".intercalate f.affiliationNames.toList] ++ f.date.toList
+  let posOf (k : String) : Pos := ((f.keyPos.find? (·.1 == k)).map (·.2)).getD f.pos
+  let authorsAt := ((f.keyPos.find? fun (k, _) => k == "author" || k == "authors").map (·.2)).getD f.pos
+  let texts := if f.title.isNone then [] else (f.title.toList.map (·, f.pos)) ++
+    (f.subtitle.toList.map (·, posOf "subtitle")) ++ (f.authors.toList.map (·, authorsAt)) ++
+    [(", ".intercalate f.affiliationNames.toList, posOf "affiliations")] ++ (f.date.toList.map (·, posOf "date"))
   let abstracts := (f.abstract.map fun a => (a.splitOn "\n\n").filter (!·.trimAscii.isEmpty)).getD []
-  let ds := texts.foldl (fun ds t => ds ++ (frontText file dialect f.pos t).2) #[]
+  let ds := texts.foldl (fun ds (t, q) => ds ++ (frontText file dialect q t).2) #[]
   abstracts.foldl (fun ds t => ds ++ (frontText file dialect f.abstractPos t).2) ds
 
 /-- The raws a file opens with, closed by a paragraph end. -/

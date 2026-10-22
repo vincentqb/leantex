@@ -48,6 +48,12 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t s!"front matter: Pandoc's title, author and abstract are read, and an undated document gets no date ({ds.map (·.message)})"
     (ds.all (·.code != "W0307") && ["Kilo Lima", "Ada Example", "An invented abstract."].all (pageHas c 0 ·) &&
       !(c[0]?.any fun p => p.lines.any fun l => (l.text.toList.filter Char.isDigit).length ≥ 4))
+  t "yaml: root sequences at their keys' indentation all close into the root mapping"
+    (Md.yamlTree #["a:", "- x", "b:", "- y"] ==
+      some (Md.Yaml.map #[("a", .seq #[.scalar "x"]), ("b", .seq #[.scalar "y"])]))
+  let (c, ds) := page "---\ntitle: Kilo\nauthor: Ada Example\nauthors: Bo Sample\n---\n\nBody.\n"
+  t s!"front matter: author and authors both given name the first as written again below ({ds.map (·.subject)})"
+    (pageHas c 0 "Bo Sample" && ds.any (·.subject == some "md:meta-twice:author"))
   t "front matter: authors at different affiliations are named as listed unmarked"
     ((page myst).2.any fun d => d.subject == some "md:affiliations")
   let (c, ds) := page "---\nauthor: Ada Example\ndate: 2026\n---\n\nBody.\n"
