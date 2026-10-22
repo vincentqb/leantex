@@ -560,7 +560,7 @@ def yamlKeyAt (cs : Array Char) : Option (String × Nat) := Id.run do
     k := k + 1
   let some c := colon | return none
   let key := (sliceStr cs 0 c).trimAscii.toString
-  if key.isEmpty || key.startsWith "-" || key.startsWith "?" then return none
+  if key.isEmpty || ["-", "?", "{", "["].any (fun (p : String) => key.startsWith p) then return none
   return some (key, c)
 
 /-- A line's text past `n` characters. -/
@@ -573,17 +573,6 @@ private def yamlSkips (l : String) : Bool :=
 /-- A line's indentation, a tab or a blank line reading as none. -/
 private def yamlIndentOf (l : String) : Option Nat :=
   if yamlSkips l then none else yamlIndent l.toList.toArray
-
-/-- Whether a line opens a sequence item at `ind`. -/
-private def yamlItemAt (l : String) (ind : Nat) : Bool :=
-  yamlIndentOf l == some ind && (yamlFrom l ind).startsWith "-" &&
-    ((yamlFrom l (ind + 1)).isEmpty || (yamlFrom l (ind + 1)).startsWith " ")
-
-/-- The first line at or past `k`, before `hi`, a block reads at indentation `ind` or less. -/
-private def yamlUntil (lines : Array String) (k hi ind : Nat) : Nat := Id.run do
-  for j in [k:hi] do
-    if (yamlIndentOf (lines.getD j "")).any (· ≤ ind) then return j
-  return hi
 
 /-- A scalar value written on its key's or item's line: flow scalars and flow sequences. -/
 private def yamlInline (t : String) : Option Yaml :=
@@ -681,6 +670,10 @@ public def yamlTree (lines : Array String) : Option Yaml := Id.run do
         continue
     let some (key, k) := yamlKeyAt t.toList.toArray | return none
     let v := (yamlFrom t (k + 1)).trimAscii.toString
+    -- a sequence written at its key's indentation ends at that mapping's next key
+    if let (some top, some below) := (stack.back?, stack.pop.back?) then
+      if top.seq && top.ind == ind && top.under.isSome && !below.seq && below.ind == ind then
+        stack := stack.pop.pop.push (below.add top.under top.node)
     match stack.back? with
     | some top =>
       if top.ind == ind && !top.seq then pure ()
@@ -691,7 +684,10 @@ public def yamlTree (lines : Array String) : Option Yaml := Id.run do
     | none => stack := stack.push { ind := ind, seq := false }
     let some top := stack.back? | return none
     if v.isEmpty then
-      stack := stack.pop.push { top with pending := some key }
+      let fields := match top.pending with
+        | some p => top.fields.push (p, .scalar "")
+        | none => top.fields
+      stack := stack.pop.push { top with fields, pending := some key }
     else if v.startsWith "|" || v.startsWith ">" then
       scalar := some (key, v.startsWith "|", ind, #[])
     else

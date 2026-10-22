@@ -149,8 +149,11 @@ twin writes citations back in Pandoc's syntax, the list as its division with
 the entries in a comment there, and closes with a metadata block naming the
 bibliography from where the twin stands, every listed entry as `nocite`,
 wherever each citation reads back so in one list; otherwise it sets every
-citation as its marks, linked to the entries it writes. Every other metadata
-key but `web` (under Output and diagnostics) is named as not read, `csl` among
+citation as its marks, linked to the entries it writes. The title block reads
+`title`, `subtitle`, `author` or `authors` (names, or MyST's mappings with their
+`affiliations` by id or name), `affiliations`, `date` and `abstract`, set as
+LaTeX's `\maketitle` and abstract; an undated document gets no date. Every other
+metadata key but `web` (under Output and diagnostics) is named as not read, `csl` among
 them, since no CSL processor runs; an included file's `web` is named, its page
 taking the including document's layout. A
 Markdown file included in TeX reads citations, into the TeX document's

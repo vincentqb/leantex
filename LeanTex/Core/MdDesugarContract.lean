@@ -1036,7 +1036,7 @@ private theorem frontBlock_adm (file : String) (f : FrontMatter) : Adm d (frontB
 private theorem frontAbstract_adm (file : String) (f : FrontMatter) :
     Adm d (frontAbstract file d f) := by
   unfold frontAbstract
-  have hpar : Adm d #[Raw.par f.pos] := adm_lit (by
+  have hpar : Adm d #[Raw.par f.abstractPos] := adm_lit (by
     intro r hr
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
     subst hr; rfl)
