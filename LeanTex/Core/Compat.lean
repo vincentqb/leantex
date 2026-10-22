@@ -12111,12 +12111,14 @@ private def doiUrl : String := "https://doi.org/"
 
 /-- A DOI's text, its escaped specials read as the characters they set. -/
 private def doiText (s : String) : String :=
-  ["_", "#", "%", "&", "{", "}", "$"].foldl (fun t c => t.replace ("\\" ++ c) c) s
+  let s := ["_", "#", "%", "&", "{", "}", "$"].foldl (fun t c => t.replace ("\\" ++ c) ("\u0001" ++ c)) s
+  -- a bare brace groups, as TeX reads it, and an escaped one is its character
+  ((s.replace "{" "").replace "}" "").replace "\u0001" ""
 
 /-- A DOI as doi.sty puts it in its URL: `#`, `%`, `<` and `>` percent-encoded. -/
 private def doiEncoded (s : String) : String :=
   s.foldl (fun out c =>
-    if c == '#' then out.append "%23" else if c == '%' then out.append "%25"
+    if c == '#' then out.append "%23" else if c == '%' then out.append "%25" else if c == ' ' then out.append "%20"
     else if c == '<' then out.append "%3C" else if c == '>' then out.append "%3E" else out.push c) ""
 
 /-- datetime's date commands: `\newdate` names a date, `\displaydate` and `\formatdate` give one in
@@ -16432,7 +16434,8 @@ private def authblkAuthor (seps : AuthblkSeps) (calls : Array AuthblkCall) (pos 
       pending := #[]
       newAffil := true
   if affils.isEmpty then return authblkNames seps authors
-  if marked || affils.size > 2 then
+  -- authblk compares its affiliation counter, which an author opening a block raises, with Maxaffil 2
+  if marked || count > 2 then
     let mut out := authblkNames seps authors
     for (a, i) in affils.zipIdx do
       out := out.push (.ctrl "\\" pos)
@@ -16445,7 +16448,8 @@ private def authblkAuthor (seps : AuthblkSeps) (calls : Array AuthblkCall) (pos 
     out := (out.append (authblkNames seps names)).append #[.ctrl "\\" pos, .sym '[' pos, .word "1em" pos,
       .sym ']' pos]
     out := out.append a
-  return out.append (authblkNames seps pending)
+  -- authblk never sets the names after the last affiliation in its blocks
+  return out
 
 /-- A document environment with `b` as its body, any other raw as it stands. -/
 private def withBody (b : Array Raw) (r : Raw) : Raw :=
@@ -16503,9 +16507,11 @@ private def authblkLowered (pkgs : List String) (raws : Array Raw) : Array Raw :
     | some (.env "document" b _) => authblkTake seps b
     | _ => (#[], #[], seps, none)
   let calls := topCalls ++ bodyCalls
+  -- the list stands where the last call stood, before a \maketitle the calls straddle
   let place (rs : Array Raw) (at_ : Nat × Pos) : Array Raw :=
-    ((rs.extract 0 at_.1).append #[.ctrl "author" at_.2, .group (authblkAuthor seps calls at_.2) at_.2]).append
-      (rs.extract at_.1 rs.size)
+    let k := ((rs.extract 0 at_.1).findIdx? (· matches .ctrl "maketitle" _)).getD at_.1
+    ((rs.extract 0 k).append #[.ctrl "author" at_.2, .group (authblkAuthor seps calls at_.2) at_.2]).append
+      (rs.extract k rs.size)
   match bodyLast, docAt with
   | some b, some d => return top.modify d (withBody (place body b))
   | _, _ => match topLast with
@@ -16514,9 +16520,17 @@ private def authblkLowered (pkgs : List String) (raws : Array Raw) : Array Raw :
       return (place top t).modify (if t.1 ≤ d then d + 2 else d) (withBody body)
     | none => return raws
 
+/-- Whether a body labels LastPage itself, which lastpage's own label then gives way to. -/
+private def labelsLastPage (b : Array Raw) : Bool :=
+  b.zipIdx.any fun (r, k) => (r matches .ctrl "label" _) && (match b[k + 1]? with
+    | some (.group g _) => (rawSrc g).trimAscii.toString == "LastPage"
+    | _ => false)
+
 /-- lastpage's label at the document's end, which a `\pageref{LastPage}` in the body reads. -/
 private def lastpageLowered (pkgs : List String) (raws : Array Raw) : Array Raw :=
-  if !pkgs.contains "lastpage" then raws else raws.map fun r =>
+  if !pkgs.contains "lastpage" || raws.any (fun r => match r with
+      | .env "document" b _ => labelsLastPage b
+      | _ => false) then raws else raws.map fun r =>
     if let .env n b p := r then
       (if n == "document" then .env n (b.append #[.ctrl "label" p, .group #[.word "LastPage" p] p]) p else r)
     else r
@@ -16535,9 +16549,7 @@ private theorem lastpageLowered_package_exact (pkgs : List String) (command name
     lastpageLowered pkgs (packageCall command names pos groupPos namePos) =
       packageCall command names pos groupPos namePos := by
   unfold lastpageLowered
-  split
-  · rfl
-  · simp [packageCall_exact]
+  simp [packageCall_exact]
 
 /-- A package call calls no `\affil`, so authblk's pass leaves it as it stands. -/
 private theorem authblkLowered_package_exact (pkgs : List String) (command names : String)
