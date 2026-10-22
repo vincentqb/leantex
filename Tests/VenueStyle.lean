@@ -141,6 +141,14 @@ def venueEdgeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   t "a \\let stored in a definition hides nothing until it runs"
     (hasStr (text stored "\\begin{ack}Shown words.\\end{ack}") "Shown words.")
 
+/-- A verbatim environment defined in an included file is named there, never noted as read. -/
+def fancyIncludedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (_, ds, _) ← runStyParity "fancy-input"
+  t "a definition in an included file is named where it stands"
+    ((ds.filter fun d => d.code == "W0302" && d.span.any (·.file.endsWith "fancy-part.tex")).size == 1 &&
+      !ds.any fun d => d.code == "N0100" && hasStr d.message "DefineVerbatimEnvironment")
+
 /-- The venue style checks, over one face. -/
 def venueStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   oldFontCmdChecks ref fonts
@@ -150,3 +158,4 @@ def venueStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   venueEnvChecks ref fonts
   authorCellFontChecks ref
   venueEdgeChecks ref fonts
+  fancyIncludedChecks ref

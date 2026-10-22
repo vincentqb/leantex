@@ -11309,14 +11309,16 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let env := (rawSrc (args.getD 0 #[])).trimAscii.toString
       let base := (rawSrc (args.getD 1 #[])).trimAscii.toString
       let st ← get
-      if st.fancyEnvs.contains base && !packageFile st.file then
+      if st.fancyEnvs.contains base && !packageFile st.file && st.file == st.docFile then
         write fun st => { st with fancyEnvs := st.fancyEnvs.push env }
         became s!"\\DefineVerbatimEnvironment\{{env}}" "its body set as a code block with its options" pos
       else
         sayOnce ("fancyvrb:" ++ env) .W0302 (Diag.say .W0302 .environment env) pos
           (detail := some (if packageFile st.file then "defined in a package file, whose \
-definitions the document's reader does not see" else s!"its base {base} is no environment the \
-reader sets as a code block"))
+definitions the document's reader does not see"
+            else if st.file != st.docFile then "defined in an included file, whose definitions \
+the reader of the files around it does not see"
+            else s!"its base {base} is no environment the reader sets as a code block"))
       return some (#[], k)
   if name == "csname" then
     -- A name the document defines is that command, as TeX forms it; another is left to the
