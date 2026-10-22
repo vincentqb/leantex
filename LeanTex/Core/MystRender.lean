@@ -51,6 +51,14 @@ def declared (fields : Array MetaField) : Option Declared := Id.run do
       | _ => pure ()
   return none
 
+/-- The front matter keys a template reads: those its source names under `doc.` or as a part, and
+the ones extendFrontmatter reads to make its doc. -/
+def keysRead (tex : String) : List String :=
+  let named := ((tex.splitOn "doc.").drop 1).map fun t => (t.takeWhile fun c => c.isAlphanum || c == '_').toString
+  let parts := ((tex.splitOn "parts.").drop 1).map fun t => (t.takeWhile fun c => c.isAlphanum || c == '_').toString
+  named ++ parts ++ ["title", "authors", "author", "affiliations", "affiliation", "date", "keywords",
+    "bibliography", "exports", "export", "parts"] ++ aliases.map (·.1)
+
 /-- The template keys a document gives with no template declared to read them, each named. -/
 def unreadDiags (file : String) (fields : Array MetaField) : Array Diag :=
   fields.filterMap fun f => if !Md.templateKeys.contains f.key then none else
@@ -59,7 +67,7 @@ def unreadDiags (file : String) (fields : Array MetaField) : Array Diag :=
 
 /-- A declared template set aside, the document set as itself, with why. -/
 def lossDiag (file : String) (d : Declared) (why : String) : Diag :=
-  Diag.of .W0392 (Diag.say .W0392 .key "exports") (some ⟨file, d.pos⟩) none
+  Diag.of .W0392 (Diag.say .W0392 .directory (some (Diag.Name.of d.path))) (some ⟨file, d.pos⟩) none
     (detail := some s!"{why}; the document sets without its template") (subject := some "md:template")
 
 /-- Where a declared template stands under the document's directory: a relative path inside its
@@ -94,6 +102,8 @@ def tokens (file : String) (pieces : Array Piece) : Array Lex.Token × Array Dia
   let flush (run : String) (line : Nat) (out : Array Lex.Token) (ds : Array Diag) :
       Array Lex.Token × Array Diag × Nat :=
     let (toks, d) := Surface.texLex file run
+    let d := d.map fun x => { x with span := x.span.map fun sp =>
+      { sp with pos := { sp.pos with line := sp.pos.line + line } } }
     (out ++ shifted line toks, ds ++ d, line + (run.splitOn "\n").length - 1)
   for p in pieces do
     match p with
@@ -108,24 +118,24 @@ def tokens (file : String) (pieces : Array Piece) : Array Lex.Token × Array Dia
   let (o, d, _) := flush run line out ds
   return (o, d)
 
-/-- An issue as the diagnostic naming its loss. -/
+/-- An issue as the diagnostic naming its loss, each its own noun and name so none hides another. -/
 def issueDiag (file : String) (pos : Pos) : Issue → Diag
-  | .malformed path what => loss s!"template:{path}" s!"its template.yml wants {what} at {path}"
-  | .optionMissing id => loss s!"template:option:{id}" s!"the template's required option '{id}' is not given"
-  | .optionUnknown id => loss s!"template:option:{id}" s!"the template declares no option '{id}'"
-  | .optionInvalid id what => loss s!"template:option:{id}" s!"the option '{id}' is not {what}"
-  | .partMissing id => loss s!"template:part:{id}" s!"the template's required part '{id}' is not given"
-  | .partUnknown id => loss s!"template:part:{id}" s!"the template declares no part '{id}'"
-  | .partTooLong id n words => loss s!"template:part:{id}"
+  | .malformed path what => loss .key path s!"template:{path}" s!"its template.yml wants {what} at {path}"
+  | .optionMissing id => loss .option id s!"template:option:{id}" s!"the template's required option '{id}' is not given"
+  | .optionUnknown id => loss .option id s!"template:option:{id}" s!"the template declares no option '{id}'"
+  | .optionInvalid id what => loss .option id s!"template:option:{id}" s!"the option '{id}' is not {what}"
+  | .partMissing id => loss .key id s!"template:part:{id}" s!"the template's required part '{id}' is not given"
+  | .partUnknown id => loss .key id s!"template:part:{id}" s!"the template declares no part '{id}'"
+  | .partTooLong id n words => loss .key id s!"template:part:{id}"
       s!"the part '{id}' runs over its {n} {if words then "words" else "characters"}"
-  | .docMissing id => loss s!"template:doc:{id}" s!"the template's required field '{id}' is not given"
-  | .frontInvalid path what => loss s!"template:front:{path}" s!"the front matter's {path} wants {what}"
-  | .undated => loss "template:date" "the document gives no date, so the template sets none"
-  | .dateUnread s => loss "template:date" s!"the date '{s}' is not one a template reads"
+  | .docMissing id => loss .key id s!"template:doc:{id}" s!"the template's required field '{id}' is not given"
+  | .frontInvalid path what => loss .key path s!"template:front:{path}" s!"the front matter's {path} wants {what}"
+  | .undated => loss .key "date" "template:date" "the document gives no date, so the template sets none"
+  | .dateUnread v => loss .key "date" "template:date" s!"the date '{v}' is not one a template reads"
 where
-  loss (subject what : String) : Diag :=
-    Diag.of .W0392 (Diag.say .W0392 .key "exports") (some ⟨file, pos⟩) none (detail := some what)
-      (subject := some ("md:" ++ subject))
+  loss (noun : Diag.Noun) (name subject what : String) : Diag :=
+    Diag.of .W0392 (Diag.say .W0392 noun (some (Diag.Name.of name))) (some ⟨file, pos⟩) none
+      (detail := some what) (subject := some ("md:" ++ subject))
 
 /-- What a template renders over: the front matter as `doc` (its bibliography left to the body's own
 list), the export's options, each part the template declares and the front matter gives as a typed
@@ -146,8 +156,12 @@ def context (tpl : TemplateYml) (fields : Array MetaField) (d : Declared) :
       partsGiven := partsGiven ++ [(pd.id, PartText.one s)]
     | .arr xs =>
       let ss := xs.filterMap fun (x : Value) => if let .str s := x then some s else none
-      texts := texts ++ (ss.zipIdx.map fun (s, k) => (s!"{pd.id}.{k}", s))
-      partsGiven := partsGiven ++ [(pd.id, PartText.many ss.toArray)]
+      if pd.asList then
+        texts := texts ++ (ss.zipIdx.map fun (s, k) => (s!"{pd.id}.{k}", s))
+        partsGiven := partsGiven ++ [(pd.id, PartText.many ss.toArray)]
+      else
+        texts := texts ++ [(pd.id, "\n\n".intercalate ss)]
+        partsGiven := partsGiven ++ [(pd.id, PartText.one ("\n\n".intercalate ss))]
     | _ => pure ()
   let (opts, oi) := options tpl d.options
   let (parts, pi) := MystTemplate.parts tpl partsGiven opts
@@ -161,9 +175,58 @@ def context (tpl : TemplateYml) (fields : Array MetaField) (d : Declared) :
     ("CONTENT", .splice "CONTENT"), ("IMPORTS", .splice "IMPORTS")]
   return (ctx, texts, oi ++ pi ++ docIssues tpl front opts ++ di)
 
+/-- The bibliography commands a template sets its own list with, which the document's own list
+stands in place of. -/
+def bibliographyCtrls : List String := ["bibliography", "bibliographystyle", "printbibliography"]
+
+/-- A template document's top-level raws with its body read as the template file's and its own
+bibliography set aside, a `\graphicspath` after its class line resolving its images beside the
+document and then in `dir`; whether it set a bibliography aside. -/
+def placed (tplFile dir : String) (raws : Array Parse.Raw) : Array Parse.Raw × Bool := Id.run do
+  let mut out : Array Parse.Raw := #[]
+  let mut dropped := false
+  for r in raws do
+    match r with
+    | .env "document" b p =>
+      let mut body : Array Parse.Raw := #[]
+      let mut skip := false
+      for x in b do
+        if skip then
+          skip := false
+          if x matches .group _ _ then continue
+        match x with
+        | .ctrl n _ =>
+          if bibliographyCtrls.contains n then
+            dropped := true
+            skip := n != "printbibliography"
+          else body := body.push x
+        | _ => body := body.push x
+      out := out.push (.env "document" #[.env (Parse.inputEnv tplFile) body p] p)
+    | _ => out := out.push r
+  -- graphicx reads the last \graphicspath, so the template's own, set after this one, still wins
+  let gp : Array Parse.Raw := #[.ctrl "graphicspath" {}, .group #[.group #[.word "./" {}] {},
+    .group #[.word (dir ++ "/") {}] {}] {}]
+  let k := (out.findIdx? fun x => x matches .ctrl "documentclass" _).getD 0
+  -- past the class line's optional run and its argument
+  let mut j := k + 1
+  let mut inOpt := false
+  for _ in [k + 1:out.size] do
+    match out[j]? with
+    | some (.sym '[' _) => inOpt := true; j := j + 1
+    | some (.sym ']' _) => inOpt := false; j := j + 1
+    | some (.group _ _) =>
+      j := j + 1
+      unless inOpt do break
+    | some _ => j := j + 1
+    | none => break
+  -- the preamble after the class line reads as the template file's, as its body does
+  let docAt := (out.findIdx? fun x => x matches .env "document" _ _).getD out.size
+  let pre := gp.append (out.extract j docAt)
+  return ((out.extract 0 j).push (.env (Parse.inputEnv tplFile) pre {}) ++ out.extract docAt out.size, dropped)
+
 /-- A markdown document set through its template: the template's raws, the splices' raws by name,
 and what the template's reading names; none where the template does not render, with why. -/
-def render (file tplFile : String) (yml tex : String) (fields : Array MetaField) (d : Declared)
+def render (file tplFile dir : String) (yml tex : String) (fields : Array MetaField) (d : Declared)
     (body : Array Parse.Raw) : Except String (Array Parse.Raw × List (String × Array Parse.Raw)) × Array Diag :=
   let ymlTree := Md.yamlTree ((yml.splitOn "\n").toArray)
   match ymlTree with
@@ -171,13 +234,22 @@ def render (file tplFile : String) (yml tex : String) (fields : Array MetaField)
   | some y =>
     let (tpl, ri) := read y
     let (ctx, texts, ci) := context tpl fields d
+    -- the undated loss is the template's only where it reads the date
+    let ci := if (tex.splitOn "doc.date").length > 1 then ci else ci.filter (· != .undated)
     let ds := (ri ++ ci).map (issueDiag file d.pos)
     match Jtex.render tex ctx with
     | .error e => (.error s!"its template.tex does not render: {e}", ds)
     | .ok pieces =>
       let (toks, lexDs) := tokens tplFile pieces
       let (raws, parseDs) := Surface.texParse tplFile toks
-      let parts := texts.map fun (id, s) => (id, (Surface.read .markdown file s).1)
-      (.ok (raws, ("CONTENT", body) :: ("IMPORTS", #[]) :: parts), ds ++ lexDs ++ parseDs)
+      let (raws, dropped) := placed tplFile dir raws
+      let bibDs := if !dropped then #[] else
+        #[Diag.of .W0392 (Diag.say .W0392 .bibliography none) (some ⟨file, d.pos⟩) none
+          (detail := some "the template's own list set aside for the document's") (subject := some "md:template:bibliography")]
+      let read := texts.map fun (id, s) => (id, Surface.fragment .markdown file s d.pos (cites := true))
+      let parts := read.map fun (id, (rs, _)) => (id, rs)
+      let partDs := read.foldl (init := #[]) fun acc (_, (_, ds)) => acc ++ ds
+      let kept := #[Parse.Raw.env (Parse.keptInputEnv file) body d.pos]
+      (.ok (raws, ("CONTENT", kept) :: ("IMPORTS", #[]) :: parts), ds ++ lexDs ++ parseDs ++ bibDs ++ partDs)
 
 end LeanTex.Core.MystRender

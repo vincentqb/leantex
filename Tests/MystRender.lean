@@ -35,6 +35,14 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t s!"template: a remote template is never fetched, named, and the parts no template reads named ({ds.map (·.message)})"
     (ds.any (fun d => d.subject == some "md:template" && d.detail.any (hasStr · "never fetched")) &&
       ds.any (·.subject == some "md:meta:parts"))
+  let (doc, ds) ← build "cited"
+  let c := censusOf #[] (layoutOf fonts doc)
+  t s!"template: a part's citation is read as one, and the template's own bibliography set aside for the document's, named ({censusText c})"
+    (pageHas c 0 "An abstract citing" && !pageHas c 0 "@zzkey" && pageHas c 0 "Body citing" &&
+      ds.any (·.subject == some "md:template:bibliography"))
+  let (_, ds) ← build "absent"
+  t "template: the template set aside is named on its own, before any issue of its reading"
+    ((ds.find? fun d => d.subject.any (·.startsWith "md:template")).any (·.subject == some "md:template"))
   t "template: a splice request is a word no source spells"
     ((MystRender.spliceName "CONTENT").any (· == ' ') && MystRender.spliceOf? (MystRender.spliceName "x") == some "x")
 

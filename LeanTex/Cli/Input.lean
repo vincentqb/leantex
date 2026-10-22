@@ -438,8 +438,10 @@ private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog
     (template : Option (System.FilePath × List (String × Array Parse.Raw)) := none) :
     IO (Compat.Executed × InputLog) :=
   (match template, Ir.Surface.ofPath file with
-    | some (tdir, splices), _ =>
-      Elab.executeInputs (spliceReader splices (readAt tdir file 8)) file (Compat.applyClassSource raws)
+    | some (tdir, splices), _ => do
+      -- the template executes as its own file, so what its execution names stands in it
+      let tex := (tdir / "template.tex").toString
+      Elab.executeInputs (spliceReader splices (readAt tdir tex 8)) tex (Compat.applyClassSource raws)
     | none, .markdown => do
       let (raws, ds) ← includeDivisions dir file raws
       modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
@@ -561,6 +563,9 @@ document's own raws where it declares none or its template cannot be set, the lo
 private def templated (file text : String) (raws : Array Parse.Raw) :
     IO (Array Parse.Raw × Array Diag × Array String ×
       Option (System.FilePath × List (String × Array Parse.Raw))) := do
+  -- a document whose front matter names no template key reads its metadata once, with its body
+  unless text.startsWith "---" && Md.templateKeys.any (fun k => (text.splitOn (k ++ ":")).length > 1) do
+    return (raws, #[], #[], none)
   let fields := Md.metadataOf file text
   match MystRender.declared fields with
   | none => return (raws, MystRender.unreadDiags file fields, #[], none)
@@ -577,12 +582,17 @@ private def templated (file text : String) (raws : Array Parse.Raw) :
         let yml := (Encoding.readMarkdown ymlPath y).text
         let tex := (Encoding.readMarkdown texPath t).text
         let (body, bodyDs) := Surface.readBody file text
-        -- the template reads the front matter, so a key the markdown title block leaves is not unread
-        let bodyDs := bodyDs.filter fun d => !(d.code == "W0307" && d.subject.any (·.startsWith "md:meta:"))
-        match MystRender.render file texPath yml tex fields d body with
-        | (.ok (traws, splices), ds) => return (traws, bodyDs ++ ds, #[ymlPath, texPath], some (tdir, splices))
+        let ((body, divDs), _) ← (includeDivisions ((System.FilePath.mk file).parent.getD ".") file body).run {}
+        -- premise: Tests.MystRender.checks — a key the template reads is not named unread, any other still is
+        let reads := MystRender.keysRead tex
+        let bodyDs := bodyDs.filter fun d =>
+          !(d.code == "W0307" && d.subject.any (fun s => reads.any (s == "md:meta:" ++ ·))) &&
+            d.subject != some "md:affiliations"
+        match MystRender.render file texPath rel yml tex fields d body with
+        | (.ok (traws, splices), ds) =>
+          return (traws, bodyDs ++ divDs ++ ds, #[ymlPath, texPath], some (tdir, splices))
         | (.error why, ds) =>
-          return (raws, ds.push (MystRender.lossDiag file d why) ++ parts, #[ymlPath, texPath], none)
+          return (raws, #[MystRender.lossDiag file d why] ++ ds ++ parts, #[ymlPath, texPath], none)
       | _, _ => return (raws, #[MystRender.lossDiag file d
           s!"its template.yml and template.tex are not both in {rel}"] ++ parts, #[], none)
 
