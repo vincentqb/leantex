@@ -114,6 +114,33 @@ def authorCellFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a weight declared around the tabular sets every author line"
     (hasStr outside "Example University</strong>")
 
+/-- A counter macro opening an environment keeps it in its sentence, a defined
+`\csname` name is its command, a brace-held `]` stays in fancyvrb's options, a definition the
+reader does not set as code is named, and a `\let` stored in a definition hides nothing. -/
+def venueEdgeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let lines (pre body : String) := bodyLines (layoutOf fonts (elabStr (dvDoc pre body)).1)
+  let text (pre body : String) := String.join ((lines pre body).toList.map (lineText ·))
+  let tag := "\\newcounter{note}\n\\newcommand{\\bump}{\\stepcounter{note}}\n" ++
+    "\\newenvironment{tag}{\\bump[\\thenote:}{]}\n"
+  t "an environment opening with a counter macro stays in its sentence"
+    ((lines tag "Words before \\begin{tag}tagged\\end{tag} words after.").size == 1)
+  t "a \\csname naming a defined command sets that command"
+    (text "\\newcommand{\\foo}{Hello}\n" "\\csname foo\\endcsname{} world." == "Hello world.")
+  let (_, braced) := elabStr (dvDoc ""
+    "\\begin{Verbatim}[label={[a]b}, fontsize=\\footnotesize]\na_b\n\\end{Verbatim}")
+  t "a brace-held bracket stays inside fancyvrb's options"
+    (braced.all (·.code != "E0304") && hasStr (text ""
+      "\\begin{Verbatim}[label={[a]b}]\na_b\n\\end{Verbatim}") "a_b")
+  let (_, other) := elabStr (dvDoc "\\DefineVerbatimEnvironment{Y}{BVerbatim}{}\n" "x")
+  t "a definition on a base the reader does not set is named, not noted as read"
+    (other.any (·.code == "W0302") && !other.any fun d => d.code == "N0100" &&
+      hasStr d.message "DefineVerbatimEnvironment")
+  let stored := "\\usepackage{environ}\n\\NewEnviron{ack}{\\BODY}\n\\NewEnviron{hide}{}\n" ++
+    "\\newcommand{\\later}{\\let\\ack\\hide}\n"
+  t "a \\let stored in a definition hides nothing until it runs"
+    (hasStr (text stored "\\begin{ack}Shown words.\\end{ack}") "Shown words.")
+
 /-- The venue style checks, over one face. -/
 def venueStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   oldFontCmdChecks ref fonts
@@ -122,3 +149,4 @@ def venueStyleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   fancyVerbatimChecks ref fonts
   venueEnvChecks ref fonts
   authorCellFontChecks ref
+  venueEdgeChecks ref fonts

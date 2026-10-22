@@ -355,14 +355,21 @@ fancyvrb's. -/
 private def fancyEnv (n : String) : String × String × Array Char × Array Char :=
   ("minted", n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
 
+/-- The index of the `]` closing an option list, outside every brace group. -/
+private def optionEnd : List Char → Nat → Nat → Option Nat
+  | [], _, _ => none
+  | ']' :: _, 0, n => some n
+  | '{' :: rest, d, n => optionEnd rest (d + 1) (n + 1)
+  | '}' :: rest, d, n => optionEnd rest (d - 1) (n + 1)
+  | _ :: rest, d, n => optionEnd rest d (n + 1)
+
 /-- A fancyvrb environment's body as minted's: the options its definition gives, then those written
 after `\begin`, and the `text` lexer. -/
 private def fancyBody (defined body : String) : String :=
   let (written, rest) := match body.toList with
-    | '[' :: tl =>
-      let inner := tl.takeWhile (· != ']')
-      if inner.length < tl.length then (String.ofList inner, String.ofList (tl.drop (inner.length + 1)))
-      else ("", body)
+    | '[' :: tl => match optionEnd tl 0 0 with
+      | some n => (String.ofList (tl.take n), String.ofList (tl.drop (n + 1)))
+      | none => ("", body)
     | _ => ("", body)
   let opts := ",".intercalate ([defined, written].filter (!·.isEmpty))
   (if opts.isEmpty then "" else "[" ++ opts ++ "]") ++ "{text}" ++ rest

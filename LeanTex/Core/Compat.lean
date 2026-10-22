@@ -1012,6 +1012,8 @@ private structure St where
   /-- environ's environments whose code never places
   `\BODY`, with their argument signatures. -/
   discardEnvs : Array (String × String) := #[]
+  /-- fancyvrb's environments the document's lexer sets as code blocks. -/
+  fancyEnvs : Array String := #["Verbatim"]
   /-- The discarding environment each `\let` copy stands for. -/
   discardAliases : Array (String × String) := #[]
   /-- Where the walk stands with an environment definition's default, whose groups are no body of
@@ -8736,9 +8738,7 @@ private def ctrlRows0 : List CtrlRow :=
    ⟨"Crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩]
 
 private def ctrlRows1 : List CtrlRow :=
-  [nothingRow "DefineVerbatimEnvironment" 3
-     "the lexer reads it: the environment sets its body as a code block with its options",
-   ⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+  [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
    ⟨"GenericError", List.replicate 4 .group, .inert⟩,
    nothingRow "GenericInfo" 2 packageLog,
    nothingRow "GenericWarning" 2 packageLog,
@@ -11272,6 +11272,7 @@ private def letDiscardEnv (raws : Array Raw) (start : Nat) (pos : Pos) :
   let k0 := skipSpaces raws (j + 1)
   let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
   let (some (.ctrl x _), some (.ctrl y _)) := (raws[j]?, raws[k]?) | return none
+  if (← get).inDef then return none
   let discards := (← get).discardEnvs
   if let some spec := (discards.find? (·.1 == y)).map (·.2) then
     let base := (((← get).discardAliases.find? (·.1 == y)).map (·.2)).getD y
@@ -11302,6 +11303,28 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     | _, _ => pure ()
   if name == "let" then
     if let some out ← letDiscardEnv raws start pos then return some out
+  if name == "DefineVerbatimEnvironment" then
+    let (args, k) := takeGroups raws start 3
+    if args.size == 3 then
+      let env := (rawSrc (args.getD 0 #[])).trimAscii.toString
+      let base := (rawSrc (args.getD 1 #[])).trimAscii.toString
+      let st ← get
+      if st.fancyEnvs.contains base && !packageFile st.file then
+        write fun st => { st with fancyEnvs := st.fancyEnvs.push env }
+        became s!"\\DefineVerbatimEnvironment\{{env}}" "its body set as a code block with its options" pos
+      else
+        sayOnce ("fancyvrb:" ++ env) .W0302 (Diag.say .W0302 .environment env) pos
+          (detail := some (if packageFile st.file then "defined in a package file, whose \
+definitions the document's reader does not see" else s!"its base {base} is no environment the \
+reader sets as a code block"))
+      return some (#[], k)
+  if name == "csname" then
+    -- A name the document defines is that command, as TeX forms it; another is left to the
+    -- elaborator, which sets none of its letters.
+    if let (some (.word w wp), some (.ctrl "endcsname" _)) := (raws[start]?, raws[start + 1]?) then
+      if (← get).bound.contains w then
+        became s!"\\csname {w}\\endcsname" s!"\\{w}" pos
+        return some (#[.ctrl w wp], start + 2)
   match name with
   | "documentclass" =>
     let (opt, j) := takeRawOpt raws start

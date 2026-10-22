@@ -11184,10 +11184,13 @@ private def lrBoxList (user : String → Bool) : List Raw → Bool
 
 end
 
-/-- Whether a body sets block content, itself or through a document macro it calls at its top. -/
+/-- Whether a body sets block content itself, or a heading through a document macro it calls. -/
 private def bodyOrCallIsBlock (ctx : Ctx) (body : Array Raw) : Bool :=
+  let heading (b : Array Raw) : Bool := b.any fun
+    | .ctrl n _ => (blockHeading? n).isSome
+    | _ => false
   bodyIsBlock body || body.any fun
-    | .ctrl c _ => (lookupUser ctx c).any (bodyIsBlock ·.2.body)
+    | .ctrl c _ => (lookupUser ctx c).any (heading ·.2.body)
     | _ => false
 
 /-- Whether a document's environment sets block content where it opens or closes. -/
