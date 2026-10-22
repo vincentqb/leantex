@@ -1,0 +1,10 @@
+# source: installed longtable.sty 4.24 documentation. A longtable sets as one
+# tabular of its column spec, centred or set left or right as its option says:
+# its first head (else its head), its rows and its last foot (else its foot),
+# the parts a page break repeats dropped, a \kill row set nothing. Its \caption,
+# \LTleft, \LTright, \LTpre and \LTpost are not read.
+body impl \begin{longtable}{ll}a & b \\ c & d \\\end{longtable}
+body impl \begin{longtable}[l]{ll}a & b \\\end{longtable}
+body impl \begin{longtable}{ll}w & w \kill a & b \\\end{longtable}
+body impl \begin{longtable}{ll}h & h \\\endhead a & b \\\end{longtable}
+body impl \begin{longtable}{ll}f & f \\\endfirsthead h & h \\\endhead a & b \\ t & t \\\endfoot l & l \\\endlastfoot\end{longtable}

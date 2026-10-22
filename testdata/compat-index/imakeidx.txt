@@ -1,0 +1,8 @@
+# source: installed imakeidx.sty 1.3e documentation. \makeindex and \index set
+# nothing where they stand, as LaTeX's do; the index \printindex prints needs
+# makeindex's external run, so it is named and not set.
+pre inert:index \makeindex
+body impl \index{zz}x
+body refuse:W0104 \printindex
+pre refuse:W0301 \indexsetup{level=\section}
+body refuse:W0301 \indexprologue{x}

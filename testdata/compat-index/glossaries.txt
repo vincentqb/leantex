@@ -1,0 +1,36 @@
+# source: installed glossaries.sty 4.9 user manual. \newglossaryentry and
+# \newacronym declare; \gls, \Gls, \GLS and their plurals set an entry's text,
+# an acronym's long form with its short one in parentheses at its first use
+# and its short form after; the \acr commands set an acronym's forms,
+# \glslink its own text and the resets forget the first use. The glossary
+# lists need makeglossaries' external run, so \printglossaries is named and
+# not set; styles and other commands are not modelled.
+pre inert:declares \newacronym{zza}{ZA}{Zulu Alpha}
+pre inert:declares \newglossaryentry{zzk}{name={kilo},description={a unit}}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\gls{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\Gls{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\GLS{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\glspl{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\Glspl{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\GLSpl{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\acrshort{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\Acrshort{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\acrlong{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\Acrlong{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\acrfull{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\Acrfull{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\acrshortpl{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\acrlongpl{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\acrfullpl{zza}
+body impl \newglossaryentry{zzk}{name={kilo},description={a unit}}\glsentryname{zzk}
+body impl \newglossaryentry{zzk}{name={kilo},description={a unit}}\glsentrytext{zzk}
+body impl \newglossaryentry{zzk}{name={kilo},description={a unit}}\glslink{zzk}{x}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\glsreset{zza}
+body impl \newacronym{zza}{ZA}{Zulu Alpha}\glsunset{zza}
+body inert:resets \glsresetall
+pre inert:lists \makeglossaries
+body refuse:W0104 \printglossaries
+body refuse:W0104 \printglossary
+body refuse:W0104 \printacronyms
+body refuse:W0301 \glsadd{zzk}
+body refuse:W0301 \setacronymstyle{long-short}

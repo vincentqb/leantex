@@ -219,7 +219,7 @@ Three gaps keep the composition open:
 
 | Area | Guarantee | Proofs |
 |---|---|---|
-| Placement | Placement is exact and floats stay whole; a page that is not blank ships at a boundary and as the last page. | `place_exact`, `runFloat_whole`, `runFloat_frames`, `runFloat_reflows`, `brk_ships_exact`, `closeLast_ships_exact` |
+| Placement | Placement is exact and floats stay whole, a box no page holds breaking; a page that is not blank ships at a boundary and as the last page. | `place_exact`, `runFloat_whole`, `runFloat_frames`, `runFloat_reflows`, `brk_ships_exact`, `closeLast_ships_exact` |
 | Class text areas | A class's text height, as typearea sets it, is the least whole baselines over its topskip reaching its target, short of it by less than a baseline. | `Ir.linesReaching_least` |
 | Two sides | Facing pages mirror: a verso's left margin and its recto's sum to the width the text block leaves; moving a page's ink keeps every line and picture and the ground at the medium's edge. | `Ir.PageSpec.leftMargin_mirror`, `PageOut.shiftX_keeps` |
 | Frames | The overflow ladder sets a fitting frame as declared, and an overfull step's overhang is positive and within its clearance; every frame it moved is named once, by what it did, a continuing one as continuing, and what it ships is one setting of an IR document. | `frameFit_id`, `frameFit_between`, `frameFit_accounts`, `runFitted_accounts`, `frameAccount_covers`, `runFitted_projects` |

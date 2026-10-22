@@ -20336,6 +20336,7 @@ split halves. -/
 public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : String)
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
+  let raws := Compat.packageEnvsLowered raws
   Compat.executeInputs reader file raws
     (provideKeeps := providedNames) (diags := splitDiags) (ignoredDefs := ignoredDefNames)
 
@@ -20412,6 +20413,7 @@ public theorem prepareExecuted_sourceTriggers_exact (file : String) (executed : 
 /-- Settles, scans, executes and rewrites a parsed document, once. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
+  let raws := Compat.packageEnvsLowered raws
   let picScan := Compat.boundaryScan file raws
   let picMacros := macroScan raws
   let executed := Compat.execute file raws

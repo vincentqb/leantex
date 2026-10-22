@@ -1,0 +1,4 @@
+# source: installed pdflscape.sty documentation. Its landscape
+# environment rotates its pages, which the page model does not; the
+# environment is refused and its content set on portrait pages.
+body refuse:W0302 \begin{landscape}x\end{landscape}

@@ -190,6 +190,7 @@ public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
               (Compat.rewriteExecuted executed).2.1 := by
     unfold executeInputs
     rw [settleSplits_package_exact file command names pos groupPos namePos]
+    simp only [Compat.packageEnvsLowered_package_exact]
     exact Compat.executeInputs_package_refusal_contract reader file command names
       pos groupPos namePos _ #[] _ hc (by rcases hc with rfl | rfl <;> rfl) hnames hr
   refine ⟨hproducer.1, ?_⟩

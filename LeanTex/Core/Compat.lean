@@ -22,6 +22,7 @@ import LeanTex.Core.PdfObj
 public import LeanTex.Core.TikzCommands
 import LeanTex.Core.UnusedSetting
 public import LeanTex.Core.DateText
+import LeanTex.Core.PackageEnvs
 public import LeanTex.Core.Definer
 import LeanTex.Core.TexText
 import LeanTex.Core.ListMark
@@ -50,7 +51,7 @@ public def nativePackages : List String :=
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend",
-   "marginnote", "sidenotes", "datetime"]
+   "marginnote", "sidenotes", "datetime", "framed", "longtable", "glossaries", "imakeidx"]
 
 /-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
 public def optionSpelling (item : String) : String :=
@@ -980,6 +981,15 @@ private structure JournalTop where
   titleAhead : Option Bool := none
   titled : Bool := false
 
+/-- One glossaries entry: the text a use sets, its plural, its first use's text where declared, and
+an acronym's short and long forms. -/
+private structure GlsEntry where
+  text : Array Raw
+  plural : Option (Array Raw) := none
+  first : Option (Array Raw) := none
+  acronym : Option (Array Raw × Array Raw) := none
+  deriving Inhabited
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -1064,6 +1074,11 @@ private structure St where
   dateStyle : DateText.Style := .long
   dateDow : Bool := true
   dateRaise : Bool := true
+  /-- The glossary entries glossaries' `\newglossaryentry` and `\newacronym` declared, by key: the
+  text a use sets, its plural, its first use's, and an acronym's short and long forms. -/
+  glossary : Array (String × GlsEntry) := #[]
+  /-- The glossary keys a use has set, whose next use is no first use. -/
+  glsUsed : Array String := #[]
   /-- biblatex is loaded, so a later babel load hands it the main language. -/
   biblatexLoaded : Bool := false
   /-- Inside the document environment, where a preamble declaration is a
@@ -8639,7 +8654,7 @@ public inductive Lowering where
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
-  | texOrPdf | changeFontSizes | addvspace | noIndent | datetime | textScript
+  | texOrPdf | changeFontSizes | addvspace | noIndent | datetime | textScript | glossary | indexing
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8735,6 +8750,9 @@ private def ctrlRows0 : List CtrlRow :=
    nothingRow "@latex@note@no@line" 1 kernelLog,
    nothingRow "@latex@warning" 1 kernelLog,
    nothingRow "@latex@warning@no@line" 1 kernelLog,
+   ⟨"Acrfull", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"Acrlong", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"Acrshort", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"AddToHook", [.group, .opt, .group], .lower .addToHook {}⟩] ++
   deferredHooks.map (hookRow ·.1) ++
   [⟨"ClassError", List.replicate 3 .group, .inert⟩,
@@ -8747,9 +8765,13 @@ private def ctrlRows0 : List CtrlRow :=
 
 private def ctrlRows1 : List CtrlRow :=
   [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+   ⟨"GLS", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"GLSpl", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"GenericError", List.replicate 4 .group, .inert⟩,
    nothingRow "GenericInfo" 2 packageLog,
    nothingRow "GenericWarning" 2 packageLog,
+   ⟨"Gls", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"Glspl", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"IfValueT", [], .tokens [.ctrl "ifgiven" {}] none⟩,
    ⟨"IfValueTF", [], .tokens [.ctrl "ifgiven" {}] none⟩,
    ⟨"KOMAoption", [.group, .group], .lower .komaOption {}⟩,
@@ -8767,6 +8789,12 @@ private def ctrlRows2 : List CtrlRow :=
   [⟨"PassOptionsToPackage", [.needed, .needed], .lower .passOptions { leaves := [.inDef] }⟩,
    ⟨"RedeclareSectionCommand", [.opt, .group], .lower .sectionSkips {}⟩,
    packageRow "RequirePackage",
+   ⟨"acrfull", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"acrfullpl", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"acrlong", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"acrlongpl", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"acrshort", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"acrshortpl", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"addbibresource", [.opt, .needed], .lower .addBibResource {}⟩,
    ⟨"addtocounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    ⟨"addvspace", [.needed], .lower .addvspace {}⟩,
@@ -8832,6 +8860,14 @@ private def ctrlRows4 : List CtrlRow :=
    ⟨"getdateyear", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"github", [.needed],
      .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
+   ⟨"gls", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glsentryname", [.needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glsentrytext", [.needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glslink", [.opt, .needed, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glspl", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glsreset", [.needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glsresetall", [], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"glsunset", [.needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"graphcolor", [.needed, .needed, .needed],
      .lower .graphColor { leaves := [.without "blueprint"] }⟩,
    ⟨"home", [.needed],
@@ -8840,6 +8876,7 @@ private def ctrlRows4 : List CtrlRow :=
      { declared with paramStands := some "hyperref's settings stand" }⟩,
    ⟨"ifoot", [.group], .lower .runningField {}⟩,
    ⟨"ihead", [.group], .lower .runningField {}⟩,
+   ⟨"index", [.opt, .needed], .lower .indexing {}⟩,
    ⟨"inputencoding", [.group], .lower .inputEncoding {}⟩,
    oldFontRow "it" "itshape",
    ⟨"lfoot", [.group], .lower .runningField {}⟩,
@@ -8852,6 +8889,8 @@ private def ctrlRows4 : List CtrlRow :=
 
 private def ctrlRows5 : List CtrlRow :=
   [⟨"makebox", [.opt, .opt], .lower .box {}⟩,
+   ⟨"makeglossaries", [], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"makeindex", [.opt], .lower .indexing {}⟩,
    ⟨"mbox", [], .lower .box {}⟩,
    ⟨"mdyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"mdyyyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
@@ -8863,11 +8902,13 @@ private def ctrlRows5 : List CtrlRow :=
    ⟨"modulolinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
    ⟨"molochset", [.needed], .lower .molochSet {}⟩,
    ⟨"monthname", [.opt], .lower .datetime { leaves := [.without "datetime"] }⟩,
+   ⟨"newacronym", [.opt, .needed, .needed, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"newcounter", [.needed, .opt],
      .lower .newCounter { paramStands := some "no counter is allocated" }⟩,
    ⟨"newdate", [.needed, .needed, .needed, .needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"newdimen", [.group], .lower .newDimen { leaves := [.notCtrl 0] }⟩,
    ⟨"newgeometry", [.needed], .lower .geometry {}⟩,
+   ⟨"newglossaryentry", [.needed, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"newlength", [.group], .lower .newLength { leaves := [.notCtrl 0] }⟩,
    ⟨"newpage", [], .tokens [.ctrl "pagebreak" {}] (some "\\pagebreak")⟩,
    ⟨"noindent", [], .lower .noIndent {}⟩,
@@ -8891,7 +8932,11 @@ private def ctrlRows6 : List CtrlRow :=
    ⟨"pagestyle", [.group],
      .lower .pageStyle { paramStands := some "the page style in force stands" }⟩,
    nothingRow "phantomsection" 0 "every heading carries its own anchor",
+   ⟨"printacronyms", [.opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"printbibliography", [.opt], .lower .printBibliography {}⟩,
+   ⟨"printglossaries", [], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"printglossary", [.opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
+   ⟨"printindex", [.opt], .lower .indexing {}⟩,
    ⟨"raggedbottom", [], .native (.page #[(.bottom, "ragged")])⟩,
    ⟨"refstepcounter", [.needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    nothingRow "relax" 0 "it means do nothing",
@@ -12126,6 +12171,99 @@ private def datetimeCall (c : CtrlCall) : M (Array Raw) := do
       write fun st => { st with dateStyle := style }
     return #[]
 
+/-- `raws` with its first word's first letter, or every word, in upper case, groups looked into. -/
+private def glsCase (all : Bool) (done : Bool) (out : Array Raw) : List Raw → Array Raw × Bool
+  | [] => (out, done)
+  | .word w p :: rest =>
+    if all then glsCase all done (out.push (.word w.toUpper p)) rest
+    else if done then glsCase all done (out.push (.word w p)) rest
+    else glsCase all true (out.push (.word w.capitalize p)) rest
+  | .group b p :: rest =>
+    let (inner, done) := glsCase all done #[] b.toList
+    glsCase all done (out.push (.group inner p)) rest
+  | r :: rest => glsCase all done (out.push r) rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals first | omega | (have := toList_sizeOf_lt b; omega)
+
+/-- glossaries' declarations and uses: an entry's text, an acronym's long and short forms at its first
+use and its short form after, an undeclared key named and giving nothing. -/
+private def glossaryCall (c : CtrlCall) : M (Array Raw) := do
+  let st ← get
+  let starred := c.name.toLower == "gls" || c.name.toLower == "glspl"
+  let key := (c.src (if c.name == "newglossaryentry" || c.name.startsWith "glsentry" ||
+    c.name == "glsreset" || c.name == "glsunset" then 0 else if starred then 2 else 1)).trimAscii.toString
+  let entry := (st.glossary.find? (·.1 == key)).map (·.2)
+  let missing : M (Array Raw) := do
+    sayOnce ("glossaries:" ++ key) .W0104
+      (Diag.say .W0104 .entry (Diag.Name.value key) (ofWritten s!"\\{c.name}")) c.pos
+      (help := "declare it with \\newglossaryentry or \\newacronym before its use")
+    return #[]
+  let paren (xs : Array Raw) : Array Raw := #[.space, .word "(" c.pos] ++ xs ++ #[.word ")" c.pos]
+  let plural (xs : Array Raw) : Array Raw := xs.push (.word "s" c.pos)
+  match c.name with
+  | "newacronym" =>
+    let k := (c.src 1).trimAscii.toString
+    let e : GlsEntry := { text := c.arg 2, acronym := some (c.arg 2, c.arg 3) }
+    write fun st => { st with glossary := (st.glossary.filter (·.1 != k)).push (k, e) }
+    return #[]
+  | "newglossaryentry" =>
+    let es := Entries.read .keyval (c.arg 1)
+    let get (k : String) := (es.find? (·.key == k)).bind (·.value)
+    let name := (get "name").getD #[]
+    let e : GlsEntry := { text := (get "text").getD name, plural := get "plural", first := get "first" }
+    write fun st => { st with glossary := (st.glossary.filter (·.1 != key)).push (key, e) }
+    return #[]
+  | "glsreset" => write fun st => { st with glsUsed := st.glsUsed.filter (· != key) }; return #[]
+  | "glsunset" => write fun st => { st with glsUsed := st.glsUsed.push key }; return #[]
+  | "glslink" => return c.arg 2
+  | "glsresetall" => write fun st => { st with glsUsed := #[] }; return #[]
+  | "makeglossaries" =>
+    discard "\\makeglossaries" "the glossary lists are not printed" "glossaries:make" c.pos
+    return #[]
+  | "printglossaries" | "printglossary" | "printacronyms" =>
+    sayOnce ("ctrl:" ++ c.name) .W0104 (Diag.say .W0104 .command s!"\\{c.name}") c.pos
+      (detail := some "the glossary list is not set")
+    return #[]
+  | n =>
+    match entry with
+    | none => missing
+    | some e =>
+      let first := !st.glsUsed.contains key
+      let use : M Unit := write fun st => { st with glsUsed := st.glsUsed.push key }
+      let pl := n.endsWith "pl"
+      let base := (n.dropEnd (if pl then 2 else 0)).toString.toLower
+      let short := (e.acronym.map (·.1)).getD e.text
+      let long := (e.acronym.map (·.2)).getD e.text
+      let text := (if pl then (e.plural.getD (plural e.text)) else e.text)
+      let out : Array Raw := match base with
+        | "acrshort" => if pl then plural short else short
+        | "acrlong" => if pl then plural long else long
+        | "acrfull" => (if pl then plural long else long) ++ paren (if pl then plural short else short)
+        | "glsentryname" | "glsentrytext" => e.text
+        | _ =>
+          if first then match e.acronym, e.first with
+            | some (s, l), _ => (if pl then plural l else l) ++ paren (if pl then plural s else s)
+            | none, some f => f
+            | none, none => text
+          else if e.acronym.isSome then (if pl then plural short else short) else text
+      let insert := c.arg 3
+      let out := if base == "gls" then out.append insert else out
+      if base == "gls" then use
+      return if n.startsWith "GLS" then (glsCase true false #[] out.toList).1
+        else if n.toList.head?.any Char.isUpper then (glsCase false false #[] out.toList).1 else out
+
+/-- The index commands: `\makeindex` and `\index` set nothing, and `\printindex` names the index it
+does not print. -/
+private def indexingCall (c : CtrlCall) : M (Array Raw) := do
+  if c.name == "printindex" then
+    sayOnce "ctrl:printindex" .W0104 (Diag.say .W0104 .command "\\printindex") c.pos
+      (detail := some "the index is not set")
+  else discard s!"\\{c.name}" "an index entry sets nothing where it stands" ("index:" ++ c.name) c.pos
+  return #[]
+
+
 /-- A registered control's lowering over its arguments. -/
 private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
   | .packages =>
@@ -12704,6 +12842,8 @@ that graph")
   | .datetime => datetimeCall c
   -- latex.ltx's `\textsuperscript` and `\textsubscript`: a script of text in an `\mbox`.
   | .textScript => return textScriptRaws (c.name == "textsuperscript") (c.arg 0) c.pos
+  | .glossary => glossaryCall c
+  | .indexing => indexingCall c
   | .blueprintSite => do
     -- leanblueprint's `\home` links nothing; `\github` and `\dochome` root the web page's links.
     if c.name == "home" then
@@ -12765,11 +12905,12 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .addvspace => some { args := [some "1em"], inDoc := true }
   | .datetime => some { args := [some "15", some "1", some "2026"], inDoc := true }
   | .textScript => some { args := [some "x"], inDoc := true }
+  | .glossary => some { args := [none, some "zza", some "ZA", some "Zulu Alpha"], inDoc := true }
   | .thisPageStyle => some { args := [some "plain"], inDoc := true }
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
-  | .beamerOption | .inputEncoding | .graphColor => none
+  | .beamerOption | .inputEncoding | .graphColor | .indexing => none
 
 /-- Whether lowering `l`, called as `name` on witness `w`, returns raws. -/
 public def Lowering.emitsOn (l : Lowering) (name : String) (w : LowerWitness) : Bool :=
@@ -15343,7 +15484,7 @@ local macro "emits_nothing" : tactic => `(tactic| (
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
-  | .beamerOption | .inputEncoding | .graphColor => true
+  | .beamerOption | .inputEncoding | .graphColor | .indexing => true
   | _ => false
 
 /-- Every lowering not proved to emit nothing has a witness call, which `Tests` runs. -/
@@ -16143,6 +16284,44 @@ private def executionState (reading : Bool) (file : String) (raws : Array Raw)
     sourceTriggers := sourceTriggers file {} raws.toList
     fileTop := reading, boundaryOpen := !boundaryRefused raws
     wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
+
+/-- The packages a source's top-level `\usepackage` and `\RequirePackage` load, and its class's
+point size, 10 where its options name none. -/
+private def loadsAndSize (raws : Array Raw) : List String × Nat := Id.run do
+  let mut pkgs : List String := []
+  let mut pt := 10
+  for h : i in [:raws.size] do
+    match raws[i] with
+    | .ctrl "usepackage" _ | .ctrl "RequirePackage" _ =>
+      let (_, j) := takeRawOpt raws (i + 1)
+      let (args, _) := takeGroups raws j 1
+      pkgs := pkgs ++ ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
+    | .ctrl "documentclass" _ =>
+      let (opt, _) := takeRawOpt raws (i + 1)
+      for o in ((opt.map rawSrc).getD "").splitOn "," do
+        match o.trimAscii.toString with
+        | "11pt" => pt := 11
+        | "12pt" => pt := 12
+        | _ => pure ()
+    | _ => pure ()
+  return (pkgs, pt)
+
+/-- A source with framed.sty's and longtable's environments set as their templates set them, where
+it loads their package. -/
+public def packageEnvsLowered (raws : Array Raw) : Array Raw :=
+  if (loadsAndSize raws).1.any (["framed", "longtable"].contains ·) then
+    PackageEnvs.lower (verbatimRaws "framed.sty") (loadsAndSize raws).1 (loadsAndSize raws).2 #[] raws.toList
+  else raws
+
+/-- A package call holds no environment, so the lowering leaves it as it stands. -/
+public theorem packageEnvsLowered_package_exact (command names : String) (pos groupPos namePos : Pos) :
+    packageEnvsLowered (packageCall command names pos groupPos namePos) =
+      packageCall command names pos groupPos namePos := by
+  unfold packageEnvsLowered
+  split
+  · rw [packageCall_exact]
+    exact PackageEnvs.lower_command_word _ _ _ command names pos namePos groupPos
+  · rfl
 
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)

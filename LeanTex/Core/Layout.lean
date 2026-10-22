@@ -17937,6 +17937,17 @@ private def oversizeWords (group : Array Op) : String × String :=
     ("a box holding a minipage or a table", "the box's content")
   else ("a figure or table", "the float's content")
 
+/-- A group set whole on the page `b` opens, or, a box no page holds, broken as its lines break, as
+framed.sty breaks a frame, so no ink leaves the page. -/
+private def wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
+    (group : Array Op) : StepSt :=
+  let whole := group.foldl (stepStaged fs imgs) { st with b := { b with noBreak := true } }
+  let over := whole.b.y + whole.b.depthPast whole.b.prevDepth whole.b.geom.maxDepth -
+    whole.b.bottom - whole.b.pageShrink
+  if (group[0]? : Option Op) matches some (.regionOpen (.box _)) then
+    if 0 < over then group.foldl (stepStaged fs imgs) { st with b := b } else whole
+  else whole
+
 /-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
 holding nothing else; a group taller than the text block ships alone, named (W0358), and a note
 block it alone pushes past the floor is named as the note (W0372). -/
@@ -17949,8 +17960,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- dies with a closed page.
     let b := if st.b.holdsNothing then st.b
       else st.b.finishPage
-    let st2 := group.foldl (stepStaged fs imgs)
-      { st with b := { b with noBreak := true } }
+    let st2 := wholeOrBroken fs imgs st b group
     let b2 := st2.b
     let depth := b2.depthPast b2.prevDepth b2.geom.maxDepth
     let own := b2.y + depth - b2.bottom - b2.pageShrink
@@ -18608,6 +18618,16 @@ private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
     (fun i acc hacc => hacc.trans
       (bgStep_stepStaged fs imgs acc group[i] (hg _ (Array.getElem_mem i.2))))
 
+private theorem bgStep_wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
+    (group : Array Op) (hg : ∀ op ∈ group, op.preservesGround = true) :
+    BgStep b (wholeOrBroken fs imgs st b group).b := by
+  have hw := (BgStep.of_eq rfl rfl rfl).trans
+    (bgStep_foldSteps fs imgs group { st with b := { b with noBreak := true } } hg)
+  have hf := bgStep_foldSteps fs imgs group { st with b := b } hg
+  dsimp only [wholeOrBroken]
+  repeat' split
+  all_goals first | exact hw | exact hf
+
 private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (group : Array Op)
     (hg : ∀ op ∈ group, op.preservesGround = true) :
@@ -18620,12 +18640,9 @@ private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
       split
       · exact BgStep.refl _
       · exact bgStep_finishPage _
-    have h2 := bgStep_foldSteps fs imgs group
-      { st with b :=
-        { (if st.b.holdsNothing then st.b
-           else st.b.finishPage) with noBreak := true } } hg
-    refine (h1.trans ((BgStep.of_eq rfl rfl rfl).trans
-      (h2.trans (BgStep.of_eq ?_ ?_ ?_))))
+    have h2 := bgStep_wholeOrBroken fs imgs st
+      (if st.b.holdsNothing then st.b else st.b.finishPage) group hg
+    refine h1.trans (h2.trans (BgStep.of_eq ?_ ?_ ?_))
     all_goals repeat' split
     all_goals simp
 
@@ -19428,6 +19445,17 @@ private theorem foldSteps_frames (fs : FontSet) (imgs : Image.Store)
     hb (fun i _ h => stepStaged_frames _ _ _ _ openings h
       (ho _ (Array.getElem_mem i.2)))
 
+private theorem frames_wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
+    (group : Array Op) (openings : Array FrameOpening) (hb : FramesFooted openings b)
+    (ho : ∀ op ∈ group, ∀ f ∈ op.frameOpening?, f ∈ openings) :
+    FramesFooted openings (wholeOrBroken fs imgs st b group).b := by
+  have hw := foldSteps_frames fs imgs group { st with b := { b with noBreak := true } } openings
+    (hb.step (FrameStep.of_eq rfl rfl)) ho
+  have hf := foldSteps_frames fs imgs group { st with b := b } openings hb ho
+  dsimp only [wholeOrBroken]
+  repeat' split
+  all_goals first | exact hw | exact hf
+
 private theorem runFloat_frames (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (group : Array Op) (openings : Array FrameOpening)
     (hb : FramesFooted openings st.b)
@@ -19446,11 +19474,8 @@ private theorem runFloat_frames (fs : FontSet) (imgs : Image.Store)
       split
       · exact hb
       · exact hb.step (frameStep_finishPage ..)
-    have hr := foldSteps_frames fs imgs group
-      { st with b :=
-        { (if st.b.holdsNothing then st.b
-           else st.b.finishPage) with noBreak := true } } openings
-      (hc.step (FrameStep.of_eq rfl rfl)) ho
+    have hr := frames_wholeOrBroken fs imgs st
+      (if st.b.holdsNothing then st.b else st.b.finishPage) group openings hc ho
     exact finish _ _ hr
 
 private theorem frameStep_restartColumn (start latest : B) (inked : Nat) :
@@ -19888,6 +19913,16 @@ private theorem foldSteps_reflows (fs : FontSet) (imgs : Image.Store)
     (motive := fun _ (acc : StepSt) => acc.b.ReflowsNamed)
     hb (fun _ _ h => stepStaged_reflows _ _ _ _ h)
 
+private theorem reflows_wholeOrBroken (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
+    (group : Array Op) (hb : b.ReflowsNamed) :
+    (wholeOrBroken fs imgs st b group).b.ReflowsNamed := by
+  have hw := foldSteps_reflows fs imgs group { st with b := { b with noBreak := true } }
+    (hb.step (ReflowStep.of_eq rfl rfl))
+  have hf := foldSteps_reflows fs imgs group { st with b := b } hb
+  dsimp only [wholeOrBroken]
+  repeat' split
+  all_goals first | exact hw | exact hf
+
 private theorem runFloat_reflows (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (group : Array Op) (hb : st.b.ReflowsNamed) :
     (runFloat fs imgs st group).b.ReflowsNamed := by
@@ -19905,11 +19940,8 @@ private theorem runFloat_reflows (fs : FontSet) (imgs : Image.Store)
       split
       · exact hb
       · exact hb.step (reflowStep_finishPage ..)
-    have hr := foldSteps_reflows fs imgs group
-      { st with b :=
-        { (if st.b.holdsNothing then st.b
-           else st.b.finishPage) with noBreak := true } }
-      (hc.step (ReflowStep.of_eq rfl rfl))
+    have hr := reflows_wholeOrBroken fs imgs st
+      (if st.b.holdsNothing then st.b else st.b.finishPage) group hc
     exact finish _ _ hr
 
 private theorem reflowStep_restartColumn (start latest : B) (inked : Nat) :
@@ -19993,11 +20025,22 @@ private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
   exact ⟨h.1, fun hd => (h.2 hd).1,
     fun hd p hm => Or.inr ((h.2 hd).2 p hm)⟩
 
+private theorem wholeOrBroken_float (fs : FontSet) (imgs : Image.Store) (st : StepSt) (b : B)
+    (group : Array Op) (hnb : ∀ k, group[0]? ≠ some (.regionOpen (.box k))) :
+    wholeOrBroken fs imgs st b group =
+      group.foldl (stepStaged fs imgs) { st with b := { b with noBreak := true } } := by
+  dsimp only [wholeOrBroken]
+  split
+  · next k h => exact absurd h (hnb k)
+  · rfl
+
+/-- A float, or a box a page holds, stays whole: on its page or the next. -/
 private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
-    (group : Array Op) (hg : ∀ s ∈ group, s ≠ Op.brk) :
+    (group : Array Op) (hg : ∀ s ∈ group, s ≠ Op.brk)
+    (hnb : ∀ k, group[0]? ≠ some (.regionOpen (.box k))) :
     (runFloat fs imgs st group).b.pages = st.b.pages ∨
     (runFloat fs imgs st group).b.pages = st.b.finishPage.pages := by
-  simp only [runFloat]
+  simp only [runFloat, wholeOrBroken_float fs imgs st _ group hnb]
   split
   ·
     next hsize =>

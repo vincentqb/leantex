@@ -1,0 +1,18 @@
+# source: installed framed.sty 0.96 environment definitions. framed and oframed
+# set a 0.4pt rule \FrameSep (9pt) from a minipage of the measure less the
+# frame, shaded and shaded* a shadecolor ground on that sep, snugshade and
+# snugshade* on the default \fboxsep; each stands \OuterFrameSep (\topsep)
+# from the text around it and breaks across pages where no page holds it. The
+# box stands within the measure: shaded's and snugshade's ground does not
+# bleed into the margins, and in a list the frame starts at the item's indent.
+# leftbar, titled-frame, \FrameCommand and the MakeFramed interface are not
+# modelled, and an \input file's environments are not lowered.
+body impl \begin{framed}x\end{framed}
+body impl \begin{oframed}x\end{oframed}
+body impl \definecolor{shadecolor}{gray}{0.9}\begin{shaded}x\end{shaded}
+body impl \definecolor{shadecolor}{gray}{0.9}\begin{shaded*}x\end{shaded*}
+body impl \definecolor{shadecolor}{gray}{0.9}\begin{snugshade}x\end{snugshade}
+body impl \definecolor{shadecolor}{gray}{0.9}\begin{snugshade*}x\end{snugshade*}
+body refuse:W0302 \begin{leftbar}x\end{leftbar}
+body refuse:W0302 \begin{titled-frame}{t}x\end{titled-frame}
+body refuse:W0302 \begin{MakeFramed}{}x\end{MakeFramed}
