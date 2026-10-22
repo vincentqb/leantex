@@ -707,6 +707,15 @@ public theorem GroupScope.restore_id (base : Palette) (saved closed : GroupScope
 public structure AfterPara where
   ground : Option Palette := none
 
+/-- What a style's own title sets besides the declared parts: the author's names as rows of
+side-by-side boxes where its separators part them, the block it sets where it reads no `\@author`,
+and the text and page enlargement of its bottom float. -/
+public structure StyleTitle where
+  authorRows : Option (Array (Array (Array Inline))) := none
+  author : Option (Array Raw) := none
+  notice : Option (Array Raw × Nat) := none
+  deriving Inhabited
+
 public structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired. -/
@@ -721,8 +730,6 @@ public structure ESt where
   author : Option (Array Inline) := none
   /-- The author's names as the metadata reads them, where `\and` parts them. -/
   authorMeta : Option String := none
-  /-- The author's names as rows of side-by-side boxes, where a style's separators part them. -/
-  authorRows : Option (Array (Array (Array Inline))) := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
   /-- Beamer's optional short forms, read by its `\insertshort...` commands. -/
@@ -742,12 +749,8 @@ under them where the document ends. -/
   /-- The last refused `\maketitle` redefinition's body, read again at the
   preamble's end for its title styling. -/
   refusedTitleBody : Option (Array Raw) := none
-  /-- The block a refused title body sets where it reads no `\@author`, which `\maketitle` sets in
-  place of the declared author. -/
-  styleAuthor : Option (Array Raw) := none
-  /-- The text a refused title body sets in a bottom float, which `\maketitle` sets as its page's
-  notice. -/
-  styleNotice : Option (Array Raw × Nat) := none
+  /-- What a style's own title sets besides the declared parts. -/
+  styleTitle : StyleTitle := {}
   /-- Size-command redefinitions' bodies, read again at the preamble's end for their size ladder. -/
   sizeBodies : Array (String × Array Raw × Span) := #[]
   /-- The rendered built-ins whose redefinition the gate refused, each at its definition's site. -/
@@ -8513,13 +8516,13 @@ an unbreakable box a space, 1em and two `\tabcolsep` from the next, names of sev
 of their own; on a slide, beamer's `\quad`; the metadata reads them apart by commas. -/
 private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : Pos) :
     EM (Array Inline) := do
-  modify fun st => { st with authorRows := none }
+  modify fun st => { st with styleTitle := { st.styleTitle with authorRows := none } }
   if let some rows := authorRowsOf ctx (authorSeparators ctx (← get)) body then
     unless slides do
       let cells ← rows.mapM (·.mapM (elabInlines ctx))
       let words := cells.flatten.map (fun c => Ir.metaText (c.takeWhile (!· matches .linebreak _)))
         |>.filter (!·.isEmpty)
-      modify fun st => { st with authorRows := some cells
+      modify fun st => { st with styleTitle := { st.styleTitle with authorRows := some cells }
                                  authorMeta := some (", ".intercalate words.toList) }
       return cells.flatten.foldl (init := #[]) fun out xs =>
         if out.isEmpty then xs else out.push (.linebreak {}) ++ xs
@@ -8556,13 +8559,13 @@ private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : 
 
 /-- Stores one `\title`-family declaration, returning the index past its
 arguments and the run of an unclosed optional argument. -/
-private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
+@[noinline] private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     (start : Nat) (pos : Pos) : EM ({ j : Nat // start ≤ j } × Array Raw) := do
   let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
     -- premise: anonymousTitleChecks — a style setting its own author block takes no later author
-    if name == "author" && (← get).styleAuthor.isSome then
+    if name == "author" && (← get).styleTitle.author.isSome then
       warnOnce ctx "ctrl:author:style" .N0100 (Diag.translated "\\author") pos
         (detail := some "nothing: the style's title sets its own block in the author's place")
       return (⟨j + 1, by omega⟩, junk)
@@ -8669,7 +8672,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       | some h => #[Ir.Inline.strut h] ++ xs
       | none => xs
   if let some xs := part st.author then
-    match st.authorRows with
+    match st.styleTitle.authorRows with
     | some rows =>
       -- Each name a centred box of its natural width, as a one-column tabular, side by side.
       for row in rows do
@@ -11658,14 +11661,14 @@ private def pictureEnvArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos
 
 /-- The `\maketitle`/`\titlepage` arm: the title is set once, as classes.dtx's
 `\maketitle` disables itself. -/
-private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
+@[noinline] private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
   if (← get).titleDone then
     warnOnce ctx "ctrl:maketitle2" .W0322 (Diag.say .W0322 .command s!"\\{n}") pos
     return blocks
   -- premise: anonymousTitleChecks — the style's own block stands in the author's place
-  if let some cell := (← get).styleAuthor then
+  if let some cell := (← get).styleTitle.author then
     let xs ← elabInlines ctx cell
     warnOnce ctx "ctrl:maketitle:author" .N0100 (Diag.translated "\\@maketitle") pos
       (detail := some (if xs.isEmpty then "nothing in the author's place, as the style's title sets none"
@@ -11673,7 +11676,7 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     modify fun st => { st with author := if xs.isEmpty then none else some xs
                                shortTitles := st.shortTitles.filter (·.1 != .author)
                                authorMeta := some (Ir.metaText (xs.takeWhile (!· matches .linebreak _)))
-                               authorRows := none }
+                               styleTitle := { st.styleTitle with authorRows := none } }
   let inner := titleBlocks ctx (← get)
   if inner.isEmpty then
     warnOnce ctx "ctrl:maketitle" .W0309
@@ -11705,7 +11708,7 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
         else content.push (.spaced (Ir.Sourced.bare { width := { em := 1500 } }) #[])
     let titlePage := blocks.back? == some (.role Ir.titlePageBeginRole #[])
     blocks := (if titlePage then blocks else blocks.push (.role Ir.plainPageRole #[])) ++ content
-    if let some (raws, lines) := (← get).styleNotice then
+    if let some (raws, lines) := (← get).styleTitle.notice then
       let xs ← elabInlines ctx raws
       let enlarge : Dim.SymGlue :=
         { width := .ofLength (Ir.baselineSkipOf ctx.page * (lines : Int)) }
@@ -19365,7 +19368,8 @@ public def applyRefusedTitleStyle (s : PreState) : EM PreState := fun st =>
     else st.refusedTitleBody.bind (refusedTitleAuthor s.ctx.user s.ctx.limit)
   let notice := if (lookupUser s.ctx "maketitle").isSome then none
     else st.refusedTitleBody.bind (refusedTitleNotice s.ctx.user s.ctx.limit)
-  let st := { st with refusedTitleBody := none, styleAuthor := author, styleNotice := notice }
+  let st := { st with refusedTitleBody := none
+                      styleTitle := { st.styleTitle with author := author, notice := notice } }
   (titleStyleMerge s fragment, if fragment.isSome then titleStyleDiagState st else st)
 
 public theorem applyRefusedTitleStyle_result_exact (s : PreState) (st : ESt) :
@@ -20336,7 +20340,7 @@ the .bib file"
       title := fallback info.title st.title
       author := (fallback info.author none).orElse fun _ =>
         -- A style setting its own author block never names the declared author.
-        if st.styleAuthor.isSome && !st.titleDone then none
+        if st.styleTitle.author.isSome && !st.titleDone then none
         else st.authorMeta.orElse fun _ => fallback none st.author }
     -- A profile l3pdfmeta describes takes its description where the document gives none.
     info := { info with intent := info.intent.map OutputIntent.described }
