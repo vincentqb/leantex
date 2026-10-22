@@ -311,9 +311,7 @@ run_cmd do
                 let n := jstr decl.userName.eraseMacroScopes.toString
                 pure (if decl.binderInfo.isExplicit then some n else none)
             catch _ => pure #[]
-          let first := ((d.splitOn "\n\n").find? fun (l : String) =>
-            l.any fun (ch : Char) => !ch.isWhitespace).getD ""
-          pure s!",\"doc\":{jstr first},\"names\":[{",".intercalate names.toList}]"
+          pure s!",\"doc\":{jstr d},\"names\":[{",".intercalate names.toList}]"
         | none => pure ""
       lines := lines.push
         s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"{fieldPart}{docPart}}"

@@ -2472,15 +2472,19 @@ private def declareStep (facts : LeanFacts.Facts) (acc : Declared) (e : String �
   | .error r => { acc with refused := acc.refused.push (e.1, r) }
 
 /-- A documentation comment's opening clause as its constant's phrase, each backticked explicit
-binder its slot and an opening article lowered; none without a slot, with other code or markup, or
-opening on neither. -/
+binder its slot and an opening article lowered; none without a slot, with other code or markup,
+opening on neither, or before a clause qualifying it. -/
 public def docPhrase? (doc : String) (names : Array String) : Option String := Id.run do
-  let blank (p : String) : Bool := p.all Char.isWhitespace
-  let para : String := ((doc.splitOn "\n\n").find? (!blank ·)).getD ""
+  let blank (l : String) : Bool := l.all Char.isWhitespace
+  let para := " ".intercalate (((doc.splitOn "\n").dropWhile blank).takeWhile (!blank ·))
+  let cs := para.toList.toArray
   let mut out := ""
   let mut code := ""
   let mut inCode := false
-  for c in para.toList do
+  let mut rest : List Char := []
+  for h : i in [0:cs.size] do
+    let c := cs[i]
+    let next := (cs[i + 1]?).getD ' '
     if inCode then
       if c == '`' then
         match names.toList.findIdx? (fun (n : String) => n == code) with
@@ -2490,10 +2494,15 @@ public def docPhrase? (doc : String) (names : Array String) : Option String := I
         inCode := false
       else code := code.push c
     else if c == '`' then inCode := true
-    else if c == '.' || c == ',' || c == ';' || c == ':' then break
-    else if "*_[]<>\\#!|~$".contains c then return none
+    else if (c == '.' && next.isWhitespace) || c == ',' || c == ';' || c == ':' then
+      rest := (cs.extract (i + 1) cs.size).toList
+      break
+    else if "*_[]<>\\#!?|~$".contains c then return none
     else out := out.push (if c.isWhitespace then ' ' else c)
   if inCode then return none
+  let after := ((String.ofList rest).splitOn " ").find? (· != "")
+  if (after.map (·.decapitalize)).any (["unless", "except", "but", "if", "when", "provided", "or",
+      "and", "only", "whenever"].contains ·) then return none
   let words := (out.splitOn " ").filter (· != "")
   let said := " ".intercalate words
   let first := words.headD ""

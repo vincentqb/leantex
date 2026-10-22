@@ -233,7 +233,16 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "prose: a documentation comment's first sentence runs across its line ends, never past its first paragraph"
     (docPhrase? "`b` is moored when\n  its draft is positive." #["b"] == some "#1 is moored when its draft is positive" &&
       docPhrase? "\n  `b` is moored\n\nMore here." #["b"] == some "#1 is moored" &&
-      docPhrase? "`a` `b`" #["a", "b"] == some "#1 #2")
+      docPhrase? "`a` `b`" #["a", "b"] == some "#1 #2" &&
+      docPhrase? "`b` is moored when its draft exceeds 0.5 metres." #["b"] ==
+        some "#1 is moored when its draft exceeds 0.5 metres" &&
+      docPhrase? "`b` is moored\n   \nIts draft is positive." #["b"] == some "#1 is moored")
+  t "prose: a comment gives no phrase whose clause the next qualifies, or that asks"
+    (docPhrase? "`b` is moored, unless its hull is zero." #["b"] == none &&
+      docPhrase? "`x` divides `y`, or `y` is zero" #["x", "y"] == none &&
+      docPhrase? "`b` is moored?" #["b"] == none)
+  t "prose: the exporter carries the comments of the file's own constants alone"
+    (!facts.docs.isEmpty && facts.docs.all (·.1.startsWith "Tide."))
   let docFacts : LeanFacts.Facts := { factsWith (#[("Tide.Calm", #[.explicit]), ("Tide.rise", #[.explicit]),
       ("Tide.Odd", #[.explicit, .explicit])] ++ eqBinders) with
     docs := #[("Tide.Calm", "`x` is calm", #["x"]), ("Tide.rise", "The rise of `x`", #["x"]),
