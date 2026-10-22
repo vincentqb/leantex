@@ -52,11 +52,17 @@ role trivlist-env
       formula inline "\\mathit {d}\\lor {}"
         ord:alpha:it{ord:𝑑} bin:∨ ord:{}
       hspace 0pt
-      formula inline "\\mathit {d}+\\mathit {a}<{}"
-        ord:alpha:it{ord:𝑑} bin:+ ord:alpha:it{ord:𝑎} rel:< ord:{}
+      formula inline "\\mathit {d}+{}"
+        ord:alpha:it{ord:𝑑} bin:+ ord:{}
       hspace 0pt
-      formula inline "\\mathit {b}+\\mathit {c}))\\to {}"
-        ord:alpha:it{ord:𝑏} bin:+ ord:alpha:it{ord:𝑐} close:) close:) rel:→ ord:{}
+      formula inline "\\mathit {a}<{}"
+        ord:alpha:it{ord:𝑎} rel:< ord:{}
+      hspace 0pt
+      formula inline "\\mathit {b}+{}"
+        ord:alpha:it{ord:𝑏} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathit {c}))\\to {}"
+        ord:alpha:it{ord:𝑐} close:) close:) rel:→ ord:{}
       hspace 0pt
       formula inline "(\\forall \\mathit {n}:\\mathbb {N},{}"
         open:( ord:∀ ord:alpha:it{ord:𝑛} rel:: ord:alpha:bb{ord:𝑁} punct:, ord:{}
@@ -73,14 +79,20 @@ role trivlist-env
       formula inline "\\mathit {b}\\lor {}"
         ord:alpha:it{ord:𝑏} bin:∨ ord:{}
       hspace 0pt
-      formula inline "\\mathit {n}+\\mathrm {1}<{}"
-        ord:alpha:it{ord:𝑛} bin:+ ord:alpha:rm{ord:1} rel:< ord:{}
+      formula inline "\\mathit {n}+{}"
+        ord:alpha:it{ord:𝑛} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {1}<{}"
+        ord:alpha:rm{ord:1} rel:< ord:{}
       hspace 0pt
       formula inline "\\mathit {c}\\lor {}"
         ord:alpha:it{ord:𝑐} bin:∨ ord:{}
       hspace 0pt
-      formula inline "\\mathit {n}+\\mathrm {2}<{}"
-        ord:alpha:it{ord:𝑛} bin:+ ord:alpha:rm{ord:2} rel:< ord:{}
+      formula inline "\\mathit {n}+{}"
+        ord:alpha:it{ord:𝑛} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathrm {2}<{}"
+        ord:alpha:rm{ord:2} rel:< ord:{}
       hspace 0pt
       formula inline "\\mathit {d})\\land {}"
         ord:alpha:it{ord:𝑑} close:) bin:∧ ord:{}
@@ -94,17 +106,32 @@ role trivlist-env
       formula inline "\\mathit {c}\\land {}"
         ord:alpha:it{ord:𝑐} bin:∧ ord:{}
       hspace 0pt
-      formula inline "\\mathit {n}+\\mathit {m}<{}"
-        ord:alpha:it{ord:𝑛} bin:+ ord:alpha:it{ord:𝑚} rel:< ord:{}
+      formula inline "\\mathit {n}+{}"
+        ord:alpha:it{ord:𝑛} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathit {m}<{}"
+        ord:alpha:it{ord:𝑚} rel:< ord:{}
       hspace 0pt
       formula inline "\\mathit {d}\\land {}"
         ord:alpha:it{ord:𝑑} bin:∧ ord:{}
       hspace 0pt
-      formula inline "\\mathit {m}+\\mathit {n}<{}"
-        ord:alpha:it{ord:𝑚} bin:+ ord:alpha:it{ord:𝑛} rel:< ord:{}
+      formula inline "\\mathit {m}+{}"
+        ord:alpha:it{ord:𝑚} bin:+ ord:{}
       hspace 0pt
-      formula inline "\\mathit {a}+\\mathit {b}+\\mathit {c}+\\mathit {d}))\\to {}"
-        ord:alpha:it{ord:𝑎} bin:+ ord:alpha:it{ord:𝑏} bin:+ ord:alpha:it{ord:𝑐} bin:+ ord:alpha:it{ord:𝑑} close:) close:) rel:→ ord:{}
+      formula inline "\\mathit {n}<{}"
+        ord:alpha:it{ord:𝑛} rel:< ord:{}
+      hspace 0pt
+      formula inline "\\mathit {a}+{}"
+        ord:alpha:it{ord:𝑎} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathit {b}+{}"
+        ord:alpha:it{ord:𝑏} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathit {c}+{}"
+        ord:alpha:it{ord:𝑐} bin:+ ord:{}
+      hspace 0pt
+      formula inline "\\mathit {d}))\\to {}"
+        ord:alpha:it{ord:𝑑} close:) close:) rel:→ ord:{}
       hspace 0pt
       formula inline "\\mathit {a}+{}"
         ord:alpha:it{ord:𝑎} bin:+ ord:{}

@@ -336,8 +336,8 @@ argument hides, and a string sets as Lean writes it. A variable sets as one
 italic word and a constant or numeral upright, both in the body's face, the
 symbols in the math face; a line may break after each operator of a statement's
 top level, between the names a quantifier binds, between the arguments of an
-application standing alone, and inside parentheses after a connective or a
-quantifier's head, a relation, a sum or an application there staying whole,
+application standing alone, and inside parentheses as at the top: after each
+operator, a negation's sign and a quantifier's head, as TeX breaks a formula,
 no line ending on an opening parenthesis or opening on a closing one. A theorem
 Lean holds unproved, or that rests on one, is marked so; a statement Lean
 elaborated around an error is not set, and a page that shows math alone sets

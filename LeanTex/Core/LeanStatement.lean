@@ -31,9 +31,6 @@ public structure Rendered where
   chain : List (Array Math) := []
   /-- Its elements, where it is a list literal. -/
   elems : Option (List (Array Math)) := none
-  /-- The formulas it sets as inside parentheses, broken only after a connective or a binder's
-  head, none for a term that sets there as one. -/
-  logic : List (Array Math) := []
   deriving Inhabited
 
 /-- The precedence of an atom or anything delimited. -/
@@ -141,25 +138,11 @@ private def bracketed (opening closing : String) : List (Array Math) → List (A
   | [] => [#[.word opening, .word closing]]
   | x :: rest => endWith #[.word closing] ((#[.word opening] ++ x) :: rest)
 
-/-- The precedence of a relation, as Lean's `binrel` notations declare it. -/
-public def relPrec : Nat := 50
-
-/-- Whether a glyph is a connective's, which a line inside parentheses may break after. -/
-private def connectiveGlyph : Glyph → Bool
-  | .ctrl c => c == .land || c == .lor || c == .iff || c == .lnot
-  | .word _ | .bb _ | .numeral => false
-
-/-- The formulas a rendered term sets as among a connective's operands inside parentheses, where a
-relation breaks after its symbol and a sum or an application stands whole: its logic, in
-parentheses where it needs them at `min`, else itself. -/
-private def logicAt (r : Rendered) (min : Nat) : List (Array Math) :=
-  if r.logic.isEmpty then [paren r min]
-  else if r.prec ≥ min then r.logic else bracketed "(" ")" r.logic
-
-/-- The formulas a rendered term sets as where it stands at precedence `min`: its chain where it
-needs no parentheses there, else its logic inside them. -/
+/-- The formulas a rendered term sets as where it stands at precedence `min`: its chain, in
+parentheses where it needs them there, else itself. -/
 private def piecesAt (r : Rendered) (min : Nat) : List (Array Math) :=
-  if r.prec ≥ min then (if r.chain.isEmpty then [r.math] else r.chain) else logicAt r min
+  if r.chain.isEmpty then [paren r min]
+  else if r.prec ≥ min then r.chain else bracketed "(" ")" r.chain
 
 /-- A binary operator's formulas: its left side's, the operator ending the last, then its right
 side's. -/
@@ -178,7 +161,7 @@ private def prefixed (head : Array Math) : List (Array Math) → List (Array Mat
 
 /-- A named hypothesis's formulas, its parentheses on its first and last: `(h : P)`. -/
 private def namedPieces (n : String) (r : Rendered) : List (Array Math) :=
-  bracketed "(" ")" (prefixed ((varMath n).push (.word ":")) (logicAt r 0))
+  bracketed "(" ")" (prefixed ((varMath n).push (.word ":")) (piecesAt r 0))
 
 /-- Items joined by commas, each appended to `acc`. -/
 private def commaJoin (acc : Array Math) : List (Array Math) → Array Math
@@ -277,37 +260,32 @@ public def render (lk : Lookup) (ctx : List String) : Term → Rendered
     if b == .inst || !body.reads 0 then
       let hyp := render lk ctx t
       { math := around (paren hyp 26) (.ctrl .to) (paren inner 25), prec := 25
-        chain := chainOf (sidePieces hyp 26) #[.ctrl .to] after
-        logic := chainOf (logicAt hyp 26) #[.ctrl .to] (logicAt inner 25) }
+        chain := chainOf (sidePieces hyp 26) #[.ctrl .to] after }
     else if prop then
       let shown := render lk ctx t
       let pieces := namedPieces n shown
       { math := ((named n shown).push (.ctrl .to)).append (paren inner 25), prec := 25
-        chain := chainOf pieces #[.ctrl .to] after
-        logic := chainOf pieces #[.ctrl .to] (logicAt inner 25) }
+        chain := chainOf pieces #[.ctrl .to] after }
     else
-      let ty := paren (render lk ctx t) (relPrec + 1)
+      let ty := paren (render lk ctx t) 51
       let me := varMath n
       let fresh : Rendered :=
         { math := (forallHead #[me] ty).append inner.math, prec := 0,
           group := some (#[me], ty, inner.math)
-          chain := opEnd (forallHead #[me] ty) :: piecesAt inner 0
-          logic := opEnd (forallHead #[me] ty) :: logicAt inner 0 }
+          chain := opEnd (forallHead #[me] ty) :: piecesAt inner 0 }
       match inner.group with
       | some (names, ty', rest) =>
         if ty' == ty then
           { math := (forallHead (#[me] ++ names) ty).append rest, prec := 0
             group := some (#[me] ++ names, ty, rest)
-            chain := opEnd (forallHead (#[me] ++ names) ty) :: inner.chain.drop 1
-            logic := opEnd (forallHead (#[me] ++ names) ty) :: inner.logic.drop 1 }
+            chain := opEnd (forallHead (#[me] ++ names) ty) :: inner.chain.drop 1 }
         else fresh
       | none => fresh
   | .lam n _ _ body =>
     let bound := if body.reads 0 then varMath n else #[.ctrl .underscore]
     let r := render lk (n :: ctx) body
     { math := (bound.push (.ctrl .mapsto)).append r.math, prec := 0
-      chain := opEnd (bound.push (.ctrl .mapsto)) :: piecesAt r 0
-      logic := opEnd (bound.push (.ctrl .mapsto)) :: logicAt r 0 }
+      chain := opEnd (bound.push (.ctrl .mapsto)) :: piecesAt r 0 }
   | .letE n _ v body =>
     let value := (render lk ctx v).math
     let rest := (render lk (n :: ctx) body).math
@@ -341,13 +319,12 @@ public def renderBinder? (lk : Lookup) (ctx : List String) (h : Head) :
     | .const c =>
       match shownOf c with
       | .notation g .binder =>
-        let ty := paren (render lk ctx t) (relPrec + 1)
+        let ty := paren (render lk ctx t) 51
         let r := render lk (n :: ctx) body
         let head := (glyphMath g).append (varMath n) |>.push (.word ":") |>.append ty
           |>.push (.word ",")
         some { math := head.append r.math, prec := 0
-               chain := opEnd head :: piecesAt r 0
-               logic := opEnd head :: logicAt r 0 }
+               chain := opEnd head :: piecesAt r 0 }
       | .notation _ _ | .name _ => none
     | .bvar _ | .sort _ | .nat _ | .str _ | .other _ => none
   | [_] => none
@@ -374,18 +351,14 @@ public def renderApps (lk : Lookup) (ctx : List String) (h : Head) (args : List 
         | .right => (p + 1, p)
         | .none => (p + 1, p + 1)
       { math := around (paren x l) g (paren y r), prec := p
-        chain := chainOf (sidePieces x l) (glyphMath g) (sidePieces y r)
-        logic := if connectiveGlyph g then chainOf (logicAt x l) (glyphMath g) (logicAt y r)
-          else if p == relPrec then chainOf [paren x l] (glyphMath g) [paren y r] else [] }
+        chain := chainOf (sidePieces x l) (glyphMath g) (sidePieces y r) }
     | .notation g (.swapped p), [first, second] =>
       let (coll, elem) := if lk.collectionFirst then (first, second) else (second, first)
       { math := around (paren elem (p + 1)) g (paren coll (p + 1)), prec := p
-        chain := chainOf (sidePieces elem (p + 1)) (glyphMath g) (sidePieces coll (p + 1))
-        logic := chainOf [paren elem (p + 1)] (glyphMath g) [paren coll (p + 1)] }
+        chain := chainOf (sidePieces elem (p + 1)) (glyphMath g) (sidePieces coll (p + 1)) }
     | .notation g (.prefix p), [x] =>
       { math := (glyphMath g).append (paren x (p + 1)), prec := p
-        chain := prefixed (glyphMath g) (sidePieces x (p + 1))
-        logic := if connectiveGlyph g then prefixed (glyphMath g) (logicAt x (p + 1)) else [] }
+        chain := prefixed (glyphMath g) (sidePieces x (p + 1)) }
     | .notation _ .power, [x, y] =>
       { math := (paren x atomPrec).push (.sup y.math.toList), prec := 75 }
     | .notation g .constant, [] => atom (glyphMath g)
@@ -407,7 +380,7 @@ public def formulasOf (lk : Lookup) (ctx : List String) (t : Term) : List (Array
 
 /-- A binder's type as one formula, parenthesized as a binder sets it. -/
 public def boundOf (lk : Lookup) (ctx : List String) (t : Term) : Array Math :=
-  paren (render lk ctx t) (relPrec + 1)
+  paren (render lk ctx t) 51
 
 /-- A piece of a statement's top level: one quantified variable and its type, a quantifier's head,
 which a word space follows, or a formula, which a line may break after. -/
@@ -431,12 +404,12 @@ public def chunksOf (lk : Lookup) (ctx : List String) (afterArrow spine : Bool) 
     else if prop || b == .inst || !body.reads 0 then
       let rest := chunksOf lk (n :: ctx) true spine body
       ((endWith (opEnd #[.ctrl .to]) (sidePieces hyp 26)).map Chunk.formula).append rest
-    else .binder (varMath n) (paren hyp (relPrec + 1)) :: chunksOf lk (n :: ctx) false spine body
+    else .binder (varMath n) (paren hyp 51) :: chunksOf lk (n :: ctx) false spine body
   | .apps (.const c) [ty, .lam n b dom body] =>
     match shownOf c with
     | .notation g .binder =>
       let opening := (((glyphMath g).append (varMath n)).push (.word ":")).append
-        (paren (render lk ctx dom) (relPrec + 1)) |>.push (.word ",")
+        (paren (render lk ctx dom) 51) |>.push (.word ",")
       .head opening :: chunksOf lk (n :: ctx) false false body
     | .notation _ _ | .name _ =>
       let t := Term.apps (.const c) [ty, .lam n b dom body]

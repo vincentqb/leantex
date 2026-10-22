@@ -105,7 +105,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\mathit {a}^{\\mathit {n}+\\mathrm {1}}={}", "\\mathit {a}^{\\mathit {n}}\\cdot {}",
     "\\mathit {a}"]
   spells "Tide.div_mod" #["\\forall \\mathit {a},{}", "\\mathit {b}:\\mathbb {N},",
-    "\\mathit {b}\\cdot {}", "(\\mathit {a}/\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
+    "\\mathit {b}\\cdot {}", "(\\mathit {a}/{}", "\\mathit {b})+{}", "\\mathit {a}\\bmod {}",
     "\\mathit {b}={}", "\\mathit {a}"]
   spells "Tide.total" #["\\mathrm {total}:", "\\mathrm {Add}\\  \\mathit {α}\\to {}",
     "\\mathit {α}\\to {}", "\\mathrm {List}\\  \\mathit {α}\\to {}", "\\mathit {α}"]
@@ -223,19 +223,19 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
         ["a", "b"] listBinders == ["[\\mathit {a},{}", "\\mathit {b}]"] &&
       piecesOf (app "List.nil" [nat]) [] listBinders == ["[]"])
   let p (i : Nat) := app "P" [var i]
-  t "statements: a negation, a quantifier and a named hypothesis inside an operator break inside their parentheses after a connective or a binder's head, a relation or an application whole"
+  t "statements: a negation, a quantifier and a named hypothesis inside an operator break inside their parentheses, after each operator and a binder's head"
     (piecesOf (app "Not" [app "And" [var 0, app "And" [var 1, var 2]]]) ["c", "b", "a"] ==
         ["\\lnot (\\mathit {c}\\land {}", "\\mathit {b}\\land {}", "\\mathit {a})"] &&
       piecesOf (.pi "h" .explicit false (.pi "n" .explicit false nat (p 0)) (app "Q" [])) [] ==
-        ["(\\forall \\mathit {n}:\\mathbb {N},{}", "\\mathrm {P}\\  \\mathit {n})\\to {}",
+        ["(\\forall \\mathit {n}:\\mathbb {N},{}", "\\mathrm {P}\\", "\\mathit {n})\\to {}",
           "\\mathrm {Q}"] &&
       piecesOf (.pi "h" .explicit true (app "And" [var 0, var 1]) (app "Q" [var 0])) ["b", "a"] ==
         ["(\\mathit {h}:\\mathit {b}\\land {}", "\\mathit {a})\\to {}",
           "\\mathrm {Q}\\  \\mathit {h}"])
   let sum : LeanFacts.Term := (List.range 6).foldl (fun acc i => app "HAdd.hAdd" [acc, var (i % 2)]) (var 0)
-  t "statements: a long relation inside parentheses breaks after its symbol, its sums whole"
+  t "statements: a long relation inside parentheses breaks after its symbol and each operator of its sums"
     ((piecesOf (.pi "h" .explicit false (.pi "g" .explicit false (app "Eq" [sum, sum]) (app "P" []))
-      (app "Q" [])) ["a", "b"]).length == 4)
+      (app "Q" [])) ["a", "b"]).length == 16)
   let opensAt (f : String) : Bool :=
     let f := ((f.trimAsciiEnd.toString.dropSuffix "{}").toString.dropSuffix "\\").toString.trimAsciiEnd.toString
     f.endsWith "(" || f.endsWith "["
