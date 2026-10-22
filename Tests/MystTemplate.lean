@@ -104,6 +104,20 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "extend: keywords given as text split at commas and semicolons, a date that does not exist named"
     (doc2.get "keywords" == .arr [.str "alpha", .str "bravo", .str "charlie"] &&
       di2.contains (.dateUnread "2024-02-31"))
+  let (doc3, _) := extend [("author", .arr [.str "Alias One"]), ("authors", .arr [
+      .obj [("name", .str "Canon Two"), ("affiliations", .arr [.str "zzx"])],
+      .obj [("name", .str "Canon Three"), ("affiliations", .arr [.obj [("id", .str "zzx"), ("name", .str "Real")]])]])]
+  let names3 := match doc3.get "authors" with
+    | .arr xs => xs.map (·.get "name")
+    | _ => []
+  t s!"extend: a key wins over its alias, and a later definition replaces a placeholder of its id ({repr names3})"
+    (names3 == [.str "Canon Two", .str "Canon Three"] &&
+      (match doc3.get "affiliations" with | .arr xs => xs.map (·.get "name") | _ => []) == [.str "Real"])
+  let multi : OptionDef := { id := "styles", kind := .choice, choices := ["a", "b"], multiple := true }
+  let tplM : TemplateYml := { options := #[multi] }
+  let (om, mi) := options tplM [("styles", .arr [.str "a", .str "z"])]
+  t "options: a multiple option keeps its valid items and names each invalid one"
+    (om == [("styles", .arr [.str "a"])] && mi.size == 1)
   t "yaml: a key indented under a key with a value, or an item under one, is outside the subset"
     (Md.yamlTree #["a: one", "  b: two"] == none && Md.yamlTree #["a: one", "  - two"] == none)
   t "letters: the twentieth is T, a departure from myst's table, and the twenty-seventh AA"

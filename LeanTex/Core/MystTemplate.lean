@@ -216,13 +216,24 @@ def checkValue (d : OptionDef) (v : Value) : Except String Value :=
   | .file, .str s => .ok (.str s)
   | .file, _ => .error "a file path"
 
-/-- A value as `d` takes it, a list item by item where it takes several, its invalid items dropped,
-a lone value a list of one. -/
+/-- The invalid items of a value `d` takes several of, each with its reason. -/
+def invalidItems (d : OptionDef) (v : Value) : List String :=
+  if !d.multiple then [] else
+  (listOf v).filterMap fun x => match checkValue d x with
+    | .error e => some e
+    | .ok _ => none
+where
+  listOf : Value → List Value
+    | .arr xs => xs
+    | v => [v]
+
+/-- A value as `d` takes it, a list item by item where it takes several, its invalid items dropped
+(`invalidItems` names them), a lone value a list of one. -/
 def checkOption (d : OptionDef) (v : Value) : Except String Value :=
   if !d.multiple then checkValue d v else
   match v with
   | .arr xs => .ok (.arr (xs.filterMap fun x => (checkValue d x).toOption))
-  | v => (checkValue d v).map fun x => .arr [x]
+  | v => .ok (.arr ((checkValue d v).toOption.toList))
 
 private def optionDef (y : Yaml) (k : Nat) (out : Array Issue) : Option OptionDef × Array Issue :=
   let path := s!"options.{k}"
@@ -350,7 +361,9 @@ def options (t : TemplateYml) (given : List (String × Value)) : List (String ×
     -- myst-templates fills a default only where it is truthy, so a false or empty default stays unset
     match v.orElse fun _ => d.default.filter (·.truthy) with
     | none => pure ()
-    | some v => match checkOption d v with
+    | some v =>
+      out := out ++ (invalidItems d v).toArray.map (.optionInvalid d.id ·)
+      match checkOption d v with
       | .ok v => res := res.push (d.id, v)
       | .error e => out := out.push (.optionInvalid d.id e)
   return (res.toList, out)
@@ -455,7 +468,18 @@ structure Stash where
   items : Array (String × List (String × Value)) := #[]
   generated : Nat := 0
 
-/-- An affiliation stashed, with the id it stands under. -/
+/-- Fields in key order, which myst-frontmatter compares affiliations by. -/
+private def sorted (fs : List (String × Value)) : List (String × Value) :=
+  (fs.toArray.qsort fun a b => a.1 < b.1).toList
+
+/-- Whether a stashed affiliation is a placeholder: its id standing as its name, nothing else. -/
+private def placeholder (fs : List (String × Value)) : Bool :=
+  match (fs.find? (·.1 == "id")).map (·.2), (fs.find? (·.1 == "name")).map (·.2) with
+  | some i, some n => i == n && fs.length == 2
+  | _, _ => false
+
+/-- An affiliation stashed, with the id it stands under; a later full definition replaces a
+placeholder of its id. -/
 def Stash.add (st : Stash) (v : Value) : Stash × Option String :=
   match v with
   | .str s =>
@@ -466,11 +490,14 @@ def Stash.add (st : Stash) (v : Value) : Stash × Option String :=
     let fs := fs.map fun (k, x) => (if k == "institution" && !fs.any (·.1 == "name") then "name" else k, x)
     match (get "id").orElse fun _ => get "ref" with
     | some id =>
-      let fs := if fs.any (·.1 == "name") then fs else fs ++ [("name", .str id)]
-      let fs := ("id", .str id) :: fs.filter fun (k, _) => k != "id" && k != "ref"
-      if st.items.any (·.1 == id) then (st, some id) else ({ st with items := st.items.push (id, fs) }, some id)
+      let rest := fs.filter fun (k, _) => k != "id" && k != "ref"
+      let fs := ("id", .str id) :: (if rest.isEmpty then [("name", .str id)] else rest)
+      match st.items.findIdx? (·.1 == id) with
+      | some i => if (st.items[i]?.any fun (_, g) => placeholder g) && !placeholder fs then
+          ({ st with items := st.items.modify i fun _ => (id, fs) }, some id) else (st, some id)
+      | none => ({ st with items := st.items.push (id, fs) }, some id)
     | none =>
-      match st.items.find? (fun (_, g) => g.filter (·.1 != "id") == fs) with
+      match st.items.find? (fun (_, g) => sorted (g.filter (·.1 != "id")) == sorted fs) with
       | some (id, _) => (st, some id)
       | none =>
         let id := s!"affiliations-generated-uid-{st.generated}"
@@ -484,14 +511,20 @@ private def nameOf : Value → String
   | .obj fs =>
     let get (k : String) := ((fs.find? (·.1 == k)).bind (textOf ·.2)).getD ""
     if get "literal" != "" then get "literal" else
-      " ".intercalate ([get "given", get "family"].filter (!·.isEmpty))
+    -- formatName's particles and suffix; its reversed form for a family name of several words is not
+    let base := " ".intercalate ([get "given", get "dropping_particle", get "non_dropping_particle",
+      get "family"].filter (!·.isEmpty))
+    if get "suffix" != "" then base ++ ", " ++ get "suffix" else base
   | _ => ""
 
 /-- A front matter as the `doc` a template reads, as extendFrontmatter makes it: its authors and
 the affiliations they name indexed and lettered, the date's fields and a lone `.bib` as `bibtex`;
 an undated document gets no date, never the clock's. -/
 def extend (fm : List (String × Value)) : Value × Array Issue := Id.run do
-  let fm := fm.map fun (k, v) => (((aliases.find? (·.1 == k)).map (·.2)).getD k, v)
+  -- an alias stands for its key only where the key itself is not given, as validateKeys reads it
+  let fm := fm.filterMap fun (k, v) => match aliases.find? (·.1 == k) with
+    | some (_, canon) => if fm.any (·.1 == canon) then none else some (canon, v)
+    | none => some (k, v)
   let get (k : String) : Value := ((fm.find? (·.1 == k)).map (·.2)).getD .undef
   let mut issues : Array Issue := #[]
   -- the declared affiliations first, then each author's, as myst-frontmatter stashes them
@@ -499,13 +532,14 @@ def extend (fm : List (String × Value)) : Value × Array Issue := Id.run do
   for a in listOf [';'] (get "affiliations") do
     st := (st.add a).1
   let mut authorsIn : Array (List (String × Value) × List String) := #[]
-  for (au, k) in (listOf [';'] (get "authors")).zipIdx do
+  for (au, k) in (listOf [] (get "authors")).zipIdx do
     let fs := match au with
       | .str s => [("name", Value.str s)]
       | .obj fs => fs
       | _ => []
     let mut ids : Array String := #[]
-    for a in listOf [';'] (((fs.find? fun (k, _) => k == "affiliations" || k == "affiliation").map (·.2)).getD .undef) do
+    let affField := ((fs.find? (·.1 == "affiliations")).orElse fun _ => fs.find? (·.1 == "affiliation")).map (·.2)
+    for a in listOf [';'] (affField.getD .undef) do
       let (st', id) := st.add a
       st := st'
       if let some id := id then ids := ids.push id
