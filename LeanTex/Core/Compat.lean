@@ -1143,6 +1143,8 @@ private structure St where
   /-- The declared class indents its paragraphs' first lines (`Ir.ClassRecord.parindent`), as a
   page declaring none does on the article's. -/
   indents : Bool := true
+  /-- The declared class sets its frames on a grid (`Ir.ClassRecord.gridFrame`). -/
+  gridFrame : Bool := false
   /-- Constructs already warned about. -/
   warned : Array String := #[]
   /-- Every control word the conditional pass has seen bound, with its
@@ -2336,9 +2338,9 @@ public def presetOption? (options : List String) : Option String :=
 public def flowPresetOf (p0 : Ir.FlowPreset) (options : List String) : Ir.FlowPreset :=
   ((presetOption? options).bind Ir.FlowPreset.ofName?).getD p0
 
-/-- The flow class's own LaTeX after its `\documentclass`, read as the class file's input
-(`Ir.flowClassSource`): its packages, faces, theorems and its preset's commands. -/
-public def applyClassSource (raws : Array Raw) : Array Raw := Id.run do
+/-- A leantex class's own LaTeX after its `\documentclass`, read as the class file's input
+(`Ir.flowClassSource`, `Ir.frameClassSource`). -/
+private def applyClassSourceAt (raws : Array Raw) : Array Raw := Id.run do
   let some i := raws.findIdx? (fun r => r matches .ctrl "documentclass" _) | return raws
   let some (.ctrl _ pos) := raws[i]? | return raws
   let (opt, j) := takeRawOpt raws (i + 1)
@@ -2355,6 +2357,24 @@ public def applyClassSource (raws : Array Raw) : Array Raw := Id.run do
   let source := verbatimRaws file text
   return raws.extract 0 k ++ #[.env (Parse.inputEnv file) source pos] ++
     raws.extract k raws.size
+
+/-- One raw with an input file's wrapper's class declaration spliced (`applyClassSourceAt`). -/
+private def classSourceIn : Raw → Raw
+  | .env n body p => .env n (if (Parse.inputEnvFile? n).isSome then applyClassSourceAt body else body) p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl c p => .ctrl c p
+  | .sym c p => .sym c p
+  | .group body p => .group body p
+  | .math d body p => .math d body p
+  | .verb e s p => .verb e s p
+
+/-- `applyClassSourceAt` over a file's raws, or over an input file's wrapper where the declaration
+stands in the file it inputs. -/
+public def applyClassSource (raws : Array Raw) : Array Raw :=
+  if raws.any (· matches .ctrl "documentclass" _) then applyClassSourceAt raws
+  else raws.map classSourceIn
 
 /-- The filename, read from the executed call the local-style reader sees. -/
 @[expose] public def InputRequest.name (request : InputRequest) : String :=
@@ -11476,6 +11496,7 @@ the reader of the files around it does not see"
       flowPage := flow,
       indents := cls != "letter" &&
         (Ir.DocClass.ofString? (classModelName cls)).any (·.record.parindent != .flush),
+      gridFrame := ((Ir.DocClass.ofString? (classModelName cls)).map (·.record.gridFrame)).getD false,
       -- KOMA-Script's titlepage environment never resets the page counter (scrbook.cls), and memoir
       -- has none.
       titlepageReset := !twoside && !koma && cls != "memoir" }
@@ -12707,8 +12728,10 @@ the engine draws")
     -- premise: Tests.FrameClass.checks — equal text margins are the page's side margins
     let items := (Entries.items .keyval (c.arg 0)).toList.map KeyVal.entry
     let side (k : String) : Option String := (items.lookup k).join.map (·.trimAscii.toString)
+    -- Beamer's own frame titles stand off the text margins, so only the grid class reads them.
+    let grid := (← get).gridFrame
     let margins := match side "text margin left", side "text margin right" with
-      | some l, some r => if l == r then some l else none
+      | some l, some r => if l == r && grid then some l else none
       | _, _ => none
     let mut out : Array Raw := #[]
     if let some m := margins then
@@ -12932,6 +12955,8 @@ public structure LowerWitness where
   resources : Array String := #[]
   /-- The class indents its paragraphs (`St.indents`). -/
   indents : Bool := false
+  /-- The class sets its frames on a grid (`St.gridFrame`). -/
+  gridFrame : Bool := false
 
 /-- A call on which a lowering emits raws: none exactly for the lowerings proved to emit nothing
 (`Lowering.emitsNothing`). -/
@@ -12958,7 +12983,9 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .vspace => some { args := [none, none, some "1em"], inDoc := true }
   | .pageBreak => some { args := [none], inDoc := true }
   | .noIndent => some { args := [], inDoc := true, indents := true }
-  | .beamerSize => some { args := [some "text margin left=1cm, text margin right=1cm"], inDoc := false }
+  | .beamerSize =>
+    some { args := [some "text margin left=1cm, text margin right=1cm"], inDoc := false
+           gridFrame := true }
   | .komaFont => some { args := [some "section", some "\\bfseries"], inDoc := false }
   | .sectionSkips => some { args := [some "beforeskip=1em", some "section"], inDoc := false }
   | .setList => some { args := [none, none, some "itemsep=0pt"], inDoc := false }
@@ -12994,7 +13021,7 @@ public def Lowering.emitsOn (l : Lowering) (name : String) (w : LowerWitness) : 
   let call : CtrlCall := ⟨name, {}, (w.args.map (·.map (verbatimRaws file))).toArray,
     verbatimRaws file w.after, 0, 0⟩
   let st : St := { file := file, docFile := file, inDoc := w.inDoc, wholeDoc := true,
-                   bibResources := w.resources, indents := w.indents }
+                   bibResources := w.resources, indents := w.indents, gridFrame := w.gridFrame }
   !((lowerCall call l).run st).1.isEmpty
 
 /-- Whether a lowered control is left, as written, to elaboration where it stands. -/

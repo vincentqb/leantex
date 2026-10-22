@@ -326,6 +326,8 @@ public structure Ctx where
   /-- Overlay steps `\pause` opened in enclosing scopes. -/
   stepBase : Nat := 0
   slides : Bool := false
+  /-- The class sets its frames on a grid (`Ir.ClassRecord.gridFrame`). -/
+  gridFrame : Bool := false
   /-- The class's ground depth for a palette generated in the body. -/
   groundDepth : GroundDepth := .documents
   /-- A frame's vertical alignment when its options name none, from beamer's
@@ -1288,8 +1290,9 @@ private def fontKeys : List String :=
 default 4:3. -/
 private def slidesStageOf (record : Ir.ClassRecord) (opts : List String) : Length × Length :=
   (opts.findSome? fun o => match KeyVal.entry o with
-    | ("aspectratio", some v) | ("aspect", some v) => Ir.slidesStageNamed v
-    | _ => none).getD (if record.design.isSome then Ir.slidesStage169 else Ir.slidesStage43)
+    | ("aspectratio", some v) => Ir.slidesStageNamed v
+    | ("aspect", some v) => if record.gridFrame then Ir.slidesStageNamed v else none
+    | _ => none).getD (if record.gridFrame then Ir.slidesStage169 else Ir.slidesStage43)
 
 /-- A grid frame's leading: its stage's height over its lines (`Ir.frameGridLines`). -/
 private def frameLead (record : Ir.ClassRecord) (opts : List String) : Length :=
@@ -7378,9 +7381,9 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
     -- tex/ltframe.cls: two lines in from either side, half a line from the top.
     let lead := page.height / (Ir.frameGridLines : Int)
     if page.hmargin == dflt.hmargin then
-      page := { page with hmargin := if record.design.isSome then 2 * lead else Ir.slidesHMargin }
+      page := { page with hmargin := if record.gridFrame then 2 * lead else Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
-      page := { page with vmargin := if record.design.isSome then lead / (2 : Int) else
+      page := { page with vmargin := if record.gridFrame then lead / (2 : Int) else
         Ir.slidesVMargin }
     -- beamer.cls sets `\raggedright` for every frame.
     if page.justify.isNone then
@@ -7425,10 +7428,10 @@ private def classSized (record : Ir.ClassRecord) (classOptions : String) (page :
     (sizes.map toString)).bind (·.toNat?) |>.map fun n =>
       if record.design.isSome then Ir.classOptionSize n else Dim.pt n
   -- tex/ltframe.cls sets its body a line over the type scale's step below it.
-  let gridSize := if record.model == .frame && record.design.isSome then
+  let gridSize := if record.gridFrame then
       some (frameLead record (KeyVal.items classOptions).toList * (10 : Int) / (12 : Int))
     else none
-  match optSize <|> gridSize <|> record.fontSize with
+  match gridSize <|> optSize <|> record.fontSize with
   | some d => { page with fontSize := d }
   | none => page
 
@@ -7535,16 +7538,16 @@ public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
   | ("BCOR", some v), _ => record.area == .typearea && (bcorValue? v).isSome
   | ("headinclude", v), _ | ("footinclude", v), _ =>
     record.area == .typearea && v.all fun v => komaTrue v || ["false", "off", "no"].contains v
-  | ("fontsize", some v), _ => sized v
+  | ("fontsize", some v), _ => sized v && !record.gridFrame
   | (k, none), .flow =>
     sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
       (classOptionFlags.lookup .flow).any (·.contains k) || abstractFormOptions.contains k
-  | (k, none), m => sized k || (classOptionFlags.lookup m).any (·.contains k)
+  | (k, none), m => (sized k && !record.gridFrame) || (classOptionFlags.lookup m).any (·.contains k)
   | (k, some v), .flow =>
     (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats") ||
       (k == "preset" && record.design.isSome)
   | (k, some v), .frame =>
-    (k == "aspectratio" || (k == "aspect" && record.design.isSome)) && (Ir.slidesStageNamed v).isSome
+    (k == "aspectratio" || (k == "aspect" && record.gridFrame)) && (Ir.slidesStageNamed v).isSome
   | (_, some _), .face => false
 
 /-- A box's declared width: a length, a fraction of the enclosing measure,
@@ -11403,22 +11406,6 @@ private def pictureEnvArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos
   diagDetail ctx .E0304 (Diag.say .E0304 .argument
     (obj := some (if env then some .environment else none, Diag.Name.of name))) pos what help
 
-/-- A grid frame's title page as `tex/ltframe.cls`'s `title page` template sets it: three blank
-lines, the title at `\Large` in bold, a blank line, then each of author, institute and date on
-its line. -/
-private def gridTitlePage (ctx : Ctx) (st : ESt) : Array Block := Id.run do
-  let lead := ctx.page.classLead.getD (Ir.leadingFor ctx.page.fontSize)
-  let skip (k : Int) : Block := .spaced (Ir.Sourced.bare { width := Dim.SymLength.ofLength (lead * k) }) #[]
-  let part (v : Option (Array Inline)) : Option (Array Inline) :=
-    v.bind fun xs => if xs.isEmpty then none else some xs
-  let mut out : Array Block := #[skip 3]
-  if let some t := part st.title then
-    out := out.push (.para #[.styled (.size "Large") #[.styled .bold t]])
-  out := out.push (skip 1)
-  for v in [st.author, st.institute, st.date] do
-    if let some xs := part v then out := out.push (.para xs)
-  return out
-
 /-- The `\maketitle`/`\titlepage` arm: the title is set once, as classes.dtx's
 `\maketitle` disables itself. -/
 private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
@@ -11432,11 +11419,6 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     warnOnce ctx "ctrl:maketitle" .W0309
       (Diag.say .W0309 .title (obj := some (none, s!"\\{n}"))) pos
       (help := "declare \\title{...} (and \\author, \\date, ...) before it")
-  else if ctx.slides && ctx.page.grid == some true then
-    -- tex/ltframe.cls's title page, its lines on the frame's grid (`gridTitlePage`).
-    modify fun st => { st with titleDone := true }
-    recordFrameSource ctx pos blocks.size
-    blocks := blocks.push (.frame #[] false .top false (gridTitlePage ctx (← get)))
   else if ctx.slides then
     -- The golden split is moloch's `title page` template glue.
     modify fun st => { st with titleDone := true }
@@ -13860,7 +13842,7 @@ private def classFrameAlign (record : Ir.ClassRecord) (opts : List String) : VAl
   opts.foldl (fun v o =>
     if o == "t" || o == "slidestop" then .top
     else if o == "c" || o == "slidescentered" then .center
-    else v) (if record.design.isSome then .top else .center)
+    else v) (if record.gridFrame then .top else .center)
 
 /-- Whether every item of a bracket's text names a key `\setkeys{beamerframe}` reads: beamer's own
 and metropolis's `standout`. -/
@@ -13909,6 +13891,15 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
           (Diag.say .N0102 .option a (some (some .environment, "frame"))) pos
           (detail := some "a standout frame is centred")
     return { o with valign := .center }
+  -- tex/ltframe.cls sets every frame top-aligned on its grid.
+  -- premise: Tests.FrameClass.checks — a frame stands top-aligned on the class's grid
+  if ctx.gridFrame then
+    for a in o.aligns do
+      unless a == "t" do
+        warnOnce ctx ("frame:opt:grid:" ++ a) .N0102
+          (Diag.say .N0102 .option a (some (some .environment, "frame")))  pos
+          (detail := some "a frame stands top-aligned on the class's grid")
+    return { o with valign := .top }
   return o
 
 /-- A box's `[pos][height][inner-pos]` arguments: its position, `undeclared` where it names none,
@@ -19729,6 +19720,9 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                           skips := some (Ir.gridSkips d.ratio page.fontSize lead bodyRow) }
     if page.flushBottom.isNone then page := { page with flushBottom := some false }
     if page.grid.isNone then page := { page with grid := some d.grid }
+    -- tex/ltframe.cls loads no microtype: its lines neither protrude nor expand.
+    if record.gridFrame then
+      page := { page with protrude := page.protrude <|> some false, expand := page.expand <|> some false }
     page := { page with classLead := some (Ir.sizeFileLeading page.fontSize 1000 "normalsize") }
     let pens := page.penalties
     let dflt : Ir.PagePenalties := {}
@@ -19758,6 +19752,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     diag ctx .W0104 s!"'\\page\{ measure = {page.measureChars.getD 0} }' sets a flow page's text block; \
 the {docClass.name} class's page keeps its own" none
     page := { page with measureChars := none }
+  -- tex/ltframe.cls derives its whole grid from its aspect's stage.
+  -- premise: Tests.FrameClass.checks — a declared paper leaves the aspect's stage
+  if record.gridFrame && page.sized then
+    diag ctx .W0104 s!"'\\page' sets the paper; the {docClass.name} class's stage is its aspect's" none
+    page := { page with widthSized := false, heightSized := false }
   page := classAreaPage record classOpts (Ir.Surface.ofPath file) s.sawAcross s.sawDown
     (classPageDefaults record classOpts page)
   let settled := settledPage page
@@ -19842,6 +19841,7 @@ the {docClass.name} class's page keeps its own" none
                                        sep := declared "marginparsep" mp.sep
                                        push := declared "marginparpush" mp.push } }
   ctx := { ctx with slides := record.model == .frame
+                    gridFrame := record.gridFrame
                     groundDepth := record.groundDepth
                     frameAlign := classFrameAlign record classOpts
                     frameKeys := if defaultBundle then Theme.daylight.frameKeys else s.frameKeys
@@ -20447,7 +20447,8 @@ public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : Strin
 /-- Resumes execution with a file answer, after settling its split halves. -/
 public def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
     (file : String) (raws : Array Raw) : m (Array Raw × Compat.InputContext) :=
-  let (raws, splitDiags) := settleSplits file raws
+  -- A leantex class declared in an input file takes its source there, as in the main file.
+  let (raws, splitDiags) := settleSplits file (Compat.applyClassSource raws)
   Compat.resumeInput reader context raws splitDiags
 
 /-- An included markdown file's answer: under hybrid its TeX reading run through the walk, the

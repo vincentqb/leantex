@@ -69,6 +69,8 @@ public structure Geom where
   bleed : Length := 0
   /-- Where the footline band stands (`Ir.footlineOf`). -/
   footline : Ir.Footline := Ir.footline
+  /-- The class sets its frames on a grid (`Ir.ClassRecord.gridFrame`). -/
+  gridFrame : Bool := false
   /-- The margin notes' column beside the text block. -/
   marginPar : Ir.MarginPar := {}
   /-- Whether a margin note takes the outer margin, the left on a verso (LaTeX's `\@mparswitch`). -/
@@ -792,7 +794,6 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     flushBottom := spec.flushBottom.getD base.flushBottom
     penalties := spec.penalties
     bleed := spec.bleed
-    footline := Ir.footlineOf spec
     marginPar := spec.marginPar
     marginSwitch := spec.twoside
     marks := spec.marks
@@ -9239,16 +9240,18 @@ private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Optio
                          opening := true
                          skip := b.skip.add g
                          opened := true }
-  -- A spill discards pending glue, so the frame's opening skip is kept in the resume origin.
+  -- A spill discards pending glue, so the frame's opening skip is kept in the resume origin; a grid
+  -- frame's spill page resumes from its title's baseline, its first line a leading below.
   { opened with chrome := b.chrome.map fun c =>
-      { c with y := opened.y + opened.skip.width
+      { c with y := (if b.geom.gridFrame then b.y else opened.y) + opened.skip.width
                depth := opened.prevDepth
                below := opened.prevBelow
                band := opened.prevBand
                header := opened.curBand } }
 
 private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : Glue)
-    (box : Option Length) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Length) (flush : Bool) :
+    (box : Option Length) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Length) (flush : Bool)
+    (hg : b.geom.gridFrame = false) :
     let opened := b.openBody fs g box
     let resumed := (opened.finishPage owed flush).reopenChrome
     resumed.y = opened.y + opened.skip.width ∧
@@ -9256,7 +9259,7 @@ private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : G
     resumed.prevBelow = opened.prevBelow ∧
     resumed.prevBand = opened.prevBand ∧
     resumed.curBand = opened.curBand := by
-  simp [Spacing.Page.openBody, Spacing.Page.reopenChrome, Spacing.Page.finishPage, hc]
+  simp [Spacing.Page.openBody, Spacing.Page.reopenChrome, Spacing.Page.finishPage, hc, hg]
 
 /-- The pending skip a fresh page keeps: all of it after `\vspace*`'s
 zero rule or a fil, else none, as TeX discards glue at a page top. -/
@@ -13700,6 +13703,22 @@ moloch's box where `frametitlepadding` is declared, else the section-size bold l
 private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     (titleLeaf : Option Nat) (titleSpan : Nat) : Acc :=
   if title.isEmpty then a else
+  if r.geom.gridFrame then
+    -- tex/ltframe.cls: the title on the grid at the step above the body, over its band's colour.
+    let bar := (Ir.Design.ofPalette a.pal).frametitle
+    let saved := (a.fg, a.ground)
+    let d := Ir.Design.ofPalette a.pal
+    let a := match bar with
+      | some bar => { a with fg := bar.fg, ground := some bar.bg }
+      | none => { a with fg := d.frameTitleFg }
+    let a := collectDisplay r a title 0 false
+      (Ir.scaleStepIn r.geom.scale r.geom.fontSize Ir.gridFrameTitleStep)
+      (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan) (inserted := true)
+    let a := match bar with
+      | some bar => { a with ops := a.ops.push (.titleBar bar.bg 0 none) }
+      | none => a
+    { a with wantDefault := true, fg := saved.1, ground := saved.2 }
+  else
   match (Ir.Design.ofPalette a.pal).frametitle with
   | some bar =>
     let barBg := bar.bg
@@ -13734,8 +13753,7 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     let savedFg := a.fg
     let a := { a with fg := (Ir.Design.ofPalette a.pal).frameTitleFg }
     let a := collectDisplay r a title 0 false
-      (Ir.scaleStepIn r.geom.scale r.geom.fontSize
-        (if r.geom.grid.isSome then Ir.gridFrameTitleStep else Ir.plainFrameTitleStep))
+      (Ir.scaleStepIn r.geom.scale r.geom.fontSize Ir.plainFrameTitleStep)
       (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
       (inserted := true)
     { a with wantDefault := true, fg := savedFg }
@@ -14112,6 +14130,17 @@ or token change, or a paragraph of label anchors alone, which TeX writes without
 private def walkTransparent : Block → Bool
   | .para content => Ir.anchorsOnly content
   | b => statefulBlock b
+
+/-- A grid frame's title page as `tex/ltframe.cls`'s `title page` template sets it: the title at
+`\Large` in bold, flush left, a blank line after it, every other part on its own line. -/
+private def collectGridTitle (r : Rd) (a : Acc) (blocks : List Block) (indent : Length) : Acc :=
+  match blocks with
+  | [] => a
+  | .center inner :: rest => collectGridTitle r (collectGridTitle r a inner.toList indent) rest indent
+  | .section 0 _ _ title :: rest =>
+    let a := collectParaBlock r a #[.styled (.size Ir.gridTitlePageStep) #[.styled .bold title]] indent
+    collectGridTitle r (a.vskip { width := r.geom.grid.getD 0 }) rest indent
+  | b :: rest => collectGridTitle r (collectBlock r a b indent) rest indent
 
 /-- A quotation's body as `collectBlockList` walks it: a list opening it stands in its item's label,
 quotation's first lines take the class's `\listparindent`, verse's lines hang (`Ir.verseHang`), and
@@ -14628,7 +14657,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `\@arrayparboxrestore`, as both boxes' bodies run: no `\parskip`.
     let rb := { (r.within blk) with geom := { r.geom with parskip := {}, texParskip := {} } }
     -- tex/ltframe.cls: a grid frame's block is its bold title line over its body, a line around it.
-    if r.slides && r.geom.grid.isSome && kind != .box then
+    if r.geom.gridFrame && kind != .box then
       let lead : Glue := { width := r.geom.grid.getD 0 }
       let a := a.addvspace lead
       let a := if title.isEmpty then a else collectParaBlock r a #[.styled .bold title] indent
@@ -14867,6 +14896,9 @@ private def collectBlock (r : Rd) (a : Acc)
             { a with boxTop := !capAbove || caption.isEmpty } body.toList indent false) a
     { a.pushOp .floatClose with noBreakNext := held }
   | .frame title standout valign breakable body =>
+    -- tex/ltframe.cls sets its title page, as every frame, top-aligned on its grid.
+    let gridTitle := r.geom.gridFrame && valign matches .golden
+    let valign := if r.geom.gridFrame then VAlign.top else valign
     let marks := Ir.frameMarks body
     let squeeze := Ir.frameSqueeze body
     -- Only a declared squeeze changes the page; the ladder's stands in for the web deck's shrink.
@@ -14910,11 +14942,13 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The title is pinned chrome; the content opens below its box with no peer gap.
     let a := if title.isEmpty then
         -- A grid frame keeps its title band, its body from the band's next line.
-        let a := if r.geom.grid.isSome then a.vskip { width := r.geom.grid.getD 0 } else a
+        let a := if r.geom.gridFrame then a.vskip { width := r.geom.grid.getD 0 } else a
         openFrameBody r a false valign area
-      else if r.geom.grid.isSome then
-        -- On a grid the body's first line stands one leading below the title's.
-        { a with ops := (a.ops.push .pin).push (.bodyOpen {} none), wantDefault := false,
+      else if r.geom.gridFrame then
+        -- On a grid the body's first line stands one leading below the title's, two below a band.
+        let g : Glue := if (Ir.Design.ofPalette a.pal).frametitle.isSome then
+            { width := r.geom.grid.getD 0 } else {}
+        { a with ops := (a.ops.push .pin).push (.bodyOpen g none), wantDefault := false,
                  frameTop := true }
       else
       let g : Glue := { width := frameBodySkip true valign r.geom.fontSize }
@@ -14926,7 +14960,10 @@ private def collectBlock (r : Rd) (a : Acc)
       { a with ops := (a.ops.push .pin).push (.bodyOpen g box), wantDefault := false,
                frameTop := true }
     -- A golden frame is the title page, all display furniture: never hyphenated or justified.
-    let a := if valign matches .golden then
+    let a := if gridTitle then
+        -- Three blank lines stand above the title (`tex/ltframe.cls`).
+        collectGridTitle r (a.vskip { width := 3 * r.geom.grid.getD 0 }) body.toList indent
+      else if valign matches .golden then
         let rd := { r with pats := none, geom := { r.geom with justify := false } }
         let slots := (r.style "titlepage").slots
         if slots.isEmpty then collectBlocks rd a body indent
@@ -17886,7 +17923,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       | some l, some first =>
         match strut with
         | none =>
-          let h := l.y + b.prevDepth + pad
+          -- A grid frame's band ends half a leading below its title's last baseline.
+          let h := if b.geom.gridFrame then l.y + b.geom.grid.getD 0 / (2 : Int)
+            else l.y + b.prevDepth + pad
           { b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
                                         h := h, color := color }]) with
             curBand := some (max h (b.curBand.getD 0)) }
@@ -22051,8 +22090,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     else geom
   -- TeX's `\topskip` on a TeX page: the document's own, else the class's body size (size10.clo).
   -- A grid frame's lines stand a whole leading below its top, as tex/ltframe.cls's body box sets.
+  let gridFrame := doc.docClass.record.gridFrame
+  let geom := { geom with gridFrame, footline := Ir.footlineOf gridFrame doc.page }
   let geom := if doc.docClass.record.model == .frame then
-      (if geom.grid.isSome then { geom with topskip := geom.grid } else geom)
+      (if gridFrame then { geom with topskip := geom.grid } else geom)
     else { geom with topskip := some ((tokenLen "topskip").getD geom.fontSize) }
   -- `Design.ofDoc` resolves the document colours, the ink `Contrast.docDiags` judges.
   let design := Ir.Design.ofDoc doc
@@ -22485,7 +22526,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   dsimp (config := { zeta := false }) only [Id.run, bind, pure, Id]
   extract_lets d ps _ _ _ _ _ _ _ _
     _ _ _ _ _ _ _ _ _ _ _
-    _ _ _ rd acc0 acc accF _ _ _ b0
+    _ _ _ _ _ rd acc0 acc accF _ _ _ b0
     alphabet _ _ _ dir post
   have hacc := collectDocBody_census rd d frameSpans acc0 hp
     (by rcases hh with hh | hh <;>

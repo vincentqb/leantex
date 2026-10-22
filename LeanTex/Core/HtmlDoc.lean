@@ -2953,8 +2953,8 @@ private def frameTitleStrutCss (hdr : String := "section.slide > header") : Stri
   s!"  vertical-align: calc(-1 * {pad}); }\n"
 
 /-- moloch's footline (beamerouterthememoloch.sty), standing on the stage's bottom edge. -/
-private def footlineCss (page : PageSpec) : String :=
-  let fl := Ir.footlineOf page
+private def footlineCss (page : PageSpec) (gridFrame : Bool) : String :=
+  let fl := Ir.footlineOf gridFrame page
   let raise := stageVh page fl.raise
   let step := milliFactor (Ir.footlineSize page.scale milleBase fl).units.toNat
   "section.slide > footer.slide-foot { position: relative; order: 1;\n" ++
@@ -3002,7 +3002,7 @@ public def themeCss (doc : Doc) (ex : Length)
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
     s!"{hdr} h2 \{ color: inherit; font-size: 1em; }\n" ++
     -- the paged deck's slide is cornerless; the bar bleeds through the safe area
-    (if doc.docClass == .slides then
+    (if doc.docClass.record.model == .frame then
       s!"@media screen, print \{ {hdr} \{ border-radius: 0;\n" ++
       -- the deck sets type in `vh`, so the bar retakes the title step in `em`
       s!"  font-size: {frameTitleStep doc}em;\n" ++
@@ -3104,7 +3104,7 @@ color: {roleRef .sectionTitleInk}; }\n" ++
 height: calc({decMilli (Ir.sectionPageStrut doc.page.scale milleBase doc.page.leading).units}em - var(--progressheight, 1pt)); }\n"
      else "") ++
     -- the deck's progress hairline, scroll-driven where supported, screen only
-    (if doc.docClass == .slides && d.progress.isSome then
+    (if doc.docClass.record.model == .frame && d.progress.isSome then
       "@media screen { @supports (animation-timeline: scroll()) {\n" ++
       ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       s!"  height: var(--progressheight, 1pt); background: {roleRef .progressFill};\n" ++
@@ -3121,9 +3121,9 @@ to { transform: scaleX(1) } }\n" ++
       (doc.chrome.hasFooter || doc.body.any fun b => match b with
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
-    footlineCss doc.page ++
+    footlineCss doc.page doc.docClass.record.gridFrame ++
     -- a named size inside a slot is the body's step, as TeX's size commands are absolute
-    (let step := (Ir.footlineSize doc.page.scale milleBase (Ir.footlineOf doc.page)).units.toNat
+    (let step := (Ir.footlineSize doc.page.scale milleBase (Ir.footlineOf doc.docClass.record.gridFrame doc.page)).units.toNat
      String.join (doc.page.scale.map fun (name, k) =>
        s!"footer.slide-foot .size-{name} \{ font-size: \
 {milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
@@ -5793,7 +5793,7 @@ private def slideCss (doc : Doc) : String :=
   -- inside this split, so the deck's screen override stands after it
   let headerH2 :=
     s!"section.slide > header h2 \{ font-size: {scaleSize doc.page.scale "Large" "rem"}; }\n"
-  if doc.docClass == .slides then
+  if doc.docClass.record.model == .frame then
     let maxSteps := doc.body.foldl (fun n b => max n (Ir.frameSteps b)) 1
     -- the covered shade is the PDF cover's own fraction (`Ir.Design.cover`)
     headerH2 ++
@@ -6328,13 +6328,13 @@ white-space: nowrap; }\n" ++
   s!"  font-size: {scaleSize doc.page.scale standoutStep "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   deckAreaCss doc ++
-  (if doc.docClass == .slides then
+  (if doc.docClass.record.model == .frame then
     looseStageCss doc ++
       frameOpeningCss doc ex ++ fillBeforeCss
    else "") ++
   -- a deck's steps set their own leading; a reading page keeps one line height
   sizeRules doc.page.scale
-    (if doc.docClass == .slides then
+    (if doc.docClass.record.model == .frame then
       some (doc.page.skipScale, doc.page.leading, doc.page.fontSize) else none) ++
   -- the resolved math face; the stack behind it serves a page with no shipped face
   "math, .math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
@@ -10628,9 +10628,9 @@ retitle them apart, or link to the numbered anchor")
                         | .left => "band-left"
                         | .right => "band-right"),
                       ("style", s!"z-index: {s.rank}")])
-                  #[("class", "slide-foot size-" ++ (Ir.footlineOf doc.page).step),
+                  #[("class", "slide-foot size-" ++ (Ir.footlineOf doc.docClass.record.gridFrame doc.page).step),
                     ("style", String.intercalate " "
-                      (paint ++ footCapDecl doc.page.scale band (Ir.footlineOf doc.page) ++
+                      (paint ++ footCapDecl doc.page.scale band (Ir.footlineOf doc.docClass.record.gridFrame doc.page) ++
                         footBoxDecls doc.page (cfg.footBox (shown.getD 0) band)))]))
               | _, other => other
             else node
@@ -10778,10 +10778,10 @@ retitle them apart, or link to the numbered anchor")
   let mut body : Array Node := headerNode ++ (unsetTitle? doc).toArray.map pageTitleNode ++
     #[main] ++ (outlineNode? cfg doc).toArray
   -- the progress hairline reads the base bar, never a section-only override
-  if doc.docClass == .slides && (Design.ofDoc doc).progress.isSome then
+  if doc.docClass.record.model == .frame && (Design.ofDoc doc).progress.isSome then
     body := body.push (Html.elem "div" #[]
       #[("class", "deck-progress"), ("aria-hidden", "true")])
-  body := body ++ deckScriptNodes (doc.docClass == .slides)
+  body := body ++ deckScriptNodes (doc.docClass.record.model == .frame)
   -- figures numbered apart before the anchors are judged, and landmarks named apart
   body := tieMath (nameNavsApart (numberFigures body))
   let facts := pageFacts.list none {} body.toList

@@ -91,6 +91,53 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (deck, _) := elabStr (talk (cls := "{beamer}"))
   t "frame class: beamer itself keeps its 4:3 stage, its margins and no grid"
     (deck.page.height == Dim.mm 96 && deck.page.hmargin == Ir.slidesHMargin && deck.page.grid.isNone)
+  -- lualatex: a wrapped title's lines and a subtitle stand a leading apart, the body on the next.
+  let (edge, _) := elabStr ("\\documentclass{ltframe}\n\\begin{document}\n" ++
+    "\\begin{frame}{A frame title long enough that it has to wrap onto a second line of the stage}\n" ++
+    "Alpha follows a long title.\n\\end{frame}\n\\begin{frame}{Kilo}\\framesubtitle{A subtitle}\nBravo follows.\n" ++
+    "\\begin{alertblock}{Charlie}\nDelta in an alert block.\n\\end{alertblock}\nEcho closes.\n" ++
+    "\\end{frame}\n\\begin{frame}[c]{Centred}\nFoxtrot.\n\\end{frame}\n" ++
+    "\\begin{frame}[allowframebreaks]{Breaks}\n" ++
+    String.intercalate "\\par " ((List.range 16).map fun i => s!"Golf{i} line.") ++
+    "\n\\end{frame}\n\\end{document}\n")
+  let edgeOut := layoutOf fonts edge
+  t "frame class: a wrapped title stands on lines two and three, the body from the fourth"
+    ((lineY edgeOut 0 "second").any (near · (lineAt 3)) && (lineY edgeOut 0 "Alpha").any (near · (lineAt 4)))
+  t "frame class: a frame's subtitle stands on the third line, the body after it"
+    ((lineY edgeOut 1 "A").any (near · (lineAt 3)) && (lineY edgeOut 1 "Bravo").any (near · (lineAt 4)))
+  t "frame class: an alert block keeps the grid, a blank line above its title"
+    ((lineY edgeOut 1 "Charlie").any (near · (lineAt 6)) && (lineY edgeOut 1 "Delta").any (near · (lineAt 7)))
+  t "frame class: a centred frame stands top-aligned on the grid"
+    ((lineY edgeOut 2 "Foxtrot").any (near · (lineAt 3)))
+  t "frame class: a broken frame's next page resumes on its third line"
+    ((lineY edgeOut 4 "Golf").any (near · (lineAt 3)) && (lineY edgeOut 3 "Golf0").any (near · (lineAt 3)))
+  let (band, _) := elabStr ("\\documentclass{ltframe}\n\\setbeamercolor{frametitle}{fg=white,bg=black}\n" ++
+    "\\begin{document}\n\\begin{frame}{Kilo}\nAlpha below a band.\n\\end{frame}\n\\end{document}\n")
+  let bandOut := layoutOf fonts band
+  t "frame class: below a coloured title band the body opens a line further down"
+    ((lineY bandOut 0 "Kilo").any (near · (lineAt 2)) && (lineY bandOut 0 "Alpha").any (near · (lineAt 4)))
+  let (_, edgeDs) := elabStr ("\\documentclass[11pt]{ltframe}\n\\page{ width = 200mm }\n" ++
+    "\\begin{document}\n\\begin{frame}[b]{Kilo}\nAlpha.\n\\end{frame}\n\\end{document}\n")
+  t "frame class: a size option, a declared paper and a bottom alignment are each named"
+    (edgeDs.any (fun d => d.code == "W0104" && hasStr d.message "11pt") &&
+      edgeDs.any (fun d => d.code == "W0104" && hasStr d.message "stage") &&
+      edgeDs.any (fun d => d.code == "N0102"))
+  let (wide, _) := elabStr (talk (cls := "[aspectratio=1610]{ltframe}"))
+  t "frame class: beamer's aspectratio key sets the stage the grid divides"
+    (wide.page.height == Dim.mm 100 && wide.page.hmargin == 2 * (Dim.mm 100 / (16 : Int)))
+  let (beamerGrid, _) := elabStr (talk "\\page{ grid = on }\n" (cls := "{beamer}"))
+  t "frame class: beamer on a declared grid keeps beamer's footline and margins"
+    (!beamerGrid.docClass.record.gridFrame && beamerGrid.page.hmargin == Ir.slidesHMargin &&
+      (Ir.footlineOf beamerGrid.docClass.record.gridFrame beamerGrid.page).step == Ir.footline.step)
+  let head := (Parse.parse "head.tex" (Lex.lex "head.tex" "\\documentclass{ltframe}\n").1).1
+  let spliced := Compat.applyClassSource #[.env (Parse.inputEnv "head.tex") head {}]
+  t "frame class: a class declared in an input file takes its source there"
+    (spliced.any fun r => match r with
+      | .env _ body _ => body.any (· matches .env "input ltframe.cls" _ _)
+      | _ => false)
+  let html := (HtmlDoc.emit {} doc).1
+  t "frame class: its web page is a deck of slides with its title page"
+    (hasStr html "<section class=\"slide title-page\"" && hasStr html "<section class=\"slide\"")
   t "frame class: tex/ltframesource.tex is generated from the source leantex splices"
     ((← IO.FS.readFile "tex/ltframesource.tex") == Ir.ltFrameSourceTex)
 

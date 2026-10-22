@@ -64,7 +64,13 @@
     11pt .code:n = \tl_set:Nn \l_lt_fontsize_tl { 11pt } ,
     12pt .code:n = \tl_set:Nn \l_lt_fontsize_tl { 12pt } ,
     aspect .tl_set:N = \l_lt_aspect_tl ,
-    unknown .code:n = \PassOptionsToClass { \l_keys_key_str } { \l_lt_base_tl } ,
+    aspectratio .tl_set:N = \l_lt_aspect_tl ,
+    unknown .code:n =
+      \use:e
+        {
+          \PassOptionsToClass
+            { \l_keys_key_str \tl_if_blank:nF {#1} { = \exp_not:n {#1} } } { \l_lt_base_tl }
+        } ,
   }
 
 \keys_define:nn { lt / page }

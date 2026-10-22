@@ -1873,6 +1873,9 @@ public def plainFrameTitleStep : String := "Large"
 (`tex/ltframe.cls`'s `\large`). -/
 public def gridFrameTitleStep : String := "large"
 
+/-- The step a grid frame's title page sets its title at (`tex/ltframe.cls`'s `\Large`). -/
+public def gridTitlePageStep : String := "Large"
+
 /-- Where beamer's default frametitle box ends below the title's last
 baseline: a strut's depth, less 1ex. -/
 public def defaultFrameTitleBelow (titleSize : Length) (leading : Nat) (ex : Length) : Length :=
@@ -8402,8 +8405,8 @@ public def footline : Footline :=
 
 /-- A page's footline: beamer's, or a grid frame's (`tex/ltframe.cls`): the step below the body,
 within the side margins, its baseline half a leading above the paper's edge. -/
-public def footlineOf (page : PageSpec) : Footline :=
-  if page.grid == some true then
+public def footlineOf (gridFrame : Bool) (page : PageSpec) : Footline :=
+  if gridFrame then
     { step := "footnotesize", left := page.hmargin, right := page.hmargin
       raise := page.classLead.getD (leadingFor page.fontSize) / (2 : Int), sep := footline.sep
       depth := false }
@@ -9074,6 +9077,9 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
 
 /-- The lineage a class's web page sets its lists in. -/
 @[expose] public def ClassRecord.htmlLists (r : ClassRecord) : ListLineage := r.webLists.getD r.lists
+
+/-- Whether a class sets its frames on a grid (`tex/ltframe.cls`): a deck under a design record. -/
+@[expose] public def ClassRecord.gridFrame (r : ClassRecord) : Bool := r.model == .frame && r.design.isSome
 
 /-- A document's class defaults: its class's colour row and ground depth, the
 web's row for a source that is not tex. -/
