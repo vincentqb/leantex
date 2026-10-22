@@ -61,4 +61,27 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t "glossaries: an undeclared key sets nothing and is named"
     ((ds.filter (·.code == "W0104")).size == 1)
 
+/-- authblk's authors and affiliations, doi's links, orcidlink's mark and lastpage's page count set
+as LaTeX sets them, as myst-to-tex's templates use them. -/
+def titleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let page (src : String) : Array CensusPage × Array Diag :=
+    let (doc, ds) := elabStr src
+    (censusOf #[] (layoutOf oneFace doc), ds)
+  let blk := "\\author[1]{Ada Example}\n\\author[2]{Bo Sample}\n\\author[1,2]{Cy Third}\n" ++
+    "\\affil[1]{Example Institute}\n\\affil[2]{Sample University}\n\\title{An Invented Paper}\n"
+  let (c, ds) := page (article "\\usepackage{authblk}\n" (blk ++ "\\maketitle\nBody."))
+  -- lualatex sets "Ada Example1, Bo Sample2, and Cy Third1,2", then each affiliation on its line
+  t s!"authblk: every author with its mark and ', and' before the last, the affiliations below ({censusText c})"
+    (ds.all (·.code != "W0103") && pageHas c 0 "Ada Example" && pageHas c 0 "Cy Third" && pageHas c 0 ", and" &&
+      (lineYOf c 0 "Ada Example").any fun y => (lineYOf c 0 "Example Institute").any fun a =>
+        (lineYOf c 0 "Sample University").any fun b => y < a && a < b)
+  let (c, ds) := page (article ("\\usepackage{doi}\\usepackage{orcidlink}\\usepackage{lastpage}" ++
+      "\\usepackage{fancyhdr}\\pagestyle{fancy}\\fancyhf{}\\cfoot{\\thepage\\ of \\pageref{LastPage}}\n")
+    "Read \\doi{10.1000/zz} by \\orcidlink{0000-0000-0000-0000}.\\newpage Second.")
+  -- lualatex prints "doi:10.1000/zz", the iD mark, and "1 of 2" and "2 of 2" in the feet
+  t s!"doi, orcidlink and lastpage: the link's text, the iD mark named, the page count in the foot ({censusText c})"
+    (ds.all (·.code != "W0103") && pageHas c 0 "doi:10.1000/zz" && pageHas c 0 "iD" &&
+      ds.any (·.code == "N0100") && c.size == 2 && (c[1]?.any fun p => hasStr p.text "2 of 2"))
+
 end Tests.MystPackages

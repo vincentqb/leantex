@@ -1,0 +1,4 @@
+# source: installed doi.sty (2018/09/09). \doi links its identifier at
+# https://doi.org/ behind \doitext, "doi:"; \doiurl and \doitext themselves
+# are not modelled.
+body impl \doi{10.1000/zz}

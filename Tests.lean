@@ -616,6 +616,7 @@ def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   Tests.TitleNames.checks ref oneFace
   Tests.MystPackages.checks ref oneFace
   Tests.MarkdownFront.checks ref oneFace
+  Tests.MystPackages.titleChecks ref oneFace
 
 /-- The table blocks: a cell's side, leading, lengths, strut and column widths. -/
 def tableSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

@@ -1,0 +1,7 @@
+# source: installed authblk.sty (preprint bundle). \author[mark]{name} and
+# \affil[mark]{text} build the list \maketitle sets: the names with their marks
+# raised, " and " between two and ", and " before the last of more, then 1em
+# below each affiliation on its line with its mark; its options, its automatic
+# marks and \Authfont, \Affilfont and the separators are not modelled.
+body impl \author[1]{Ada Example}\affil[1]{Example Institute}\maketitle
+body impl \author[1]{Ada Example}\author[2]{Bo Sample}\affil[1]{Example Institute}\affil[2]{Sample University}\maketitle

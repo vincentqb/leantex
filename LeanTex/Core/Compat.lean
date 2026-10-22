@@ -51,7 +51,8 @@ public def nativePackages : List String :=
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint", "scrextend",
-   "marginnote", "sidenotes", "datetime", "framed", "longtable", "glossaries", "imakeidx"]
+   "marginnote", "sidenotes", "datetime", "framed", "longtable", "glossaries", "imakeidx",
+   "doi", "orcidlink", "lastpage", "authblk"]
 
 /-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
 public def optionSpelling (item : String) : String :=
@@ -8655,6 +8656,7 @@ public inductive Lowering where
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
   | texOrPdf | changeFontSizes | addvspace | noIndent | datetime | textScript | glossary | indexing
+  | doiLink | orcidLink | lastPage
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8839,6 +8841,7 @@ body of \\begin{columns} \
    ⟨"dmyyyydate", [], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"dochome", [.needed],
      .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
+   ⟨"doi", [.needed], .lower .doiLink { leaves := [.without "doi"] }⟩,
    ⟨"doublespacing", [], .native (.page #[(.leading, "1.667")])⟩,
    nothingRow "endlinenomath" 0 "display math lines are numbered like every galley line",
    ⟨"ensuremath", [.needed], .lower .ensureMath {}⟩,
@@ -8923,12 +8926,14 @@ private def ctrlRows6 : List CtrlRow :=
    ⟨"ofoot", [.group], .lower .runningField {}⟩,
    ⟨"ohead", [.group], .lower .runningField {}⟩,
    ⟨"onehalfspacing", [], .native (.page #[(.leading, "1.25")])⟩,
+   ⟨"orcidlink", [.needed], .lower .orcidLink { leaves := [.without "orcidlink"] }⟩,
    ⟨"ordinaldate", [.needed], .lower .datetime { leaves := [.without "datetime"] }⟩,
    ⟨"overprintstate", [.needed], .refuse .W0104 .each (Diag.say .W0104 .command "\\overprintstate")
      none⟩,
    ⟨"pagebreak", [.opt], .lower .pageBreak {}⟩,
    ⟨"pagecolor", [.opt, .needed], .lower .pageColor {}⟩,
    ⟨"pagecolorspace", [.needed], .discard pageInks "pagecolorspace"⟩,
+   ⟨"pageref", [.star, .needed], .lower .lastPage { leaves := [.without "lastpage"] }⟩,
    ⟨"pagestyle", [.group],
      .lower .pageStyle { paramStands := some "the page style in force stands" }⟩,
    nothingRow "phantomsection" 0 "every heading carries its own anchor",
@@ -12101,6 +12106,9 @@ private def datePieceRaws (ps : Array DateText.Piece) (pos : Pos) : Array Raw :=
 private def dateField (c : CtrlCall) (i : Nat) : Option Nat :=
   (c.src i).trimAscii.toString.toNat?
 
+/-- The resolver doi.sty's `\doiurl` names. -/
+private def doiUrl : String := "https://doi.org/"
+
 /-- datetime's date commands: `\newdate` names a date, `\displaydate` and `\formatdate` give one in
 the format in force, the format switches and `\showdow` choose that format, and the name commands
 give a day or month name; a field that is no number, or the clock's date, gives nothing. -/
@@ -12844,6 +12852,22 @@ and 'transparent=<n>' are understood")
 that graph")
     return #[]
   | .datetime => datetimeCall c
+  | .doiLink => do
+    -- doi.sty's \doi links the identifier at doi.org behind its \doitext, `doi:`
+    let id := (c.src 0).trimAscii.toString
+    return #[.ctrl "href" c.pos, .group #[.word (doiUrl ++ id) c.pos] c.pos,
+      .group #[.word ("doi:" ++ id) c.pos] c.pos]
+  | .orcidLink => do
+    let id := (c.src 0).trimAscii.toString
+    sayOnce "orcidlink:mark" .N0100 (Diag.translated "\\orcidlink") c.pos
+      (detail := some "the ORCID iD mark set as its letters in ORCID's green, linked as the package links it")
+    return #[.ctrl "href" c.pos, .group #[.word ("https://orcid.org/" ++ id) c.pos] c.pos,
+      .group #[.ctrl "textcolor" c.pos, .sym '[' c.pos, .word "HTML" c.pos, .sym ']' c.pos,
+        .group #[.word "A6CE39" c.pos] c.pos, .group #[.word "iD" c.pos] c.pos] c.pos]
+  | .lastPage => do
+    -- lastpage's label stands on the last page, so its page is the page count
+    if (c.src 1).trimAscii.toString == "LastPage" then return #[.ctrl "pagecount" c.pos]
+    return #[.ctrl c.name c.pos] ++ c.raws.extract c.start c.stop
   -- latex.ltx's `\textsuperscript` and `\textsubscript`: a script of text in an `\mbox`.
   | .textScript => return textScriptRaws (c.name == "textsuperscript") (c.arg 0) c.pos
   | .glossary => glossaryCall c
@@ -12908,6 +12932,9 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .changeFontSizes => some { args := [none, some "12pt"], inDoc := false }
   | .addvspace => some { args := [some "1em"], inDoc := true }
   | .datetime => some { args := [some "15", some "1", some "2026"], inDoc := true }
+  | .doiLink => some { args := [some "10.1000/zz"], inDoc := true }
+  | .orcidLink => some { args := [some "0000-0000-0000-0000"], inDoc := true }
+  | .lastPage => some { args := [none, some "LastPage"], inDoc := true }
   | .textScript => some { args := [some "x"], inDoc := true }
   | .glossary => some { args := [none, some "zza", some "ZA", some "Zulu Alpha"], inDoc := true }
   | .thisPageStyle => some { args := [some "plain"], inDoc := true }
@@ -16315,24 +16342,113 @@ private def loadsAndSize (raws : Array Raw) : List String × Nat × String := Id
     | _ => pure ()
   return (pkgs, pt, sep)
 
-/-- A source with framed.sty's and longtable's environments set as their templates set them, where
-it loads their package. -/
+/-- The first index at or past `i` that holds no space. -/
+private def pastSpaces (raws : Array Raw) (i : Nat) : Nat := Id.run do
+  for k in [i:raws.size] do
+    unless raws[k]? matches some .space do return k
+  return raws.size
+
+/-- The optional `[…]` after `raws[i]` and the index past it, spaces skipped before it. -/
+private def bracketAt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat := Id.run do
+  let j := pastSpaces raws i
+  unless raws[j]? matches some (.sym '[' _) do return (none, i)
+  let mut body : Array Raw := #[]
+  for k in [j + 1:raws.size] do
+    match raws[k]? with
+    | some (.sym ']' _) => return (some body, k + 1)
+    | some r => body := body.push r
+    | none => break
+  return (none, i)
+
+/-- authblk's `\author` its authors so far set: each name with its mark raised, `and` between two
+and `, and` before the last of more, then 1em below each affiliation with its mark on a line. -/
+private def authblkAuthor (authors affils : Array (Array Raw × Array Raw)) (pos : Pos) : Array Raw :=
+  Id.run do
+  let mark (m : Array Raw) : Array Raw :=
+    if m.all (· matches .space) then #[] else #[.ctrl "textsuperscript" pos, .group m pos]
+  let mut out : Array Raw := #[]
+  for ((m, name), i) in authors.zipIdx do
+    if i > 0 then
+      out := out ++ (if authors.size == 2 then #[.space, .word "and" pos, .space]
+        else if i + 1 == authors.size then #[.word "," pos, .space, .word "and" pos, .space]
+        else #[.word "," pos, .space])
+    out := (out.append name).append (mark m)
+  for ((m, a), i) in affils.zipIdx do
+    out := out.push (.ctrl "\\" pos)
+    if i == 0 then out := out ++ #[.sym '[' pos, .word "1em" pos, .sym ']' pos]
+    out := (out.append (mark m)).append a
+  return out
+
+/-- authblk's `\author[mark]{name}` and `\affil[mark]{text}` in `raws`, each setting `\author` to the
+whole list so far, as authblk's `\maketitle` reads it, with the lists after them. -/
+private def authblkRun (lists : Array (Array Raw × Array Raw) × Array (Array Raw × Array Raw))
+    (raws : Array Raw) : Array Raw × Array (Array Raw × Array Raw) × Array (Array Raw × Array Raw) :=
+  Id.run do
+  let mut out : Array Raw := #[]
+  let mut authors := lists.1
+  let mut affils := lists.2
+  let mut i := 0
+  for _ in [0:raws.size] do
+    if i ≥ raws.size then break
+    match raws[i]? with
+    | some (.ctrl n p) =>
+      if n == "author" || n == "affil" then
+        let (m, j) := bracketAt raws (i + 1)
+        let k := pastSpaces raws j
+        match raws[k]? with
+        | some (.group g _) =>
+          if n == "author" then authors := authors.push (m.getD #[], g)
+          else affils := affils.push (m.getD #[], g)
+          out := out ++ #[.ctrl "author" p, .group (authblkAuthor authors affils p) p]
+          i := k + 1
+        | _ => out := out.push (.ctrl n p); i := i + 1
+      else out := out.push (.ctrl n p); i := i + 1
+    | some r => out := out.push r; i := i + 1
+    | none => break
+  return (out, authors, affils)
+
+/-- A source's authblk author list set as `\author`, in its preamble and its document's body, where it
+loads authblk and calls `\affil`. -/
+private def authblkLowered (pkgs : List String) (raws : Array Raw) : Array Raw := Id.run do
+  unless pkgs.contains "authblk" && raws.any (fun r => r matches .ctrl "affil" _ ||
+      (match r with | .env "document" b _ => b.any (· matches .ctrl "affil" _) | _ => false)) do
+    return raws
+  let (top, authors, affils) := authblkRun (#[], #[]) raws
+  return top.map fun r =>
+    if let .env "document" b p := r then .env "document" (authblkRun (authors, affils) b).1 p else r
+
+/-- A source with framed.sty's and longtable's environments set as their templates set them, and
+authblk's authors as its `\author`, where it loads their package. -/
 public def packageEnvsLowered (raws : Array Raw) : Array Raw :=
   let found := loadsAndSize raws
-  if found.1.any (["framed", "longtable"].contains ·) then
+  authblkLowered found.1 (if found.1.any (["framed", "longtable"].contains ·) then
     PackageEnvs.lower (verbatimRaws "framed.sty") found.1 found.2.1 found.2.2 #[] raws.toList
-  else raws
+  else raws)
 
-/-- A package call holds no environment, so the lowering leaves it as it stands. -/
-public theorem packageEnvsLowered_package_exact (command names : String) (pos groupPos namePos : Pos) :
+/-- A package call calls no `\affil`, so authblk's pass leaves it as it stands. -/
+private theorem authblkLowered_package_exact (pkgs : List String) (command names : String)
+    (pos groupPos namePos : Pos) (hc : command = "usepackage" ∨ command = "RequirePackage") :
+    authblkLowered pkgs (packageCall command names pos groupPos namePos) =
+      packageCall command names pos groupPos namePos := by
+  rcases hc with rfl | rfl <;> simp [authblkLowered, packageCall_exact]
+
+/-- A package call holds no environment and calls no `\affil`, so the lowering leaves it as it
+stands. -/
+public theorem packageEnvsLowered_package_exact (command names : String) (pos groupPos namePos : Pos)
+    (hc : command = "usepackage" ∨ command = "RequirePackage") :
     packageEnvsLowered (packageCall command names pos groupPos namePos) =
       packageCall command names pos groupPos namePos := by
   unfold packageEnvsLowered
   dsimp only
   split
-  · rw [packageCall_exact]
-    exact PackageEnvs.lower_command_word _ _ _ _ command names pos namePos groupPos
-  · rfl
+  · have h := PackageEnvs.lower_command_word (verbatimRaws "framed.sty")
+      (loadsAndSize (packageCall command names pos groupPos namePos)).1
+      (loadsAndSize (packageCall command names pos groupPos namePos)).2.1
+      (loadsAndSize (packageCall command names pos groupPos namePos)).2.2 command names pos namePos groupPos
+    rw [packageCall_exact] at h ⊢
+    rw [h, ← packageCall_exact]
+    exact authblkLowered_package_exact _ command names pos groupPos namePos hc
+  · exact authblkLowered_package_exact _ command names pos groupPos namePos hc
 
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)

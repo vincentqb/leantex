@@ -1,0 +1,4 @@
+# source: installed orcidlink.sty. \orcidlink links an ORCID iD at orcid.org
+# behind the iD mark, which is set as its letters in ORCID's green and named;
+# \orcidlogo is not modelled.
+body impl \orcidlink{0000-0000-0000-0000}
