@@ -15,42 +15,42 @@
 {"name":"Ebb.some_moored","module":"Ebb","kind":"theorem","range":[76,0,78,72],"head":[76,0],"signature":[77,20,77,67],"proof":[77,68,78,72],"proved":true,"prop":true,"doc":"An existential's first statement about its name reads as one too. ","type":[["const","Exists"],["const","Ebb.Barge"],["app",0,1],["const","Ebb.Barge"],["const","And"],["const","Ebb.Moored"],["bvar",0],["app",5,6],["app",4,7],["const","Eq"],["const","Nat"],["app",9,10],["const","Ebb.Barge.hull"],["bvar",0],["app",12,13],["app",11,14],["const","OfNat.ofNat"],["const","Nat"],["app",16,17],["nat","0"],["app",18,19],["const","instOfNatNat"],["nat","0"],["app",21,22],["app",20,23],["app",15,24],["app",8,25],["lam","b","d",3,26],["app",2,27]]}
 {"name":"Ebb.swap","module":"Ebb","kind":"theorem","range":[20,0,21,59],"head":[20,0],"signature":[21,13,21,47],"proof":[21,48,21,59],"proved":true,"prop":true,"doc":"An equivalence of conjunctions under a quantifier stands as a block, its sides bare. ","type":[["sort","0"],["sort","0"],["const","Iff"],["const","And"],["bvar",1],["app",3,4],["bvar",0],["app",5,6],["app",2,7],["const","And"],["bvar",0],["app",9,10],["bvar",1],["app",11,12],["app",8,13],["pi","q","d",1,14,0],["pi","p","d",0,15,0]]}
 {"name":"List.TFAE","module":"Ebb","kind":"def","range":[7,0,9,43],"head":[7,0],"signature":[8,14,8,36],"proof":[8,37,9,43],"proved":true,"prop":false,"doc":"Each statement of a list implies every other, as Mathlib's TFAE says. ","type":[["const","List"],["sort","0"],["app",0,1],["sort","0"],["pi","l","d",2,3,0]],"value":[["const","List"],["sort","0"],["app",0,1],["sort","0"],["const","Membership.mem"],["sort","0"],["app",4,5],["const","List"],["sort","0"],["app",7,8],["app",6,9],["const","List.instMembership"],["sort","0"],["app",11,12],["app",10,13],["bvar",1],["app",14,15],["bvar",0],["app",16,17],["sort","0"],["const","Membership.mem"],["sort","0"],["app",20,21],["const","List"],["sort","0"],["app",23,24],["app",22,25],["const","List.instMembership"],["sort","0"],["app",27,28],["app",26,29],["bvar",3],["app",30,31],["bvar",0],["app",32,33],["const","Iff"],["bvar",3],["app",35,36],["bvar",1],["app",37,38],["pi","a","d",34,39,1],["pi","y","d",19,40,0],["pi","a","d",18,41,1],["pi","x","d",3,42,0],["lam","l","d",2,43]]}
-{"const":"False","binders":"","doc":"`False` is the empty proposition. Thus, it has no introduction rules.","names":[]}
+{"const":"False","binders":""}
 {"const":"Ebb.Barge.draft","binders":"d","field":0}
 {"const":"Ebb.Moored","binders":"d","doc":"`b` is moored, its draft positive. ","names":["b"]}
 {"const":"Ebb.nameOf","binders":"d","doc":"The label of `b`, its hull number. ","names":["b"]}
-{"const":"String","binders":"","doc":"A string is a sequence of Unicode scalar values.","names":[]}
-{"const":"List.map","binders":"iidd","doc":"Applies a function to each element of the list, returning the resulting list of values.","names":["f","l"]}
-{"const":"Membership.mem","binders":"iicdd","doc":"The membership relation `a ∈ s : Prop` where `a : α`, `s : γ`. ","names":["a","a"]}
-{"const":"Exists","binders":"id","doc":"Existential quantification. If `p : α → Prop` is a predicate, then `∃ x : α, p x`","names":["p"]}
+{"const":"String","binders":""}
+{"const":"List.map","binders":"iidd"}
+{"const":"Membership.mem","binders":"iicdd"}
+{"const":"Exists","binders":"id"}
 {"const":"List.TFAE","binders":"d","field":0,"doc":"Each statement of a list implies every other, as Mathlib's TFAE says. ","names":["l"]}
 {"const":"Nat.instMod","binders":""}
 {"const":"instHMod","binders":"ic"}
 {"const":"instOfNatNat","binders":"d"}
-{"const":"LE.le","binders":"icdd","doc":"The less-equal relation: `x ≤ y` ","names":["a","a"]}
+{"const":"LE.le","binders":"icdd"}
 {"const":"instLENat","binders":""}
-{"const":"List.cons","binders":"idd","doc":"The list whose first element is `head`, where `tail` is the rest of the list.","names":["head","tail"]}
-{"const":"List","binders":"d","doc":"Linked lists: ordered lists, in which each element has a reference to the next element.","names":["α"]}
+{"const":"List.cons","binders":"idd"}
+{"const":"List","binders":"d"}
 {"const":"instHAdd","binders":"ic"}
-{"const":"HMod.hMod","binders":"iiicdd","doc":"`a % b` computes the remainder upon dividing `a` by `b`.","names":["a","a"]}
-{"const":"And","binders":"dd","doc":"`And a b`, or `a ∧ b`, is the conjunction of propositions. It can be","names":["a","b"]}
-{"const":"Iff","binders":"dd","doc":"If and only if, or logical bi-implication. `a ↔ b` means that `a` implies `b` and vice versa.","names":["a","b"]}
+{"const":"HMod.hMod","binders":"iiicdd"}
+{"const":"And","binders":"dd"}
+{"const":"Iff","binders":"dd"}
 {"const":"List.instMembership","binders":"i"}
-{"const":"List.drop","binders":"idd","doc":"Removes the first `n` elements of the list `xs`. Returns the empty list if `n` is greater than the","names":["n","xs"]}
-{"const":"HAdd.hAdd","binders":"iiicdd","doc":"`a + b` computes the sum of `a` and `b`.","names":["a","a"]}
+{"const":"List.drop","binders":"idd"}
+{"const":"HAdd.hAdd","binders":"iiicdd"}
 {"const":"Ebb.Barge.hull","binders":"d","field":0}
-{"const":"Nat","binders":"","doc":"The natural numbers, starting at zero.","names":[]}
-{"const":"LT.lt","binders":"icdd","doc":"The less-than relation: `x < y` ","names":["a","a"]}
-{"const":"True","binders":"","doc":"`True` is a proposition and has only an introduction rule, `True.intro : True`.","names":[]}
+{"const":"Nat","binders":""}
+{"const":"LT.lt","binders":"icdd"}
+{"const":"True","binders":""}
 {"const":"instAddNat","binders":""}
-{"const":"Or","binders":"dd","doc":"`Or a b`, or `a ∨ b`, is the disjunction of propositions. There are two","names":["a","b"]}
+{"const":"Or","binders":"dd"}
 {"const":"instLTNat","binders":""}
-{"const":"OfNat.ofNat","binders":"idc","doc":"The `OfNat.ofNat` function is automatically inserted by the parser when","names":["x"]}
-{"const":"Eq","binders":"idd","doc":"The equality relation. It has one introduction rule, `Eq.refl`.","names":["a","a"]}
-{"const":"List.length","binders":"id","field":1,"doc":"The length of a list.","names":["a"]}
-{"const":"Not","binders":"d","doc":"`Not p`, or `¬p`, is the negation of `p`. It is defined to be `p → False`,","names":["a"]}
+{"const":"OfNat.ofNat","binders":"idc"}
+{"const":"Eq","binders":"idd"}
+{"const":"List.length","binders":"id","field":1}
+{"const":"Not","binders":"d"}
 {"const":"Ebb.Barge","binders":""}
-{"const":"List.nil","binders":"i","doc":"The empty list, usually written `[]`. ","names":[]}
+{"const":"List.nil","binders":"i"}
 {"command":[7,0,9,43],"text":"/-- Each statement of a list implies every other, as Mathlib's TFAE says. -/\ndef List.TFAE (l : List Prop) : Prop := forall x, Membership.mem l x ->\n  forall y, Membership.mem l y -> (x <-> y)"}
 {"command":[11,0,11,13],"text":"namespace Ebb"}
 {"command":[13,0,15,25],"text":"/-- A quantified hypothesis stands as a block under its condition. -/\ntheorem none_all (h : forall n : Nat, n = 0) : False :=\n  absurd (h 1) (by omega)"}

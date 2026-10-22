@@ -227,7 +227,13 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     (docPhrase? "`b.draft` is positive" #["b"] == none &&
       docPhrase? "`b` is `moored`" #["b"] == none && docPhrase? "`b is moored" #["b"] == none &&
       docPhrase? "The length of a list" #["l"] == none &&
-      docPhrase? "Removes the first `n` elements" #["n"] == none)
+      docPhrase? "Removes the first `n` elements" #["n"] == none &&
+      docPhrase? "``b`` is moored" #["b"] == none && docPhrase? "`b` is *moored*" #["b"] == none &&
+      docPhrase? "The answer to #1 for `b`" #["b"] == none && docPhrase? "`b` is moored!" #["b"] == none)
+  t "prose: a documentation comment's first sentence runs across its line ends, never past its first paragraph"
+    (docPhrase? "`b` is moored when\n  its draft is positive." #["b"] == some "#1 is moored when its draft is positive" &&
+      docPhrase? "\n  `b` is moored\n\nMore here." #["b"] == some "#1 is moored" &&
+      docPhrase? "`a` `b`" #["a", "b"] == some "#1 #2")
   let docFacts : LeanFacts.Facts := { factsWith (#[("Tide.Calm", #[.explicit]), ("Tide.rise", #[.explicit]),
       ("Tide.Odd", #[.explicit, .explicit])] ++ eqBinders) with
     docs := #[("Tide.Calm", "`x` is calm", #["x"]), ("Tide.rise", "The rise of `x`", #["x"]),
@@ -236,6 +242,30 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "prose: a constant's documentation gives its phrase where none is declared, its refusal unreported and its phrase uncounted"
     ((fromDocs.table.rels.lookup "Tide.Calm").isSome && (fromDocs.table.phrases.lookup "Tide.rise").isSome &&
       (fromDocs.table.rels.lookup "Tide.Odd").isNone && fromDocs.refused.isEmpty && fromDocs.phrases.isEmpty)
+  let twiceFacts : LeanFacts.Facts := { factsWith #[("Tide.Pair", #[.explicit, .explicit]),
+      ("Tide.Calm", #[.explicit])] with
+    docs := #[("Tide.Pair", "`a` matches `a`", #["a", "a"]), ("Calm", "`x` is calm", #["x"])] }
+  t "prose: a comment naming one argument twice, or naming a constant the facts do not, gives no phrase"
+    (((tableFor twiceFacts []).table.rels.lookup "Tide.Pair").isNone &&
+      ((tableFor twiceFacts []).table.rels.lookup "Tide.Calm").isNone)
+  let ownFacts : LeanFacts.Facts := { factsWith #[("Tide.Calm", #[.implicit, .explicit])] with
+    decls := #[{ theoremAt "Tide.Calm" 1 (.pi "α" .implicit false (.apps (.sort "1") [])
+      (.pi "x" .explicit false (.apps (.bvar 0) []) (.apps (.sort "0") []))) with
+        kind := .definition, prop := false, doc := some "`x` is calm, as the sea is." }] }
+  t "prose: a declaration's own comment gives its phrase, its slots its explicit binders"
+    (((tableFor ownFacts []).table.rels.lookup "Tide.Calm").isSome)
+  t "prose: a refused directive keeps its constant from its comment's phrase too"
+    (((tableFor docFacts [("Calm", "#1 #1")]).table.rels.lookup "Tide.Calm").isNone &&
+      (tableFor docFacts [("Calm", "#1 #1")]).refused.size == 1)
+  let docLine := "{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
+    "{\"name\":\"a\",\"module\":\"\",\"kind\":\"theorem\",\"range\":[1,0,1,1],\"head\":[1,0]," ++
+    "\"signature\":null,\"proof\":null,\"proved\":true,\"prop\":true,\"doc\":\"`p` holds\"," ++
+    "\"type\":[[\"const\",\"True\"]]}\n" ++
+    "{\"const\":\"Tide.Calm\",\"binders\":\"d\",\"doc\":\"`x` is calm\",\"names\":[\"x\"]}\n" ++
+    "{\"leantex-lean-export-end\":1}\n"
+  t "prose: the facts carry a declaration's comment and each constant's comment and explicit names"
+    ((LeanFacts.decode docLine).toOption.any fun f =>
+      f.decls.any (·.doc == some "`p` holds") && f.docs == #[("Tide.Calm", "`x` is calm", #["x"])])
   t "prose: a declared phrase and the core table's each win over a constant's documentation"
     ((tableFor docFacts [("Calm", "#1 is still")]).table.rels.lookup "Tide.Calm" ==
         (tableFor (factsWith #[("Tide.Calm", #[.explicit])]) [("Calm", "#1 is still")]).table.rels.lookup "Tide.Calm" &&

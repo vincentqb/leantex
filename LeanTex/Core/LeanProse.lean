@@ -2472,27 +2472,31 @@ private def declareStep (facts : LeanFacts.Facts) (acc : Declared) (e : String �
   | .error r => { acc with refused := acc.refused.push (e.1, r) }
 
 /-- A documentation comment's opening clause as its constant's phrase, each backticked explicit
-binder its slot and an opening article lowered; none without a slot, with other code, or opening on
-neither. -/
+binder its slot and an opening article lowered; none without a slot, with other code or markup, or
+opening on neither. -/
 public def docPhrase? (doc : String) (names : Array String) : Option String := Id.run do
+  let blank (p : String) : Bool := p.all Char.isWhitespace
+  let para : String := ((doc.splitOn "\n\n").find? (!blank ·)).getD ""
   let mut out := ""
   let mut code := ""
   let mut inCode := false
-  for c in doc.trimAscii.toString.toList do
+  for c in para.toList do
     if inCode then
       if c == '`' then
-        match names.toList.findIdx? (· == code) with
+        match names.toList.findIdx? (fun (n : String) => n == code) with
         | some k => out := out ++ s!"#{k + 1}"
         | none => return none
         code := ""
         inCode := false
       else code := code.push c
     else if c == '`' then inCode := true
-    else if c == '.' || c == ',' || c == ';' || c == ':' || c == '\n' then break
-    else out := out.push c
+    else if c == '.' || c == ',' || c == ';' || c == ':' then break
+    else if "*_[]<>\\#!|~$".contains c then return none
+    else out := out.push (if c.isWhitespace then ' ' else c)
   if inCode then return none
-  let said := out.trimAscii.toString
-  let first := (said.splitOn " ").headD ""
+  let words := (out.splitOn " ").filter (· != "")
+  let said := " ".intercalate words
+  let first := words.headD ""
   if !said.contains '#' then return none
   if first.startsWith "#" then return some said
   if ["the", "a", "an"].contains first.decapitalize then return some said.decapitalize
@@ -2513,11 +2517,12 @@ public def docPhrases (facts : LeanFacts.Facts) : List (String × String) :=
 
 /-- What a page says its statements through: the core table, then each declared phrase it takes,
 with each refused one and why, then each constant's its documentation gives where neither the core
-table nor a declared phrase says it, none of those refused or counted. -/
+table nor a directive names it, none of those refused or counted. -/
 public def tableFor (facts : LeanFacts.Facts) (declared : List (String × String)) : Declared :=
   let core := coreTable facts.collectionFirst
   let d := declared.foldl (declareStep facts) ⟨core, [], #[], #[]⟩
-  let said (c : String) := d.taken.contains c || core.rels.any (·.1 == c) || core.phrases.any (·.1 == c)
+  let said (c : String) := declared.any (fun e => (namedBy facts e.1).contains c) ||
+    core.rels.any (·.1 == c) || core.phrases.any (·.1 == c) || !facts.binders.any (·.1 == c)
   let fromDocs := ((docPhrases facts).filter fun (c, _) => !said c).foldl (declareStep facts) d
   { fromDocs with refused := d.refused, phrases := d.phrases }
 

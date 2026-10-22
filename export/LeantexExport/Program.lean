@@ -291,13 +291,18 @@ run_cmd do
     unless seen.contains w.id do
       lines := lines.push (s!"\{\"failed\":{jstr w.name.toString},\"kind\":\"{w.kind}\"," ++
         s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}],\"proof\":{spanText w.val}}")
+  let ownRoot := (moduleName.splitOn ".").headD ""
   for c in consts.toList do
     if let some ci := env.find? c then
       let field ← liftTermElabM <| try fieldOf c ci.type catch _ => pure none
       let fieldPart := match field with
         | some i => s!",\"field\":{i}"
         | none => ""
-      let docPart ← match ← findDocString? env c with
+      let own : Bool := match env.getModuleIdxFor? c with
+        | none => true
+        | some i => ownRoot != "" &&
+          (env.header.moduleNames[i.toNat]?).any (·.getRoot.toString == ownRoot)
+      let docPart ← match ← if own then findDocString? env c else pure none with
         | some d => do
           let names ← liftTermElabM do
             try
@@ -306,7 +311,8 @@ run_cmd do
                 let n := jstr decl.userName.eraseMacroScopes.toString
                 pure (if decl.binderInfo.isExplicit then some n else none)
             catch _ => pure #[]
-          let first := ((d.splitOn "\n").find? fun (l : String) => l.any fun (ch : Char) => !ch.isWhitespace).getD ""
+          let first := ((d.splitOn "\n\n").find? fun (l : String) =>
+            l.any fun (ch : Char) => !ch.isWhitespace).getD ""
           pure s!",\"doc\":{jstr first},\"names\":[{",".intercalate names.toList}]"
         | none => pure ""
       lines := lines.push
