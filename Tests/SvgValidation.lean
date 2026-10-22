@@ -170,8 +170,7 @@ def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
             ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
         let log := run.stdout ++ run.stderr
         check ref s!"SVG doctype {name}: {extension} keeps the figure"
-          (run.exitCode == 0 && (log.splitOn "W0602").length == 1 &&
-            (log.splitOn "W0602").length == 1)
+          (run.exitCode == 0 && (log.splitOn "W0602").length == 1)
       let html ← IO.FS.readFile (output / "figure.html")
       let (_, published) ← svgPublishedAsset html "img" "src"
       check ref s!"SVG doctype {name}: original browser source publishes"

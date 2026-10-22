@@ -726,7 +726,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
             d.subject == some ("ctrl:nothing:" ++ key)).size == 1)
       | none =>
         t s!"compat {name} is consumed with its loss named ({spacing})"
-          (diagDs.any fun d => d.code == "W0104")
+          (diagDs.any fun d => d.code == "W0104" && d.subject.any (·.startsWith "ctrl:"))
   let (unkDoc, unkDs) := elabStr ("\\documentclass{article}\n" ++
     "\\begin{document}\n\\zzzNotAControl{kept one}{kept two} x\n\\end{document}")
   let unkText := Ir.plainText (match unkDoc.body with
@@ -5593,7 +5593,7 @@ def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "thanks in the title fires W0012 and keeps its text inline"
     (let (doc, ds) := elabStr (dvDoc
       "\\title{A Panel\\thanks{Synthetic Grant 1}}\n" "x\n\\maketitle")
-     ds.any (·.code == "W0012") &&
+     ds.any (fun d => d.code == "W0012" && d.subject == some "ctrl:thanks") &&
        ((Ir.blocksText doc.body).splitOn "Synthetic Grant 1").length == 2)
   t "a title without thanks stays silent on W0012"
     ((dvE (dvDoc "\\title{A Panel}\n" "x\n\\maketitle")).all (·.code != "W0012"))

@@ -248,7 +248,7 @@ warning: missing math font [W0003]
 ── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
 warning: substituted encoding 'Windows-1252 (Latin-1)' for 'UTF-8' [W0004]
   note: byte 0x92 at offset 83
-── W0005 (degraded) content past its measure, where no re-flowed declared line accounts for it
+── W0005 (degraded) content past its measure or page, where no re-flowed declared line accounts for it
 warning: overfull line [W0005]
   note: 175.215pt too wide
 warning: overfull column for frame [W0005]
@@ -779,7 +779,7 @@ warning: unreadable image figures/plot.png [W0601]
   note: not found at /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added
 warning: unreadable image figures/plot.png [W0601]
   note: permission denied (error code: 13)
-── W0602 (degraded) an image format an artifact cannot use; a placeholder box marks its place
+── W0602 (degraded) an image an artifact cannot use; a placeholder box marks its place
 warning: unsupported image figures/plot.gif [W0602]
   note: not a PNG, JPEG, or PDF file
 warning: unsupported image figures/box.pdf [W0602]

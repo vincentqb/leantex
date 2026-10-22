@@ -1743,14 +1743,17 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a group inside \\text is grouping, not a construct"
     (warnCodes "$\\text{a{b}c}$" == [] &&
       glyphChars "$\\text{a{b}c}$" == glyphChars "$\\text{abc}$")
+  let styleDropped (src : String) : Bool :=
+    let ds := (elabStr src).2.filter (·.severity == .warning)
+    ds.size == 1 && ds.all fun d => d.code == "W0012" && d.subject.any (·.startsWith "math:style:")
   t "a style command inside \\text keeps its letters, names the styling"
-    (warnCodes "$\\text{\\textbf{bold} word}$" == ["W0012"] &&
+    (styleDropped "$\\text{\\textbf{bold} word}$" &&
       glyphChars "$\\text{\\textbf{bold} word}$" == glyphChars "$\\text{bold word}$")
   t "a symbol inside \\text contributes its scalar"
     (warnCodes "$\\text{a\\ldots b}$" == [] &&
       (glyphChars "$\\text{a\\ldots b}$").contains '…')
   t "a colour inside \\text keeps its content, names the colour"
-    (warnCodes "$\\text{\\textcolor{indigo}{red} ink}$" == ["W0012"] &&
+    (styleDropped "$\\text{\\textcolor{indigo}{red} ink}$" &&
       glyphChars "$\\text{\\textcolor{indigo}{red} ink}$" ==
         glyphChars "$\\text{red ink}$")
   t "a coloured styled alignment renders as a grid, never as source"

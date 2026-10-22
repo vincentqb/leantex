@@ -317,7 +317,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
   | .W0003 => ("0003", .degraded, "no math face available; math set as plain text")
   | .E0405 => ("0405", .dropped, "font has no glyph for a character; dropped")
-  | .W0005 => ("0005", .degraded, "content past its measure, where no re-flowed declared line accounts for it")
+  | .W0005 => ("0005", .degraded, "content past its measure or page, where no re-flowed declared line accounts for it")
   | .W0006 => ("0006", .degraded, "a declared face that is not installed; the nearest installed face substitutes")
   | .W0007 => ("0007", .degraded, "paged-media furniture omitted from HTML")
   | .W0008 => ("0008", .config, "\\fonts dir is not a directory")
@@ -392,7 +392,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0353 => ("0353", .degraded, "an unknown bibliography style; the reference list is set as unsrtnat")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
-  | .W0602 => ("0602", .degraded, "an image format an artifact cannot use; a placeholder box marks its place")
+  | .W0602 => ("0602", .degraded, "an image an artifact cannot use; a placeholder box marks its place")
   | .N0359 => ("0359", .info,
     "a \\note nested inside another note's frame is dropped, as beamer drops it")
   | .W0362 => ("0362", .degraded, "picture entirely outside the rendered subset; a placeholder box marks its place")

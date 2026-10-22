@@ -13,7 +13,7 @@ open LeanTex.Core Scoreboard
 def verdict (doc : Ir.Doc) (ds : Array Diag) : Int :=
   let drawn := Elab.enginePictures doc.body > 0 && !(ds.any (·.code == "W0362"))
   let lost := ds.any fun d => d.code == "W0334" || d.code == "E0333" ||
-    d.code == "W0012" && !d.subject.any (·.startsWith "math:style:")
+    d.code == "W0012" && !d.subject.any fun s => s.startsWith "math:style:" || s == "ctrl:thanks"
   if !drawn then 0 else if lost then 1 else 2
 
 def measureTier : IO (Array String × Array Row) := do
