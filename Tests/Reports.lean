@@ -2493,12 +2493,12 @@ def reports : List Report := [
     accept := ["main's binary at 0a9241e0 on an invented statement with a negated disjunction and a quantified hypothesis: an overfull line (W0005) at an 8.5cm measure and at the article's, the guards failing there; this tree breaks inside the parentheses after their operators, the negation's sign and the quantifiers' heads, with no overfull line, in the PDF and on the web page",
       "the corpus built by main's binary at 0a9241e0 and by this tree's: every PDF, web page and twin byte-identical but the new math fixture's"]
     state := .guarded "0a9241e0" .before .author },
-  { id := "R999", date := "2026-10-22"
+  { id := "R289", date := "2026-10-22"
     what := "a Lean quantifier whose first hypothesis is a relation of words about its one bound name read as a conditional under it, and an existential's first conjunct about it as one of a pair, where a relative clause says it"
     pins := [check% censusChecks, check% Tests.LeanProseReading.readingChecks,
       check% Tests.LeanProse.leanProseChecks, thm% LeanProse.parse_render_exact]
-    accept := ["the parent branch's binary at c6b85a8a on the Lean prose fixture: For every b : Barge, if b is moored, then 0 < b.draft, and There is b : Barge such that b is moored and b.hull = 0, the guards failing there; this tree says For every b : Barge that is moored, 0 < b.draft, and There is b : Barge that is moored such that b.hull = 0, in the PDF, on the web page and in the twin"]
-    state := .guarded "c6b85a8a" .before .author }
+    accept := ["main's binary at 590f187f on the Lean prose fixture: For every b : Barge, if b is moored, then 0 < b.draft, and There is b : Barge such that b is moored and b.hull = 0, the guards failing there; this tree says For every b : Barge that is moored, 0 < b.draft, and There is b : Barge that is moored such that b.hull = 0, in the PDF, on the web page and in the twin"]
+    state := .guarded "590f187f" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
