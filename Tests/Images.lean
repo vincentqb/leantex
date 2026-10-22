@@ -990,7 +990,7 @@ width=.4\\textwidth]{rects.png}%\n"
   | some p =>
     match p.footBox with
     | some (bh, bd) =>
-      let th := Layout.footFloor geom.pageH Ir.footline.sep bh bd
+      let th := Layout.footFloor geom Ir.footline.sep bh bd
       t s!"image rows: .28\\textheight is .28 of the frame's text area, {reprStr th}: {reprStr bs}"
         (bs.size == 4 && bs.all fun (_, _, _, _, hh) => hh == 280 * th / 1000)
     | none => t "image rows: the frame page carries the footline" false
@@ -1005,7 +1005,7 @@ width=.4\\textwidth]{rects.png}%\n"
   | some p =>
     match p.footBox with
     | some (bh, bd) =>
-      let th := Layout.footFloor logoGeom.pageH Ir.footline.sep bh bd
+      let th := Layout.footFloor logoGeom Ir.footline.sep bh bd
       t s!"image rows: a logo's .2\\textheight is .2 of the frame's text area, {reprStr th}: \
 {reprStr (boxes logoOut)}"
         ((boxes logoOut).map (·.2.2.2.2) == #[200 * th / 1000])

@@ -5188,7 +5188,7 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
   t "footnote: a frame's note lands at the frame foot"
     (!(notesOf dout).isEmpty && dout.pages.all fun p =>
       p.lines.all fun n => !n.note ||
-        (n.y ≤ Layout.frameFloor dgeom.pageH Ir.footline.sep p.footBox &&
+        (n.y ≤ Layout.frameFloor dgeom Ir.footline.sep p.footBox &&
           dgeom.bodyBottom < n.y && (flowOf dout).all fun b => b.y < n.y))
   let (bigDoc, _) := elabStr (dvDoc
     "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"

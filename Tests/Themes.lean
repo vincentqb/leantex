@@ -810,7 +810,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let footSize := Ir.footlineSize Ir.sizeScale geom0.fontSize
   let descent : Dim.Length := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
   -- A flat digit's band has no depth: its baseline stands moloch's closing `\vskip4pt` above the paper's edge.
-  let footY := Layout.footBaseline geom0.pageH 0
+  let footY := Layout.footBaseline geom0 0
   t "the foot line stands 4 pt above the paper's edge, at its step, muted"
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
@@ -993,7 +993,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
-  let footY := Layout.footBaseline gGeom.pageH 0
+  let footY := Layout.footBaseline gGeom 0
   t "runningFrom keeps the head off page 1 and on page 2"
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[false, true])
   t "runningFrom does not gate the frame's chrome footer"

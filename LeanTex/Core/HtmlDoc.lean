@@ -2325,9 +2325,9 @@ private def stepFactor (scale : List (String × Nat)) (name : String) : String :
 private def standoutStep : String := "Large"
 
 /-- The tallest type a footline band's slots set, per mille of the band's own step. -/
-private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot) :
-    List String :=
-  let step := (Ir.footlineSize scale milleBase).units.toNat
+private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot)
+    (fl : Ir.Footline) : List String :=
+  let step := (Ir.footlineSize scale milleBase fl).units.toNat
   let sizeOf (m : Nat) (x : Inline) : Nat := match x with
     | .styled (.size n) _ => max m (Ir.scaleStepIn scale milleBase n).units.toNat
     | _ => m
@@ -2954,8 +2954,9 @@ private def frameTitleStrutCss (hdr : String := "section.slide > header") : Stri
 
 /-- moloch's footline (beamerouterthememoloch.sty), standing on the stage's bottom edge. -/
 private def footlineCss (page : PageSpec) : String :=
-  let raise := stageVh page Ir.footline.raise
-  let step := milliFactor (Ir.footlineSize page.scale milleBase).units.toNat
+  let fl := Ir.footlineOf page
+  let raise := stageVh page fl.raise
+  let step := milliFactor (Ir.footlineSize page.scale milleBase fl).units.toNat
   "section.slide > footer.slide-foot { position: relative; order: 1;\n" ++
   s!"  margin: 0 calc(-1 * {safeareaVar}); line-height: 0;\n" ++
   "  font-weight: var(--ltx-body-weight, normal);\n" ++
@@ -2964,9 +2965,9 @@ private def footlineCss (page : PageSpec) : String :=
 {stepFactor page.scale standoutStep}); }\n" ++
   "footer.slide-foot::before { content: \"\"; display: inline-block;\n" ++
   s!"  height: calc(var(--foot-h, var(--foot-cap, 1) * 1cap) + var(--foot-d, 0px) + {raise}); }\n" ++
-  s!"footer.slide-foot > .band-left \{ position: absolute; left: {stageVh page Ir.footline.left};\n" ++
+  s!"footer.slide-foot > .band-left \{ position: absolute; left: {stageVh page fl.left};\n" ++
   "  bottom: 0; white-space: nowrap; }\n" ++
-  s!"footer.slide-foot > .band-right \{ position: absolute; right: {stageVh page Ir.footline.right};\n" ++
+  s!"footer.slide-foot > .band-right \{ position: absolute; right: {stageVh page fl.right};\n" ++
   "  bottom: 0; white-space: nowrap; }\n" ++
   "footer.slide-foot > :is(.band-left, .band-right)::before { content: \"\";\n" ++
   s!"  display: inline-block; height: calc(1cap + {raise} + var(--foot-d, 0px));\n" ++
@@ -3122,7 +3123,7 @@ to { transform: scaleX(1) } }\n" ++
         | _ => false) then
     footlineCss doc.page ++
     -- a named size inside a slot is the body's step, as TeX's size commands are absolute
-    (let step := (Ir.footlineSize doc.page.scale milleBase).units.toNat
+    (let step := (Ir.footlineSize doc.page.scale milleBase (Ir.footlineOf doc.page)).units.toNat
      String.join (doc.page.scale.map fun (name, k) =>
        s!"footer.slide-foot .size-{name} \{ font-size: \
 {milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
@@ -10627,9 +10628,9 @@ retitle them apart, or link to the numbered anchor")
                         | .left => "band-left"
                         | .right => "band-right"),
                       ("style", s!"z-index: {s.rank}")])
-                  #[("class", "slide-foot size-" ++ Ir.footline.step),
+                  #[("class", "slide-foot size-" ++ (Ir.footlineOf doc.page).step),
                     ("style", String.intercalate " "
-                      (paint ++ footCapDecl doc.page.scale band ++
+                      (paint ++ footCapDecl doc.page.scale band (Ir.footlineOf doc.page) ++
                         footBoxDecls doc.page (cfg.footBox (shown.getD 0) band)))]))
               | _, other => other
             else node

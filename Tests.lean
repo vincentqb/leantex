@@ -127,6 +127,7 @@ import Tests.FrameFit
 import Tests.NestedLedgers
 import Tests.DeclaredLadder
 import Tests.FlowClass
+import Tests.FrameClass
 import Tests.PageOverrun
 import Tests.Jtex
 import Tests.MystTemplate
@@ -1176,6 +1177,7 @@ def commandSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.Chapters.chapterChecks ref oneFace
   Tests.FlowClass.checks ref oneFace
   Tests.FlowClass.firstIndentChecks ref oneFace
+  Tests.FrameClass.checks ref oneFace
   Tests.Chapters.twosideChecks ref oneFace
   Tests.Chapters.markChecks ref oneFace
   Tests.Chapters.chapterReadingChecks ref oneFace
@@ -1325,6 +1327,7 @@ def main (args : List String) : IO UInt32 := do
   corpusCoverageChecks ref
   runGoldens update (failures ref)
   if update then Tests.FlowClass.update
+  if update then Tests.FrameClass.update
   Tests.regressionDocumentChecks ref
   floatRefAgreementChecks ref
 

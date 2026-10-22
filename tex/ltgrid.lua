@@ -1,6 +1,6 @@
 -- ltgrid: each text line of the main vertical list stands a whole number of grid lines below the
 -- text line before it, its interline glue moving it to the nearest grid line.
-local ltgrid = { leading = 0, on = false }
+local ltgrid = { leading = 0, on = false, level = 0 }
 
 local glue_id = node.id("glue")
 local kern_id = node.id("kern")
@@ -35,6 +35,12 @@ local function walk(n, stop, sum)
 end
 
 local function since_last_line()
+  local ptr = tex.nest.ptr
+  if ptr > 0 then
+    local sum, found = walk(tex.nest[ptr].tail, tex.nest[ptr].head, 0)
+    if found then return sum end
+    return sum - ltgrid.leading
+  end
   local contrib = tex.lists.contrib_head
   local sum, found = walk(tex.nest[0].tail, contrib, 0)
   if found then return sum end
@@ -64,7 +70,7 @@ end
 local function append(box, location, prevdepth, mirrored)
   local g = interline(box, prevdepth)
   local L = ltgrid.leading
-  if ltgrid.on and L > 0 and tex.nest.ptr == 0 and box.id == hlist_id
+  if ltgrid.on and L > 0 and tex.nest.ptr == ltgrid.level and box.id == hlist_id
       and box.subtype == line_subtype then
     local before = since_last_line()
     if before then
@@ -98,6 +104,15 @@ end
 
 function ltgrid.disable()
   ltgrid.on = false
+end
+
+-- A frame's body box: its lines stand on the grid from one leading below its top.
+function ltgrid.frame()
+  ltgrid.level = tex.nest.ptr
+end
+
+function ltgrid.main()
+  ltgrid.level = 0
 end
 
 luatexbase.add_to_callback("append_to_vlist_filter", append, "ltgrid.append")

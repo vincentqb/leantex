@@ -525,7 +525,7 @@ private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
     let look := (Design.ofPalette pal).footline
     let key : ColorRef := if (Design.declared? pal .muted).isSome then .role .muted else .role .ink
     let cx := { base with
-      size := Ir.footlineSize doc.page.scale doc.page.fontSize
+      size := Ir.footlineSize doc.page.scale doc.page.fontSize (Ir.footlineOf doc.page)
       ground := look.bar, groundName := look.bar.map (fun _ => "the footline")
       groundRole := look.bar.map fun _ => .footBand }
     acc := { acc with pal := pal }

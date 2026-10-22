@@ -67,6 +67,8 @@ public structure Geom where
   penalties : Ir.PagePenalties := {}
   /-- Bleed past the trim edge, for the PDF writer; layout works in trim coordinates. -/
   bleed : Length := 0
+  /-- Where the footline band stands (`Ir.footlineOf`). -/
+  footline : Ir.Footline := Ir.footline
   /-- The margin notes' column beside the text block. -/
   marginPar : Ir.MarginPar := {}
   /-- Whether a margin note takes the outer margin, the left on a verso (LaTeX's `\@mparswitch`). -/
@@ -243,47 +245,50 @@ public def Geom.textHeight (g : Geom) : Length :=
 
 public def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Length) : Length :=
   match side with
-  | .left => Ir.footline.left
-  | .right => g.pageW - Ir.footline.right - w
+  | .left => g.footline.left
+  | .right => g.pageW - g.footline.right - w
 
 public theorem bandSlotX_right_pinned (g : Geom) (w : Length) :
-    bandSlotX g .right w + w = g.pageW - Ir.footline.right := by
+    bandSlotX g .right w + w = g.pageW - g.footline.right := by
   have key : ∀ a b c : Length, a - b - c + c = a - b := by intro a b c; length_omega
   simp only [bandSlotX]
-  exact key g.pageW Ir.footline.right w
+  exact key g.pageW g.footline.right w
 
-public def footBaseline (pageH d : Length) : Length := pageH - Ir.footline.raise - d
+/-- The depth of a footline box `d` its baseline stands above `raise`. -/
+public def Geom.footDepth (g : Geom) (d : Length) : Length := if g.footline.depth then d else 0
+
+public def footBaseline (g : Geom) (d : Length) : Length := g.pageH - g.footline.raise - g.footDepth d
 
 /-- The floor of a frame's text area, `gap` above a footline
 band whose box stands `h` above and `d` below its baseline. -/
-public def footFloor (pageH gap h d : Length) : Length := footBaseline pageH d - h - gap
+public def footFloor (g : Geom) (gap h d : Length) : Length := footBaseline g d - h - gap
 
-public theorem footFloor_exact (pageH gap h d : Length) :
-    footFloor pageH gap h d + gap + h + d + Ir.footline.raise = pageH ∧
-      footBaseline pageH d - h - footFloor pageH gap h d = gap := by
+public theorem footFloor_exact (g : Geom) (gap h d : Length) :
+    footFloor g gap h d + gap + h + g.footDepth d + g.footline.raise = g.pageH ∧
+      footBaseline g d - h - footFloor g gap h d = gap := by
   have key : ∀ H g h d r : Length, H - r - d - h - g + g + h + d + r = H ∧
       H - r - d - h - (H - r - d - h - g) = g := by intros; length_omega
-  exact key pageH gap h d Ir.footline.raise
+  exact key g.pageH gap h (g.footDepth d) g.footline.raise
 
 /-- The floor of a frame's text area: `gap` above the footline box
 where the page carries one, else `gap` above the paper's edge. -/
-public def frameFloor (pageH gap : Length) : Option (Length × Length) → Length
-  | some (h, d) => footFloor pageH gap h d
-  | none => pageH - gap
+public def frameFloor (g : Geom) (gap : Length) : Option (Length × Length) → Length
+  | some (h, d) => footFloor g gap h d
+  | none => g.pageH - gap
 
-public theorem frameFloor_exact (pageH gap : Length) (box : Option (Length × Length)) :
-    frameFloor pageH gap box + gap +
+public theorem frameFloor_exact (g : Geom) (gap : Length) (box : Option (Length × Length)) :
+    frameFloor g gap box + gap +
       (match box with
-       | some (h, d) => h + d + Ir.footline.raise
-       | none => 0) = pageH := by
+       | some (h, d) => h + g.footDepth d + g.footline.raise
+       | none => 0) = g.pageH := by
   cases box with
   | none =>
     have key : ∀ H g : Length, H - g + g + 0 = H := by intros; length_omega
-    exact key pageH gap
+    exact key g.pageH gap
   | some hd =>
     obtain ⟨h, d⟩ := hd
     have key : ∀ H g h d r : Length, H - r - d - h - g + g + (h + d + r) = H := by intros; length_omega
-    exact key pageH gap h d Ir.footline.raise
+    exact key g.pageH gap h (g.footDepth d) g.footline.raise
 
 
 /-- Whether a box `w` wide whose left edge stands at `x` lies on the
@@ -787,6 +792,7 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     flushBottom := spec.flushBottom.getD base.flushBottom
     penalties := spec.penalties
     bleed := spec.bleed
+    footline := Ir.footlineOf spec
     marginPar := spec.marginPar
     marginSwitch := spec.twoside
     marks := spec.marks
@@ -7894,10 +7900,10 @@ private def Spacing.Page.surfaceBottom (b : B) : Length :=
 text area or above a footline, the paper's edge on a plain frame, else `Geom.bodyBottom`. -/
 private def Spacing.Page.bottom (b : B) : Length :=
   match b.frameArea with
-  | .text => frameFloor b.geom.pageH b.footGap b.footBox
+  | .text => frameFloor b.geom b.footGap b.footBox
   | .paper => b.geom.pageH
   | .margins => match b.footBox with
-    | some (h, d) => footFloor b.geom.pageH b.footGap h d
+    | some (h, d) => footFloor b.geom b.footGap h d
     | none => b.geom.bodyBottom
 
 /-- The gap above a page's note block: LaTeX's `\skip\footins`,
@@ -8357,7 +8363,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Length := 0) (flush : Bool :
   -- The footer background is page furniture and never joins the body's distribution.
   let footerFills := match b.curFoot, b.footBox, b.curFootLook.bind (·.bar) with
     | some _, some (h, d), some c =>
-      let y := footBaseline b.geom.pageH d - h
+      let y := footBaseline b.geom d - h
       #[{ x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c : Fill }]
     | _, _, _ => #[]
   -- Picture ink carries the picture's shares; title-slot ink is pinned with its lines.
@@ -13728,7 +13734,8 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     let savedFg := a.fg
     let a := { a with fg := (Ir.Design.ofPalette a.pal).frameTitleFg }
     let a := collectDisplay r a title 0 false
-      (Ir.scaleStepIn r.geom.scale r.geom.fontSize Ir.plainFrameTitleStep)
+      (Ir.scaleStepIn r.geom.scale r.geom.fontSize
+        (if r.geom.grid.isSome then Ir.gridFrameTitleStep else Ir.plainFrameTitleStep))
       (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
       (inserted := true)
     { a with wantDefault := true, fg := savedFg }
@@ -13755,7 +13762,7 @@ private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
   -- A named size inside a slot is the body's step, as TeX's size commands are absolute.
   let (items, ds, cache, _) :=
     itemsOfInlines pats geom.fontSize xHeight fs
-      { style with scale := (geom.scale.lookup Ir.footline.step).getD 1000 }
+      { style with scale := (geom.scale.lookup geom.footline.step).getD 1000 }
       content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
       (ladder := geom.scale)
   let breaks := kp items geom.textWidth
@@ -13796,14 +13803,14 @@ private def frameReader (r : Rd) (a : Acc) (standout : Bool) (area : FrameArea) 
   if area == .margins then r
   else
     { r with geom := { r.geom with
-        frameTextHeight := some (frameFloor r.geom.pageH r.footGap
+        frameTextHeight := some (frameFloor r.geom r.footGap
           ((a.selectedFoot standout).map (bandBox r.fs r.imgs r.geom r.xHeight 1))) } }
 
 private theorem frameReader_foot_agree (r : Rd) (a : Acc) (standout : Bool) (area : FrameArea) :
     (frameReader r a standout area).geom.frameTextHeight =
       if area == .margins then r.geom.frameTextHeight
       else
-        some (frameFloor r.geom.pageH r.footGap
+        some (frameFloor r.geom r.footGap
           ((a.selectedFoot standout).map (bandBox r.fs r.imgs r.geom r.xHeight 1))) := by
   unfold frameReader
   split <;> rfl
@@ -14620,6 +14627,13 @@ private def collectBlock (r : Rd) (a : Acc)
                     else a.bodyGround.or (Ir.Design.declared? done.pal .page) }
     -- `\@arrayparboxrestore`, as both boxes' bodies run: no `\parskip`.
     let rb := { (r.within blk) with geom := { r.geom with parskip := {}, texParskip := {} } }
+    -- tex/ltframe.cls: a grid frame's block is its bold title line over its body, a line around it.
+    if r.slides && r.geom.grid.isSome && kind != .box then
+      let lead : Glue := { width := r.geom.grid.getD 0 }
+      let a := a.addvspace lead
+      let a := if title.isEmpty then a else collectParaBlock r a #[.styled .bold title] indent
+      (collectBlocks r a body indent).addvspace lead
+    else
     if kind == .box then
       let (opened, bodyIndent) := collectBoxOpen r a title indent (look.bg.map r.shown)
       let inner := { opened with
@@ -14895,7 +14909,13 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectFrameTitle r a title titleLeaf titleSpan
     -- The title is pinned chrome; the content opens below its box with no peer gap.
     let a := if title.isEmpty then
+        -- A grid frame keeps its title band, its body from the band's next line.
+        let a := if r.geom.grid.isSome then a.vskip { width := r.geom.grid.getD 0 } else a
         openFrameBody r a false valign area
+      else if r.geom.grid.isSome then
+        -- On a grid the body's first line stands one leading below the title's.
+        { a with ops := (a.ops.push .pin).push (.bodyOpen {} none), wantDefault := false,
+                 frameTop := true }
       else
       let g : Glue := { width := frameBodySkip true valign r.geom.fontSize }
       -- A title with no bar stands in beamer's default frametitle box.
@@ -20914,7 +20934,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     -- Colliding slots yield by ink, never position (W0333); ink off the medium is named (W0388).
     if let some band := page.foot then
       -- One baseline for the band, from the box the page's floor was set against (`footBaseline`).
-      let footY := footBaseline geom.pageH ((page.footBox.map (·.2)).getD 0)
+      let footY := footBaseline geom ((page.footBox.map (·.2)).getD 0)
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
         let (l?, ds, c) := slotLine slot.side slot.content (toString (i + 1)) footY
@@ -20954,8 +20974,8 @@ slot yields in place: shorten the content or drop a slot")
           -- Sized by the page's `\textheight`, beamer's in its text area (`frameFloor`).
           let textH := match page.frameArea with
             | .margins => page.footBox.elim geom.textHeight fun (h, d) =>
-                footFloor geom.pageH sh.footGap h d
-            | .text | .paper => frameFloor geom.pageH sh.footGap page.footBox
+                footFloor geom sh.footGap h d
+            | .text | .paper => frameFloor geom sh.footGap page.footBox
           let (l?, ds, c) := mkLogoLine content textH cache
           diags := diags ++ ds
           cache := c
@@ -22007,7 +22027,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let footAllowed := doc.chromeAllowed
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
   -- The chrome footer's size is the footline's step (`Ir.footline`) and its colour a palette key.
-  let footSize := Ir.footlineSize geom.scale geom.fontSize
+  let footSize := Ir.footlineSize geom.scale geom.fontSize geom.footline
   -- One `furnitureBand` per side from its own margin, one ink and gap (`furniture_sides`).
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)
@@ -22030,7 +22050,9 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       { geom with headBand := headFurn.band }
     else geom
   -- TeX's `\topskip` on a TeX page: the document's own, else the class's body size (size10.clo).
-  let geom := if doc.docClass.record.model == .frame then geom
+  -- A grid frame's lines stand a whole leading below its top, as tex/ltframe.cls's body box sets.
+  let geom := if doc.docClass.record.model == .frame then
+      (if geom.grid.isSome then { geom with topskip := geom.grid } else geom)
     else { geom with topskip := some ((tokenLen "topskip").getD geom.fontSize) }
   -- `Design.ofDoc` resolves the document colours, the ink `Contrast.docDiags` judges.
   let design := Ir.Design.ofDoc doc
@@ -24404,6 +24426,7 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 deriving instance DecidableEq for Ir.PdfColor, Ir.Color
 deriving instance DecidableEq for Diag
 deriving instance DecidableEq for Ir.MarginPar
+deriving instance DecidableEq for Ir.Footline
 deriving instance DecidableEq for Geom, Attribution, DecorationRule, LeaderPaint, Decorations,
   MathLineMetrics, RunMetrics
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule

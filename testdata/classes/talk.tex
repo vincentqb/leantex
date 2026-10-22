@@ -1,0 +1,32 @@
+% The frame class's talk preset on an invented talk: a title page, lists, a display and a block.
+\documentclass{ltframe}
+\title{Invented Lattices}
+\author{Pat Placeholder}
+\date{20 October 2026}
+\begin{document}
+\begin{frame}
+\titlepage
+\end{frame}
+\section{Kilo}
+\begin{frame}{A list and a display}
+A frame opens with a sentence of invented prose.
+\begin{itemize}
+\item Bravo, the first item.
+\item Charlie, the second item, long enough to wrap onto a second line of the stage measure.
+  \begin{itemize}\item Delta, nested.\end{itemize}
+\end{itemize}
+The display below stands on the grid:
+\[ a \wedge (b \vee c) \ge (a \wedge b) \vee (a \wedge c). \]
+Echo closes the frame.
+\end{frame}
+\begin{frame}{Numbered steps and a block}
+\begin{enumerate}
+\item Foxtrot, the first step.
+\item Golf, the second step.
+\end{enumerate}
+\begin{block}{Hotel}
+India sits in a block.
+\end{block}
+Juliet follows the block.
+\end{frame}
+\end{document}

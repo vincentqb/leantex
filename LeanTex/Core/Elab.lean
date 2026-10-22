@@ -1286,10 +1286,14 @@ private def fontKeys : List String :=
 
 /-- The slides stage beamer's `aspectratio=` option selects, else beamer's
 default 4:3. -/
-private def slidesStageOf (opts : List String) : Length × Length :=
+private def slidesStageOf (record : Ir.ClassRecord) (opts : List String) : Length × Length :=
   (opts.findSome? fun o => match KeyVal.entry o with
-    | ("aspectratio", some v) => Ir.slidesStageNamed v
-    | _ => none).getD Ir.slidesStage43
+    | ("aspectratio", some v) | ("aspect", some v) => Ir.slidesStageNamed v
+    | _ => none).getD (if record.design.isSome then Ir.slidesStage169 else Ir.slidesStage43)
+
+/-- A grid frame's leading: its stage's height over its lines (`Ir.frameGridLines`). -/
+private def frameLead (record : Ir.ClassRecord) (opts : List String) : Length :=
+  (slidesStageOf record opts).2 / (Ir.frameGridLines : Int)
 
 /-- The picture environments, whose body is never a paragraph's text. -/
 private def reservedEnv : List String :=
@@ -7369,12 +7373,15 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with twoside := true }
   if record.model == .frame then
     if !page.sized then
-      let (w, h) := slidesStageOf opts
+      let (w, h) := slidesStageOf record opts
       page := { page with width := w, height := h }
+    -- tex/ltframe.cls: two lines in from either side, half a line from the top.
+    let lead := page.height / (Ir.frameGridLines : Int)
     if page.hmargin == dflt.hmargin then
-      page := { page with hmargin := Ir.slidesHMargin }
+      page := { page with hmargin := if record.design.isSome then 2 * lead else Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
-      page := { page with vmargin := Ir.slidesVMargin }
+      page := { page with vmargin := if record.design.isSome then lead / (2 : Int) else
+        Ir.slidesVMargin }
     -- beamer.cls sets `\raggedright` for every frame.
     if page.justify.isNone then
       page := { page with justify := some false }
@@ -7417,7 +7424,11 @@ private def classSized (record : Ir.ClassRecord) (classOptions : String) (page :
   let optSize := (Ir.lastProcessed (record.area != .sizeFile) ["10", "11", "12"]
     (sizes.map toString)).bind (·.toNat?) |>.map fun n =>
       if record.design.isSome then Ir.classOptionSize n else Dim.pt n
-  match optSize <|> record.fontSize with
+  -- tex/ltframe.cls sets its body a line over the type scale's step below it.
+  let gridSize := if record.model == .frame && record.design.isSome then
+      some (frameLead record (KeyVal.items classOptions).toList * (10 : Int) / (12 : Int))
+    else none
+  match optSize <|> gridSize <|> record.fontSize with
   | some d => { page with fontSize := d }
   | none => page
 
@@ -7532,7 +7543,8 @@ public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
   | (k, some v), .flow =>
     (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats") ||
       (k == "preset" && record.design.isSome)
-  | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome
+  | (k, some v), .frame =>
+    (k == "aspectratio" || (k == "aspect" && record.design.isSome)) && (Ir.slidesStageNamed v).isSome
   | (_, some _), .face => false
 
 /-- A box's declared width: a length, a fraction of the enclosing measure,
@@ -11391,6 +11403,22 @@ private def pictureEnvArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos
   diagDetail ctx .E0304 (Diag.say .E0304 .argument
     (obj := some (if env then some .environment else none, Diag.Name.of name))) pos what help
 
+/-- A grid frame's title page as `tex/ltframe.cls`'s `title page` template sets it: three blank
+lines, the title at `\Large` in bold, a blank line, then each of author, institute and date on
+its line. -/
+private def gridTitlePage (ctx : Ctx) (st : ESt) : Array Block := Id.run do
+  let lead := ctx.page.classLead.getD (Ir.leadingFor ctx.page.fontSize)
+  let skip (k : Int) : Block := .spaced (Ir.Sourced.bare { width := Dim.SymLength.ofLength (lead * k) }) #[]
+  let part (v : Option (Array Inline)) : Option (Array Inline) :=
+    v.bind fun xs => if xs.isEmpty then none else some xs
+  let mut out : Array Block := #[skip 3]
+  if let some t := part st.title then
+    out := out.push (.para #[.styled (.size "Large") #[.styled .bold t]])
+  out := out.push (skip 1)
+  for v in [st.author, st.institute, st.date] do
+    if let some xs := part v then out := out.push (.para xs)
+  return out
+
 /-- The `\maketitle`/`\titlepage` arm: the title is set once, as classes.dtx's
 `\maketitle` disables itself. -/
 private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
@@ -11404,6 +11432,11 @@ private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
     warnOnce ctx "ctrl:maketitle" .W0309
       (Diag.say .W0309 .title (obj := some (none, s!"\\{n}"))) pos
       (help := "declare \\title{...} (and \\author, \\date, ...) before it")
+  else if ctx.slides && ctx.page.grid == some true then
+    -- tex/ltframe.cls's title page, its lines on the frame's grid (`gridTitlePage`).
+    modify fun st => { st with titleDone := true }
+    recordFrameSource ctx pos blocks.size
+    blocks := blocks.push (.frame #[] false .top false (gridTitlePage ctx (← get)))
   else if ctx.slides then
     -- The golden split is moloch's `title page` template glue.
     modify fun st => { st with titleDone := true }
@@ -13822,12 +13855,12 @@ private structure FrameOpts where
   /-- The index past the last bracket group read. -/
   next : Nat := 0
 
-/-- The frame alignment a deck's class options declare. -/
-private def classFrameAlign (opts : List String) : VAlign :=
+/-- The frame alignment a deck's class options declare over its class's own, tex/ltframe.cls's `t`. -/
+private def classFrameAlign (record : Ir.ClassRecord) (opts : List String) : VAlign :=
   opts.foldl (fun v o =>
     if o == "t" || o == "slidestop" then .top
     else if o == "c" || o == "slidescentered" then .center
-    else v) .center
+    else v) (if record.design.isSome then .top else .center)
 
 /-- Whether every item of a bracket's text names a key `\setkeys{beamerframe}` reads: beamer's own
 and metropolis's `standout`. -/
@@ -19603,6 +19636,13 @@ private def flowDesignDecls (body : Length) (tokens : Ir.Tokens) (styles : Ir.St
   (tokens, head (head (head (head styles "section" 2 (some 1)) "subsection" 1 (some 1))
     "subsubsection" 2 (some 1)) "heading5" 1 none)
 
+/-- The frame class's display skips where the document declares none: half a leading above and
+below, short or not, so the line after a display returns to the grid (`tex/ltframe.cls`). -/
+private def frameDesignTokens (body : Length) (tokens : Ir.Tokens) : Ir.Tokens :=
+  let half : SymGlue := { width := Dim.SymLength.ofLength (Ir.leadingFor body / (2 : Int)) }
+  [Ir.displaySkipAbove, Ir.displaySkipBelow, Ir.displaySkipAboveShort, Ir.displaySkipBelowShort].foldl
+    (fun t n => if (t.find? n).isSome then t else t.declare n half) tokens
+
 private def prepareStyledBody (file : String) (decls : Array PDecl)
     (body trailing : Array Raw) (s : PreState) : EM DocBodyPlan := do
   let mut ctx := s.ctx
@@ -19644,8 +19684,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         | _ => pal
     | _ => pal) basePalette
   let (tokens, styles) := match docClass.record.design with
-    | some _ => flowDesignDecls (classSized docClass.record classOptions page).fontSize themedDs.tokens
-        themedDs.styles
+    | some _ =>
+      let body := (classSized docClass.record classOptions page).fontSize
+      if docClass.record.model == Ir.PageModel.frame then
+        (frameDesignTokens body themedDs.tokens, themedDs.styles)
+      else flowDesignDecls body themedDs.tokens themedDs.styles
     | none => (themedDs.tokens, themedDs.styles)
   let chrome := themedDs.chrome
   ctx := { ctx with palette := palette, basePalette := openingInk, tokens := tokens, styles := styles
@@ -19800,7 +19843,7 @@ the {docClass.name} class's page keeps its own" none
                                        push := declared "marginparpush" mp.push } }
   ctx := { ctx with slides := record.model == .frame
                     groundDepth := record.groundDepth
-                    frameAlign := classFrameAlign classOpts
+                    frameAlign := classFrameAlign record classOpts
                     frameKeys := if defaultBundle then Theme.daylight.frameKeys else s.frameKeys
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles

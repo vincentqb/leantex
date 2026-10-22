@@ -633,14 +633,14 @@ styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "put \\smallskip, \\medskip or \\bigskip at a block's body start; \
 \\framefoot sets a frame footer")]
 
-public def presentationClasses : List String := ["beamer", "slides"]
+public def presentationClasses : List String := ["beamer", "slides", "ltframe"]
 
 /-- The packages a class loads itself: beamer loads both AMS packages unless its
 options hold the `noamsthm` key. -/
 public def classPackages (cls : String) (options : List String) : List String :=
   let disabled := options.any fun option =>
     String.ofList ((KeyVal.entry option).1.toList.filter (!·.isWhitespace)) == "noamsthm"
-  if cls == "beamer" && !disabled then ["amsmath", "amsthm"]
+  if (cls == "beamer" || cls == "ltframe") && !disabled then ["amsmath", "amsthm"]
   else if amsArticleClasses.contains cls then ["amsmath", "amsthm", "amsfonts"]
   else if cls == "ltflow" then Ir.flowPackages else []
 
@@ -2345,12 +2345,15 @@ public def applyClassSource (raws : Array Raw) : Array Raw := Id.run do
   let (args, k) := takeGroups raws j 1
   -- `ltflow` takes the class file's whole source; a class word leantex alone reads, its preset's.
   let cls := (rawSrc (args.getD 0 #[])).trimAscii.toString
-  let some (.flow p0) := Ir.DocClass.ofString? cls | return raws
-  let preset := flowPresetOf p0 (KeyVal.items ((opt.map rawSrc).getD "")).toList
-  let text := if cls == "ltflow" then Ir.flowClassSource preset else Ir.flowPresetSource preset
+  let (file, text) := match Ir.DocClass.ofString? cls with
+    | some (.flow p0) =>
+      let preset := flowPresetOf p0 (KeyVal.items ((opt.map rawSrc).getD "")).toList
+      ("ltflow.cls", if cls == "ltflow" then Ir.flowClassSource preset else Ir.flowPresetSource preset)
+    | some (.frame _) => ("ltframe.cls", Ir.frameClassSource)
+    | _ => ("", "")
   if text.isEmpty then return raws
-  let source := verbatimRaws "ltflow.cls" text
-  return raws.extract 0 k ++ #[.env (Parse.inputEnv "ltflow.cls") source pos] ++
+  let source := verbatimRaws file text
+  return raws.extract 0 k ++ #[.env (Parse.inputEnv file) source pos] ++
     raws.extract k raws.size
 
 /-- The filename, read from the executed call the local-style reader sees. -/
@@ -8650,6 +8653,7 @@ public inductive Lowering where
   | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
   | texOrPdf | changeFontSizes | addvspace | noIndent | datetime | textScript | glossary | indexing
   | doiLink | orcidLink | lastPage
+  | beamerSize
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8954,7 +8958,7 @@ private def ctrlRows7 : List CtrlRow :=
    ⟨"setbeamercovered", [.group], .lower .beamerCovered {}⟩,
    ⟨"setbeamerfont", [.star, .needed, .needed], .lower .beamerFont {}⟩,
    ⟨"setbeameroption", [.opt, .group], .lower .beamerOption {}⟩,
-   ⟨"setbeamersize", [.needed], .lower .unreadKeys {}⟩,
+   ⟨"setbeamersize", [.needed], .lower .beamerSize {}⟩,
    ⟨"setcitestyle", [.needed], .lower .natbibStyle declared⟩,
    ⟨"setcounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    ⟨"setkomafont", [.needed, .needed], .lower .komaFont {}⟩,
@@ -11556,14 +11560,15 @@ the option" else "the page is one-sided, as without the option")) pos
       let theorems := if cls == "acmart" && !keptItems.any (acmThm · == some false) then
           verbatimRaws "acmart.cls" acmTheoremSource else #[]
       return some (cls0.raws pos ++ (← carry page pos) ++ dependencies ++ theorems, k)
-    else if cls == "beamer" then
+    else if cls == "beamer" || cls == "ltframe" then
       -- beamer's `hyperref={...}` option is `\hypersetup`'s keys.
       let hyper := ((takeRawOpt raws start).1.map (Entries.read .keyval ·)).getD #[]
         |>.filter (·.key == "hyperref")
       let keptItems := keptItems.filter fun kv => (KeyVal.entry kv).1 != "hyperref"
+      -- tex/ltframe.cls is beamer's class under its own record.
       let declaration := Native.Head.documentclass (if opt.isSome then keptItems.toArray else #[])
-        "slides"
-      became "\\documentclass{beamer}" declaration.render pos
+        (if cls == "ltframe" then "ltframe" else "slides")
+      became s!"\\documentclass\{{cls}}" declaration.render pos
       let mut setup : Array Raw := #[]
       for e in hyper do
         let v := match (e.value.getD #[]).filter (· != .space) with
@@ -12698,6 +12703,22 @@ the engine draws")
   | .setList => lowerSetList c
   | .sectionLines => sectionRule (c.src 1) c.pos
   | .uniMathSetup => unicodeMathOptions s!"\\unimathsetup\{{c.src 0}}" (c.src 0) c.pos
+  | .beamerSize => do
+    -- premise: Tests.FrameClass.checks — equal text margins are the page's side margins
+    let items := (Entries.items .keyval (c.arg 0)).toList.map KeyVal.entry
+    let side (k : String) : Option String := (items.lookup k).join.map (·.trimAscii.toString)
+    let margins := match side "text margin left", side "text margin right" with
+      | some l, some r => if l == r then some l else none
+      | _, _ => none
+    let mut out : Array Raw := #[]
+    if let some m := margins then
+      out := out ++ (← setting "\\setbeamersize{text margin left, text margin right}"
+        (.page #[(.hmargin, m)]) c.pos)
+    for (key, _) in items do
+      let read := margins.isSome && (key == "text margin left" || key == "text margin right")
+      unless key.isEmpty || read do
+        unreadParam s!"\\{c.name}" key .key key (ofWritten s!"\\{c.name}") c.pos
+    return out
   | .unreadKeys => do
     for e in Entries.items .keyval (c.arg 0) do
       let key := (KeyVal.entry e).1
@@ -12937,6 +12958,7 @@ public def Lowering.emitWitness : Lowering → Option LowerWitness
   | .vspace => some { args := [none, none, some "1em"], inDoc := true }
   | .pageBreak => some { args := [none], inDoc := true }
   | .noIndent => some { args := [], inDoc := true, indents := true }
+  | .beamerSize => some { args := [some "text margin left=1cm, text margin right=1cm"], inDoc := false }
   | .komaFont => some { args := [some "section", some "\\bfseries"], inDoc := false }
   | .sectionSkips => some { args := [some "beforeskip=1em", some "section"], inDoc := false }
   | .setList => some { args := [none, none, some "itemsep=0pt"], inDoc := false }
@@ -14023,7 +14045,7 @@ private def declaresPresentation (raws : Array Raw) : Bool :=
   | some i =>
     let (_, j) := takeRawOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
-    (rawSrc (args.getD 0 #[])).trimAscii.toString == "beamer"
+    ["beamer", "ltframe"].contains (rawSrc (args.getD 0 #[])).trimAscii.toString
   | none => false
 
 /-- A presentation's frame commands as frame environments, every level's (`frameCommandsLevel`). -/

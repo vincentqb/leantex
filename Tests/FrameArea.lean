@@ -104,7 +104,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame area: a bottom-aligned frame's content ends on its text area's floor"
     (!band.isEmpty && ((line out 6 "Kilo").map fun l =>
       l.y + (Layout.segsInk fira l.segs).2 ==
-        Layout.frameFloor geom.pageH Ir.footline.sep (some box)).getD false)
+        Layout.frameFloor geom Ir.footline.sep (some box)).getD false)
 
 /-- The deck the class option `t` declares, with a frame naming `c` and a standout frame; `opt` is
 the class options' tail, `frame` every unaligned frame's options. -/

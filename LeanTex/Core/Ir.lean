@@ -1869,6 +1869,10 @@ public def frameTitleInset (titleSize : Length) : Length := frameTitleStrut titl
 /-- The step a frame title with no bar sets at: beamer's default font theme's `\Large`. -/
 public def plainFrameTitleStep : String := "Large"
 
+/-- The step a grid frame's title sets at: the type scale's one step above the body
+(`tex/ltframe.cls`'s `\large`). -/
+public def gridFrameTitleStep : String := "large"
+
 /-- Where beamer's default frametitle box ends below the title's last
 baseline: a strut's depth, less 1ex. -/
 public def defaultFrameTitleBelow (titleSize : Length) (leading : Nat) (ex : Length) : Length :=
@@ -8384,6 +8388,8 @@ public structure Footline where
   right : Length
   raise : Length
   sep : Length
+  /-- Whether the band's baseline stands its box's depth above `raise`. -/
+  depth : Bool
   deriving Repr
 
 public def footline : Footline :=
@@ -8391,12 +8397,23 @@ public def footline : Footline :=
     left := Dim.pt 4    -- beamerouterthememoloch.sty:115, leftskip=4pt
     right := Dim.pt 5   -- beamerouterthememoloch.sty:116, rightskip=5pt
     raise := Dim.pt 4   -- beamerouterthememoloch.sty:123, \vskip4pt
-    sep := Dim.pt 4 }   -- beamerbaseframecomponents.sty:167, \advance\footheight by 4pt
+    sep := Dim.pt 4     -- beamerbaseframecomponents.sty:167, \advance\footheight by 4pt
+    depth := true }
+
+/-- A page's footline: beamer's, or a grid frame's (`tex/ltframe.cls`): the step below the body,
+within the side margins, its baseline half a leading above the paper's edge. -/
+public def footlineOf (page : PageSpec) : Footline :=
+  if page.grid == some true then
+    { step := "footnotesize", left := page.hmargin, right := page.hmargin
+      raise := page.classLead.getD (leadingFor page.fontSize) / (2 : Int), sep := footline.sep
+      depth := false }
+  else footline
 
 /-- The footline's size: its step of `base` on the document's ladder, which both backends and the
 contrast judge read. -/
-@[expose] public def footlineSize (scale : List (String × Nat)) (base : Length) : Length :=
-  scaleStepIn scale base footline.step
+@[expose] public def footlineSize (scale : List (String × Nat)) (base : Length)
+    (fl : Footline := footline) : Length :=
+  scaleStepIn scale base fl.step
 
 /-- A note mark's size: the default ladder's script step, near LaTeX's math script size, which a
 declared `\scriptsize` does not move. -/
@@ -8616,6 +8633,23 @@ public def FlowPreset.ofName? (n : String) : Option FlowPreset :=
 public theorem FlowPreset.ofName?_name (p : FlowPreset) : FlowPreset.ofName? p.name = some p := by
   cases p <;> rfl
 
+/-- The leantex frame class's presets (`tex/ltframe.cls`). -/
+public inductive FramePreset where
+  /-- A talk on beamer's 16:9 stage, its frames on a grid of sixteen lines. -/
+  | talk
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+public def FramePreset.name : FramePreset → String
+  | .talk => "talk"
+
+public def FramePreset.all : List FramePreset := [.talk]
+
+public def FramePreset.ofName? (n : String) : Option FramePreset :=
+  FramePreset.all.find? (·.name == n)
+
+/-- The lines a frame's stage holds from its top to its bottom edge. -/
+public def frameGridLines : Nat := 16
+
 /-- The theorem-like environments the flow class declares, amsthm's style for each, on one
 counter named by the first: the shared practice of the AMS, ACM, IEEE and NeurIPS classes. -/
 public def flowTheorems : List (String × String × String) :=
@@ -8697,12 +8731,43 @@ public def FlowPreset.indents : FlowPreset → Bool
   | .article | .cookbook => true
   | .cv | .resume | .cvweb => false
 
+/-- A frame preset's design: LaTeX's ratio 1.2 and the grid on; its measure follows the stage. -/
+public def FramePreset.design : FramePreset → FlowDesign
+  | .talk => { ratio := 1200, measure := 0, grid := true }
+
+/-- A frame preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
+public def FramePreset.keys (p : FramePreset) : String :=
+  let d := p.design
+  s!"ratio = {d.ratio / 1000}.{toString (d.ratio % 1000 + 1000) |>.drop 1} , grid = {d.grid} , " ++
+    "aspect = 169 , base = beamer"
+
 /-- A preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
 public def FlowPreset.keys (p : FlowPreset) : String :=
   let d := p.design
   let ratio := s!"{d.ratio / 1000}.{toString (d.ratio % 1000 + 1000) |>.drop 1}"
   s!"fontsize = {flowOptionPt}pt , measure = {d.measure} , ratio = {ratio} , grid = {d.grid} , " ++
     s!"paper = letter , twoside = {p == .cookbook} , base = {p.base}"
+
+/-- The frame class's LaTeX after beamer.cls: the flow class's faces with its sans as the body, as
+beamer sets its text in sans, no navigation symbols, and black on white (`tex/ltframesource.tex`). -/
+public def frameClassSource : String := Id.run do
+  let mut out := "\\RequirePackage{fontspec}\n\\RequirePackage{unicode-math}\n"
+  let sans := (flowFaces.find? (·.1 == "sans")).getD default
+  for (slot, up, b, i, bi) in flowFaces do
+    let (cmd, up, b, i, bi) := if slot == "body" then ("setmainfont", sans.2)
+      else if slot == "sans" then ("setsansfont", up, b, i, bi) else ("setmonofont", up, b, i, bi)
+    out := out ++ s!"\\{cmd}\{{up}}[BoldFont={b},ItalicFont={i},BoldItalicFont={bi}]\n"
+  out := out ++ s!"\\setmathfont\{{flowMathFace}}\n"
+  return out ++ "\\setbeamertemplate{navigation symbols}{}\n" ++
+    "\\setbeamertemplate{itemize item}{\\textbullet}\n" ++
+    "\\setbeamertemplate{itemize subitem}{\\textendash}\n" ++
+    "\\setbeamertemplate{itemize subsubitem}{\\textasteriskcentered}\n" ++
+    "\\setbeamertemplate{footline}{\\hfill\\insertframenumber}\n" ++
+    "\\setbeamercolor{normal text}{fg=black,bg=white}\n\\setbeamercolor{structure}{fg=black}\n"
+
+/-- `tex/ltframesource.tex`: the frame class's source in LaTeX's own syntax, read by both engines. -/
+public def ltFrameSourceTex : String :=
+  "% Generated by leantex's test suite under --update; never edited by hand.\n" ++ frameClassSource
 
 /-- A preset's whole class source after its base class. -/
 public def flowClassSource (p : FlowPreset) : String :=
@@ -8726,6 +8791,8 @@ public def ltDefaultsTex : String := Id.run do
     "\\ProvidesFile{ltdefaults.tex}[2026/10/20 v0.1 leantex class defaults]\n"
   for p in FlowPreset.all do
     out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltflow_{p.name}_tl } \{ {p.keys} }\n"
+  for p in FramePreset.all do
+    out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltframe_{p.name}_tl } \{ {p.keys} }\n"
   let bp (l : Length) : String :=
     let m := l.toBpMilli
     s!"{m / 1000}.{(toString (m % 1000 + 1000)).drop 1}bp"
@@ -8842,6 +8909,8 @@ public inductive DocClass where
   | koma
   /-- The leantex flow class (`tex/ltflow.cls`) at one of its presets. -/
   | flow (preset : FlowPreset)
+  /-- The leantex frame class (`tex/ltframe.cls`) at one of its presets. -/
+  | frame (preset : FramePreset)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The class's one spelling, the `\documentclass` argument. -/
@@ -8852,6 +8921,7 @@ public def DocClass.name : DocClass → String
   | .poster => "poster"
   | .koma => "scrartcl"
   | .flow p => p.classWord
+  | .frame _ => "ltframe"
 
 /-- The class a `\documentclass` argument names, if any: the inverse of `name`, KOMA-Script's
 report and book spelling its article. -/
@@ -8866,20 +8936,24 @@ public def DocClass.ofString? : String → Option DocClass
   | "cv" => some (.flow .cv)
   | "resume" => some (.flow .resume)
   | "webpage" => some (.flow .cvweb)
+  | "ltframe" => some (.frame .talk)
   | _ => none
 
 public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
   cases c with
   | flow p => cases p <;> rfl
+  | frame p => cases p; rfl
   | _ => rfl
 
 /-- Every class, in the order a help lists them. -/
 @[expose] public def DocClass.all : List DocClass :=
-  [.article, .slides, .card, .poster, .koma] ++ FlowPreset.all.map .flow
+  [.article, .slides, .card, .poster, .koma] ++ FlowPreset.all.map .flow ++
+    FramePreset.all.map .frame
 
 public theorem DocClass.all_complete (c : DocClass) : c ∈ DocClass.all := by
   cases c with
   | flow p => cases p <;> simp [DocClass.all, FlowPreset.all]
+  | frame p => cases p; simp [DocClass.all, FramePreset.all]
   | _ => simp [DocClass.all]
 
 public theorem DocClass.all_nodup : DocClass.all.Nodup := by decide
@@ -8986,6 +9060,16 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       formats := if p == .cvweb then #["html", "md"] else #[]
       mdName := if p == .cvweb then some "llms.txt" else none
       area := .flow
+      design := some p.design }
+  -- tex/ltframe.cls loads beamer.cls at its `t` option, black on white, its body size the stage's.
+  | .frame p =>
+    { model := .frame
+      parskip := some {}
+      lists := .beamer
+      preambleSans := true
+      chrome := true
+      groundDepth := .decks
+      abstractForm := .inset
       design := some p.design }
 
 /-- The lineage a class's web page sets its lists in. -/
