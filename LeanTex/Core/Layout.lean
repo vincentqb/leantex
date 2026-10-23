@@ -71,6 +71,10 @@ public structure Geom where
   footline : Ir.Footline := Ir.footline
   /-- The class sets its frames on a grid (`Ir.ClassRecord.gridFrame`). -/
   gridFrame : Bool := false
+  /-- A grid frame with no title keeps its title's line (`Ir.ClassRecord.gridTitleLine`). -/
+  gridTitleLine : Bool := false
+  /-- A face's column grid, the widths its boxes snap to (`Ir.faceColumns`). -/
+  columnGrid : Option Ir.ColumnGrid := none
   /-- The margin notes' column beside the text block. -/
   marginPar : Ir.MarginPar := {}
   /-- Whether a margin note takes the outer margin, the left on a verso (LaTeX's `\@mparswitch`). -/
@@ -807,6 +811,18 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     grid := if spec.grid == some true then
         some (spec.classLead.getD (spec.bodySkip.getD (Ir.leadingFor spec.fontSize))) else none
     classLead := spec.classLead }
+
+/-- A page's geometry under its class: a grid frame's footline, title line and column grid, its lines
+a whole leading below its top as tex/ltgridframe.tex's body box sets, a frame page's top skip none,
+else TeX's `\topskip` `tex`. -/
+public def Geom.forClass (g : Geom) (r : Ir.ClassRecord) (page : PageSpec) (tex : Length) : Geom :=
+  let measure := (r.design.map (·.measure)).getD 0
+  let columnGrid := if r.gridFrame && r.model == .face && 0 < measure then
+      g.grid.map fun lead => Ir.faceColumns g.textWidth (2 * lead) g.fontSize measure
+    else none
+  { g with gridFrame := r.gridFrame, gridTitleLine := r.gridTitleLine, columnGrid
+           footline := Ir.footlineOf r.gridFrame page
+           topskip := if r.gridFrame then g.grid else if r.model == .frame then g.topskip else some tex }
 
 /-- A picture's ink on the page: its figure, its label keys, the isometry from
 picture coordinates (y up) to layout coordinates (y down), and the leaf it paints. -/
@@ -14485,7 +14501,7 @@ private def holdsPicture (cols : Array (BoxWidth × Array Block)) : Bool :=
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
 private def collectColumns (r : Rd) (a : Acc)
-    (cols : List (BoxWidth × Array Block)) (naturals : List (Option Length))
+    (cols : List (BoxWidth × Array Block)) (naturals : List (Option Length)) (spans : List Length)
     (places : List (Length × Bool)) (reopen : Op) (base x0 shareW gutter total : Length) : Acc :=
   match cols with
   | [] => a
@@ -14494,14 +14510,15 @@ private def collectColumns (r : Rd) (a : Acc)
     let x0 := match places.head? with
       | some (x, _) => base + x
       | none => x0
-    let wi := ((w.resolve total).orElse fun _ => natural).getD shareW + innerPaint r a (w, body) total
+    let wi := ((spans.head?.orElse fun _ => w.resolve total).orElse fun _ => natural).getD shareW +
+      innerPaint r a (w, body) total
     let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt, boxTop := w.minipage }
     let a := a.absorb (collectBlocks r sub body x0)
     -- The next box opening a line of a wrapped row closes this line and opens its own.
     let a := if rest.isEmpty then a
       else if (places.tail.head?.map (·.2)).getD false then (a.pushOp .colClose).pushOp reopen
       else a.pushOp .colNext
-    collectColumns { r with labels := #[] } a rest naturals.tail places.tail reopen base
+    collectColumns { r with labels := #[] } a rest naturals.tail spans.tail places.tail reopen base
       (x0 + wi + gutter) shareW gutter total
 
 /-- A standout frame's content: paragraphs centre and
@@ -14839,16 +14856,26 @@ private def collectBlock (r : Rd) (a : Acc)
       s + (((c.1.resolve total).orElse fun _ => n).getD 0) + innerPaint r a c total) 0
     let unspecified := sized.foldl (fun (c : Nat) ((col : BoxWidth × Array Block), n) =>
       if col.1.declared || n.isSome then c else c + 1) 0
+    -- On a face's column grid a row of beamer columns spans whole columns, the grid's gutter between.
+    let grid := r.geom.columnGrid.filter fun _ => cols.all (·.1.column)
+    let spans : List Length := match grid with
+      | some g => g.spans (cols.toList.map fun c => (c.1.resolve total).getD g.width)
+      | none => []
+    let declared := if grid.isSome then
+        spans.foldl (· + ·) 0 + (cols.size - 1 : Nat) * (grid.map (·.gutter)).getD 0 else declared
+    let unspecified := if grid.isSome then 0 else unspecified
     -- A row of natural boxes spreads its slack evenly before, between and after them.
-    let evenly := !cols.isEmpty && unspecified == 0 && naturals.all (·.isSome)
+    let evenly := !cols.isEmpty && unspecified == 0 && naturals.all (·.isSome) && grid.isNone
     let rem := max 0 (total - declared)
     let a := if declared > total && !evenly then
         { a with diags := a.diags.push (columnsOverfull r a cols (declared - total)) }
       else a
     let places := if evenly then evenRows total (naturals.toList.map (·.getD 0)) else []
     let shareW := if unspecified > 0 then rem / unspecified else 0
-    let gutter := if evenly then rem / (cols.size + 1)
-      else if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
+    let gutter := match grid with
+      | some g => g.gutter
+      | none => if evenly then rem / (cols.size + 1)
+        else if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
     -- A lone declared box leaves its slack to its scope's side; several spend it on gutters.
     let side : Ir.HAlign := if r.centreBoxes then .center
       else if r.geom.flushRight then .right else .left
@@ -14878,7 +14905,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let inner := { (r.within blk) with
       centreBoxes := false, texRows := true
       geom := { r.geom with flushRight := false, texParskip := r.pageParskip } }
-    let a := collectColumns inner a cols.toList naturals.toList places opening (indent + inset)
+    let a := collectColumns inner a cols.toList naturals.toList spans places opening (indent + inset)
       (indent + off + inset) (natural.getD (shareW - 2 * inset)) gutter total
     let a := { a with ops := a.ops.push .colClose }
     if spec.isSome then { (a.pushOp .regionClose).pushOp .floatClose with ground := saved } else a
@@ -15027,10 +15054,10 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The title is pinned chrome; the content opens below its box with no peer gap.
     let a := if title.isEmpty then
         if r.geom.gridFrame then
-          -- A grid frame keeps its title band, its body (and a spill page's) from the band's next line.
-          -- The body opens from the paper's top: the band and half a leading above the first line.
-          { a with ops := (a.ops.push .pin).push
-                     (.bodyOpen { width := r.geom.grid.getD 0 * (3 : Int) / (2 : Int) } none)
+          -- The body (and a spill page's) opens from the paper's top, below the margin and a talk's
+          -- title line, its first line a leading below.
+          let band := if r.geom.gridTitleLine then r.geom.grid.getD 0 else 0
+          { a with ops := (a.ops.push .pin).push (.bodyOpen { width := r.geom.vmargin + band } none)
                    wantDefault := false, frameTop := true }
         else openFrameBody r a false valign area
       else if r.geom.gridFrame then
@@ -22186,12 +22213,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       { geom with headBand := headFurn.band }
     else geom
   -- TeX's `\topskip` on a TeX page: the document's own, else the class's body size (size10.clo).
-  -- A grid frame's lines stand a whole leading below its top, as tex/ltframe.cls's body box sets.
-  let gridFrame := doc.docClass.record.gridFrame
-  let geom := { geom with gridFrame, footline := Ir.footlineOf gridFrame doc.page }
-  let geom := if doc.docClass.record.model == .frame then
-      (if gridFrame then { geom with topskip := geom.grid } else geom)
-    else { geom with topskip := some ((tokenLen "topskip").getD geom.fontSize) }
+  let geom := geom.forClass doc.docClass.record doc.page ((tokenLen "topskip").getD geom.fontSize)
   -- `Design.ofDoc` resolves the document colours, the ink `Contrast.docDiags` judges.
   let design := Ir.Design.ofDoc doc
   let footGap := doc.page.furnitureGap.getD Ir.footline.sep
@@ -22614,7 +22636,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   dsimp (config := { zeta := false }) only [Id.run, bind, pure, Id]
   extract_lets d ps _ _ _ _ _ _ _ _
     _ _ _ _ _ _ _ _ _ _ _
-    _ _ _ _ _ rd acc0 acc accF _ _ _ b0
+    _ _ _ rd acc0 acc accF _ _ _ b0
     alphabet _ _ _ dir post
   have hacc := collectDocBody_census rd d frameSpans acc0 hp
     (by rcases hh with hh | hh <;>
@@ -24556,6 +24578,7 @@ deriving instance DecidableEq for Ir.PdfColor, Ir.Color
 deriving instance DecidableEq for Diag
 deriving instance DecidableEq for Ir.MarginPar
 deriving instance DecidableEq for Ir.Footline
+deriving instance DecidableEq for Ir.ColumnGrid
 deriving instance DecidableEq for Geom, Attribution, DecorationRule, LeaderPaint, Decorations,
   MathLineMetrics, RunMetrics
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule

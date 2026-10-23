@@ -574,6 +574,17 @@ and the author, institute and date after a gap. The stage is the aspect's: a siz
 declared paper is named, while equal `text margin left` and `text margin right` in `\setbeamersize`,
 or `\page{ hmargin = ... }`, set the side margins.
 
+`\documentclass{ltface}` sets one printed face per frame on the same grid, its first line a leading
+below the safe margin and an untitled face keeping no title line: the poster preset (the default) is
+beamerposter's A0 landscape board at 24.88pt inside a 10mm margin, and `[preset=card]` (or
+`\documentclass{card}`) an ISO/IEC 7810 ID-1 card at 10pt inside a 5mm one; a size option sets the
+body, its leading 1.2 of it. A poster's text width holds the column count whose column takes nearest
+66 characters of Latin Modern Sans within 60 to 75 (five on the default board), two leadings between
+columns, and each `column` spans the whole grid columns nearest its declared width, flush left. A
+face keeps the card and poster classes' contracts: its faces are its pages, its ink stays inside the
+margin and its x-height above the reading floor. `\documentclass{poster}` stays beamerposter's
+board, the class `\usepackage{beamerposter}` lowers to.
+
 ## Fonts and themes
 
 Use installed `.ttf` or `.otf` fonts, or the faces of a `.ttc` or `.otc`

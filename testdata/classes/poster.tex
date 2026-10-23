@@ -1,0 +1,35 @@
+% The face class's poster preset on an invented poster: a titled face and its blocks in columns
+% spanning the poster's column grid.
+\documentclass{ltface}
+\begin{document}
+\begin{frame}{Invented Lattice Posters}
+\begin{columns}[T]
+\begin{column}{0.38\textwidth}
+\begin{block}{Alder block}
+Birch is the block's first paragraph, long enough to wrap across a column of the poster's grid
+at its own size, which takes it to a second line and a third.
+
+Cedar is its second paragraph.
+\end{block}
+\begin{block}{Dogwood block}
+Elm is the second block's body.
+\[ a \wedge (b \vee c) \ge (a \wedge b) \vee (a \wedge c). \]
+\end{block}
+\end{column}
+\begin{column}{0.2\textwidth}
+\begin{block}{Hazel block}
+Juniper is the right column's body.
+\begin{itemize}
+\item Kilo, the first item.
+\item Lima, the second.
+\end{itemize}
+\end{block}
+\end{column}
+\begin{column}{0.4\textwidth}
+\begin{alertblock}{Mike block}
+November closes the poster.
+\end{alertblock}
+\end{column}
+\end{columns}
+\end{frame}
+\end{document}

@@ -18,6 +18,11 @@
 \tl_new:N \l_lt_base_tl
 \tl_new:N \l_lt_aspect_tl
 \bool_new:N \l_lt_twoside_bool
+\dim_new:N \l_lt_frameL_dim
+\dim_new:N \l_lt_framesize_dim
+\dim_new:N \l_lt_frameside_dim
+\dim_new:N \l_lt_frametop_dim
+\dim_new:N \l_lt_frameband_dim
 
 \cs_new_protected:Npn \lt_unread:nn #1#2
   {
@@ -65,10 +70,15 @@
     12pt .code:n = \tl_set:Nn \l_lt_fontsize_tl { 12pt } ,
     aspect .tl_set:N = \l_lt_aspect_tl ,
     aspectratio .tl_set:N = \l_lt_aspect_tl ,
+    width .code:n = \dim_set:Nn \l_lt_paperwidth_dim {#1} ,
+    height .code:n = \dim_set:Nn \l_lt_paperheight_dim {#1} ,
+    margin .code:n = { \dim_set:Nn \l_lt_hmargin_dim {#1} \dim_set:Nn \l_lt_vmargin_dim {#1} } ,
+    us .code:n = \lt_paper:nn { 252bp } { 144bp } ,
+    jis .code:n = \lt_paper:nn { 91mm } { 55mm } ,
     unknown .code:n =
       \use:e
         {
-          \PassOptionsToClass
+          \exp_not:N \PassOptionsToClass
             { \l_keys_key_str \tl_if_blank:nF {#1} { = \exp_not:n {#1} } } { \l_lt_base_tl }
         } ,
   }

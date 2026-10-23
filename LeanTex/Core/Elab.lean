@@ -7447,6 +7447,9 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with hyphenate := some false }
     if page.justify.isNone then
       page := { page with justify := some false }
+    -- tex/ltface.cls sets each face as beamer sets a frame, `\raggedright`.
+    if record.gridFrame then
+      page := { page with raggedFil := true }
   if let some w := page.blockWidth then
     page := { page with hmargin := (page.width - w) / 2 }
   if let some s := page.widthScale then
@@ -7467,11 +7470,20 @@ private def classSized (record : Ir.ClassRecord) (classOptions : String) (page :
   let optSize := (Ir.lastProcessed (record.area != .sizeFile) ["10", "11", "12"]
     (sizes.map toString)).bind (·.toNat?) |>.map fun n =>
       if record.design.isSome then Ir.classOptionSize n else Dim.pt n
+  -- tex/ltface.cls sets the last size it is given as written, its 11pt as size11.clo's.
+  let faceSize := if record.gridFrame && record.model == .face then
+      ((KeyVal.items classOptions).toList.filterMap fun o =>
+        let v := match KeyVal.entry o with
+          | ("fontsize", some v) => v
+          | (k, _) => k
+        if v.endsWith "pt" then ((v.dropEnd 2).toString.toNat?).filter (· > 0) else none).getLast?.map
+        fun n => if n == 11 then Ir.classOptionSize n else Dim.pt n
+    else none
   -- tex/ltframe.cls sets its body a line over the type scale's step below it.
-  let gridSize := if record.gridFrame then
+  let gridSize := if record.gridFrame && record.model == .frame then
       some (frameLead record (KeyVal.items classOptions).toList * (10 : Int) / (12 : Int))
     else none
-  match gridSize <|> optSize <|> record.fontSize with
+  match gridSize <|> faceSize <|> optSize <|> record.fontSize with
   | some d => { page with fontSize := d }
   | none => page
 
@@ -7578,21 +7590,23 @@ public def classOptionRead (record : Ir.ClassRecord) (o : String) : Bool :=
   | ("BCOR", some v), _ => record.area == .typearea && (bcorValue? v).isSome
   | ("headinclude", v), _ | ("footinclude", v), _ =>
     record.area == .typearea && v.all fun v => komaTrue v || ["false", "off", "no"].contains v
-  | ("fontsize", some v), _ => sized v && !record.gridFrame
+  | ("fontsize", some v), _ => sized v && !(record.gridFrame && record.model == .frame)
   | (k, none), .flow =>
     sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
       (classOptionFlags.lookup .flow).any (·.contains k) || abstractFormOptions.contains k
-  | (k, none), m => (sized k && !record.gridFrame) || (classOptionFlags.lookup m).any (·.contains k)
+  | (k, none), m =>
+    (sized k && !(record.gridFrame && record.model == .frame)) ||
+      (classOptionFlags.lookup m).any (·.contains k)
   | (k, some v), .flow =>
     (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats") ||
       (k == "preset" && record.design.isSome)
   | (k, some v), .frame =>
     (k == "aspectratio" || (k == "aspect" && record.gridFrame)) && (Ir.slidesStageNamed v).isSome
-  | (_, some _), .face => false
+  | (k, some v), .face => k == "preset" && record.design.isSome && (Ir.FacePreset.ofName? v).isSome
 
 /-- A box's declared width: a length, a fraction of the enclosing measure,
 or a parameterless command's body read once; `none` when unreadable. -/
-private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.run do
+private def columnWidthOf (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.run do
   let s := src.trimAscii.toString
   match affineLength ctx (· != .textHeight) s with
   | .ok e => return some (.sized e)
@@ -7615,6 +7629,13 @@ private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.ru
           return some (.sized (Affine.scaleQ m sc (.ref .lineWidth)))
         else return none
       | none => return none
+
+/-- A box's declared width (`columnWidthOf`), a column's Compat marks beamer's own (`column`). -/
+private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth :=
+  let mark := Parse.rawSrcOne (.env Compat.beamerColumnsMark #[] {})
+  if src.endsWith mark then
+    (columnWidthOf ctx (src.dropEnd mark.length).toString).map ({ · with column := true })
+  else columnWidthOf ctx src
 
 /-- The verbatim captures that always run inline: `\verb`, the inline code commands and url.sty's
 delimited commands. -/
@@ -12370,7 +12391,7 @@ or absolute lengths")
   rows := Ir.padTableRows rows cols.size
   let table := Block.table cols padL padR rows rules spans
   blocks := blocks.push (match valign with
-    | some p => .columns #[(⟨.share, p, none, false, false⟩, #[table])]
+    | some p => .columns #[(⟨.share, p, none, false, false, false⟩, #[table])]
     | none => table)
   return blocks
 
@@ -16935,7 +16956,10 @@ private def faceKeyOf? (key : String) : Option String :=
 directories. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
     (sites : Array (String × Pos)) (pos : Pos) : FontSpec × Array PEvent := Id.run do
-  let mut spec := spec
+  -- A slot's family replaces the faces an earlier declaration named, as fontspec's `\setmainfont`.
+  let aliases := [("rm", "body"), ("sf", "sans"), ("tt", "mono")]
+  let reset := entries.toList.filterMap fun e => if e.value matches .str _ then fontSlot? e.key else none
+  let mut spec := { spec with faces := spec.faces.filter fun f => !reset.contains f.1.1 }
   let mut evs : Array PEvent := #[]
   let mut sites := sites
   for e in entries do
@@ -17007,8 +17031,8 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
               (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic",
                 "<slot>.<series>[.italic] (series ul/el/l/sl/m/sb/b/eb/ub)"]) pos))
     -- Only slot and alphabet settings are scalars that report an overwrite.
-    if evs.size == before then
-      let aliases := [("rm", "body"), ("sf", "sans"), ("tt", "mono")]
+    -- A leantex class's own faces are its defaults, which a document's declaration overrides.
+    if evs.size == before && !ctx.file.endsWith ".cls" then
       let canonical := (aliases.lookup e.key).getD e.key
       if ["body", "sans", "mono", "math"].contains canonical ||
           (Math.MathAlphabet.sourceKey? canonical).isSome then
@@ -18531,6 +18555,13 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
               diag s.ctx .W0104 s!"'preset={v}' is not a preset of the flow class \
 ({", ".intercalate (Ir.FlowPreset.all.map (·.name))}); the {p0.name} preset stands" pos
               pure c
+          | .face p0, some v =>
+            match Ir.FacePreset.ofName? v with
+            | some p => pure (Ir.DocClass.face p)
+            | none =>
+              diag s.ctx .W0104 s!"'preset={v}' is not a preset of the face class \
+({", ".intercalate (Ir.FacePreset.all.map (·.name))}); the {p0.name} preset stands" pos
+              pure c
           | _, _ => pure c
         return { s with docClass := c, palette := { s.palette with
           classColors := c.classColors (Ir.Surface.ofPath s.ctx.file) } }
@@ -20023,7 +20054,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let (tokens, styles) := match docClass.record.design with
     | some _ =>
       let body := (classSized docClass.record classOptions page).fontSize
-      if docClass.record.model == Ir.PageModel.frame then
+      if docClass.record.gridFrame then
         (frameDesignTokens body themedDs.tokens, themedDs.styles)
       else flowDesignDecls body themedDs.tokens themedDs.styles
     | none => (themedDs.tokens, themedDs.styles)
@@ -20100,7 +20131,7 @@ the {docClass.name} class's page keeps its own" none
     page := { page with measureChars := none }
   -- tex/ltframe.cls derives its whole grid from its aspect's stage.
   -- premise: Tests.FrameClass.checks — a declared paper leaves the aspect's stage
-  if record.gridFrame && page.sized then
+  if record.gridFrame && record.model == .frame && page.sized then
     diag ctx .W0104 s!"'\\page' sets the paper; the {docClass.name} class's stage is its aspect's" none
     page := { page with widthSized := false, heightSized := false }
   page := classAreaPage record classOpts (Ir.Surface.ofPath file) s.sawAcross s.sawDown

@@ -4845,15 +4845,17 @@ public structure BoxWidth where
   /-- Whether a box of no declared width takes its content's width, as a tabular sets it; a row of
   such boxes spreads its slack evenly around them, as `\hfil` between centred boxes does. -/
   natural : Bool := false
+  /-- Whether the box is beamer's `column`, the box a face's column grid spans (`Ir.ColumnGrid`). -/
+  column : Bool := false
   deriving Repr, BEq, Inhabited
 
-@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none, false, false⟩
+@[match_pattern, expose] public def BoxWidth.share : BoxWidth := ⟨.share, .top, none, false, false, false⟩
 @[match_pattern, expose] public def BoxWidth.sized (width : Affine Measure) : BoxWidth :=
-  ⟨.sized width, .top, none, false, false⟩
+  ⟨.sized width, .top, none, false, false, false⟩
 @[match_pattern, expose] public def BoxWidth.frac (permille : Nat) : BoxWidth :=
-  ⟨.frac permille, .top, none, false, false⟩
+  ⟨.frac permille, .top, none, false, false, false⟩
 @[match_pattern, expose] public def BoxWidth.abs (w : Length) : BoxWidth :=
-  ⟨.abs w, .top, none, false, false⟩
+  ⟨.abs w, .top, none, false, false, false⟩
 
 /-- The declared width against a known measure: the width the box is set at. -/
 public def BoxWidth.resolve (w : BoxWidth) (measure : Length) : Option Length :=
@@ -8679,6 +8681,62 @@ public def FramePreset.ofName? (n : String) : Option FramePreset :=
 /-- The lines a frame's stage holds from its top to its bottom edge. -/
 public def frameGridLines : Nat := 16
 
+/-- The leantex face class's presets (`tex/ltface.cls`), each one printed face per frame. -/
+public inductive FacePreset where
+  /-- beamerposter's A0 landscape board, its blocks on a column grid. -/
+  | poster
+  /-- An ISO/IEC 7810 ID-1 card. -/
+  | card
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+public def FacePreset.name : FacePreset → String
+  | .poster => "poster"
+  | .card => "card"
+
+public def FacePreset.all : List FacePreset := [.poster, .card]
+
+/-- A face preset's `\documentclass` word: `ltface` for the poster, `card` for the card. -/
+public def FacePreset.classWord : FacePreset → String
+  | .poster => "ltface"
+  | .card => "card"
+
+public def FacePreset.ofName? (n : String) : Option FacePreset :=
+  FacePreset.all.find? (·.name == n)
+
+public theorem FacePreset.ofName?_name (p : FacePreset) : FacePreset.ofName? p.name = some p := by
+  cases p <;> rfl
+
+/-- The face classes' in-area contract guidance: their margins are the print safe zone. -/
+public def faceInAreaHelp : String := "the margins are the print safe zone: ink past them risks \
+the trim; declare \\assert{ text.in_area } to take control"
+
+/-- A poster's x-height floor guidance. -/
+public def posterXHeightHelp : String :=
+  "3.5mm x-height is the fluent-reading floor (Legge & Bigelow 2011) \
+at 1m, the distance where a poster body at beamerposter's own 24.88pt \
+calibration reads fluently; declare \
+\\assert{ text.xheight >= ... } to take control"
+
+/-- A card's x-height floor guidance. -/
+public def cardXHeightHelp : String :=
+  "1.4mm x-height is the fluent-reading floor at hand-held \
+distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control"
+
+/-- A face preset's trim: beamerposter's A0 landscape board, ISO/IEC 7810's ID-1. -/
+public def FacePreset.trim : FacePreset → Length × Length
+  | .poster => (Dim.mm 1189, Dim.mm 841)
+  | .card => (Dim.mm100 8560, Dim.mm100 5398)
+
+/-- A face preset's body size: beamerposter's scale-1 A0 normalsize, LaTeX's 10pt. -/
+public def FacePreset.fontSize : FacePreset → Length
+  | .poster => posterFontSize
+  | .card => baseFontSize
+
+/-- A face preset's print safe zone, the margins on every side. -/
+public def FacePreset.safeMargin : FacePreset → Length
+  | .poster => Dim.mm 10
+  | .card => Dim.mm 5
+
 /-- The theorem-like environments the flow class declares, amsthm's style for each, on one
 counter named by the first: the shared practice of the AMS, ACM, IEEE and NeurIPS classes. -/
 public def flowTheorems : List (String × String × String) :=
@@ -8770,6 +8828,69 @@ public def FramePreset.keys (p : FramePreset) : String :=
   s!"ratio = {d.ratio / 1000}.{toString (d.ratio % 1000 + 1000) |>.drop 1} , grid = {d.grid} , " ++
     "aspect = 169 , base = beamer"
 
+/-- Latin Modern Sans's lowercase alphabet at 10pt (lualatex 1.24, lmsans10: 119.65pt), the ruler
+a face's columns are measured in characters by. -/
+public def sansAlphabet10 : Length := Dim.pt 11965 / 100
+
+/-- The characters, in tenths, a line `w` wide holds at body `size`, by memoir's copy-fitting lines
+of 45 and 65 characters from the lowercase alphabet. -/
+public def faceChars10 (size w : Length) : Int :=
+  let a := sansAlphabet10.mulDiv size (Dim.pt 10)
+  let l45 : Length := (1415 : Int) * a / (1000 : Int) + Dim.pt 2303 / (100 : Int)
+  let l65 : Length := (2042 : Int) * a / (1000 : Int) + Dim.pt 3341 / (100 : Int)
+  450 + (200 * (w - l45)) / (l65 - l45)
+
+/-- A face's column grid: each column's width and the gutter between two. -/
+public structure ColumnGrid where
+  count : Nat
+  width : Length
+  gutter : Length
+  deriving Repr, BEq, Inhabited
+
+/-- The columns a text width holds at a gutter: the count whose column lands nearest `measure`
+characters within the 60–75 band (Bringhurst §2.1.2), else nearest it at all. -/
+public def faceColumns (textW gutter size : Length) (measure : Nat) : ColumnGrid := Id.run do
+  let mut best : ColumnGrid := { count := 1, width := textW, gutter }
+  let mut bestKey : Int × Int := (1, (faceChars10 size textW - 10 * (measure : Int)).natAbs)
+  for n in [1:13] do
+    let w := (textW - ((n : Int) - 1) * gutter) / (n : Int)
+    if w > 0 then
+      let c := faceChars10 size w
+      let key : Int × Int := (if 600 ≤ c && c ≤ 750 then 0 else 1, (c - 10 * (measure : Int)).natAbs)
+      if key.1 < bestKey.1 || (key.1 == bestKey.1 && key.2 < bestKey.2) then
+        best := { count := n, width := w, gutter }
+        bestKey := key
+  return best
+
+/-- The widths a row of boxes declared `ws` wide take on a column grid: each ends on the grid column
+nearest the row's declared width so far, at least one past the last and at most the last column. -/
+public def ColumnGrid.spans (g : ColumnGrid) (ws : List Length) : List Length := Id.run do
+  let step := g.width + g.gutter
+  let mut out : Array Length := #[]
+  let mut sum : Length := 0
+  let mut edge : Int := 0
+  for w in ws do
+    sum := sum + w
+    let near : Int := ((sum + g.gutter) * (2 : Int) + step) / ((2 : Int) * step)
+    let next := max (edge + 1) (min (g.count : Int) near)
+    out := out.push ((next - edge) * g.width + (next - edge - 1) * g.gutter)
+    edge := next
+  return out.toList
+
+/-- A face preset's design: LaTeX's ratio 1.2 and the grid on; a poster's columns hold 66
+characters. -/
+public def FacePreset.design : FacePreset → FlowDesign
+  | .poster => { ratio := 1200, measure := 66, grid := true }
+  | .card => { ratio := 1200, measure := 0, grid := true }
+
+/-- A face preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
+public def FacePreset.keys (p : FacePreset) : String :=
+  let d := p.design
+  let pt (l : Length) : String := l.toPtString ++ "pt"
+  s!"fontsize = {pt p.fontSize} , measure = {d.measure} , ratio = {d.ratio / 1000}." ++
+    s!"{toString (d.ratio % 1000 + 1000) |>.drop 1} , grid = {d.grid} , width = {pt p.trim.1} , " ++
+    s!"height = {pt p.trim.2} , margin = {pt p.safeMargin} , base = beamer"
+
 /-- A preset's keys as `tex/ltkeys.sty`'s `lt / preset` family reads them. -/
 public def FlowPreset.keys (p : FlowPreset) : String :=
   let d := p.design
@@ -8777,9 +8898,10 @@ public def FlowPreset.keys (p : FlowPreset) : String :=
   s!"fontsize = {flowOptionPt}pt , measure = {d.measure} , ratio = {ratio} , grid = {d.grid} , " ++
     s!"paper = letter , twoside = {p == .cookbook} , base = {p.base}"
 
-/-- The frame class's LaTeX after beamer.cls: the flow class's faces with its sans as the body, as
-beamer sets its text in sans, no navigation symbols, and black on white (`tex/ltframesource.tex`). -/
-public def frameClassSource : String := Id.run do
+/-- The frame and face classes' LaTeX after beamer.cls: the flow class's faces with its sans as the
+body, as beamer sets its text in sans, no navigation symbols, black ink, and a talk's frame
+number (`tex/ltframesource.tex`). -/
+public def frameClassSource (numbered : Bool := true) : String := Id.run do
   let mut out := "\\RequirePackage{fontspec}\n\\RequirePackage{unicode-math}\n"
   let sans := (flowFaces.find? (·.1 == "sans")).getD default
   for (slot, up, b, i, bi) in flowFaces do
@@ -8791,12 +8913,17 @@ public def frameClassSource : String := Id.run do
     "\\setbeamertemplate{itemize item}{\\textbullet}\n" ++
     "\\setbeamertemplate{itemize subitem}{\\textendash}\n" ++
     "\\setbeamertemplate{itemize subsubitem}{\\textasteriskcentered}\n" ++
-    "\\setbeamertemplate{footline}{\\hfill\\insertframenumber}\n" ++
-    "\\setbeamercolor{normal text}{fg=black,bg=white}\n\\setbeamercolor{structure}{fg=black}\n"
+    (if numbered then "\\setbeamertemplate{footline}{\\hfill\\insertframenumber}\n" else "") ++
+    "\\setbeamercolor{normal text}{fg=black}\n\\setbeamercolor{structure}{fg=black}\n"
 
 /-- `tex/ltframesource.tex`: the frame class's source in LaTeX's own syntax, read by both engines. -/
 public def ltFrameSourceTex : String :=
   "% Generated by leantex's test suite under --update; never edited by hand.\n" ++ frameClassSource
+
+/-- `tex/ltfacesource.tex`: the face class's source, a talk's less its frame number. -/
+public def ltFaceSourceTex : String :=
+  "% Generated by leantex's test suite under --update; never edited by hand.\n" ++
+    frameClassSource (numbered := false)
 
 /-- A preset's whole class source after its base class. -/
 public def flowClassSource (p : FlowPreset) : String :=
@@ -8822,6 +8949,8 @@ public def ltDefaultsTex : String := Id.run do
     out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltflow_{p.name}_tl } \{ {p.keys} }\n"
   for p in FramePreset.all do
     out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltframe_{p.name}_tl } \{ {p.keys} }\n"
+  for p in FacePreset.all do
+    out := out ++ s!"\\tl_const:cn \{ c_lt_preset_ltface_{p.name}_tl } \{ {p.keys} }\n"
   let bp (l : Length) : String :=
     let m := l.toBpMilli
     s!"{m / 1000}.{(toString (m % 1000 + 1000)).drop 1}bp"
@@ -8931,33 +9060,36 @@ public structure ClassRecord where
 public inductive DocClass where
   | article
   | slides
-  | card
-  /-- One fixed, printed, trimmed surface at a large base: the face model's second class. -/
-  | poster
   /-- KOMA-Script's article, report and book classes, one record for the three. -/
   | koma
   /-- The leantex flow class (`tex/ltflow.cls`) at one of its presets. -/
   | flow (preset : FlowPreset)
   /-- The leantex frame class (`tex/ltframe.cls`) at one of its presets. -/
   | frame (preset : FramePreset)
+  /-- The leantex face class (`tex/ltface.cls`) at one of its presets. -/
+  | face (preset : FacePreset)
+  /-- beamerposter's board, one fixed, printed, trimmed surface at a large base: beamer under
+  `\usepackage{beamerposter}`. -/
+  | poster
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The class's one spelling, the `\documentclass` argument. -/
 public def DocClass.name : DocClass → String
   | .article => "article"
   | .slides => "slides"
-  | .card => "card"
-  | .poster => "poster"
   | .koma => "scrartcl"
   | .flow p => p.classWord
   | .frame _ => "ltframe"
+  | .face p => p.classWord
+  | .poster => "poster"
 
 /-- The class a `\documentclass` argument names, if any: the inverse of `name`, KOMA-Script's
 report and book spelling its article. -/
 public def DocClass.ofString? : String → Option DocClass
   | "article" => some .article
   | "slides" => some .slides
-  | "card" => some .card
+  | "card" => some (.face .card)
+  | "ltface" => some (.face .poster)
   | "poster" => some .poster
   | "scrartcl" | "scrreprt" | "scrbook" => some .koma
   | "ltflow" => some (.flow .article)
@@ -8972,17 +9104,19 @@ public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some 
   cases c with
   | flow p => cases p <;> rfl
   | frame p => cases p; rfl
+  | face p => cases p <;> rfl
   | _ => rfl
 
 /-- Every class, in the order a help lists them. -/
 @[expose] public def DocClass.all : List DocClass :=
-  [.article, .slides, .card, .poster, .koma] ++ FlowPreset.all.map .flow ++
-    FramePreset.all.map .frame
+  [.article, .slides, .poster, .koma] ++ FlowPreset.all.map .flow ++
+    FramePreset.all.map .frame ++ FacePreset.all.map .face
 
 public theorem DocClass.all_complete (c : DocClass) : c ∈ DocClass.all := by
   cases c with
   | flow p => cases p <;> simp [DocClass.all, FlowPreset.all]
   | frame p => cases p; simp [DocClass.all, FramePreset.all]
+  | face p => cases p <;> simp [DocClass.all, FacePreset.all]
   | _ => simp [DocClass.all]
 
 public theorem DocClass.all_nodup : DocClass.all.Nodup := by decide
@@ -9011,24 +9145,29 @@ résumé's floor the fluent-reading x-height at hand-held distance. -/
       colorRow := .stage
       schemes := .own
       abstractForm := .inset }
-  | .card =>
+  -- tex/ltface.cls loads beamer.cls at its `t` option, one face per frame.
+  | .face p =>
     { model := .face
+      fontSize := some p.fontSize
+      parskip := some {}
+      lists := .beamer
+      preambleSans := true
       abstractForm := .inset
       colorRow := .stage
       schemes := .own
-      runningFurniture := false
+      runningFurniture := p == .poster
+      groundDepth := if p == .poster then .posters else .documents
       pagesBound := some .faces
-      inkInArea := some "the margins are the print safe zone: ink past them risks \
-the trim; declare \\assert{ text.in_area } to take control"
-      xHeightFloor := some (cardXHeightFloor,
-        "1.4mm x-height is the fluent-reading floor at hand-held \
-distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control")
-      trimDefault := some (Dim.mm100 8560, Dim.mm100 5398)
-      safeMargin := some (Dim.mm 5) }
+      inkInArea := some faceInAreaHelp
+      xHeightFloor := some (if p == .poster then (posterXHeightFloor, posterXHeightHelp)
+        else (cardXHeightFloor, cardXHeightHelp))
+      trimDefault := some p.trim
+      safeMargin := some p.safeMargin
+      design := some p.design }
   | .poster =>
     { model := .face
       abstractForm := .inset
-      fontSize := some posterFontSize
+      fontSize := some FacePreset.poster.fontSize
       lists := .beamer
       colorRow := .stage
       schemes := .own
@@ -9036,16 +9175,10 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       headline := true
       groundDepth := .posters
       pagesBound := some .faces
-      inkInArea := some "the margins are the print safe zone: ink past them risks \
-the trim; declare \\assert{ text.in_area } to take control"
-      xHeightFloor := some (posterXHeightFloor,
-        "3.5mm x-height is the fluent-reading floor (Legge & Bigelow 2011) \
-at 1m, the distance where a poster body at beamerposter's own 24.88pt \
-calibration reads fluently; declare \
-\\assert{ text.xheight >= ... } to take control")
-      -- ISO 216 A0, landscape: beamerposter's default board.
-      trimDefault := some (Dim.mm 1189, Dim.mm 841)
-      safeMargin := some (Dim.mm 10) }
+      inkInArea := some faceInAreaHelp
+      xHeightFloor := some (posterXHeightFloor, posterXHeightHelp)
+      trimDefault := some FacePreset.poster.trim
+      safeMargin := some FacePreset.poster.safeMargin }
   -- scrkernel-fontsize.dtx's 11pt, scrkernel-paragraphs.dtx's `parskip=false`.
   | .koma =>
     { model := .flow
@@ -9082,9 +9215,7 @@ calibration reads fluently; declare \
 declare \\assert{ pages <= N } to take control" else ""
       inkInArea := if p == .resume then some "the margins frame what every printer keeps: ink past \
 them risks the clip; declare \\assert{ text.in_area } to take control" else none
-      xHeightFloor := if p == .resume then some (cardXHeightFloor,
-        "1.4mm x-height is the fluent-reading floor at hand-held \
-distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control") else none
+      xHeightFloor := if p == .resume then some (cardXHeightFloor, cardXHeightHelp) else none
       colorRow := if p == .cvweb then .web else .latex
       formats := if p == .cvweb then #["html", "md"] else #[]
       mdName := if p == .cvweb then some "llms.txt" else none
@@ -9104,8 +9235,13 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
 /-- The lineage a class's web page sets its lists in. -/
 @[expose] public def ClassRecord.htmlLists (r : ClassRecord) : ListLineage := r.webLists.getD r.lists
 
-/-- Whether a class sets its frames on a grid (`tex/ltframe.cls`): a deck under a design record. -/
-@[expose] public def ClassRecord.gridFrame (r : ClassRecord) : Bool := r.model == .frame && r.design.isSome
+/-- Whether a class sets its frames on a grid (`tex/ltframe.cls`, `tex/ltface.cls`): a deck or a
+face under a design record. -/
+@[expose] public def ClassRecord.gridFrame (r : ClassRecord) : Bool :=
+  (r.model == .frame || r.model == .face) && r.design.isSome
+
+/-- Whether a grid frame with no title keeps its title's line: a talk's band, never a face's. -/
+@[expose] public def ClassRecord.gridTitleLine (r : ClassRecord) : Bool := r.model == .frame
 
 /-- A document's class defaults: its class's colour row and ground depth, the
 web's row for a source that is not tex. -/
@@ -16710,7 +16846,7 @@ private def alertCtrl : String := "alert"
 /-- What beamer defines that a beamer document's standalone does not:
 `\alert`, where the picture spells it. -/
 public def slideShims (doc : Doc) (roots : String) : String :=
-  if doc.docClass != .slides && doc.docClass != .poster then "" else
+  if !(doc.docClass matches .slides | .poster | .frame _ | .face _) then "" else
   let alert :=
     if !(ctrlNames roots).contains alertCtrl then ""
     else if (Design.declared? doc.palette .alert).isSome then

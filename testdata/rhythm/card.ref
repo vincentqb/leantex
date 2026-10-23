@@ -2,10 +2,10 @@
 fixture: card
 src-key: 0765C4154F0DABA494FCEEED00ACC40A
 ref-src: card.ref.tex
-ref-src-key: 5ACB0662726AA0EAAC3746F7E5567174
+ref-src-key: 65834DD2816BA51BAA5B707A6970F089
 engine: This is LuaHBTeX, Version 1.24.0 (TeX Live 2026/Homebrew)
 format: LaTeX2e <2025-11-01>
 unit: bp (1/72 in, the PDF user unit), measured downward on the page
-page-first-baseline	Alder	top	24.136 bp	top edge of the page → baseline of the marker's line
+page-first-baseline	Alder	top	26.128 bp	top edge of the page → baseline of the marker's line
 par-par	Birch	span	11.955 bp	baseline of the text line above → baseline of the marker's line
 par-par	Cedar	span	11.955 bp	baseline of the text line above → baseline of the marker's line

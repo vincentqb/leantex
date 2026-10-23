@@ -1,0 +1,204 @@
+% The leantex grid deck after beamer.cls, shared by tex/ltframe.cls and tex/ltface.cls: a class sets
+% L (\l_lt_frameL_dim), the body size, the side and top margins and a title line's band first.
+\ExplSyntaxOn
+\cs_set_protected:Npe \normalsize
+  {
+    \exp_not:N \@setfontsize \exp_not:N \normalsize
+      { \dim_use:N \l_lt_framesize_dim } { \dim_use:N \l_lt_frameL_dim }
+    \abovedisplayskip = \dim_eval:n { \l_lt_frameL_dim / 2 } \scan_stop:
+    \belowdisplayskip = \abovedisplayskip
+    \abovedisplayshortskip = \abovedisplayskip
+    \belowdisplayshortskip = \abovedisplayskip
+  }
+\normalsize
+% beamerbaselocalstructure.sty's list lengths, in the body's em.
+\setlength \leftmargini { 2em }
+\setlength \leftmarginii { 2em }
+\setlength \leftmarginiii { 2em }
+\setlength \labelsep { .5em }
+\setlength \labelwidth { \leftmargini }
+\addtolength \labelwidth { -\labelsep }
+\lt_grid_init:
+\lt_ladder:
+\setbeamertemplate{headline}{}
+\setbeamersize{text~margin~left=\l_lt_frameside_dim, text~margin~right=\l_lt_frameside_dim}
+% A nested list keeps the body's size, its lines on the body's leading.
+\setbeamerfont{itemize/enumerate~subbody}{ size = \normalsize }
+\setbeamerfont{itemize/enumerate~subsubbody}{ size = \normalsize }
+% Titles set at the step above the body, solid on the grid's leading; a break fills the frame.
+\setbeamerfont{framesubtitle}{ size = \normalsize }
+\setbeamerfont{frametitle}
+  { size = \fontsize { \dim_use:N \l_lt_frameL_dim } { \dim_use:N \l_lt_frameL_dim } , series = \bfseries }
+\define@key { beamerframe } { allowframebreaks } [ 1 ]
+  { \cs_set:Npn \beamer@autobreakfactor {#1} \beamer@autobreaktrue }
+% The title stands a leading below the margin, its subtitle on the next line, the body on the line
+% after both, a line further below a coloured band.
+\box_new:N \l__lt_title_box
+\dim_new:N \l__lt_drop_dim
+\dim_new:N \l__lt_band_dim
+\cs_new_protected:Npn \lt_frame_title:
+  {
+    \raggedright \usebeamerfont{frametitle}
+    \leavevmode \usebeamercolor[fg]{frametitle} \insertframetitle \par
+    \tl_if_empty:NF \insertframesubtitle
+      {
+        \usebeamerfont{framesubtitle}
+        \leavevmode \usebeamercolor[fg]{framesubtitle} \insertframesubtitle \par
+      }
+  }
+\setbeamertemplate{frametitle}
+  {
+    \nointerlineskip
+    \vbox_set_top:Nn \l__lt_title_box { \lt_frame_title: }
+    \dim_set:Nn \l__lt_drop_dim
+      { \l_lt_frametop_dim + \l_lt_frameL_dim - \box_ht:N \l__lt_title_box }
+    \vbox_set:Nn \l__lt_title_box { \lt_frame_title: }
+    % A band colour paints the title's band, to half a leading below its last line.
+    \ifbeamercolorempty [ bg ] { frametitle } { }
+      {
+        \dim_set:Nn \l__lt_band_dim
+          { \l__lt_drop_dim + \box_ht:N \l__lt_title_box + 0.5\l_lt_frameL_dim }
+        \hbox_set:Nn \l_tmpb_box
+          {
+            \skip_horizontal:n { -\beamer@leftmargin }
+            \usebeamercolor [ bg ] { frametitle }
+            \rule [ -\l__lt_band_dim ] { \paperwidth } { \l__lt_band_dim }
+          }
+        \box_set_ht:Nn \l_tmpb_box { 0pt }
+        \box_set_dp:Nn \l_tmpb_box { 0pt }
+        \box_use_drop:N \l_tmpb_box
+        \nointerlineskip
+      }
+    \skip_vertical:n { \l__lt_drop_dim }
+    \box_set_dp:Nn \l__lt_title_box { 0pt }
+    \box_use_drop:N \l__lt_title_box
+    { \normalsize \vskip -0.25em }
+    \skip_vertical:n { -\l_lt_frametop_dim - \l_lt_frameband_dim }
+    \ifbeamercolorempty [ bg ] { frametitle } { } { \skip_vertical:n { \l_lt_frameL_dim } }
+  }
+\cs_set_protected:Npn \lt_frame_topskip:
+  {
+    \skip_set:Nn \beamer@frametopskip { \l_lt_frametop_dim + \l_lt_frameband_dim }
+    \skip_set:Nn \beamer@framebottomskip { 0pt plus 1fill }
+    \skip_set_eq:NN \beamer@frametopskipautobreak \beamer@frametopskip
+    \skip_set_eq:NN \beamer@framebottomskipautobreak \beamer@framebottomskip
+  }
+\define@key { beamerframe } { t } [ true ] { \lt_frame_topskip: }
+\define@key { beamerframe } { c } [ true ] { \lt_frame_topskip: }
+\define@key { beamerframe } { b } [ true ] { \lt_frame_topskip: }
+\define@key { beamerframe } { standout } [ true ] { }
+% A block is its bold title over its body, a blank line around it.
+\setbeamertemplate { block~begin }
+  {
+    \par \addvspace { \l_lt_frameL_dim }
+    \tl_if_empty:NF \insertblocktitle { { \bfseries \insertblocktitle \par } }
+  }
+\setbeamertemplate { block~end } { \par \addvspace { \l_lt_frameL_dim } }
+\setbeamertemplate { block~alerted~begin } { \usebeamertemplate { block~begin } }
+\setbeamertemplate { block~alerted~end } { \usebeamertemplate { block~end } }
+\setbeamertemplate { block~example~begin } { \usebeamertemplate { block~begin } }
+\setbeamertemplate { block~example~end } { \usebeamertemplate { block~end } }
+\setbeamertemplate { title~page }
+  {
+    \vspace* { 3\l_lt_frameL_dim }
+    { \raggedright \Large \bfseries \inserttitle \par }
+    \tl_if_empty:NF \insertsubtitle { { \raggedright \insertsubtitle \par } }
+    \vspace { \l_lt_frameL_dim }
+    \tl_if_empty:NF \insertauthor { { \insertauthor \par } }
+    \tl_if_empty:NF \insertinstitute { { \insertinstitute \par } }
+    \tl_if_empty:NF \insertdate { { \insertdate \par } }
+  }
+% A row of columns stands from the last line's baseline, each column's lines on the grid as a
+% frame's, the columns flush with both margins; on a column grid each spans whole columns, the
+% grid's gutter between them, each ending on the grid column nearest the row's width so far.
+\int_new:N \l__lt_cols_int
+\dim_new:N \l__lt_colw_dim
+\dim_new:N \l__lt_gutter_dim
+\bool_new:N \g__lt_colfirst_bool
+\box_new:N \l__lt_row_box
+\dim_new:N \g__lt_colsum_dim
+\int_new:N \g__lt_coledge_int
+\dim_new:N \l__lt_span_dim
+\cs_new_protected:Npn \__lt_span:n #1
+  {
+    \int_compare:nNnTF { \l__lt_cols_int } > { 0 }
+      {
+        \dim_gadd:Nn \g__lt_colsum_dim {#1}
+        \int_set:Nn \l_tmpa_int
+          {
+            \int_max:nn { \g__lt_coledge_int + 1 }
+              {
+                \int_min:nn { \l__lt_cols_int }
+                  {
+                    \fp_eval:n
+                      {
+                        floor ( \dim_to_fp:n { \g__lt_colsum_dim + \l__lt_gutter_dim }
+                          / \dim_to_fp:n { \l__lt_colw_dim + \l__lt_gutter_dim } + 0.5 )
+                      }
+                  }
+              }
+          }
+        \int_set:Nn \l_tmpb_int { \l_tmpa_int - \g__lt_coledge_int }
+        \int_gset_eq:NN \g__lt_coledge_int \l_tmpa_int
+        \dim_set:Nn \l__lt_span_dim
+          { \l__lt_colw_dim * \l_tmpb_int + \l__lt_gutter_dim * ( \l_tmpb_int - 1 ) }
+      }
+      { \dim_set:Nn \l__lt_span_dim {#1} }
+  }
+\RenewDocumentEnvironment { columns } { O { } }
+  {
+    \par
+    \dim_compare:nNnT { \prevdepth } > { -1000pt } { \skip_vertical:n { -\prevdepth } }
+    \nointerlineskip
+    \bool_gset_true:N \g__lt_colfirst_bool
+    \dim_gzero:N \g__lt_colsum_dim
+    \int_gzero:N \g__lt_coledge_int
+    \int_compare:nNnTF { \l__lt_cols_int } > { 0 }
+      { \hbox_set:Nw \l__lt_row_box }
+      { \hbox_set_to_wd:Nnw \l__lt_row_box { \linewidth } }
+    \ignorespaces
+  }
+  {
+    \unskip
+    \hbox_set_end:
+    \box_use_drop:N \l__lt_row_box
+  }
+\RenewDocumentEnvironment { column } { O { T } m }
+  {
+    \unskip
+    \bool_if:NF \g__lt_colfirst_bool
+      {
+        \int_compare:nNnTF { \l__lt_cols_int } > { 0 }
+          { \skip_horizontal:N \l__lt_gutter_dim } { \hfill }
+      }
+    \bool_gset_false:N \g__lt_colfirst_bool
+    \__lt_span:n {#2}
+    \begin { minipage } [ t ] { \l__lt_span_dim }
+    \vspace { 0pt }
+    \@minipagefalse
+    \raggedright
+    \lua_now:n { ltgrid.push() }
+  }
+  {
+    \par
+    \lua_now:n { ltgrid.pop() }
+    \end { minipage }
+    \ignorespacesafterend
+  }
+% A frame's body box snaps its lines to the grid (`tex/ltgrid.lua`).
+\AddToHook { env / beamer@framepauses / begin } { \lua_now:n { ltgrid.frame() } }
+\AddToHook { env / beamer@framepauses / end } { \lua_now:n { ltgrid.main() } }
+% Declared side margins are the text's.
+\AddToHook { begindocument / before }
+  {
+    \bool_if:NT \l_lt_hmargin_bool
+      {
+        \dim_set_eq:NN \l_lt_frameside_dim \l_lt_hmargin_dim
+        \setbeamersize { text~margin~left = \l_lt_hmargin_dim , text~margin~right = \l_lt_hmargin_dim }
+      }
+    \bool_if:NT \l_lt_vmargin_bool { \dim_set_eq:NN \l_lt_frametop_dim \l_lt_vmargin_dim }
+  }
+\AddToHook { begindocument / before }
+  { \lua_now:e { ltgrid.enable(\dim_to_decimal_in_sp:n { \l_lt_L_dim }) } }
+\ExplSyntaxOff
+\endinput

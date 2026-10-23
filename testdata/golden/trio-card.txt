@@ -1,13 +1,22 @@
 class card
-page 242.646x153.014 vmargin 14.173 hmargin 14.173 bleed 8.504 marks cut hyphenate off justify off
+page 242.646x153.014 vmargin 14.173 hmargin 14.173 size tiny 579 size scriptsize 694 size footnotesize 833 size small 913 skip tiny 1200 skip scriptsize 1200 skip footnotesize 1200 skip small 1200 skip large 2400 skip Large 2400 skip LARGE 2400 skip huge 2400 skip Huge 3600 parskip 0 bleed 8.504 marks cut hyphenate off justify off
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
 font mono "Source Code Pro"
 palette primary #B45309
 palette quiet #6B7280
+palette frametitlefg #000000
+palette framesubtitlefg #000000
+palette sectiontitlefg #000000
+palette blocktitlefg #000000
+palette fg #000000
 token rhythm 1600/1000ex plus 400/1000ex
 token sep 1200/1000ex plus 300/1000ex
+token abovedisplayskip 6pt
+token belowdisplayskip 6pt
+token abovedisplayshortskip 6pt
+token belowdisplayshortskip 6pt
 meta title "Cardamom Press — card"
 meta author "Pat Placeholder"
 assert fonts.all_embedded
@@ -15,7 +24,7 @@ assert pages <= 2
 assert text.in_area
 assert text.xheight >= 3.983pt
 allow W0449
-frame
+frame top
   title
     styled size:Large
       styled sans
@@ -29,7 +38,7 @@ frame
   block before 1600/1000ex plus 400/1000ex
     para
       text "Cardamom Press"
-frame
+frame top
   title
     styled sans
       styled bold
@@ -44,4 +53,19 @@ frame
       color quiet #6B7280
         text "Editions of 64 or fewer, numbered by hand."
 -- diagnostics
+info[N0100] 9:1 translated class card | detail: \documentclass{card}
+info[N0100] 9:1 translated package amsmath | detail: nothing: the engine does this itself
+info[N0100] 9:1 translated package amsthm | detail: \theoremstyle{plain}
+info[N0100] 1:1 translated package fontspec | detail: nothing: the engine does this itself
+info[N0100] 2:1 translated package unicode-math | detail: nothing: the engine does this itself
+info[N0100] 3:1 translated command \setmainfont | detail: \fonts{ body = "lmsans10-regular.otf", body.bold = "lmsans10-bold.otf", body.italic = "lmsans10-oblique.otf", body.bolditalic = "lmsans10-boldoblique.otf" }
+info[N0100] 4:1 translated command \setsansfont | detail: \fonts{ sans = "lmsans10-regular.otf", sans.bold = "lmsans10-bold.otf", sans.italic = "lmsans10-oblique.otf", sans.bolditalic = "lmsans10-boldoblique.otf" }
+info[N0100] 5:1 translated command \setmonofont | detail: \fonts{ mono = "lmmono10-regular.otf", mono.bold = "lmmonolt10-bold.otf", mono.italic = "lmmono10-italic.otf", mono.bolditalic = "lmmonolt10-boldoblique.otf" }
+info[N0100] 6:1 translated command \setmathfont | detail: \fonts{ math = "latinmodern-math.otf" }
+info[N0100] 7:1 translated command '\setbeamertemplate{navigation symbols}{}' | detail: nothing: the engine draws no navigation symbols
+info[N0100] 8:1 translated command '\setbeamertemplate{itemize item}' | detail: \style{itemize}{ marker = {\textbullet} }
+info[N0100] 9:1 translated command '\setbeamertemplate{itemize subitem}' | detail: \style{itemize2}{ marker = {\textendash} }
+info[N0100] 10:1 translated command '\setbeamertemplate{itemize subsubitem}' | detail: \style{itemize3}{ marker = {\textasteriskcentered} }
+info[N0100] 11:1 translated command '\setbeamercolor{normal text}' | detail: named colour declaration in \palette
+info[N0100] 12:1 translated command \setbeamercolor{structure} | detail: named colour declaration in \palette
 warning[W0449] 26:1 unused style itemize | detail: the document sets no itemize lists | help: delete what it declares for them, or \allow{W0449} keeps it

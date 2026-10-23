@@ -635,14 +635,17 @@ styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "put \\smallskip, \\medskip or \\bigskip at a block's body start; \
 \\framefoot sets a frame footer")]
 
-public def presentationClasses : List String := ["beamer", "slides", "ltframe"]
+public def presentationClasses : List String := ["beamer", "slides", "ltframe", "ltface", "card"]
+
+/-- The classes built on beamer.cls: beamer's own and the leantex classes loading it. -/
+public def beamerClasses : List String := ["beamer", "ltframe", "ltface", "card"]
 
 /-- The packages a class loads itself: beamer loads both AMS packages unless its
 options hold the `noamsthm` key. -/
 public def classPackages (cls : String) (options : List String) : List String :=
   let disabled := options.any fun option =>
     String.ofList ((KeyVal.entry option).1.toList.filter (!·.isWhitespace)) == "noamsthm"
-  if (cls == "beamer" || cls == "ltframe") && !disabled then ["amsmath", "amsthm"]
+  if beamerClasses.contains cls && !disabled then ["amsmath", "amsthm"]
   else if amsArticleClasses.contains cls then ["amsmath", "amsthm", "amsfonts"]
   else if cls == "ltflow" then Ir.flowPackages else []
 
@@ -2354,6 +2357,7 @@ private def applyClassSourceAt (raws : Array Raw) : Array Raw := Id.run do
       let preset := flowPresetOf p0 (KeyVal.items ((opt.map rawSrc).getD "")).toList
       ("ltflow.cls", if cls == "ltflow" then Ir.flowClassSource preset else Ir.flowPresetSource preset)
     | some (.frame _) => ("ltframe.cls", Ir.frameClassSource)
+    | some (.face _) => ("ltface.cls", Ir.frameClassSource (numbered := false))
     | _ => ("", "")
   if text.isEmpty then return raws
   let source := verbatimRaws file text
@@ -11598,14 +11602,14 @@ the option" else "the page is one-sided, as without the option")) pos
       let theorems := if cls == "acmart" && !keptItems.any (acmThm · == some false) then
           verbatimRaws "acmart.cls" acmTheoremSource else #[]
       return some (cls0.raws pos ++ (← carry page pos) ++ dependencies ++ theorems, k)
-    else if cls == "beamer" || cls == "ltframe" then
+    else if beamerClasses.contains cls then
       -- beamer's `hyperref={...}` option is `\hypersetup`'s keys.
       let hyper := ((takeRawOpt raws start).1.map (Entries.read .keyval ·)).getD #[]
         |>.filter (·.key == "hyperref")
       let keptItems := keptItems.filter fun kv => (KeyVal.entry kv).1 != "hyperref"
-      -- tex/ltframe.cls is beamer's class under its own record.
+      -- tex/ltframe.cls and tex/ltface.cls are beamer's class under their own records.
       let declaration := Native.Head.documentclass (if opt.isSome then keptItems.toArray else #[])
-        (if cls == "ltframe" then "ltframe" else "slides")
+        (if cls == "beamer" then "slides" else cls)
       became s!"\\documentclass\{{cls}}" declaration.render pos
       let mut setup : Array Raw := #[]
       for e in hyper do
@@ -13304,13 +13308,25 @@ private def splitColumns (body : Array Raw) : Array Raw := Id.run do
 
 mutual
 
+/-- The mark a written `{column}`'s width ends with, beamer's own column: an engine name. -/
+public def beamerColumnsMark : String := " beamer column"
+
+/-- A written `{column}`'s width group marked as beamer's own (`beamerColumnsMark`). -/
+private def markColumn (r : Raw) : Raw := Id.run do
+  let .env "column" body p := r | return r
+  let i := match takeRawOpt body 0 with
+    | (some _, j) => skipSpaces body j
+    | (none, _) => skipSpaces body 0
+  let some (Raw.group g gp) := (body[i]? : Option Raw) | return r
+  return .env "column" (body.modify i fun _ => .group (g.push (.env beamerColumnsMark #[] gp)) gp) p
+
 /-- Every `{columns}` body's implicit column boundaries made explicit, whole
 tree, before the rewrite walk. -/
 private def splitColumnsRaw : Raw → Raw
   | .group body p => .group (splitColumnsList body.toList).toArray p
   | .env n body p =>
     let body := (splitColumnsList body.toList).toArray
-    .env n (if n == "columns" then splitColumns body else body) p
+    .env n (if n == "columns" then (splitColumns body).map markColumn else body) p
   | .math d body p => .math d body p
   | .word s p => .word s p
   | .space => .space
@@ -14089,7 +14105,7 @@ private def declaresPresentation (raws : Array Raw) : Bool :=
   | some i =>
     let (_, j) := takeRawOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
-    ["beamer", "ltframe"].contains (rawSrc (args.getD 0 #[])).trimAscii.toString
+    beamerClasses.contains (rawSrc (args.getD 0 #[])).trimAscii.toString
   | none => false
 
 /-- A presentation's frame commands as frame environments, every level's (`frameCommandsLevel`). -/

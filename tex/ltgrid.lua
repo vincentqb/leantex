@@ -115,6 +115,18 @@ function ltgrid.main()
   ltgrid.level = 0
 end
 
+-- A column's box inside a frame: its lines stand on the grid as a frame's do, until it closes.
+local levels = {}
+function ltgrid.push()
+  levels[#levels + 1] = ltgrid.level
+  ltgrid.level = tex.nest.ptr
+end
+
+function ltgrid.pop()
+  ltgrid.level = levels[#levels] or 0
+  levels[#levels] = nil
+end
+
 luatexbase.add_to_callback("append_to_vlist_filter", append, "ltgrid.append")
 
 return ltgrid
