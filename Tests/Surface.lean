@@ -5561,11 +5561,11 @@ def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((dvE (dvDoc "" "a\\footnote{note body}")).all (·.code != "W0301"))
   t "footnote body lands in a footnote node with number 1"
     ((elabStr (dvDoc "" "a\\footnote{note body}")).1.body ==
-      #[.para #[.text "a", .footnote (some 1) #[.text "note body"]]])
+      #[.para #[.text "a", .footnote (some (.arabic 1)) #[.text "note body"]]])
   t "footnote numbers are 1, 7, 2 under an unstepping override"
     (let doc := (elabStr (dvDoc ""
       "a\\footnote{x} b\\footnote[7]{y} c\\footnote{z}")).1
-     (Ir.footnotesOf doc.body).map (·.1) == #[some 1, some 7, some 2])
+     (Ir.footnotesOf doc.body).map (·.1) == #[some (.arabic 1), some (.arabic 7), some (.arabic 2)])
   t "footnotesOf reads the notes in flow order with their bodies"
     (let doc := (elabStr (dvDoc "" "a\\footnote{x} b\\footnote{y}")).1
      (Ir.footnotesOf doc.body).map (fun n => Ir.plainText n.2) == #["x", "y"])
@@ -5590,9 +5590,14 @@ def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
        ((Ir.blocksText doc.body).splitOn "kept words").length == 2)
   t "a plain footnote stays silent on W0370"
     ((dvE (dvDoc "" "a\\footnote{x}")).all (·.code != "W0370"))
-  t "thanks in the title fires W0012 and keeps its text inline"
+  t "thanks in a page's title is a note, no loss"
     (let (doc, ds) := elabStr (dvDoc
       "\\title{A Panel\\thanks{Synthetic Grant 1}}\n" "x\n\\maketitle")
+     ds.all (fun d => d.subject != some "ctrl:thanks") &&
+       (Ir.footnotesOf doc.body).map (Ir.plainText ·.2) == #["Synthetic Grant 1"])
+  t "thanks in a deck's title fires W0012 and keeps its text inline"
+    (let (doc, ds) := elabStr (dvDeck
+      "\\title{A Panel\\thanks{Synthetic Grant 1}}\n" "\\begin{frame}\\titlepage\\end{frame}")
      ds.any (fun d => d.code == "W0012" && d.subject == some "ctrl:thanks") &&
        ((Ir.blocksText doc.body).splitOn "Synthetic Grant 1").length == 2)
   t "a title without thanks stays silent on W0012"

@@ -56,7 +56,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
         d.trigger.isNone) &&
       overfull.any (fun d => sameSource d.span second &&
         d.trigger.isNone))
-  let notes : Ir.Doc := { body := #[.para #[.text "Note", .footnote (some 1) content]] }
+  let notes : Ir.Doc := { body := #[.para #[.text "Note", .footnote (some (.arabic 1)) content]] }
   let noteOut := Layout.run geom fs none notes
   let noteDiags := noteOut.diags.filter (·.kind == .W0005)
   t "layout origins: footnote overflow keeps commands after generated mark insertion"

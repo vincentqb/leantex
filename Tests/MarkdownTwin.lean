@@ -335,7 +335,7 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .styled .bold ys => Ir.plainText ys == "Edge title"
         | _ => false
       | _ => false)
-  let doc : Ir.Doc := { body := #[.para #[.text "Text", .footnote (some 1)
+  let doc : Ir.Doc := { body := #[.para #[.text "Text", .footnote (some (.arabic 1))
     #[.text "Note", .linebreak default, .text "# not a heading"]]] }
   let tw := MarkdownDoc.emit doc
   t s!"twin: a footnote's lines stay its own ({repr tw})"

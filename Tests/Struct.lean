@@ -128,7 +128,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a language style is a span" (structKinds (inl (.styled (.lang "fr") #[.text "b"])) == #[.span "fr"])
   t "other styles are transparent"
     ((inl (.styled .bold #[.text "b"])) == #[.leaf 0 (.text "b")])
-  t "footnote is a note" (structKinds (inl (.footnote (some 1) #[.text "n"])) == #[.note])
+  t "footnote is a note" (structKinds (inl (.footnote (some (.arabic 1)) #[.text "n"])) == #[.note])
   t "ref is a reference over its resolved text"
     (structKinds (inl (.ref "k" .plain "3" (some "a"))) == #[.reference (some "a")]
       && structTexts (inl (.ref "k" .plain "3" (some "a"))) == #["3"])

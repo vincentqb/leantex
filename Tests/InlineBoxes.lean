@@ -291,7 +291,7 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     | .footnote n body => acc.push (n, Ir.plainText body)
     | _ => acc) #[] (elabStr envNotes).1.body
   t s!"box scope: an environment's begin code runs before its content ({notes})"
-    (notes == #[(some 1, "begin note"), (some 2, "inner note"), (some 3, "after note")])
+    (notes == #[(some (.arabic 1), "begin note"), (some (.arabic 2), "inner note"), (some (.arabic 3), "after note")])
   let plainLines := doc "" "Alpha\\\\\nCharlie\\\\\nDelta"
   let baseline (src w : String) := ((runsOf (layoutOf fonts (elabStr src).1) w)[0]?).map (·.2)
   for (what, inner) in [("a frame", "\\fbox{\\Huge Bravo}"), ("a rule", "\\rule{1cm}{2cm}"),

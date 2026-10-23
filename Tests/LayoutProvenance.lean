@@ -63,7 +63,7 @@ def overfullSourceChecks (fs : FontSet) : Array (String × Bool) := Id.run do
   let out := run geom fs none { body := #[.para content] }
   let overfull := out.diags.filter (·.kind == .W0005)
   let notes := run geom fs none
-    { body := #[.para #[.text "Note", .footnote (some 1) content]] }
+    { body := #[.para #[.text "Note", .footnote (some (.arabic 1)) content]] }
   let noteOverfull := notes.diags.filter (·.kind == .W0005)
   let expansion := provenanceSpan 17 79
   let expanded := run geom fs none

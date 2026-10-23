@@ -113,6 +113,7 @@ import Tests.Tabbing
 import Tests.ScrExtend
 import Tests.ItemRefs
 import Tests.ParIndent
+import Tests.TitleThanks
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -595,6 +596,8 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.ScrExtend.checks ref oneFace
   Tests.ItemRefs.checks ref
   Tests.ParIndent.parIndentChecks ref oneFace
+  Tests.TitleThanks.thanksChecks ref oneFace
+  Tests.TitleThanks.anonymousThanksChecks ref oneFace
   Tests.ItemLabels.cellChecks ref oneFace
   Tests.ItemLabels.itemSpaceChecks ref oneFace
   nativeCarrierChecks ref oneFace

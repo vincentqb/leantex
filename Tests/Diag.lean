@@ -389,8 +389,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     (
     dvE (w := w) "$\\overset{?}{=}$" ++
     dvE (w := w) "$\\overset{\\alpha}{\\beta}$") ++
-    (dvE (w := w) (dvDoc "\\title{An Invented Panel\\thanks{Synthetic Grant 1}}\n"
-      "x\n\\maketitle")) ++
+    (dvE (w := w) (dvDeck "\\title{An Invented Panel\\thanks{Synthetic Grant 1}}\n"
+      "\\begin{frame}\\titlepage\\end{frame}")) ++
     (dvE (w := w) "$\\text{\\textbf{bold} word}$")
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
   | .W0014 =>

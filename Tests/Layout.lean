@@ -5548,7 +5548,7 @@ the text sets ({badGap.getD ""})"
     let sideNums : Array Nat := Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
       | .marginNote m _ => (m.num.map acc.push).getD acc
       | _ => acc) #[] doc.body
-    let notes := (((Ir.footnotesOf doc.body).map fun p => p.1.getD 0) ++ sideNums).qsort (· < ·)
+    let notes := (((Ir.footnotesOf doc.body).map fun p => (p.1.getD (.arabic 0)).num) ++ sideNums).qsort (· < ·)
       |>.foldl (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
     t s!"attr {n}: note marks are the footnotes {notes} (got {marks})" (marks == notes)
     let mut labelOff : Option String := none

@@ -3712,6 +3712,29 @@ public structure InlineBox where
   rule : SymGlue
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- A footnote mark as it shows: its number in arabic digits, or as LaTeX's `\fnsymbol` series
+writes it, which a title's notes take. -/
+public inductive FootMark where
+  | arabic (n : Nat)
+  | symbol (n : Nat)
+  deriving Repr, DecidableEq, Hashable, Inhabited
+
+/-- The count a mark shows. -/
+@[expose] public def FootMark.num : FootMark → Nat
+  | .arabic n | .symbol n => n
+
+/-- latex.ltx's `\@fnsymbol` series, one to nine. -/
+public def fnSymbols : Array String :=
+  #["\u2217", "\u2020", "\u2021", "\u00a7", "\u00b6", "\u2016", "\u2217\u2217", "\u2020\u2020",
+    "\u2021\u2021"]
+
+/-- The text a mark shows; a symbol past the series, which LaTeX refuses, shows its digits. -/
+public def FootMark.text : FootMark → String
+  | .arabic n => toString n
+  | .symbol n => if 0 < n then fnSymbols[n - 1]?.getD (toString n) else toString n
+
+public instance : ToString FootMark := ⟨FootMark.text⟩
+
 /-- How a margin note stands: its number where `\sidenote` numbers it, ragged or justified lines,
 in the margin opposite its page's own under `\reversemarginpar`, whether it stood between blocks,
 and whether it stands free of the notes before it, as after a margin switch. -/
@@ -3784,8 +3807,8 @@ public inductive Inline where
   /-- A citation the bibliography resolved: its form and keys, and the ink its style sets. -/
   | cited (form : CiteForm) (keys : Array String) (ink : Array Inline)
   /-- `\footnote{...}`: a note set at the foot of the page its mark lands on;
-  `num` is the resolved mark number. -/
-  | footnote (num : Option Nat) (body : Array Inline)
+  `num` is the resolved mark. -/
+  | footnote (num : Option FootMark) (body : Array Inline)
   /-- A note set in the margin beside the line it stands on (`\marginpar`, marginnote's
   `\marginnote`, sidenotes' `\sidenote`, MyST's `{margin}` and `{aside}`). -/
   | marginNote (mode : MarginMode) (body : Array Inline)
@@ -14249,10 +14272,10 @@ public theorem disclosureSummary_text : Conserves plainText disclosureSummary :=
   · exact wrap_text (.styled disclosureSummaryStyle) (fun _ => rfl) xs
 
 /-- Wrap inline content as a footnote's body: what `\footnote` becomes. -/
-public def footnoteWrap (num : Option Nat) (xs : Array Inline) : Array Inline :=
+public def footnoteWrap (num : Option FootMark) (xs : Array Inline) : Array Inline :=
   #[.footnote num xs]
 
-public theorem footnoteWrap_text (num : Option Nat) :
+public theorem footnoteWrap_text (num : Option FootMark) :
     Conserves plainText (footnoteWrap num) :=
   wrap_text (.footnote num) fun _ => rfl
 
@@ -14704,16 +14727,16 @@ mutual
 /-- Every footnote outside a speaker note, in document order with its resolved
 mark number; equal occurrences in exclusive alternatives share one endnote. -/
 -- conserves: none — projects the footnotes alone.
-public def footnotesOf (xs : Array Block) : Array (Option Nat × Array Inline) :=
+public def footnotesOf (xs : Array Block) : Array (Option FootMark × Array Inline) :=
   footnoteBlockList #[] xs.toList
 
-private def footnoteBlockList (out : Array (Option Nat × Array Inline)) :
-    List Block → Array (Option Nat × Array Inline)
+private def footnoteBlockList (out : Array (Option FootMark × Array Inline)) :
+    List Block → Array (Option FootMark × Array Inline)
   | [] => out
   | b :: rest => footnoteBlockList (footnoteBlockOne out b) rest
 
-private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
-    Block → Array (Option Nat × Array Inline)
+private def footnoteBlockOne (out : Array (Option FootMark × Array Inline)) :
+    Block → Array (Option FootMark × Array Inline)
   | .para content => footnoteInlineList out content.toList
   | .equation number content =>
     footnoteInlineList (footnoteInlineList out content.toList) number.toList
@@ -14756,51 +14779,51 @@ private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .bibliography _ _ items => footnoteBibItems out items.toList
   | .contents _ entries => footnoteContentsEntries out entries.toList
 
-private def footnoteBibItems (out : Array (Option Nat × Array Inline)) :
-    List BibItem → Array (Option Nat × Array Inline)
+private def footnoteBibItems (out : Array (Option FootMark × Array Inline)) :
+    List BibItem → Array (Option FootMark × Array Inline)
   | [] => out
   | it :: rest => footnoteBibItems (footnoteInlineList out it.content.toList) rest
 
-private def footnoteContentsEntries (out : Array (Option Nat × Array Inline)) :
-    List ContentsEntry → Array (Option Nat × Array Inline)
+private def footnoteContentsEntries (out : Array (Option FootMark × Array Inline)) :
+    List ContentsEntry → Array (Option FootMark × Array Inline)
   | [] => out
   | e :: rest => footnoteContentsEntries (footnoteInlineList out e.title.toList) rest
 
-private def footnoteTableRows (out : Array (Option Nat × Array Inline)) :
-    List (Array (Array Block)) → Array (Option Nat × Array Inline)
+private def footnoteTableRows (out : Array (Option FootMark × Array Inline)) :
+    List (Array (Array Block)) → Array (Option FootMark × Array Inline)
   | [] => out
   | row :: rest => footnoteTableRows (footnoteItems out row.toList) rest
 
-private def footnoteItems (out : Array (Option Nat × Array Inline)) :
-    List (Array Block) → Array (Option Nat × Array Inline)
+private def footnoteItems (out : Array (Option FootMark × Array Inline)) :
+    List (Array Block) → Array (Option FootMark × Array Inline)
   | [] => out
   | item :: rest => footnoteItems (footnoteBlockList out item.toList) rest
 
-private def footnoteColumns (out : Array (Option Nat × Array Inline)) :
-    List (BoxWidth × Array Block) → Array (Option Nat × Array Inline)
+private def footnoteColumns (out : Array (Option FootMark × Array Inline)) :
+    List (BoxWidth × Array Block) → Array (Option FootMark × Array Inline)
   | [] => out
   | (_, body) :: rest => footnoteColumns (footnoteBlockList out body.toList) rest
 
-private def footnoteAlgLines (out : Array (Option Nat × Array Inline)) :
-    List AlgLine → Array (Option Nat × Array Inline)
+private def footnoteAlgLines (out : Array (Option FootMark × Array Inline)) :
+    List AlgLine → Array (Option FootMark × Array Inline)
   | [] => out
   | l :: rest =>
     footnoteAlgLines (match l.comment with
       | some c => footnoteInlineList (footnoteInlineList out l.content.toList) c.toList
       | none => footnoteInlineList out l.content.toList) rest
 
-private def footnoteLaid (out : Array (Option Nat × Array Inline)) :
-    List LaidLine → Array (Option Nat × Array Inline)
+private def footnoteLaid (out : Array (Option FootMark × Array Inline)) :
+    List LaidLine → Array (Option FootMark × Array Inline)
   | [] => out
   | l :: rest => footnoteLaid (footnoteInlineList out l.content.toList) rest
 
-private def footnoteInlineList (out : Array (Option Nat × Array Inline)) :
-    List Inline → Array (Option Nat × Array Inline)
+private def footnoteInlineList (out : Array (Option FootMark × Array Inline)) :
+    List Inline → Array (Option FootMark × Array Inline)
   | [] => out
   | x :: rest => footnoteInlineList (footnoteInlineOne out x) rest
 
-private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
-    Inline → Array (Option Nat × Array Inline)
+private def footnoteInlineOne (out : Array (Option FootMark × Array Inline)) :
+    Inline → Array (Option FootMark × Array Inline)
   | .footnote num body =>
     footnoteInlineList (out.push (num, body)) body.toList
   | .marginNote _ body => footnoteInlineList out body.toList
@@ -14824,11 +14847,11 @@ end
 /-- The places of a document's notes, one past each one's index, grouped by equal notes: the
 names a backend gives them whatever numbers they show. -/
 public structure NotePlaces where
-  notes : Array (Option Nat × Array Inline)
-  table : Std.HashMap (Option Nat × String) (Array (Array Inline × Array Nat))
+  notes : Array (Option FootMark × Array Inline)
+  table : Std.HashMap (Option FootMark × String) (Array (Array Inline × Array Nat))
   deriving Inhabited
 
-public def NotePlaces.of (notes : Array (Option Nat × Array Inline)) : NotePlaces :=
+public def NotePlaces.of (notes : Array (Option FootMark × Array Inline)) : NotePlaces :=
   ⟨notes, notes.zipIdx.foldl (init := {}) fun m ((n, c), i) =>
     let key := (n, plainText c)
     let xs := m.getD key #[]
@@ -14837,11 +14860,11 @@ public def NotePlaces.of (notes : Array (Option Nat × Array Inline)) : NotePlac
     | none => m.insert key (xs.push (c, #[i + 1]))⟩
 
 /-- The places of the notes equal to one, in reading order; empty for a note outside the list. -/
-public def NotePlaces.places (t : NotePlaces) (n : Option Nat) (c : Array Inline) : Array Nat :=
+public def NotePlaces.places (t : NotePlaces) (n : Option FootMark) (c : Array Inline) : Array Nat :=
   (((t.table.getD (n, plainText c) #[]).find? (·.1 == c)).map (·.2)).getD #[]
 
 /-- The place of the first note equal to one. -/
-public def NotePlaces.place (t : NotePlaces) (n : Option Nat) (c : Array Inline) : Option Nat :=
+public def NotePlaces.place (t : NotePlaces) (n : Option FootMark) (c : Array Inline) : Option Nat :=
   (t.places n c)[0]?
 
 /-- Each group of equal notes' places, by its first. -/
@@ -14859,7 +14882,7 @@ public def numberNotesInline (k : Nat) (x : Inline) : Nat × Inline :=
   match x with
   | .footnote none body =>
     let r := numberNotesList (k + 1) #[] body.toList
-    (r.1, .footnote (some (k + 1)) r.2)
+    (r.1, .footnote (some (.arabic (k + 1))) r.2)
   | .footnote (some n) body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .footnote (some n) r.2)
@@ -17307,6 +17330,24 @@ nodes, `finish` combines each completed sibling array. -/
   | .linebreak e => f (.linebreak e)
 
 end
+
+/-- Inline content without its footnotes, as a metadata field reads a title: a note is no part of
+the words it marks. -/
+-- conserves: none — drops each footnote with its body.
+public def withoutNotes (xs : Array Inline) : Array Inline :=
+  mapInlines id xs (finish := fun ys => ys.filter (!· matches .footnote _ _))
+
+/-- A title part's notes marked in reading order from `k + 1` in the `\fnsymbol` series, as
+`\maketitle` marks its `\thanks`; returns the count past them. -/
+-- conserves: none — sets marks only.
+public def titleNoteMarks (k : Nat) (xs : Array Inline) : Nat × Array Inline :=
+  let bare := mapInlines id xs (finish := fun ys => ys.map fun
+    | .footnote _ b => .footnote none b
+    | y => y)
+  let (past, marked) := numberNotesList k #[] bare.toList
+  (past, mapInlines id marked (finish := fun ys => ys.map fun
+    | .footnote (some m) b => .footnote (some (.symbol m.num)) b
+    | y => y))
 
 @[expose] public def mapBibItems (f : Inline → Inline) (out : Array BibItem) (items : List BibItem)
     (finish : Array Inline → Array Inline := id) : Array BibItem :=

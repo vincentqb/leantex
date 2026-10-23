@@ -7189,7 +7189,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .cited _ _ ink => inlineNodesInto cfg acc ink.toList
   -- the mark links to the note's endnote entry (DPUB-ARIA `doc-noteref`)
   | .footnote num body =>
-    let n := num.getD 0
+    let n := num.getD (.arabic 0)
     -- A mark outside the endnotes (a speaker note's) links nowhere; the others name their group,
     -- each taking its own anchor once the page is whole (`noteMarks`).
     match cfg.notes.place num body with
@@ -10778,6 +10778,10 @@ retitle them apart, or link to the numbered anchor")
   let notes := cfg.notes.notes
   -- Each note named by its place, showing the number its mark shows, back to the first mark
   -- reaching it.
+  let noteAttrs (place : Nat) (num : Option Ir.FootMark) : Array (String × String) := match num with
+    | some (.symbol k) => #[("id", s!"fn{place}"),
+        ("style", "list-style-type: \"" ++ cssString (Ir.FootMark.symbol k).text ++ " \"")]
+    | _ => #[("id", s!"fn{place}"), ("value", toString (num.getD (.arabic 0)).num)]
   let inner := if notes.isEmpty then inner else
     inner.push (Html.elem "section"
       #[Html.elem "ol" (notes.zipIdx.map fun ((num, content), i) =>
@@ -10786,7 +10790,7 @@ retitle them apart, or link to the numbered anchor")
               |>.push (Html.elem "a" #[Html.text "\u21a9"]
                 #[("data-back", toString (i + 1)), ("href", ""), ("role", "doc-backlink"),
                   ("aria-label", "back to the text"), ("style", "color: inherit")]))
-            #[("id", s!"fn{i + 1}"), ("value", toString (num.getD 0))]) #[]]
+            (noteAttrs (i + 1) num)) #[]]
       #[("role", "doc-endnotes")])
   let inner := marginMarks (noteMarks cfg.notes inner)
   let mainAttrs := (if bodyClass.isEmpty then #[] else #[("class", bodyClass)]) ++

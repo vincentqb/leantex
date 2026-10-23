@@ -545,7 +545,7 @@ private def monoInto (acc : String) (run : Array Inline) : List Inline → Strin
     monoInto (bangApart (acc ++ span) ++ "[" ++ text ++ "](" ++ dest ++ ")") #[] rest
   | .footnote num _ :: rest =>
     let span := codeSpan (twinPlain run)
-    monoInto (acc ++ span ++ s!"[^{num.getD 0}]") #[] rest
+    monoInto (acc ++ span ++ s!"[^{(num.getD (.arabic 0)).num}]") #[] rest
   | .marginNote _ _ :: rest => monoInto acc run rest
   | .label key :: rest =>
     let span := codeSpan (twinPlain run)
@@ -936,7 +936,7 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
   | .cited _ _ ink => inlinesInto site cites (if cites then acc ++ unspelled else acc) none after 0
     ink.toList
   -- The mark in footnote syntax; the body is a `[^k]: ...` definition after the document.
-  | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
+  | .footnote num _ => acc ++ s!"[^{(num.getD (.arabic 0)).num}]"
   -- A margin note is MyST's aside after its paragraph (`asidesText`).
   | .marginNote _ _ => acc
   | .linebreak _ =>
@@ -1631,7 +1631,8 @@ private def notesByPlace (body : Array Block) : Array Block :=
   if notes.isEmpty then flat else
   let places := Ir.NotePlaces.of notes
   Ir.mapBlocks id flat (finish := fun xs => xs.map fun x => match x with
-    | .footnote n content => .footnote ((places.place n content).orElse fun _ => n) content
+    | .footnote n content =>
+      .footnote (((places.place n content).map Ir.FootMark.arabic).orElse fun _ => n) content
     | x => x)
 
 /-- The twin's view of a document's body: source locations erased, backend conditionals resolved
@@ -1648,7 +1649,7 @@ private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
   let mut out := ""
   let mut written : Std.HashSet Nat := {}
   for (num, content) in notes do
-    let label := num.getD 0
+    let label := (num.getD (.arabic 0)).num
     unless written.contains label do
       written := written.insert label
       -- The reader sets a definition at its reference, so a note's citation keeps its place.

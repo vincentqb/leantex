@@ -468,7 +468,7 @@ public inductive Attribution where
   | hyphen
   /-- Generated marker ink: a list bullet or number, an algorithm line number. -/
   | label
-  /-- The footnote mark's digits, in the text and leading the note block. -/
+  /-- A footnote mark, in the text and leading the note block, by the count it shows. -/
   | noteMark (num : Nat)
   /-- Ink the projection does not census: furniture, measuring
   passes, the abstract heading and the headline band. -/
@@ -1478,7 +1478,7 @@ private inductive Tk where
   | icon (style : TextStyle) (c : Char) (attr : Attribution)
   /-- A footnote mark with its note body: the mark sets raised at scriptsize,
   the body as its own note block; `bodyLeaf` is the note's first leaf. -/
-  | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
+  | note (num : Ir.FootMark) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
   /-- A margin note with its body: its mark where it is numbered, else nothing in the line, the
   body set beside the line in the margin; `bodyLeaf` is the note's first leaf. -/
   | margin (mode : Ir.MarginMode) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
@@ -1494,7 +1494,7 @@ private def Tk.attr? : Tk → Option Attribution
   | .word _ _ a => some a
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
-  | .note num _ _ _ => some (.noteMark num)
+  | .note num _ _ _ => some (.noteMark num.num)
   | .margin m _ _ _ => m.num.map Attribution.noteMark
   | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ _ | .corr _ _
   | .boxOpen _ _ | .boxClose => none
@@ -1778,7 +1778,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   -- Without a note apparatus (furniture, markers, captions, a card face) the body stays inline.
   | .footnote num body =>
     if noteOk then
-      { st with toks := st.toks.push (.note (num.getD 0) sty body st.ctr.next?)
+      { st with toks := st.toks.push (.note (num.getD (.arabic 0)) sty body st.ctr.next?)
                 ctr := st.ctr.skip (Struct.leafCountInlines body) }
     else flatten mathOk noteOk st sty body
   | .marginNote m body =>
@@ -3035,7 +3035,10 @@ icon scalars. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
   let (icons, math) := leafScalars #[] out.math xs
   let text := Ir.plainText xs
-  let texts := (out.texts.push text).push (String.ofList icons.toList)
+  let marks := Ir.foldInlines (fun acc x => match x with
+    | .footnote (some m) _ => acc ++ m.text
+    | _ => acc) "" xs
+  let texts := ((out.texts.push text).push (String.ofList icons.toList)).push marks
   let caps := Ir.foldInlines (fun acc x => acc || x matches .styled .smallcaps _) false xs
   { out with texts := if caps then texts.push (CaseFold.upper text) else texts, math }
 
@@ -4250,20 +4253,25 @@ public theorem hyphenation_follows_language (main : Option Hyphen.Patterns)
 public theorem patsOf_off (lang : Option String) : patsOf none lang = none := by
   cases lang <;> rfl
 
-/-- A footnote mark's box: its digits as one raised run at the
-scriptsize step of `around`; digits the face lacks return beside it. -/
+/-- A footnote mark's box: its text as one raised run at the scriptsize step of `around`, in the
+face in force or the fallback holding the whole mark; characters neither has return beside it. -/
 private def markBox (fs : FontSet) (sty : TextStyle) (around : Length)
-    (decorations : Decorations) (num : Nat) :
+    (decorations : Decorations) (num : Ir.FootMark) :
     Item × Array (Nat × Char) := Id.run do
-  let attr : Attribution := .noteMark num
-  let idx := fs.lookup sty.slot sty.weight.css sty.italic
+  let attr : Attribution := .noteMark num.num
+  let own := fs.lookup sty.slot sty.weight.css sty.italic
+  let holds (i : Nat) : Bool := num.text.all fun c => ((fs.get i).gid c).isSome
+  let idx := if holds own then own else
+    match (num.text.toList.find? fun c => ((fs.get own).gid c).isNone).bind fs.fallbackFor with
+    | some fb => if holds fb then fb else own
+    | none => own
   let font := fs.get idx
   let markSize := Ir.noteMarkSize around
   let raise := around * Ir.markRaise / 1000
   let mut gs : Array (Nat × Char × Length) := #[]
   let mut w : Length := 0
   let mut miss : Array (Nat × Char) := #[]
-  for c in (toString num).toList do
+  for c in num.text.toList do
     match glyphOf markSize font c with
     | some g =>
       gs := gs.push g
@@ -4288,7 +4296,7 @@ private structure ItemsAcc where
   itemSources : Array (Nat × Span) := #[]
   /-- Each note met: its mark item's index, its number, its body, the body's first leaf, and how it
   stands where it is a margin note. -/
-  notes : Array (Nat × Nat × Array Inline × Option Nat × Option Ir.MarginMode) := #[]
+  notes : Array (Nat × Ir.FootMark × Array Inline × Option Nat × Option Ir.MarginMode) := #[]
   dropped : Array (Nat × Char) := #[]
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
@@ -4754,7 +4762,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
     -- A numbered note's mark sets in the line; an unnumbered one holds its place with an empty box.
     let (markItem, miss) := match m.num with
-      | some k => markBox fs sty around decorations k
+      | some k => markBox fs sty around decorations (.arabic k)
       | none =>
         (.box 0 (fs.lookup sty.slot sty.weight.css sty.italic) sty.paint none #[] around {leading}
           decorations 0 sty.ground .unattributed, #[])
@@ -4763,7 +4771,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Length)
       else { acc with dropped := acc.dropped.push mk
                       origins := rememberGlyph acc.origins .E0405 mk.1 mk.2 source }) acc
     let at_ := acc.items.size
-    { acc with notes := acc.notes.push (at_, m.num.getD 0, body, bodyLeaf, some m)
+    { acc with notes := acc.notes.push (at_, .arabic (m.num.getD 0), body, bodyLeaf, some m)
                items := acc.items.push markItem }
   | .formula display sty body attr =>
     -- `flatten` pushes a formula only when a math face with constants is present.
@@ -4953,7 +4961,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Lengt
     (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
     (roleMetrics : List (String × (Length × Option Length)) := []) (steps : Nat := 0) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
-      Std.HashMap Nat Length × Array (Nat × Nat × Array Inline × Option Nat × Option Ir.MarginMode) ×
+      Std.HashMap Nat Length × Array (Nat × Ir.FootMark × Array Inline × Option Nat × Option Ir.MarginMode) ×
       Std.HashMap Nat Length × Array (String × Nat) × Array (Nat × Span) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
     { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step, steps := steps }
@@ -10737,7 +10745,7 @@ private def marginBlock (r : Rd) (a : Acc) (m : Ir.MarginMode) (body : Array Inl
   let (items, sources, anchors) := match m.num with
     | some k =>
       -- sidenotes' `\textsuperscript{n}~`: the mark, then an unbreakable space.
-      let (markItem, _) := markBox r.fs style r.geom.fontSize {} k
+      let (markItem, _) := markBox r.fs style r.geom.fontSize {} (.arabic k)
       let tie := Item.glue (rigidGlue (interword r.geom.fontSize (r.fs.get (r.fs.lookup 0 400 false))))
       (#[markItem, unbreakable, tie] ++ items0, sources.map (fun (i, sp) => (i + 3, sp)),
         anchors.map (fun (n, i) => (n, i + 3)))
@@ -14039,13 +14047,14 @@ private def naturalWidth? (r : Rd) (a : Acc) (body : Array Block) (total : Lengt
     else none
 
 /-- The width a centred paragraph sets at unbroken, as a one-column tabular sets its cell: its
-widest line and a `\tabcolsep` on each side. -/
+widest line, a note its mark, and a `\tabcolsep` on each side. -/
 private def cellNaturalWidth? (r : Rd) (a : Acc) (body : Array Block) : Option Length :=
   match body.toList.filter (!·.epoch) with
   | [.center #[.para xs]] | [.para xs] =>
     let (items, _, _, _) := itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
       { color := a.fg, ground := a.ground } xs a.hyphCache (.fixed .unattributed) r.imgs
-      r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
+      r.geom.textWidth r.geom.textHeight (noteOk := true) (ladder := r.geom.scale) (step := r.step)
+      (steps := r.steps)
     let colsep := tableLength ((a.tokens.find? "tabcolsep").map fun g => (r.resolve g).width)
       r.preamble "tabcolsep"
     some (itemsLinesWidth items + 2 * colsep)

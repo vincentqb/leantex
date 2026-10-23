@@ -568,6 +568,8 @@ public structure Counters where
   /-- Inside a bibliography field's reading, where an unoverridden
   `\footnote`'s mark is left to its list. -/
   fnDefer : Bool := false
+  /-- Whether a title declaration is being read, and on a deck: a page's `\thanks` is a note there. -/
+  inTitleDecl : Option Bool := none
   /-- The notes each `\bibliography` list's fields set, in document order. -/
   listNotes : Array Nat := #[]
   /-- The footnote counter where each `\bibliography` list stands. -/
@@ -4294,6 +4296,14 @@ private def thanksWarn (ctx : Ctx) (pos : Pos) : EM Unit :=
     (detail := some "kept inline in the title block")
     (help := "a plain \\footnote in the body text renders as a page footnote")
 
+/-- A `\thanks`'s ink: in a page's title declaration the note `\maketitle` marks, in a deck's its
+text, a named loss, and elsewhere its text, as LaTeX relaxes it past `\maketitle`. -/
+private def thanksInk (ctx : Ctx) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
+  match (← get).ctr.inTitleDecl with
+  | some false => return #[.footnote none inner]
+  | some true => thanksWarn ctx pos; return inner
+  | none => return inner
+
 /-- Steps the footnote counter and returns the mark's number; an override or
 a deferred mark steps nothing, and a deferred one returns `none`. -/
 private def footnoteStepNum (override : Option Nat) : EM (Option Nat) := do
@@ -5008,7 +5018,7 @@ private def theCounterInlines (ctx : Ctx) (c : String) (pos : Pos) : EM (Array I
 
 -- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
-seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
+seal thanksWarn thanksInk footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 seal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 seal warnPaletteMiss warnOverlaySpec warnAltSpec targetInlines
 seal argText skipBracketRun bracketRunSrc
@@ -6788,7 +6798,7 @@ when it is empty — '{}'")
         elabInlinesFrom ctx raws k (acc ++ inner) ""
       else
         let num ← footnoteStepNum override
-        elabInlinesFrom ctx raws k (acc.push (.footnote num inner)) ""
+        elabInlinesFrom ctx raws k (acc.push (.footnote (num.map .arabic) inner)) ""
     | _ =>
       noteNeedsGroup ctx name pos
       elabInlinesFrom ctx raws (i + 1) acc sb
@@ -6797,7 +6807,6 @@ when it is empty — '{}'")
     have _ : sliceWeight raws (i + 1) < sliceWeight raws i := sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "thanks" then
-    thanksWarn ctx pos
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
     match hj : raws[j]? with
@@ -6808,7 +6817,7 @@ when it is empty — '{}'")
       let inner ← elabInlinesCore ctx body
       have _ : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
-      elabInlinesFrom ctx raws (j + 1) (acc ++ inner) ""
+      elabInlinesFrom ctx raws (j + 1) (acc ++ (← thanksInk ctx inner pos)) ""
     | _ =>
       noteNeedsGroup ctx "thanks" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
@@ -6926,7 +6935,7 @@ public def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) :=
   elabInlinesCore ctx raws
 
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
-unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
+unseal thanksWarn thanksInk footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
 unseal warnMisplacedDecl warnReservedCtrl optionRunAdvice optionRunClause
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec targetInlines
 unseal argText skipBracketRun bracketRunSrc
@@ -8572,7 +8581,8 @@ private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : 
   if let some rows := authorRowsOf ctx (authorSeparators ctx (← get)) body then
     unless slides do
       let cells ← rows.mapM (·.mapM (elabInlines ctx))
-      let words := cells.flatten.map (fun c => Ir.metaText (c.takeWhile (!· matches .linebreak _)))
+      let words := cells.flatten.map (fun c =>
+          Ir.metaText (Ir.withoutNotes (c.takeWhile (!· matches .linebreak _))))
         |>.filter (!·.isEmpty)
       modify fun st => { st with styleTitle := { st.styleTitle with authorRows := some cells }
                                  authorMeta := some (", ".intercalate words.toList) }
@@ -8588,7 +8598,7 @@ private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : 
     modify fun st => { st with authorMeta := none }
     return ← elabInlines ctx body
   let sets ← names.mapM fun n => elabInlines ctx (trimRawEdges n)
-  let words := sets.map Ir.metaText |>.filter (!·.isEmpty)
+  let words := sets.map (Ir.metaText ∘ Ir.withoutNotes) |>.filter (!·.isEmpty)
   modify fun st => { st with authorMeta := some (", ".intercalate words.toList) }
   let quad : Inline := .hspace (.lit { width := { em := 1000 } }) false
   let gap : Inline := .hspace (.lit { width := { em := 1000, fixed := 2 * Ir.tabColSep.fixed } }) false
@@ -8609,6 +8619,18 @@ private def authorInlines (ctx : Ctx) (slides : Bool) (body : Array Raw) (pos : 
       else if broken then #[.linebreak {}] else #[.text " ", gap]
     out ++ sep ++ (if slides || broken then xs else #[.boxed box xs])
 
+/-- A title part's content, read as a title declaration (`thanksInk`), the body's note count
+untouched. -/
+private def titlePartInlines (ctx : Ctx) (slides : Bool) (name : String) (body : Array Raw)
+    (pos : Pos) : EM (Array Inline) := do
+  let saved := (← get).ctr
+  modify fun st => { st with ctr := { st.ctr with inTitleDecl := some slides } }
+  let xs ← if name == "author" then authorInlines ctx slides body pos else elabInlines ctx body
+  -- A page's `\maketitle` numbers the title's notes itself; a deck's keep the count they took.
+  modify fun st => { st with ctr := { st.ctr with inTitleDecl := saved.inTitleDecl
+                                                  fnNum := if slides then st.ctr.fnNum else saved.fnNum } }
+  return xs
+
 /-- Stores one `\title`-family declaration, returning the index past its
 arguments and the run of an unclosed optional argument. -/
 @[noinline] private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
@@ -8622,8 +8644,7 @@ arguments and the run of an unclosed optional argument. -/
         (detail := some "nothing: the style's title sets its own block in the author's place")
       return (⟨j + 1, by omega⟩, junk)
     let short ← (bracketArgRaws? raws start pos).mapM (elabInlines ctx)
-    storeTitlePart name
-      (← if name == "author" then authorInlines ctx ctx.slides body pos else elabInlines ctx body) short
+    storeTitlePart name (← titlePartInlines ctx ctx.slides name body pos) short
     return (⟨j + 1, by omega⟩, junk)
   | _ =>
     if recovered then
@@ -8631,6 +8652,30 @@ arguments and the run of an unclosed optional argument. -/
       return (⟨j, hj⟩, junk)
     diag ctx .E0304 (missingArg name) pos
     return (⟨start, Nat.le_refl start⟩, #[])
+
+/-- The title's notes marked in the `\fnsymbol` series past the body's count in the order `\maketitle`
+sets its parts, and the body's count restarted, as the standard classes' `\maketitle` does. -/
+private def markTitleNotes (st : ESt) : ESt := Id.run do
+  let mark (k : Nat) : Option (Array Inline) → Nat × Option (Array Inline)
+    | some xs => let (k, ys) := Ir.titleNoteMarks k xs; (k, some ys)
+    | none => (k, none)
+  let (k, title) := mark st.ctr.fnNum st.title
+  let (k, subtitle) := mark k st.subtitle
+  let (past, author) := mark k st.author
+  let (k, rows) := match st.styleTitle.authorRows with
+    | some rows =>
+      let (k, rows) := rows.foldl (init := (k, #[])) fun (k, out) row =>
+        let (k, cells) := row.foldl (init := (k, #[])) fun (k, cs) c =>
+          let (k, c) := Ir.titleNoteMarks k c
+          (k, cs.push c)
+        (k, out.push cells)
+      (k, some rows)
+    | none => (past, none)
+  let (k, institute) := mark k st.institute
+  let (_, date) := mark k st.date
+  return { st with title, subtitle, author, institute, date
+                   styleTitle := { st.styleTitle with authorRows := rows }
+                   ctr := { st.ctr with fnNum := 0 } }
 
 /-- The blocks `\maketitle` sets from the declared parts under the
 `titlepage` style; a declared but empty part sets nothing. -/
@@ -11740,6 +11785,7 @@ private def pictureEnvArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos
                                shortTitles := st.shortTitles.filter (·.1 != .author)
                                authorMeta := some (Ir.metaText (xs.takeWhile (!· matches .linebreak _)))
                                styleTitle := { st.styleTitle with authorRows := none } }
+  unless ctx.slides do modify markTitleNotes
   let inner := titleBlocks ctx (← get)
   if inner.isEmpty then
     warnOnce ctx "ctrl:maketitle" .W0309
@@ -19093,9 +19139,8 @@ convert = none refuses both")
     match body with
     | some (b, short) =>
       let short ← short.mapM (elabInlines s.ctx)
-      storeTitlePart name (← if name == "author" then
-          authorInlines s.ctx (s.docClass == .slides || s.ctx.slides) b pos
-        else elabInlines s.ctx b) short
+      storeTitlePart name
+        (← titlePartInlines s.ctx (s.docClass == .slides || s.ctx.slides) name b pos) short
       return s
     | none =>
       if recovered then
@@ -20410,7 +20455,7 @@ the .bib file"
       | some s => some s
       | none =>
         src.bind fun xs =>
-          let t := Ir.metaText xs
+          let t := Ir.metaText (Ir.withoutNotes xs)
           if t.isEmpty then none else some t
     info := { info with
       title := fallback info.title st.title

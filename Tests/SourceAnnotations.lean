@@ -61,7 +61,7 @@ def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("role", Inline.role "accent"), ("link", Inline.link "https://example.invalid"),
     ("decoration", Inline.decorated .underline),
     ("overlay", Inline.onSteps ⟨2, some 4, [], false⟩),
-    ("footnote", Inline.footnote (some 1))]
+    ("footnote", Inline.footnote (some (.arabic 1)))]
   for (name, wrap) in wrappers do
     let xs := #[.text "left", .located span #[wrap annotated], .text "right"]
     t s!"source annotations: recursive erasure preserves {name} boundaries"
@@ -79,7 +79,7 @@ def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let content : Array Inline := #[
     .styled .bold #[.text "bold"], .colored ink none #[.text "color"],
     .onSteps ⟨2, some 4, [], false⟩ #[.text "overlay"],
-    .footnote (some 7) #[.text "note"]]
+    .footnote (some (.arabic 7)) #[.text "note"]]
   let located : Array Inline := #[.located span content]
   t "source annotations: no additional semantic leaves"
     (Struct.leafCountInlines located == Struct.leafCountInlines content)
