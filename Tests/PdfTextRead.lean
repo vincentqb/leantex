@@ -69,17 +69,20 @@ def onePage (content : String) (xobjects catalog : String) (more : Array String)
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     streamObj "" content] ++ more)
 
-/-- A body segment's characters as a viewer reads them: a line-end hyphen as the soft hyphen its
-span reads as. -/
-def segReadChars : Layout.Seg → List Char
+/-- A segment's characters as a viewer reads them: a body line's line-end hyphen as the soft
+hyphen its span reads as, a held picture label's as its glyphs. -/
+def segReadChars (held : Bool) : Layout.Seg → List Char
   | s@(.run _ _ _ _ glyphs _ _ _ _ _ attr) =>
-    if Pdf.lineHyphen attr glyphs then Pdf.generatedHyphen.toList else s.glyphChars
+    if !held && Pdf.lineHyphen attr glyphs then Pdf.generatedHyphen.toList else s.glyphChars
   | s => s.glyphChars
 
-/-- A page line's characters as a viewer reads them, a held picture label's as its glyphs. -/
+/-- Whether a page line is a picture label the picture sets. -/
+def heldLine (p : Layout.PageOut) (l : Layout.LineOut) : Bool :=
+  Pdf.heldBy (Pdf.routesLabels p.inks) (Pdf.inkLabelKeys p.inks) l
+
+/-- A page line's characters as a viewer reads them. -/
 def lineReadChars (p : Layout.PageOut) (l : Layout.LineOut) : List Char :=
-  if Pdf.heldBy (Pdf.routesLabels p.inks) (Pdf.inkLabelKeys p.inks) l then l.glyphChars
-  else l.segs.toList.flatMap segReadChars
+  l.segs.toList.flatMap (segReadChars (heldLine p l))
 
 /-- A text with each run of white space one space, none at either end. -/
 def wsNorm (s : String) : String :=
@@ -90,7 +93,7 @@ run's advances under the line's horizontal scaling, falls a fifth of its size sh
 glyph, and a line feed between lines. -/
 def paintWords (p : Layout.PageOut) : String :=
   (Pdf.paintLines p).foldl (fun acc l => Id.run do
-    let held := Pdf.heldBy (Pdf.routesLabels p.inks) (Pdf.inkLabelKeys p.inks) l
+    let held := heldLine p l
     let mut out := if acc.isEmpty then acc else acc.push '\n'
     let mut gap : Int := 0
     let mut last : Option Dim.Length := none
@@ -101,7 +104,7 @@ def paintWords (p : Layout.PageOut) : String :=
         if glyphs.isEmpty then gap := gap + w.units else
           if let some ls := last then
             if 5 * gap > ls.units then out := out.push ' '
-          for c in (if held then s.glyphChars else segReadChars s) do out := out.push c
+          for c in segReadChars held s do out := out.push c
           let drawn := glyphs.foldl (fun (s : Int) (_, _, a) => s + a.units) 0 * (1000 + l.expand)
           gap := w.units - drawn / 1000
           last := some sz
@@ -198,17 +201,21 @@ BT /F1 10 Tf 1 0 0 1 5 -20 Tm (\\003) Tj ET") == [("a", .line), ("b", .line), ("
     "Extraordinarily comprehensive internationalization considerations accompany representative \
 documentation throughout"]] }
   let hout := Layout.run hgeom fs (some Hyphen.english.get) hdoc
-  let hset := hout.pages.toList.any fun p => p.lines.toList.any fun l =>
-    l.segs.toList.any fun s => !(segReadChars s == s.glyphChars)
+  let hyphens := hout.pages.toList.foldl (fun n p => p.lines.toList.foldl (fun n l =>
+    n + (l.segs.toList.filter fun s => !(segReadChars false s == s.glyphChars)).length) n) 0
   match PdfTextRead.extract (Pdf.write hgeom fs hout.pages hdoc.info) with
   | .error e => t s!"pdf text: the hyphenated paragraph reads ({e})" false
   | .ok x =>
     let text := x.contentText true
     let src := inkOf "Extraordinarily comprehensive internationalization considerations accompany \
 representative documentation throughout"
-    t "pdf text: a hyphen the breaker sets at a line end reads back as a soft hyphen, no word's"
-      (hset && text.toList.contains '\u00AD' && !text.toList.contains '-' &&
+    let soft := (text.splitOn Pdf.generatedHyphen).length - 1
+    t "pdf text: each hyphen the breaker sets at a line end reads back as a soft hyphen ending its line"
+      (0 < hyphens && soft == hyphens && (text.splitOn (Pdf.generatedHyphen ++ "\n")).length - 1 == hyphens &&
+        !text.toList.contains '-' &&
         (inkOf (String.ofList (text.toList.filter (· != '\u00AD')))).take src.length == src)
+  t "pdf text: a generated hyphen's span opens with its soft hyphen as UTF-16 ActualText"
+    (Pdf.MarkTag.opener (.span Pdf.generatedHyphen) == "/Span << /ActualText <FEFF00AD> >> BDC")
   let mut docs := 0
   for name in goldenNames do
     let (doc, _) ← goldenDoc name
