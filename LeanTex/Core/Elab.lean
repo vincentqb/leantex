@@ -6132,7 +6132,7 @@ sets as a block")
             let inner := wordInlines argCtx s p
             let active ← modifierInlines ctx name style (edges [.word s p] raws[next]?) inner pos
             elabInlinesFrom ctx raws next (pushModifier (flushText acc sb) spec active inner) ""
-          -- TeX reads an unbraced argument as the one token after the command.
+          -- TeX reads an unbraced control word after the command as its argument.
           | some (.ctrl c p) =>
             have _ : rawWeightList (raws.extract j (j + 1)).toList < sliceWeight raws i :=
               extract_lt_slice (j + 1) h (by omega)
@@ -7557,12 +7557,19 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
                     a.sides.map fun (l, r) => (l.units.toNat, r.units.toNat) }
     let page := page.kernelSides
     if down then page else
-      -- latex.ltx sets the text block an inch, `\topmargin`, `\headheight` and `\headsep` down.
+      -- latex.ltx sets the text block an inch, `\topmargin`, `\headheight` and `\headsep` down, the
+      -- size files fixing `\topmargin` as the class loads.
+      let kernel := [.sizeFile, .book, .memoir, .letter].contains rule
+      let hh := page.headHeight.getD a.headheight
       let top := match page.topOffset with
-        | some t => Dim.inch 1 + t + page.headHeight.getD a.headheight + page.headsep.getD a.headsep
-        | none => a.top + (page.headHeight.getD a.headheight - a.headheight)
+        | some t => Dim.inch 1 + t + hh + page.headsep.getD a.headsep
+        | none => if kernel then a.top + (hh - a.headheight) + (page.headsep.getD a.headsep - a.headsep)
+            else a.top
+      let read := page.topOffset.isSome || kernel
       { page with vmargin := top, bmargin := some (page.height - top - a.height)
-                  classSeps := some (a.headsep, a.footskip) }
+                  classSeps := some (a.headsep, a.footskip)
+                  topOffset := if read then none else page.topOffset
+                  headHeight := if read then none else page.headHeight }
   | none =>
     if record.model == .flow && !across && !down then
       { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }.kernelSides
@@ -16732,7 +16739,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" e.key
           ((Native.PageKey.names.filter (·.2.listed)).map (·.1)) pos))
     | some key =>
-      if let some set := pageDim key then
+      if [.oddsidemargin, .evensidemargin, .topmargin, .headheight].contains key &&
+          e.value matches .ident "auto" then
+        spec := match key with
+          | .oddsidemargin => { spec with oddSide := none }
+          | .evensidemargin => { spec with evenSide := none }
+          | .topmargin => { spec with topOffset := none }
+          | _ => { spec with headHeight := none }
+      else if let some set := pageDim key then
         if let some d := asDim e.value then
           spec := set d spec
           if key == .margin || key == .vmargin then
@@ -17906,7 +17920,7 @@ public inductive PDecl where
   /-- A preamble ink declaration still in force where the body begins, replayed
   as the body's first. -/
   | bodyStart (source : String) (pos : Pos)
-  | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
+  | titleDecl (name : String) (starred : Bool) (unclosed : Option Pos) (recovered : Bool)
       (body : Option (Array Raw × Option (Array Raw))) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
   | unknownCmd (name : String) (args : String) (unclosed : Option Pos) (pos : Pos)
@@ -18323,16 +18337,17 @@ private def scanDeclStep (preamble : Array Raw) (i : Nat) (h : i < preamble.size
       out := out.push (.algSetting name pos)
     else if titleCtrls.contains name then
       -- A journal class's starred form marks the corresponding author; the starred line is read.
-      if preamble[i]? matches some (.word "*" _) then i := i + 1
+      let starred := preamble[i]? matches some (.word "*" _)
+      if starred then i := i + 1
       let (j, recovered, _, unclosed) := scanOptArg preamble i pos
       match preamble[j]? with
       | some (.group b _) =>
         let short := bracketArgRaws? preamble i pos
         i := j + 1
-        out := out.push (.titleDecl name unclosed recovered
+        out := out.push (.titleDecl name starred unclosed recovered
           (some (b, short)) pos)
       | _ =>
-        out := out.push (.titleDecl name unclosed recovered none pos)
+        out := out.push (.titleDecl name starred unclosed recovered none pos)
         if recovered then
           i := j
     else if name == "newtheorem" then
@@ -19161,9 +19176,13 @@ convert = none refuses both")
     | none =>
       missingArgDiag s.ctx "\\captionsetup" pos "a {key = value} block"
       return s
-  | .titleDecl name unclosed recovered body pos =>
+  | .titleDecl name starred unclosed recovered body pos =>
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
+    if starred then
+      warnOnce s.ctx ("titlestar:" ++ name) .W0104
+        (Diag.say .W0104 .marker "*" (some (none, s!"\\{name}"))) pos
+        (detail := some "a journal class's corresponding-author mark, which the title block does not set")
     match body with
     | some (b, short) =>
       let short ← short.mapM (elabInlines s.ctx)
@@ -20234,6 +20253,19 @@ the {docClass.name} class's page keeps its own" none
   page := if settled.2.isSome then
       classAreaPage record classOpts (Ir.Surface.ofPath file) true false settled.1
     else settled.1
+  -- latex.ltx's offsets the page did not take are named.
+  let offsetLost (key why : String) : EM Unit := do
+    let d := diagOf ctx .W0104 (Diag.say .W0104 .key key (some (none, "\\page"))) none
+      (detail := some why) (subject := some (Compat.paramSubject "\\page" key))
+    modify fun st => { st with diags := st.diags.push d }
+  if page.oddSide.isSome then
+    offsetLost "oddsidemargin" "it leaves the text block no room on the paper; the block stays centred"
+  if page.topOffset.isSome then
+    offsetLost "topmargin" "the page's top is placed by another declaration or by the class itself"
+  if let some even := page.evenSide then
+    if page.twoside && !(0 ≤ Dim.inch 1 + even && Dim.inch 1 + even ≤ 2 * page.hmargin) then
+      offsetLost "evensidemargin" "it leaves a verso's text block no room on the paper; the verso mirrors the recto"
+  page := { page with headHeight := none }
   let classSay (code : DiagCode) (o msg : String) (detail : Option String := none) : EM Unit := do
     let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
       (detail := detail)

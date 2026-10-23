@@ -152,13 +152,21 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("\\oddsidemargin -0.125in \\topmargin 0in \\headheight 0in \\headsep 0in " ++
         "\\textwidth 6.75in \\textheight 8.74in", 72000, 63000),
       ("\\topmargin -39pt \\headheight 20pt \\headsep 38pt \\oddsidemargin 0cm", 91000, 72000),
-      ("\\headheight 30pt", 143270, 134270)] do
+      ("\\headheight 30pt", 143270, 134270), ("\\headsep 40pt", 140270, 134270)] do
     let p := page ("\\documentclass{article}" ++ pre)
     t s!"latex.ltx's offsets {pre} set the text block {top} from the top and {left} from the left"
       (near p.vmargin top 1000 && near (p.leftMargin 1) left 1000)
   t "a two-sided page sets a verso's text block an inch beyond a declared \\evensidemargin"
     (let p := page "\\documentclass[twoside]{article}\\evensidemargin 10pt"
      near (p.leftMargin 2) 82000 1000 && near (p.leftMargin 1) 107270 1000)
+  t "a geometry text width after a class's \\oddsidemargin centres the block, as geometry does"
+    (let p := page "\\documentclass{article}\\oddsidemargin 0in\\usepackage[textwidth=15cm]{geometry}"
+     near (p.leftMargin 1) 93402 1000)
+  t "an \\oddsidemargin leaving the block no room is named, the block centred"
+    (let (doc, ds) := Elab.run "t.tex" ("\\documentclass{article}\\oddsidemargin 5in" ++
+       "\\begin{document}x\\end{document}")
+     near (doc.page.leftMargin 1) 134270 1000 && ds.any fun d =>
+       d.code == "W0104" && d.subject == some (Compat.paramSubject "\\page" "oddsidemargin"))
   t "a later page geometry replaces the kernel's offsets"
     (let p := page ("\\documentclass{article}\\oddsidemargin 0in\\topmargin 0in" ++
        "\\usepackage[left=20mm,right=20mm,top=25mm,bottom=25mm]{geometry}")

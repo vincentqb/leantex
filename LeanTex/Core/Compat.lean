@@ -141,7 +141,7 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
    ("xcolor", [("natural", .engineSets "colours ship in the model they are declared in"),
      ("hyperref", .engineSets "link colours are read from hyperref's own keys"),
      ("usenames", .asWithout "the option has had no effect since xcolor 2.11"),
-     ("svgnames", .engineSets "a colour copied from an SVG 1.1 name takes that name's value"),
+     ("svgnames", .engineSets "a colour named from SVG 1.1's list takes that name's value"),
      ("table", .engineSets "the table colour commands are read, whether or not the option asks")] ++
      drivers),
    ("color", ("usenames", .asWithout "the option has no effect") :: drivers),
@@ -232,7 +232,7 @@ private def amsArticleClasses : List String := ["amsart", "amsproc", "acmart"]
 
 /-- Classes that are an `article` with different defaults. -/
 private def articleClasses : List String :=
-  ["report", "book", "memoir", "letter", "extarticle", "extreport", "extbook"] ++ amsArticleClasses
+  ["report", "book", "memoir", "letter", "extarticle"] ++ amsArticleClasses
 
 /-- Whether a class's options give its title a page of its own, from the class's default:
 `notitlepage` winning as the classes declare it last, KOMA-Script's `titlepage=` read by it alone. -/
@@ -306,7 +306,8 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
     | [some n] => some n
     | [] => if flowClass then some Ir.flowOptionPt
       else some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
-    | _ => none
+    -- An extsizes size the engine does not model sets the body at 10pt, named at the class line.
+    | _ => if cls == "extarticle" then some 10 else none
 
 /-- The whole points a class's last size option sets, its record's or 10pt without one. -/
 private def classPoints (cls : String) (opts : List String) : Option Nat :=
@@ -3516,9 +3517,11 @@ private def condCharOf (vals : Std.HashMap String (Option CondVal)) : Nat → St
         | _ => none
     | _ => none
 
-/-- The category code TeX gives a character under LaTeX's catcode table, as `\ifcat` compares. -/
-private def condCatOf (c : Char) : Nat :=
-  if c.isAlpha then 11 else if c == ' ' then 10 else 12
+/-- The category code a character holds under LaTeX's document catcodes, for an ASCII letter, a
+digit, a space or punctuation whose code no package changes; none for any other. -/
+private def condCatOf (c : Char) : Option Nat :=
+  if c.toNat < 128 && c.isAlpha then some 11 else if c == ' ' then some 10
+  else if c.isDigit || ".,;:!?()[]=+-*/<>'\"|".contains c then some 12 else none
 
 /-- The expansion of textual, parameterless selector
 fragments in this use's state. -/
@@ -3755,7 +3758,9 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
       match token p1 with
       | none => return undecided
       | some (b, p2) =>
-        let v := if h == "if" then a == b else condCatOf a == condCatOf b
+        let some ca := condCatOf a | return undecided
+        let some cb := condCatOf b | return undecided
+        let v := if h == "if" then a == b else ca == cb
         let src := condSrc atoms p2
         let (used, tail) := condFinish raws (i + 1) atoms p2
         return two v src s!"reads '{a}' and '{b}', which {if v then "agree" else "differ"}"
@@ -4079,6 +4084,18 @@ private def flagOperands (raws : Array Raw) (i : Nat) (toggle : Bool) (act : Fla
 private def flagWhat (toggle : Bool) (name : String) : String :=
   if toggle then s!"toggle '{name}'" else s!"boolean '\\if{name}'"
 
+/-- extsizes' body sizes past the standard three, which the engine does not model, each named. -/
+private def extsizesUnmodelled (given : List String) (pos : Pos) : M Unit := do
+  for o in given do
+    if ["8pt", "9pt", "14pt", "17pt", "20pt"].contains o then
+      say .W0104 (Diag.say .W0104 .option o (ofWritten "\\documentclass")) pos
+        (detail := some "an extsizes body size the engine does not model; the body is set at 10pt")
+        (subject := some ("documentclass:" ++ o))
+
+/-- The classes whose `\@ptsize` is their size option's points less ten. -/
+private def ptsizeLessTen : List String :=
+  ["article", "report", "book", "letter", "memoir", "amsart", "amsproc"]
+
 /-- A load the flow performs where it stands: a package line, the class line, an
 option pass, or a theme slot. -/
 private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := do
@@ -4098,9 +4115,13 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let os := (PackageImports.literalOptions ((opt.map rawSrc).getD "")).toArray
     unless c.isEmpty do
       write fun st => { st with loads := st.loads.setCls c os }
-      -- The standard classes define `\@ptsize` as their size option's points less ten.
-      if let some pt := classNormalPt c os.toList then
-        let size : CondVal := ⟨#[.word (toString (pt - 10)) {}], false, false, 0, none, false, 0, 0,
+      -- The standard classes define `\@ptsize` as their size option's points less ten, extsizes and
+      -- KOMA-Script as the points.
+      let pt := classNormalPt c os.toList
+      let ptsize := if ptsizeLessTen.contains c then pt.map (· - 10)
+        else if c.startsWith "ext" || c.startsWith "scr" then pt else none
+      if let some n := ptsize then
+        let size : CondVal := ⟨#[.word (toString n) {}], false, false, 0, none, false, 0, 0,
           (false, false), false⟩
         setBind "@ptsize" (some size)
   else if name == classBaseMark then
@@ -7366,7 +7387,7 @@ private def svgSource (st : St) (src : String) : String :=
 lengths it holds, else the value as written. -/
 private def dimexprValue (v : Array Raw) : M (Array Raw) := do
   let src := rawSrc v
-  -- geometry reads a value against the `\baselineskip` in force where it loads.
+  -- A value naming `\baselineskip` reads the one in force where it stands.
   if !src.startsWith "\\dimexpr" && (src.splitOn "\\baselineskip").length == 1 then return v
   let st ← get
   -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
@@ -7617,7 +7638,14 @@ length as one literal")
   let foot ← match footSetting with
     | some f => carry f pos
     | none => pure #[]
-  return foot ++ (← carry native pos)
+  -- geometry sets latex.ltx's offsets again on each axis it places.
+  let across := fit.any fun (k, _, _) => k.claimsAcross || k == .hmarginratio
+  let down := fit.any fun (k, _, _) => k.claimsDown || k == .textheightUnder
+  let offsets : Array (Native.PageKey × String) :=
+    (if across then #[(.oddsidemargin, "auto"), (.evensidemargin, "auto")] else #[]) ++
+      (if down then #[(.topmargin, "auto"), (.headheight, "auto")] else #[])
+  let cleared ← if offsets.isEmpty then pure #[] else carry (.page offsets) pos
+  return foot ++ (← carry native pos) ++ cleared
 
 /-- `\usepackage[opts]{crop}` and `\crop[opts]` as `\page{ marks = cut }`. -/
 private def crop (opts : String) (pos : Pos)
@@ -10294,11 +10322,24 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
       unappliedParam "color" "its text sets in the ink in force" pos
       return some (#[], skipSpaces raws k)
     let value := rawSrc (args.getD 0 #[])
-    let source := modeledColorSource model value
+    let st ← get
+    let source := modeledColorSource model (if model.isSome then value else svgSource st value)
     match model with
     | some m => became s!"\\color[{m}]\{{value}}" s!"the {source} ink declaration" pos
     | none => became s!"\\color\{{value}}" s!"\\{value}" pos
     return some (#[.ctrl (Marker.name .ink source) pos], skipSpaces raws k)
+  | "textcolor" | "colorbox" =>
+    -- xcolor's `svgnames` names a colour these commands read.
+    let (model, j) := takeRawOpt raws start
+    let j := skipSpaces raws j
+    if model.isSome then return none
+    match raws[j]? with
+    | some (.group g gp) =>
+      let value := rawSrc g
+      let svg := svgSource (← get) value
+      if svg == value then return none
+      return some (#[.ctrl name pos, .group #[.word svg gp] gp], j + 1)
+    | _ => return none
   | "vskip" =>
     -- Unlike `\vspace`, `\vskip` leaves its own glue as the last skip (`kind = vskip`).
     if (← get).inDef then return none
@@ -11592,6 +11633,7 @@ the reader of the files around it does not see"
     let passedAll := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
       if name == cls then options.toList else []
     let given := passedAll ++ keptItems
+    if cls == "extarticle" then extsizesUnmodelled given pos
     let koma := cls.startsWith "scr"
     if titlepageAskers.contains cls &&
         asksTitlePage koma (titlepageDefaults.contains cls) given then
@@ -12479,7 +12521,10 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
       return #[]
     became "\\colorlet" (Native.Setting.palette #[(c.src 0, src)]).render c.pos
     carry (.palette #[(c.src 0, Decl.xcolorDefinitionPrefix ++ src)]) c.pos
-  | .pageColor => pageColor (modeledColorSource (c.optSrc 0) (c.src 1)) c.pos
+  | .pageColor => do
+    let st ← get
+    pageColor (modeledColorSource (c.optSrc 0)
+      (if (c.optSrc 0).isSome then c.src 1 else svgSource st (c.src 1))) c.pos
   | .geometry =>
     -- The command forms take the same keys the package options carry.
     geometry (c.arg 0) c.pos s!"\\{c.name}"
@@ -15460,7 +15505,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         let body' ← rewriteList inBody body #[] body.toList 0 0
         let (args, k) := plainArgs spec body'
         return .group (args ++ body'.extract k body'.size) p
-      else if setspaceEnvs.contains n && !(← get).definedEnvs.contains n then
+      else if setspaceEnvs.contains n && !(← get).definedEnvs.contains n &&
+          (← get).loads.pkgs.any (·.1 == "setspace") then
         -- setspace's environments set their body at a line spread of its own.
         sayOnce ("env:" ++ n) .W0104 (Diag.say .W0104 .environment n) p
           (detail := some "its body is set at the page's leading, not at a line spread of its own")

@@ -217,8 +217,8 @@ private def flowAreaOf (i : AreaInput) : TextArea :=
 
 /-- The rule a LaTeX class's name selects. -/
 public def AreaRule.ofClass (cls : String) : AreaRule :=
-  if cls == "article" || cls == "report" || cls == "extarticle" || cls == "extreport" then .sizeFile
-  else if cls == "book" || cls == "extbook" then .book else if cls == "memoir" then .memoir
+  if cls == "article" || cls == "report" || cls == "extarticle" then .sizeFile
+  else if cls == "book" then .book else if cls == "memoir" then .memoir
   else if cls == "letter" then .letter else if cls.startsWith "scr" then .typearea
   else if cls == "ltflow" then .flow else .engine
 

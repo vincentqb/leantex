@@ -123,16 +123,31 @@ def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     "\\usepackage{natbib}\n\\usepackage[headsep=2\\baselineskip]{geometry}\n" ++
     "\\colorlet{shade}{DarkSlateGrey}\n\\bibsep=1pt\n\\author*[1]{Ada Example}\n\\title{T}\n" ++
     "\\usepackage{setspace}\n\\begin{document}\n\\maketitle\n\\textcolor{shade}{Widgets.}\n" ++
+    "\\textcolor{Navy}{Sprockets.}\n" ++
     "\\begin{spacing}{1.5}\nGadgets turn.\n\\end{spacing}\n\\end{document}\n")
   t "class code reads as LaTeX reads it: an extsizes class, SVG names, natbib's lengths, \
 geometry against the baseline skip, a starred author and setspace's environments"
     (!codeDs.any (·.severity == .error) && !codeDs.any (·.code == "W0301") &&
       !codeDs.any (·.code == "E0309") &&
-      (code.palette.find? "shade").map (·.hex) == some "#2F4F4F" &&
+      (code.palette.find? "shade").map (·.hex) == some "#2F4F4F" && !codeDs.any (·.code == "W0304") &&
       (code.tokens.find? Ir.bibSepName).map (·.width.fixed) == some (Dim.pt 1) &&
       code.page.headsep == some (Dim.pt 24) && code.info.author.isSome &&
+      codeDs.any (fun d => d.code == "W0104" && d.subject == some "titlestar:author") &&
       hasStr (String.join ((bodyLines (layoutOf fonts code)).toList.map (lineText ·)))
         "Gadgets turn.")
+  let (_, docStrayDs) := elabStr "\\documentclass{article}\nStray words.\n\\begin{document}x\\end{document}"
+  t "a document's own preamble text stays an error"
+    (docStrayDs.any fun d => d.code == "E0313" && d.severity == .error)
+  let (eleven, _) := elabStr ("\\documentclass[11pt]{article}\n\\makeatletter\n\\begin{document}\n" ++
+    "\\if1\\@ptsize Eleven\\else Other\\fi\n\\ifcat a1Same\\else Mixed\\fi\n\\end{document}")
+  t "\\@ptsize holds an 11pt class's size less ten, and \\ifcat tells a letter from a digit"
+    (let text := String.join ((bodyLines (layoutOf fonts eleven)).toList.map (lineText ·))
+     hasStr text "Eleven" && hasStr text "Mixed" && !hasStr text "Other" && !hasStr text "Same")
+  let (jobname, jobnameDs, _) ← runStyParity "jobname-input"
+  t "an \\input of a \\jobname file beside the document reads it"
+    (!jobnameDs.any (·.severity == .error) &&
+      hasStr (String.join ((bodyLines (layoutOf fonts jobname)).toList.map (lineText ·)))
+        "Invented part words.")
   let (stray, strayDs, _) ← runStyParity "cls-stray"
   t "a class's own text the engine cannot run is no ink and no error, its construct named"
     (!strayDs.any (·.severity == .error) &&

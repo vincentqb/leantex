@@ -1230,7 +1230,8 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
   else if (s.splitOn "*").length == 2 then
     parseScaled tokens s <|>
       (if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue else none)
-  else if (s.splitOn " plus").length > 1 || (s.splitOn " minus").length > 1 then
+  else if s.contains ' ' && (s.splitOn " ").any fun w =>
+      w == "plus" || w == "minus" || (splitGlueKeyword w).length == 2 then
     (parseGlue s).map Value.glue
   else if s.endsWith "em" || s.endsWith "ex" then
     ((parseLength s).map fun l => Value.glue { width := l }) <|>

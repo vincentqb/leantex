@@ -101,7 +101,8 @@ private def readTexOnce (path : String) (bytes : ByteArray) : ReadM Encoding.Fil
 private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
     (prefer : String → String) (command : String)
     (decode : String → ByteArray → ReadM Encoding.FileText) (surface : Ir.Surface)
-    (cites : Bool := false) (hybrid : Bool := false) : ReadM (Array Parse.Raw × Array Diag) := do
+    (cites : Bool := false) (hybrid : Bool := false) (runFile : Bool := false) :
+    ReadM (Array Parse.Raw × Array Diag) := do
   -- Do not turn an unmatched quote into an accepted, unquoted filename.
   let name := if name.toList.count '"' % 2 == 0 then
       let unquoted := name.replace "\"" ""
@@ -118,7 +119,8 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
       modify fun log => { log with reads := log.reads.push path.toString }
       let read ← decode path.toString bytes
       return Surface.fragment surface path.toString read.text pos cites hybrid
-  else if name.startsWith "\\jobname" then
+  -- premise: none — a `\jobname` file the run has not written is one it writes itself
+  else if runFile then
     return (#[], #[DriverDiag.runFileUnread preferred (some ⟨file, pos⟩)])
   else
     -- The span names the file the `\input` sits in, where the reader fixes it.
@@ -127,10 +129,19 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
 
 /-- An `\input` read through the door, trying the `.tex` suffix before the literal
 spelling unless it already ends in `.tex`. -/
-private def readInputAt (dir : System.FilePath) (file name : String) (pos : Pos) :
-    ReadM (Array Parse.Raw × Array Diag) :=
+private def readInputAt (dir : System.FilePath) (file name : String) (pos : Pos)
+    (runFile : Bool := false) : ReadM (Array Parse.Raw × Array Diag) :=
   readFragment dir file name pos (fun name =>
     if name.endsWith ".tex" then name else name ++ ".tex") "input" readTexOnce .tex
+    (runFile := runFile)
+
+/-- A name `\jobname` opens, spelled with the root document's stem, and whether it opens so. -/
+private def jobnamed (root name : String) : String × Bool :=
+  let n := name.trimAscii.toString
+  if n.startsWith "\\jobname" then
+    ((System.FilePath.mk root).fileStem.getD root ++ (n.drop "\\jobname".length).trimAsciiStart.toString,
+      true)
+  else (name, false)
 
 public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
     IO (Array Parse.Raw × Array Diag) := do
@@ -333,7 +344,9 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
       let (sub, diags) ← if request.command == "inputminted" then readMinted dir request
         else if request.command == "lstinputlisting" then readListing dir request
         else if request.command == "inputlean" then readLean dir (inputleanAsk request)
-        else readInputAt dir request.file request.name request.pos
+        else
+          let (name, runFile) := jobnamed root request.name
+          readInputAt dir request.file name request.pos runFile
       modify fun log => { log with diags := log.diags ++ diags }
       if request.command == "inputlean" then
         let (answer, context) := context.keep sub request.pos

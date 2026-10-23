@@ -417,7 +417,9 @@ or an inch beyond a declared `\evensidemargin`. -/
 public def PageSpec.leftMargin (spec : PageSpec) (folio : Nat) : Length :=
   if spec.twoside && folio % 2 == 0 then
     match spec.evenSide with
-    | some even => Dim.inch 1 + even
+    | some even =>
+      if 0 ≤ Dim.inch 1 + even ∧ Dim.inch 1 + even ≤ 2 * spec.hmargin then Dim.inch 1 + even
+      else 2 * spec.hmargin - spec.rectoLeft
     | none => 2 * spec.hmargin - spec.rectoLeft
   else spec.rectoLeft
 
@@ -433,7 +435,7 @@ public theorem PageSpec.leftMargin_mirror (spec : PageSpec) (k : Nat) (h : spec.
     ite_true, ite_false, Bool.false_eq_true]
   length_omega
 
-/-- The sides latex.ltx's `\oddsidemargin` sets: a recto's left margin an inch more than it,
+/-- The sides latex.ltx's `\oddsidemargin` sets, read: a recto's left margin an inch more than it,
 where that leaves both margins at least zero. -/
 public def PageSpec.kernelSides (spec : PageSpec) : PageSpec :=
   match spec.oddSide with
@@ -441,7 +443,7 @@ public def PageSpec.kernelSides (spec : PageSpec) : PageSpec :=
     let free := 2 * spec.hmargin
     let left := Dim.inch 1 + odd
     if 0 ≤ left ∧ left ≤ free then
-      { spec with sideRatio := some (left.units.toNat, (free - left).units.toNat) }
+      { spec with sideRatio := some (left.units.toNat, (free - left).units.toNat), oddSide := none }
     else spec
   | none => spec
 
