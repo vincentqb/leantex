@@ -717,11 +717,13 @@ private theorem mod_arm (K M : String → Prop) (hK : ∀ n, K n → PlainCtrl n
       rw [hb'] at hw
       cases hw
     case h_3 =>
+      rename_i hw
+      rw [hb'] at hw
+      cases hw
+    case h_4 =>
       exfalso
-      rename_i h1 h2 _
-      first
-        | exact h1 body q hb'
-        | exact h2 body q hb'
+      rename_i h1 _ _
+      exact h1 body q hb'
     rename_i hg
     rw [hb'] at hg
     cases hg
