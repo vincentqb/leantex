@@ -121,15 +121,16 @@ def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
         "Widgets turn. Tenpoint. Lettered. \\textit{Gadgets}."))
   let (code, codeDs) := elabStr ("\\documentclass{extarticle}\n\\usepackage[svgnames]{xcolor}\n" ++
     "\\usepackage{natbib}\n\\usepackage[headsep=2\\baselineskip]{geometry}\n" ++
-    "\\colorlet{shade}{DarkSlateGrey}\n\\bibsep=1pt\n\\author*[1]{Ada Example}\n\\title{T}\n" ++
+    "\\colorlet{shade}{DarkSlateGrey}\n\\definecolor{Navy}{HTML}{112233}\n\\bibsep=1pt\n\\author*[1]{Ada Example}\n\\title{T}\n" ++
     "\\usepackage{setspace}\n\\begin{document}\n\\maketitle\n\\textcolor{shade}{Widgets.}\n" ++
-    "\\textcolor{Navy}{Sprockets.}\n" ++
+    "\\textcolor{Teal}{Sprockets.}\n\\textcolor{Navy}{Cogs.}\n" ++
     "\\begin{spacing}{1.5}\nGadgets turn.\n\\end{spacing}\n\\end{document}\n")
   t "class code reads as LaTeX reads it: an extsizes class, SVG names, natbib's lengths, \
 geometry against the baseline skip, a starred author and setspace's environments"
     (!codeDs.any (·.severity == .error) && !codeDs.any (·.code == "W0301") &&
       !codeDs.any (·.code == "E0309") &&
       (code.palette.find? "shade").map (·.hex) == some "#2F4F4F" && !codeDs.any (·.code == "W0304") &&
+      (code.palette.find? "Navy").map (·.hex) == some "#112233" &&
       (code.tokens.find? Ir.bibSepName).map (·.width.fixed) == some (Dim.pt 1) &&
       code.page.headsep == some (Dim.pt 24) && code.info.author.isSome &&
       codeDs.any (fun d => d.code == "W0104" && d.subject == some "titlestar:author") &&

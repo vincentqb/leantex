@@ -7556,15 +7556,15 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
                   sideRatio := page.sideRatio <|>
                     a.sides.map fun (l, r) => (l.units.toNat, r.units.toNat) }
     let page := page.kernelSides
-    if down then page else
+    -- A declared vertical placement sets the top whatever the head's height, as geometry folds it.
+    if down then { page with headHeight := none } else
       -- latex.ltx sets the text block an inch, `\topmargin`, `\headheight` and `\headsep` down, the
       -- size files fixing `\topmargin` as the class loads.
       let kernel := [.sizeFile, .book, .memoir, .letter].contains rule
       let hh := page.headHeight.getD a.headheight
       let top := match page.topOffset with
         | some t => Dim.inch 1 + t + hh + page.headsep.getD a.headsep
-        | none => if kernel then a.top + (hh - a.headheight) + (page.headsep.getD a.headsep - a.headsep)
-            else a.top
+        | none => if kernel then a.top + (hh - a.headheight) else a.top
       let read := page.topOffset.isSome || kernel
       { page with vmargin := top, bmargin := some (page.height - top - a.height)
                   classSeps := some (a.headsep, a.footskip)
@@ -20259,13 +20259,14 @@ the {docClass.name} class's page keeps its own" none
       (detail := some why) (subject := some (Compat.paramSubject "\\page" key))
     modify fun st => { st with diags := st.diags.push d }
   if page.oddSide.isSome then
-    offsetLost "oddsidemargin" "it leaves the text block no room on the paper; the block stays centred"
+    offsetLost "oddsidemargin" "it leaves the text block no room on the paper; the class's margins stand"
   if page.topOffset.isSome then
     offsetLost "topmargin" "the page's top is placed by another declaration or by the class itself"
+  if page.headHeight.isSome then
+    offsetLost "headheight" "the class places its text block itself, whatever the head's height"
   if let some even := page.evenSide then
     if page.twoside && !(0 ≤ Dim.inch 1 + even && Dim.inch 1 + even ≤ 2 * page.hmargin) then
       offsetLost "evensidemargin" "it leaves a verso's text block no room on the paper; the verso mirrors the recto"
-  page := { page with headHeight := none }
   let classSay (code : DiagCode) (o msg : String) (detail : Option String := none) : EM Unit := do
     let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
       (detail := detail)

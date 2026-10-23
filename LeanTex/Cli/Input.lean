@@ -138,9 +138,9 @@ private def readInputAt (dir : System.FilePath) (file name : String) (pos : Pos)
 /-- A name `\jobname` opens, spelled with the root document's stem, and whether it opens so. -/
 private def jobnamed (root name : String) : String × Bool :=
   let n := name.trimAscii.toString
-  if n.startsWith "\\jobname" then
-    ((System.FilePath.mk root).fileStem.getD root ++ (n.drop "\\jobname".length).trimAsciiStart.toString,
-      true)
+  let rest := (n.drop "\\jobname".length).toString
+  if n.startsWith "\\jobname" && !(rest.front?.any Char.isAlpha) then
+    ((System.FilePath.mk root).fileStem.getD root ++ rest.trimAsciiStart.toString, true)
   else (name, false)
 
 public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :

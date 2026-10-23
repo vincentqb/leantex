@@ -306,8 +306,7 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
     | [some n] => some n
     | [] => if flowClass then some Ir.flowOptionPt
       else some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
-    -- An extsizes size the engine does not model sets the body at 10pt, named at the class line.
-    | _ => if cls == "extarticle" then some 10 else none
+    | _ => none
 
 /-- The whole points a class's last size option sets, its record's or 10pt without one. -/
 private def classPoints (cls : String) (opts : List String) : Option Nat :=
@@ -1049,6 +1048,8 @@ private structure St where
   refusedEnvs : Array (String × String × Bool) := #[]
   /-- The environments the preamble's definitions lowered here define. -/
   definedEnvs : Array String := #[]
+  /-- The colour names the document's `\definecolor` and `\colorlet` define. -/
+  colorsDefined : Array String := #[]
   /-- The first of paracol's two column shares, in per mille. -/
   paracolRatio : Nat := 500
   /-- Inside a paracol flow, whose close splits its switching commands. -/
@@ -3518,10 +3519,10 @@ private def condCharOf (vals : Std.HashMap String (Option CondVal)) : Nat → St
     | _ => none
 
 /-- The category code a character holds under LaTeX's document catcodes, for an ASCII letter, a
-digit, a space or punctuation whose code no package changes; none for any other. -/
+digit, a space or punctuation no language makes active under lualatex; none for any other. -/
 private def condCatOf (c : Char) : Option Nat :=
   if c.toNat < 128 && c.isAlpha then some 11 else if c == ' ' then some 10
-  else if c.isDigit || ".,;:!?()[]=+-*/<>'\"|".contains c then some 12 else none
+  else if c.isDigit || ".,;:!?()[]=+-*/'|".contains c then some 12 else none
 
 /-- The expansion of textual, parameterless selector
 fragments in this use's state. -/
@@ -4089,7 +4090,7 @@ private def extsizesUnmodelled (given : List String) (pos : Pos) : M Unit := do
   for o in given do
     if ["8pt", "9pt", "14pt", "17pt", "20pt"].contains o then
       say .W0104 (Diag.say .W0104 .option o (ofWritten "\\documentclass")) pos
-        (detail := some "an extsizes body size the engine does not model; the body is set at 10pt")
+        (detail := some "an extsizes size, whose own size file's text area and leadings are not read")
         (subject := some ("documentclass:" ++ o))
 
 /-- The classes whose `\@ptsize` is their size option's points less ten. -/
@@ -4115,11 +4116,11 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let os := (PackageImports.literalOptions ((opt.map rawSrc).getD "")).toArray
     unless c.isEmpty do
       write fun st => { st with loads := st.loads.setCls c os }
-      -- The standard classes define `\@ptsize` as their size option's points less ten, extsizes and
-      -- KOMA-Script as the points.
+      -- The standard classes and KOMA-Script define `\@ptsize` as their size option's points less
+      -- ten, extsizes as the points.
       let pt := classNormalPt c os.toList
-      let ptsize := if ptsizeLessTen.contains c then pt.map (· - 10)
-        else if c.startsWith "ext" || c.startsWith "scr" then pt else none
+      let ptsize := if ptsizeLessTen.contains c || c.startsWith "scr" then pt.map (· - 10)
+        else if c.startsWith "ext" then pt else none
       if let some n := ptsize then
         let size : CondVal := ⟨#[.word (toString n) {}], false, false, 0, none, false, 0, 0,
           (false, false), false⟩
@@ -7378,7 +7379,9 @@ the option; any other source as written. -/
 private def svgSource (st : St) (src : String) : String :=
   let name := src.trimAscii.toString
   let svg := st.loads.pkgs.any fun (p, os) => p == "xcolor" && (os.getD #[]).contains "svgnames"
-  if !svg || !(name.front?.any Char.isUpper) then src else
+  -- xcolor spells SVG's names capitalised, never in capitals throughout.
+  let spelled := name.front?.any Char.isUpper && name.toList.any Char.isLower
+  if !svg || !spelled || st.colorsDefined.contains name then src else
   match CssColor.named? name with
   | some (r, g, b) => "#" ++ Hex.byte true r.toUInt8 ++ Hex.byte true g.toUInt8 ++ Hex.byte true b.toUInt8
   | none => src
@@ -7638,13 +7641,10 @@ length as one literal")
   let foot ← match footSetting with
     | some f => carry f pos
     | none => pure #[]
-  -- geometry sets latex.ltx's offsets again on each axis it places.
-  let across := fit.any fun (k, _, _) => k.claimsAcross || k == .hmarginratio
-  let down := fit.any fun (k, _, _) => k.claimsDown || k == .textheightUnder
+  -- geometry sets latex.ltx's offsets again each time it lays the page out.
   let offsets : Array (Native.PageKey × String) :=
-    (if across then #[(.oddsidemargin, "auto"), (.evensidemargin, "auto")] else #[]) ++
-      (if down then #[(.topmargin, "auto"), (.headheight, "auto")] else #[])
-  let cleared ← if offsets.isEmpty then pure #[] else carry (.page offsets) pos
+    #[(.oddsidemargin, "auto"), (.evensidemargin, "auto"), (.topmargin, "auto")]
+  let cleared ← if fit.isEmpty then pure #[] else carry (.page offsets) pos
   return foot ++ (← carry native pos) ++ cleared
 
 /-- `\usepackage[opts]{crop}` and `\crop[opts]` as `\page{ marks = cut }`. -/
@@ -12509,6 +12509,7 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
           (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
     became s!"\\definecolor\{{n}}" (Native.Setting.palette #[(n, modeled)]).render c.pos
+    write fun st => { st with colorsDefined := st.colorsDefined.push n }
     carry (.palette #[(n, Decl.xcolorDefinitionPrefix ++ modeled)]) c.pos
   | .colorLet => do
     -- xcolor's `.` names the current colour, black in the preamble.
@@ -12520,6 +12521,7 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
           (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
     became "\\colorlet" (Native.Setting.palette #[(c.src 0, src)]).render c.pos
+    write fun st => { st with colorsDefined := st.colorsDefined.push (c.src 0) }
     carry (.palette #[(c.src 0, Decl.xcolorDefinitionPrefix ++ src)]) c.pos
   | .pageColor => do
     let st ← get

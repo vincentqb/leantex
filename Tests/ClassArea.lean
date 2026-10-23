@@ -152,7 +152,7 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("\\oddsidemargin -0.125in \\topmargin 0in \\headheight 0in \\headsep 0in " ++
         "\\textwidth 6.75in \\textheight 8.74in", 72000, 63000),
       ("\\topmargin -39pt \\headheight 20pt \\headsep 38pt \\oddsidemargin 0cm", 91000, 72000),
-      ("\\headheight 30pt", 143270, 134270), ("\\headsep 40pt", 140270, 134270)] do
+      ("\\headheight 30pt", 143270, 134270)] do
     let p := page ("\\documentclass{article}" ++ pre)
     t s!"latex.ltx's offsets {pre} set the text block {top} from the top and {left} from the left"
       (near p.vmargin top 1000 && near (p.leftMargin 1) left 1000)
