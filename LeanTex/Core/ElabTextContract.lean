@@ -1084,8 +1084,8 @@ public theorem elabInlines_ctrl_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
       (fun _ _ _ _ h => h.elim)
 
 /-- The text-font and decoration commands conserve their argument's text: `\textbf{…}`, `\emph{…}`,
-`\underline{…}` and the like, each directly before its braced argument and no overlay word after,
-read as that argument among the plain-text arms and the control words setting their own text. -/
+`\underline{…}` and the like, each directly before its braced argument and `\emph` before no overlay
+word, read as that argument among the plain-text arms and the control words setting their own text. -/
 public theorem elabInlines_modifier_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
     (hfit : Fits (fun n => PlainCtrl n ∨ ModCtrl n) ctx)
