@@ -6132,6 +6132,15 @@ sets as a block")
             let inner := wordInlines argCtx s p
             let active ← modifierInlines ctx name style (edges [.word s p] raws[next]?) inner pos
             elabInlinesFrom ctx raws next (pushModifier (flushText acc sb) spec active inner) ""
+          -- TeX reads an unbraced argument as the one token after the command.
+          | some (.ctrl c p) =>
+            have _ : rawWeightList (raws.extract j (j + 1)).toList < sliceWeight raws i :=
+              extract_lt_slice (j + 1) h (by omega)
+            let inner ← elabInlinesCore argCtx (raws.extract j (j + 1))
+            have _ : sliceWeight raws next < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            let active ← modifierInlines ctx name style (edges [.ctrl c p] raws[next]?) inner pos
+            elabInlinesFrom ctx raws next (pushModifier (flushText acc sb) spec active inner) ""
           | _ =>
             diag ctx .E0304 (missingArg name) pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -7546,13 +7555,18 @@ private def classAreaPage (record : Ir.ClassRecord) (opts : List String) (surfac
       { page with hmargin := (page.width - a.width) / 2
                   sideRatio := page.sideRatio <|>
                     a.sides.map fun (l, r) => (l.units.toNat, r.units.toNat) }
+    let page := page.kernelSides
     if down then page else
-      { page with vmargin := a.top, bmargin := some (page.height - a.top - a.height)
+      -- latex.ltx sets the text block an inch, `\topmargin`, `\headheight` and `\headsep` down.
+      let top := match page.topOffset with
+        | some t => Dim.inch 1 + t + page.headHeight.getD a.headheight + page.headsep.getD a.headsep
+        | none => a.top + (page.headHeight.getD a.headheight - a.headheight)
+      { page with vmargin := top, bmargin := some (page.height - top - a.height)
                   classSeps := some (a.headsep, a.footskip) }
   | none =>
     if record.model == .flow && !across && !down then
-      { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
-    else page
+      { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }.kernelSides
+    else page.kernelSides
 
 /-- Class options leaving a page model's page as it stands, each with why. -/
 public def classOptionsInert : List (Ir.PageModel × List (String × Compat.Inert)) :=
@@ -16629,6 +16643,10 @@ private def pageDim : Native.PageKey → Option (Length → PageSpec → PageSpe
   | .headsep => some fun d s => { s with headsep := some d }
   | .footskip => some fun d s => { s with footskip := some d }
   | .headrule => some fun d s => { s with headRule := some d }
+  | .oddsidemargin => some fun d s => { s with oddSide := some d }
+  | .topmargin => some fun d s => { s with topOffset := some d }
+  | .headheight => some fun d s => { s with headHeight := some d }
+  | .evensidemargin => some fun d s => { s with evenSide := some d }
   | _ => none
 
 /-- The page switch an on-or-off key sets; lineno's `\linenumbers` is `linenumbers`. -/
@@ -16916,6 +16934,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         | _ =>
           evs := bad evs e "flush or ragged"
       | key, v => evs := wrong key v evs
+    -- A later margin replaces the kernel's offsets on its axis, as geometry sets them again.
+    if let some key := Native.PageKey.ofName? e.key then
+      if [.margin, .hmargin, .hmarginratio, .hscale].contains key then
+        spec := { spec with oddSide := none, evenSide := none }
+      if [.margin, .vmargin, .tmargin, .bmargin, .vmarginratio, .vscale].contains key then
+        spec := { spec with topOffset := none }
     -- A clean count means the entry applied; a `rule` adds, so it overwrites nothing.
     if evs.size == before && !(Native.PageKey.ofName? e.key matches some .rule | some .frontRule) &&
         !(e.value matches .ident "auto" | .ident "default") then
@@ -18298,6 +18322,8 @@ private def scanDeclStep (preamble : Array Raw) (i : Nat) (h : i < preamble.size
       i := j
       out := out.push (.algSetting name pos)
     else if titleCtrls.contains name then
+      -- A journal class's starred form marks the corresponding author; the starred line is read.
+      if preamble[i]? matches some (.word "*" _) then i := i + 1
       let (j, recovered, _, unclosed) := scanOptArg preamble i pos
       match preamble[j]? with
       | some (.group b _) =>
@@ -18709,9 +18735,11 @@ margins stand{replaced}"
             userEnvs := s.ctx.userEnvs.push (envOfHalves envName params b e)
             envLimit := s.ctx.userEnvs.size + 1 } }
         | _, _ =>
-          diagDetail s.ctx .E0303 (Diag.say .E0303 .signature (obj := some
-            (some .environment, envName)))
-            pos "needs {begin} and {end}"
+          let d := diagOf s.ctx .E0303 (Diag.say .E0303 .signature (obj := some
+            (some .environment, envName))) (some pos) (detail := some "needs {begin} and {end}")
+          -- premise: none — a package's internal environment reaches the page only through its code
+          let d := if Compat.styInternal s.ctx.file envName then d.demote else d
+          modify fun st => { st with diags := st.diags.push d }
           return s
     | none =>
       diagDetail s.ctx .E0303 (Diag.say .E0303 .signature (obj := some (none, "\\defineenv"))) pos
@@ -19305,11 +19333,16 @@ convert = none refuses both")
     return s
   | .stray src pos =>
     noteMentions src
+    let d := diagOf s.ctx .E0313 (Diag.tex .preambleText) pos
+      (detail := some "before '\\begin{document}', where only declarations stand")
+    -- premise: localClassChecks — a class's text the engine cannot run ships no ink
+    if d.span.any (Compat.packageFile ·.file) then
+      modify fun st => { st with diags := st.diags.push d.demote }
+      return s
     if s.textDiagged then
       return s
     else
-      diagDetail s.ctx .E0313 (Diag.tex .preambleText) pos
-        "before '\\begin{document}', where only declarations stand"
+      modify fun st => { st with diags := st.diags.push d }
       return { s with textDiagged := true }
 
 /-- The elaboration state with the stores only diagnostics read erased. -/

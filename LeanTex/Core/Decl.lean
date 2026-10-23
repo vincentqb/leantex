@@ -576,11 +576,26 @@ public def filFactor? (s : String) : Option ((Int × Nat) × Nat) :=
     | _ => none
   order.bind fun o => (parseDecimal (String.ofList digits)).map (·, o)
 
-/-- `<len> [plus <len>] [minus <len>]`, TeX's glue spelling. -/
+/-- A word TeX reads as a glue keyword and the dimension after it, as `plus1pt` is. -/
+private def splitGlueKeyword (w : String) : List String :=
+  let opens (t : String) : Bool :=
+    match t.front? with
+    | some c => c.isDigit || c == '.' || c == '-' || c == '+'
+    | none => false
+  let fused (k : String) : Option String :=
+    if w.startsWith k && opens (w.drop k.length).toString then some (w.drop k.length).toString
+    else none
+  match fused "plus", fused "minus" with
+  | some v, _ => ["plus", v]
+  | none, some v => ["minus", v]
+  | none, none => [w]
+
+/-- `<len> [plus <len>] [minus <len>]`, TeX's glue spelling, a keyword fused to its dimension
+read as TeX reads it. -/
 public def parseGlue (s : String) : Option SymGlue := do
-  let words := (s.trimAscii.toString.splitOn " ").filterMap fun w =>
+  let words := (s.trimAscii.toString.splitOn " ").flatMap fun w =>
     let t := w.trimAscii.toString
-    if t.isEmpty then none else some t
+    if t.isEmpty then [] else splitGlueKeyword t
   match words with
   | [] => none
   | base :: rest =>
@@ -1215,7 +1230,7 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
   else if (s.splitOn "*").length == 2 then
     parseScaled tokens s <|>
       (if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue else none)
-  else if (s.splitOn " plus ").length > 1 || (s.splitOn " minus ").length > 1 then
+  else if (s.splitOn " plus").length > 1 || (s.splitOn " minus").length > 1 then
     (parseGlue s).map Value.glue
   else if s.endsWith "em" || s.endsWith "ex" then
     ((parseLength s).map fun l => Value.glue { width := l }) <|>

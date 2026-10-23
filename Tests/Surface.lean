@@ -2055,6 +2055,10 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "dim 6pc is 72pt" (Decl.parseValue "6pc" == Decl.parseValue "72pt")
   t "dim 72bp is 1in" (Decl.parseValue "72bp" == Decl.parseValue "1in")
   t "dim 65536sp is 1pt" (Decl.parseValue "65536sp" == Decl.parseValue "1pt")
+  t "glue: a keyword fused to its dimension reads as TeX reads it"
+    (Decl.parseValue "2pt plus1pt minus1pt" == Decl.parseValue "2pt plus 1pt minus 1pt" &&
+      (Decl.parseValue "2pt plus 1pt minus 1pt").isSome &&
+      Decl.parseGlue "4pt plus2pt minus1pt" == Decl.parseGlue "4pt plus 2pt minus 1pt")
   t "dim 10mm is 1cm" (Decl.parseValue "10mm" == Decl.parseValue "1cm")
   t "dim negative is exact" (Decl.parseValue "-0.5in" == some (.dim (-(Dim.inch 1) / 2)))
   t "dim negative em is exact"

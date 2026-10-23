@@ -112,6 +112,32 @@ def localClassChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "a class loading a class already read reads nothing again, the loop named once"
     (cycleRead.map (·.1) == #["inventedcyca.cls", "inventedcycb.cls"] &&
       (cycleDs.filter (·.code == "E0309")).size == 1 && !cycleDs.any (·.code == "E0501"))
+  let (kernel, kernelDs, _) ← runStyParity "cls-kernel"
+  t "a class's kernel code runs as lualatex runs it: its tests, log lines, dates and offsets"
+    (!kernelDs.any (·.severity == .error) && !kernelDs.any (·.code == "W0301") &&
+      linePlaces (layoutOf fonts kernel) == places (inventedPaper "\\documentclass{article}"
+        ("\\oddsidemargin -0.125in \\topmargin 0in \\headheight 0in \\headsep 0in " ++
+          "\\textwidth 6.75in \\textheight 8.74in\n")
+        "Widgets turn. Tenpoint. Lettered. \\textit{Gadgets}."))
+  let (code, codeDs) := elabStr ("\\documentclass{extarticle}\n\\usepackage[svgnames]{xcolor}\n" ++
+    "\\usepackage{natbib}\n\\usepackage[headsep=2\\baselineskip]{geometry}\n" ++
+    "\\colorlet{shade}{DarkSlateGrey}\n\\bibsep=1pt\n\\author*[1]{Ada Example}\n\\title{T}\n" ++
+    "\\usepackage{setspace}\n\\begin{document}\n\\maketitle\n\\textcolor{shade}{Widgets.}\n" ++
+    "\\begin{spacing}{1.5}\nGadgets turn.\n\\end{spacing}\n\\end{document}\n")
+  t "class code reads as LaTeX reads it: an extsizes class, SVG names, natbib's lengths, \
+geometry against the baseline skip, a starred author and setspace's environments"
+    (!codeDs.any (·.severity == .error) && !codeDs.any (·.code == "W0301") &&
+      !codeDs.any (·.code == "E0309") &&
+      (code.palette.find? "shade").map (·.hex) == some "#2F4F4F" &&
+      (code.tokens.find? Ir.bibSepName).map (·.width.fixed) == some (Dim.pt 1) &&
+      code.page.headsep == some (Dim.pt 24) && code.info.author.isSome &&
+      hasStr (String.join ((bodyLines (layoutOf fonts code)).toList.map (lineText ·)))
+        "Gadgets turn.")
+  let (stray, strayDs, _) ← runStyParity "cls-stray"
+  t "a class's own text the engine cannot run is no ink and no error, its construct named"
+    (!strayDs.any (·.severity == .error) &&
+      strayDs.any (·.code == "W0301") &&
+      bodyTexts (layoutOf fonts stray) == #["Widgets turn."])
 
 /-- A journal class sets its gathered top matter under its title: every author, address and
 key-word line, and the abstract written before `\maketitle`; `\and` keeps authors apart, and an

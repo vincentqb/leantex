@@ -554,7 +554,8 @@ def lengthRow : Row :=
     "\\begin{paracol}{2}Left column words.\\switchcolumn Right column words.\\end{paracol}" ++
     "Before skips.\\smallskip After small.\\medskip After medium.\\bigskip After big."
   { reader := "\\setlength"
-    inert := fun n => n == "textwidth" || match Compat.paramSites.lookup n with
+    inert := fun n => n == "textwidth" || n == "evensidemargin" ||
+      match Compat.paramSites.lookup n with
       | some (.sizeReset _) | some .listReset => true
       | _ => false
     settings := Compat.paramSites.map (·.1) ++

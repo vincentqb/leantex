@@ -1,10 +1,11 @@
 # source: setspace documentation (setspace.sty header) — the three spacing
 # declarations, \setstretch, the spacing environment. Single spacing is the
 # leading a document already has, so \singlespacing moves no ink where it
-# stands (inert:default); the other two declarations carry the evidence.
+# stands (inert:default); the other two declarations carry the evidence. The
+# spacing environment's body is kept at the page's leading, its own spread named.
 pre impl \setstretch{1.2}
 pre impl \onehalfspacing
 pre impl \doublespacing
 pre inert:default \singlespacing
-body refuse:W0302 \begin{spacing}{1.5}x\end{spacing}
+body refuse:W0104 \begin{spacing}{1.5}x\end{spacing}
 pre refuse:W0301 \SetSinglespace{1.1}

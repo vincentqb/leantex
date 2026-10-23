@@ -24,7 +24,7 @@ def logOnlyControls : List (String × Nat) :=
 
 /-- The most members of `logOnlyControls` that may still reach unknown-command recovery: a ratchet
 that may only fall. -/
-def logOnlyOwedBaseline : Nat := 19
+def logOnlyOwedBaseline : Nat := 2
 
 /-- The synthetic package name and message every probe uses, each holding a reserved character, so a
 recovered group would error. -/

@@ -312,6 +312,13 @@ public def htmlResourceUnavailable (detail : String) : Diag :=
     (help := "use readable local image, font, stylesheet and math renderer files; remove CSS `@import` and external `url(...)` dependencies")
     (output := some .html)
 
+/-- W0104: an `\input` of a file the run itself writes under `\jobname`, which the engine writes
+none of, read as empty. -/
+public def runFileUnread (name : String) (span : Option Span) : Diag :=
+  Diag.of .W0104 (Diag.say .W0104 .file name (some (none, "\\input"))) span
+    (detail := some "the run writes it under \\jobname, and the engine writes no such file")
+    (subject := some ("input:" ++ name))
+
 /-- E0502: an included source file is not there; its content is absent. -/
 public def inputMissing (name : String) (span : Option Span) (command : String := "input")
     (spelled : Option String := none) : Diag :=

@@ -118,6 +118,8 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
       modify fun log => { log with reads := log.reads.push path.toString }
       let read ← decode path.toString bytes
       return Surface.fragment surface path.toString read.text pos cites hybrid
+  else if name.startsWith "\\jobname" then
+    return (#[], #[DriverDiag.runFileUnread preferred (some ⟨file, pos⟩)])
   else
     -- The span names the file the `\input` sits in, where the reader fixes it.
     let d := DriverDiag.inputMissing preferred (some ⟨file, pos⟩) command

@@ -363,6 +363,15 @@ public structure PageSpec where
   plainPages : Bool := false
   /-- The margin notes' column beside the text block (`MarginPar.ofPage`). -/
   marginPar : MarginPar := {}
+  /-- LaTeX's `\oddsidemargin`, as declared: a recto's left margin is an inch more. -/
+  oddSide : Option Length := none
+  /-- LaTeX's `\evensidemargin`, as declared: a verso's left margin is an inch more. -/
+  evenSide : Option Length := none
+  /-- LaTeX's `\topmargin`, as declared: an inch more, the head's height and `\headsep` above the
+  text block. -/
+  topOffset : Option Length := none
+  /-- LaTeX's `\headheight`, as declared. -/
+  headHeight : Option Length := none
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Length := spec.bmargin.getD spec.vmargin
@@ -403,20 +412,60 @@ public def MarginPar.room (page : PageSpec) (sep : Length) : Length :=
   marginPoints (if page.twoside then max left right - sep - Dim.inch 2 / 5
     else right - sep - Dim.inch 4 / 5)
 
-/-- The text block's left edge on the page numbered `folio`: a verso's is the recto's right margin. -/
+/-- The text block's left edge on the page numbered `folio`: a verso's is the recto's right margin,
+or an inch beyond a declared `\evensidemargin`. -/
 public def PageSpec.leftMargin (spec : PageSpec) (folio : Nat) : Length :=
-  if spec.twoside && folio % 2 == 0 then 2 * spec.hmargin - spec.rectoLeft else spec.rectoLeft
+  if spec.twoside && folio % 2 == 0 then
+    match spec.evenSide with
+    | some even => Dim.inch 1 + even
+    | none => 2 * spec.hmargin - spec.rectoLeft
+  else spec.rectoLeft
 
-/-- Two-sided pages mirror: a verso's left margin and its recto's sum to the width the block
-leaves, so the inner margins of facing pages match. -/
-public theorem PageSpec.leftMargin_mirror (spec : PageSpec) (k : Nat) (h : spec.twoside = true) :
+/-- Two-sided pages mirror where no `\evensidemargin` is declared: a verso's left margin and its
+recto's sum to the width the block leaves, so the inner margins of facing pages match. -/
+public theorem PageSpec.leftMargin_mirror (spec : PageSpec) (k : Nat) (h : spec.twoside = true)
+    (he0 : spec.evenSide = none) :
     spec.leftMargin (2 * k + 2) + spec.leftMargin (2 * k + 1) = 2 * spec.hmargin := by
   have he : (2 * k + 2) % 2 = 0 := by omega
   have ho : ((2 * k + 1) % 2 == 0) = false := by
     rw [show (2 * k + 1) % 2 = 1 by omega]; rfl
-  simp only [PageSpec.leftMargin, h, he, ho, Bool.true_and, Bool.and_false, beq_self_eq_true,
+  simp only [PageSpec.leftMargin, h, he, ho, he0, Bool.true_and, Bool.and_false, beq_self_eq_true,
     ite_true, ite_false, Bool.false_eq_true]
   length_omega
+
+/-- The sides latex.ltx's `\oddsidemargin` sets: a recto's left margin an inch more than it,
+where that leaves both margins at least zero. -/
+public def PageSpec.kernelSides (spec : PageSpec) : PageSpec :=
+  match spec.oddSide with
+  | some odd =>
+    let free := 2 * spec.hmargin
+    let left := Dim.inch 1 + odd
+    if 0 ≤ left ∧ left ≤ free then
+      { spec with sideRatio := some (left.units.toNat, (free - left).units.toNat) }
+    else spec
+  | none => spec
+
+/-- A declared `\oddsidemargin` leaving room on both sides puts a recto's left margin an inch
+beyond it. -/
+public theorem PageSpec.kernelSides_left (spec : PageSpec) (odd : Length)
+    (h : spec.oddSide = some odd) (h0 : 0 ≤ Dim.inch 1 + odd)
+    (h1 : Dim.inch 1 + odd < 2 * spec.hmargin) :
+    spec.kernelSides.rectoLeft = Dim.inch 1 + odd := by
+  have hle : Dim.inch 1 + odd ≤ 2 * spec.hmargin := by length_omega
+  simp only [PageSpec.kernelSides, h, h0, hle, and_self, ite_true, PageSpec.rectoLeft,
+    PageSpec.sides, Option.orElse]
+  have hsum : ((Dim.inch 1 + odd).units.toNat +
+      (2 * spec.hmargin - (Dim.inch 1 + odd)).units.toNat : Nat) =
+      (2 * spec.hmargin).units.toNat := by length_units; omega
+  have hne : ((Dim.inch 1 + odd).units.toNat +
+      (2 * spec.hmargin - (Dim.inch 1 + odd)).units.toNat == 0) = false := by
+    rw [hsum]; simp; length_units; omega
+  simp only [hne, Bool.false_eq_true, ite_false]
+  rw [hsum]
+  apply (Length.ext_iff' _ _).mpr
+  simp only [Length.units_muli, Length.units_divi]
+  rw [Int.toNat_of_nonneg (by length_omega), Int.toNat_of_nonneg (by length_omega)]
+  exact Int.mul_ediv_cancel_left _ (by length_omega)
 
 /-- Whether a declaration named the page's size on either axis. -/
 public def PageSpec.sized (spec : PageSpec) : Bool := spec.widthSized || spec.heightSized
@@ -961,13 +1010,13 @@ public def trivlistSkip (tokens : Tokens) (size : Length) : SymGlue :=
   (tokens.find? trivlistSkipName).getD (trivlistSkipDefault size)
 
 /-- natbib's hanging indent for an author-year reference list, `\bibhang`. -/
-public def bibHangName : String := "bibhang"
+@[expose] public def bibHangName : String := "bibhang"
 
 public def bibHang (tokens : Tokens) : SymGlue :=
   (tokens.find? bibHangName).getD { width := { em := 1000 } }
 
 /-- natbib's gap between reference-list entries, `\bibsep`. -/
-public def bibSepName : String := "bibsep"
+@[expose] public def bibSepName : String := "bibsep"
 
 public def bibSepDefault (size : Length) : SymGlue :=
   let g (w s h : Length) : SymGlue :=

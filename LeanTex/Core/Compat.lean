@@ -26,6 +26,8 @@ import LeanTex.Core.PackageEnvs
 public import LeanTex.Core.Definer
 import LeanTex.Core.TexText
 import LeanTex.Core.ListMark
+import LeanTex.Core.CssColor
+import LeanTex.Core.Hex
 
 namespace LeanTex.Core.Compat
 
@@ -139,6 +141,7 @@ public def packageOptionsInert : List (String × List (String × Inert)) :=
    ("xcolor", [("natural", .engineSets "colours ship in the model they are declared in"),
      ("hyperref", .engineSets "link colours are read from hyperref's own keys"),
      ("usenames", .asWithout "the option has had no effect since xcolor 2.11"),
+     ("svgnames", .engineSets "a colour copied from an SVG 1.1 name takes that name's value"),
      ("table", .engineSets "the table colour commands are read, whether or not the option asks")] ++
      drivers),
    ("color", ("usenames", .asWithout "the option has no effect") :: drivers),
@@ -228,7 +231,8 @@ private def acmTheoremSource : String :=
 private def amsArticleClasses : List String := ["amsart", "amsproc", "acmart"]
 
 /-- Classes that are an `article` with different defaults. -/
-private def articleClasses : List String := ["report", "book", "memoir", "letter"] ++ amsArticleClasses
+private def articleClasses : List String :=
+  ["report", "book", "memoir", "letter", "extarticle", "extreport", "extbook"] ++ amsArticleClasses
 
 /-- Whether a class's options give its title a page of its own, from the class's default:
 `notitlepage` winning as the classes declare it last, KOMA-Script's `titlepage=` read by it alone. -/
@@ -560,6 +564,10 @@ public def paramSites : List (String × ParamSite) :=
    ("textwidth", .page .textwidth),
    ("textheight", .page .textheight),
    ("headsep", .page .headsep),
+   ("oddsidemargin", .page .oddsidemargin),
+   ("evensidemargin", .page .evensidemargin),
+   ("topmargin", .page .topmargin),
+   ("headheight", .page .headheight),
    ("footskip", .page .footskip),
    ("abovecaptionskip", .token "captionsep"),
    ("topsep", .token "topsep"),
@@ -1504,6 +1512,10 @@ private def St.skipInForce (st : St) : Option Int := if st.inDoc then st.bodySki
 /-- Whether the walk stands where a line is the text's full measure: in no list or environment. -/
 private def St.topLevel (st : St) : Bool := !st.inList && st.envDepth == 0
 
+/-- setspace's environments, each a body at a line spread of its own. -/
+private def setspaceEnvs : List String :=
+  ["spacing", "singlespace", "singlespace*", "onehalfspace", "doublespace"]
+
 /-- The `\baselineskip` an environment's body sets at: a size command's environment form at its
 size, article's and report's abstract on the title's page in one column at `\small`, unknown under
 setspace's, any other abstract or a redefined one, else the one in force. -/
@@ -1514,7 +1526,7 @@ private def envSkip (st : St) (n : String) : Option Int :=
     let small := st.loads.cls.any (fun c => (c.1 == "article" || c.1 == "report") &&
       !c.2.contains "twocolumn") && !st.titlePageAsked && !st.definedEnvs.contains "abstract"
     if small then st.classPt.map (classSizeSkip · "small") else none
-  else if ["spacing", "singlespace", "onehalfspace", "doublespace", "singlespace*"].contains n then none
+  else if setspaceEnvs.contains n then none
   else st.bodySkip
 
 /-- Enters the document body: `\normalsize` resets the size-owned lengths. -/
@@ -3489,6 +3501,25 @@ private def condIntOf (vals : Std.HashMap String (Option CondVal)) : Nat → Str
         | _ => none
     | _ => none
 
+/-- The character a macro expands to first: its body is one character, or one control word
+expanding to one in turn. -/
+private def condCharOf (vals : Std.HashMap String (Option CondVal)) : Nat → String → Option Char
+  | 0, _ => none
+  | k + 1, n =>
+    match condValueOf vals n with
+    | some (some v) =>
+      if v.arity != 0 || v.optional.isSome then none else
+        match v.raws.toList with
+        | [.word w _] => if w.length == 1 then w.front? else none
+        | [.sym c _] => some c
+        | [.ctrl m _] => condCharOf vals k m
+        | _ => none
+    | _ => none
+
+/-- The category code TeX gives a character under LaTeX's catcode table, as `\ifcat` compares. -/
+private def condCatOf (c : Char) : Nat :=
+  if c.isAlpha then 11 else if c == ' ' then 10 else 12
+
 /-- The expansion of textual, parameterless selector
 fragments in this use's state. -/
 private def overlayFragment (vals : Std.HashMap String (Option CondVal)) :
@@ -3710,6 +3741,25 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
           let (used, tail) := condFinish raws (i + 1) atoms p3
           return two v src s!"reads {a} {rel} {b}, which {if v then "holds" else "fails"}"
             s!"{a}{rel}{b}" used tail
+  if h == "if" || h == "ifcat" then
+    let atoms := condAtoms raws (i + 1)
+    let token (p : Nat) : Option (Char × Nat) := atoms[p]?.bind fun a => match a with
+      | .ch c _ _ => some (c, p + 1)
+      | .sp _ => some (' ', p + 1)
+      | .cs n _ =>
+        if st.picBound.contains n then none
+        else (condCharOf st.binds st.binds.size n).map (·, p + 1)
+    match token 0 with
+    | none => return undecided
+    | some (a, p1) =>
+      match token p1 with
+      | none => return undecided
+      | some (b, p2) =>
+        let v := if h == "if" then a == b else condCatOf a == condCatOf b
+        let src := condSrc atoms p2
+        let (used, tail) := condFinish raws (i + 1) atoms p2
+        return two v src s!"reads '{a}' and '{b}', which {if v then "agree" else "differ"}"
+          s!"{a}{b}" used tail
   if h == "ifx" then
     match raws[i + 1]?, raws[i + 2]? with
     | some (.ctrl a _), some (.ctrl b _) =>
@@ -4048,6 +4098,11 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let os := (PackageImports.literalOptions ((opt.map rawSrc).getD "")).toArray
     unless c.isEmpty do
       write fun st => { st with loads := st.loads.setCls c os }
+      -- The standard classes define `\@ptsize` as their size option's points less ten.
+      if let some pt := classNormalPt c os.toList then
+        let size : CondVal := ⟨#[.word (toString (pt - 10)) {}], false, false, 0, none, false, 0, 0,
+          (false, false), false⟩
+        setBind "@ptsize" (some size)
   else if name == classBaseMark then
     write fun st => { st with loads := { st.loads with cls := none } }
   else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
@@ -6792,6 +6847,10 @@ the paragraph's gap stands"
     -- premise: paramCensusChecks — a page setting in the body ships the page without it
     if st.inDoc && !st.inDef then
       return ← named "sets the page, which the body leaves as the preamble declared it"
+    -- premise: paramCensusChecks — a one-sided page places every page by `\oddsidemargin`
+    if key == .evensidemargin && !st.twoSided then
+      return ← nothing "a one-sided page places every text block by '\\oddsidemargin'"
+        (tokens := false)
     if key == .textheight then
       -- premise: textBlockChecks — beamer sets the height again at each frame from its paper
       unless st.flowPage do
@@ -7015,7 +7074,8 @@ private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) :
 /-- Whether a control word names a length register: a kernel parameter or one the document
 allocates. -/
 private def lengthRegister (st : St) (n : String) : Bool :=
-  (paramSites.lookup n).isSome || st.newLengths.contains n
+  (paramSites.lookup n).isSome || st.newLengths.contains n ||
+    ([Ir.bibSepName, Ir.bibHangName].contains n && st.loads.pkgs.any (·.1 == "natbib"))
 
 /-- TeX's own assignment to a length register `register` names, when the control word `name`
 opens one. -/
@@ -7292,11 +7352,22 @@ private def letterRuns (s : String) : Array String := Id.run do
 private def absoluteWords : List String :=
   ["true", "plus", "minus", "pt", "pc", "in", "bp", "cm", "mm", "dd", "cc", "nd", "nc", "sp"]
 
+/-- The colour xcolor's `svgnames` gives a name SVG 1.1 lists, as `#RRGGBB`, where xcolor loads with
+the option; any other source as written. -/
+private def svgSource (st : St) (src : String) : String :=
+  let name := src.trimAscii.toString
+  let svg := st.loads.pkgs.any fun (p, os) => p == "xcolor" && (os.getD #[]).contains "svgnames"
+  if !svg || !(name.front?.any Char.isUpper) then src else
+  match CssColor.named? name with
+  | some (r, g, b) => "#" ++ Hex.byte true r.toUInt8 ++ Hex.byte true g.toUInt8 ++ Hex.byte true b.toUInt8
+  | none => src
+
 /-- A key's value as the preamble's length door reads a `\dimexpr` to a literal, sums and scalings of
 lengths it holds, else the value as written. -/
 private def dimexprValue (v : Array Raw) : M (Array Raw) := do
   let src := rawSrc v
-  if !src.startsWith "\\dimexpr" then return v
+  -- geometry reads a value against the `\baselineskip` in force where it loads.
+  if !src.startsWith "\\dimexpr" && (src.splitOn "\\baselineskip").length == 1 then return v
   let st ← get
   -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
   let read := (lenValue st.lens v (preamble := !st.inDoc) (topLevel := st.topLevel)
@@ -8748,9 +8819,10 @@ private def packageHelp : String := "load the package in the preamble, before '\
 preamble. -/
 private def declared : CtrlGates := { bodyHelp := some Diag.declareInPreamble }
 
-/-- A package load: in a definition body left to its uses, in the body ignored as a declaration. -/
+/-- A package load, its release date after its name read as LaTeX reads it: in a definition body
+left to its uses, in the body ignored as a declaration. -/
 public def packageRow (name : String) : CtrlRow :=
-  ⟨name, [.opt, .needed], .lower .packages { leaves := [.inDef], bodyHelp := some packageHelp }⟩
+  ⟨name, [.opt, .needed, .opt], .lower .packages { leaves := [.inDef], bodyHelp := some packageHelp }⟩
 
 /-- A control refused once by name. -/
 private def refusedRow (name : String) (sig : List ArgKind) (msg help : String) : CtrlRow :=
@@ -8795,8 +8867,25 @@ private def ctrlRows0 : List CtrlRow :=
    nothingRow "ClassWarningNoLine" 2 classLog,
    ⟨"Crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩]
 
+/-- What LaTeX's font-selection declarations set, which the engine never reads. -/
+private def nfssTables : String := "LaTeX's font tables, where the engine selects faces by Unicode"
+
 private def ctrlRows1 : List CtrlRow :=
-  [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+  [nothingRow "DeclareFixedFont" 6 nfssTables,
+   nothingRow "DeclareFontEncoding" 3 nfssTables,
+   nothingRow "DeclareFontFamily" 3 nfssTables,
+   nothingRow "DeclareFontShape" 6 nfssTables,
+   nothingRow "DeclareFontSubstitution" 4 nfssTables,
+   nothingRow "DeclareMathAccent" 4 nfssTables,
+   nothingRow "DeclareMathAlphabet" 5 nfssTables,
+   nothingRow "DeclareMathDelimiter" 6 nfssTables,
+   nothingRow "DeclareMathRadical" 5 nfssTables,
+   nothingRow "DeclareMathSizes" 4 nfssTables,
+   nothingRow "DeclareMathSymbol" 4 nfssTables,
+   nothingRow "DeclareMathVersion" 1 nfssTables,
+   nothingRow "DeclareSymbolFont" 5 nfssTables,
+   nothingRow "DeclareSymbolFontAlphabet" 2 nfssTables,
+   ⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
    -- premise: floatBarrierChecks — no float the layout defers stands past the text after it
    nothingRow "FloatBarrier" 0 "a float is set where it stands, never past the text after it",
    ⟨"GLS", [.star, .opt, .needed, .opt], .lower .glossary { leaves := [.without "glossaries"] }⟩,
@@ -8823,6 +8912,8 @@ private def ctrlRows2 : List CtrlRow :=
   [⟨"PassOptionsToPackage", [.needed, .needed], .lower .passOptions { leaves := [.inDef] }⟩,
    ⟨"RedeclareSectionCommand", [.opt, .group], .lower .sectionSkips {}⟩,
    packageRow "RequirePackage",
+   nothingRow "SetMathAlphabet" 6 nfssTables,
+   nothingRow "SetSymbolFont" 6 nfssTables,
    ⟨"acrfull", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"acrfullpl", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
    ⟨"acrlong", [.opt, .needed], .lower .glossary { leaves := [.without "glossaries"] }⟩,
@@ -9035,6 +9126,7 @@ private def ctrlRows8 : List CtrlRow :=
 should appear; \
 \\allow{W0104} accepts the skip",
    oldFontRow "tt" "ttfamily",
+   nothingRow "typeout" 1 kernelLog,
    ⟨"ul", [], .tokens [.ctrl "underline" {}] (some "\\underline")⟩,
    ⟨"unimathsetup", [.needed], .lower .uniMathSetup {}⟩]
 
@@ -9048,6 +9140,7 @@ private def ctrlRows9 : List CtrlRow :=
    ⟨"usetheme", [.opt, .group], .lower .useTheme {}⟩,
    ⟨"vfill", [], .native (.block #[("before", "fill")])⟩,
    ⟨"vspace", [.star, .opt, .group], .lower .vspace {}⟩,
+   nothingRow "wlog" 1 kernelLog,
    ⟨"yyyymmdddate", [], .lower .datetime { leaves := [.without "datetime"] }⟩]
 
 /-- The controls the dispatcher answers from its table, in byte order of their names. -/
@@ -9238,11 +9331,12 @@ private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
       if !aliases.isEmpty && nativeStandoutDefined (← get) then
         became "\\apptocmd{\\KV@beamerframe@standout}" "frame-local colour aliases" pos
         return some (aliases ++ tail, k)
+  -- premise: localClassChecks — a class's patch the engine cannot run ships no ink
   say .E0111 (Diag.say .E0111 .command "\\apptocmd") pos
     (detail := some "the engine reads standout colour aliases and explicit-footer restoration")
       (help := "append '\\colorlet' aliases after loading the standout theme, or use \
 '\\chrome{standout-note=true}' to restore explicit notes")
-    (subject := some "ctrl:apptocmd")
+    (subject := some "ctrl:apptocmd") (demote := packageFile (← get).file)
   return some (tail, k)
 
 /-- Whether `\alert` takes the alert colour: a shipped theme
@@ -9681,7 +9775,8 @@ private def texParamOf (n : String) : Option (TexQuantity × Option String) :=
       "doublehyphendemerits", "finalhyphendemerits", "looseness", "uchyph", "lefthyphenmin",
       "righthyphenmin", "binoppenalty", "relpenalty"].map (·, some lines)) ++
     (["clubpenalty", "widowpenalty", "displaywidowpenalty", "brokenpenalty", "interlinepenalty",
-      "predisplaypenalty", "postdisplaypenalty", "floatingpenalty"].map (·, some pages)) ++
+      "predisplaypenalty", "postdisplaypenalty", "floatingpenalty", "@lowpenalty", "@medpenalty",
+      "@highpenalty"].map (·, some pages)) ++
     [("hangafter", some shape)] ++
     (["hbadness", "vbadness", "tracingonline", "tracingmacros", "tracingstats", "tracingparagraphs",
       "tracingpages", "tracingoutput", "tracinglostchars", "tracingcommands", "tracingrestores",
@@ -9692,7 +9787,8 @@ private def texParamOf (n : String) : Option (TexQuantity × Option String) :=
     (["hangindent", "hsize", "leftskip", "rightskip", "parfillskip", "spaceskip", "xspaceskip"].map
       (·, some shape)) ++
     (["vsize", "maxdepth", "splitmaxdepth", "boxmaxdepth", "hoffset", "voffset", "lineskiplimit",
-      "lineskip", "splittopskip", "tabskip"].map (·, some boxes)) ++
+      "lineskip", "normallineskip", "normallineskiplimit", "splittopskip", "tabskip"].map
+      (·, some boxes)) ++
     (["mathsurround", "delimitershortfall", "nulldelimiterspace", "scriptspace"].map (·, some math)) ++
     [("overfullrule", some "marks an overfull line with a rule, which the engine never draws")] ++
     (["hfuzz", "vfuzz"].map (·, none))
@@ -12374,7 +12470,8 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
     carry (.palette #[(n, Decl.xcolorDefinitionPrefix ++ modeled)]) c.pos
   | .colorLet => do
     -- xcolor's `.` names the current colour, black in the preamble.
-    let src := if (c.src 1).trimAscii.toString == "." then "#000000" else c.src 1
+    let st ← get
+    let src := if (c.src 1).trimAscii.toString == "." then "#000000" else svgSource st (c.src 1)
     unless nativeName (c.src 0) && (src.isEmpty || Decl.wholeValue src) do
       say .W0102 (Diag.say .W0102 .colour (c.src 0) (ofWritten "\\colorlet")) c.pos
         (detail := some "a name or colour no palette entry spells")
@@ -12982,7 +13079,7 @@ public structure LowerWitness where
 /-- A call on which a lowering emits raws: none exactly for the lowerings proved to emit nothing
 (`Lowering.emitsNothing`). -/
 public def Lowering.emitWitness : Lowering → Option LowerWitness
-  | .packages => some { args := [none, some "parskip"], inDoc := false }
+  | .packages => some { args := [none, some "parskip", none], inDoc := false }
   | .defineColor => some { args := [some "zzshade", some "rgb", some "1,0,0"], inDoc := false }
   | .colorLet => some { args := [some "zzshade", some "red"], inDoc := false }
   | .pageColor => some { args := [none, some "red"], inDoc := false }
@@ -15363,6 +15460,13 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         let body' ← rewriteList inBody body #[] body.toList 0 0
         let (args, k) := plainArgs spec body'
         return .group (args ++ body'.extract k body'.size) p
+      else if setspaceEnvs.contains n && !(← get).definedEnvs.contains n then
+        -- setspace's environments set their body at a line spread of its own.
+        sayOnce ("env:" ++ n) .W0104 (Diag.say .W0104 .environment n) p
+          (detail := some "its body is set at the page's leading, not at a line spread of its own")
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        let k := if n == "spacing" then (takeGroups body' (skipSpaces body' 0) 1).2 else 0
+        return .group (body'.extract k body'.size) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment keeps only the arguments its signature reads.
         let k := spec.foldl (fun k c =>
@@ -15780,13 +15884,19 @@ public theorem ctrlRow_declines_contract (hsound : CtrlRowsSound) (row : CtrlRow
     simp only [hl, ↓reduceIte]
 
 private theorem packageCall_args (command names : String) (pos groupPos namePos : Pos) :
-    argsRead (packageCall command names pos groupPos namePos) #[] [.opt, .needed] 1 =
-      some (#[none, some #[.word names namePos]], 2) := by
+    argsRead (packageCall command names pos groupPos namePos) #[] [.opt, .needed, .opt] 1 =
+      some (#[none, some #[.word names namePos], none], 2) := by
   have hs := (packageCall_readers command names pos groupPos namePos).1
   have hopt : takeRawOpt (packageCall command names pos groupPos namePos) 1 = (none, 1) := by
     simp only [takeRawOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray, hs, Id.run]
     simp [packageCall]
-  simp only [argsRead, hopt, (packageCall_readers command names pos groupPos namePos).2.2]
+  have hs2 : skipSpaces (packageCall command names pos groupPos namePos) 2 = 2 := by
+    rw [skipSpaces]
+    simp [packageCall]
+  have hopt2 : takeRawOpt (packageCall command names pos groupPos namePos) 2 = (none, 2) := by
+    simp only [takeRawOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray, hs2, Id.run]
+    simp [packageCall]
+  simp only [argsRead, hopt, (packageCall_readers command names pos groupPos namePos).2.2, hopt2]
   rfl
 
 private theorem rewriteCtrl_package_external_exact
@@ -15826,7 +15936,7 @@ private theorem rewriteCtrl_package_external_exact
   have hname : (packageRow command).name = command := rfl
   rw [hname] at hstep
   have hlower : ctrlRowRun (packageRow command)
-      ⟨command, pos, #[none, some #[.word names np]], packageCall command names pos gp np, 1, 2⟩
+      ⟨command, pos, #[none, some #[.word names np], none], packageCall command names pos gp np, 1, 2⟩
       st = rewritePackages command
         ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none #[] pos st := by
     simp [ctrlRowRun, packageRow, lowerCall, CtrlCall.src, CtrlCall.arg, CtrlCall.given,
@@ -15843,7 +15953,8 @@ private theorem rewriteCtrl_unknown_exact (s : St) (pos : Pos)
     (hn : s.newLengths.contains "zzNotAControl" = false) :
     rewriteCtrl "zzNotAControl" pos raws start s = (none, s) := by
   have hreg : lengthRegister s "zzNotAControl" = false := by
-    simp only [lengthRegister, hn]; rfl
+    have hb : [Ir.bibSepName, Ir.bibHangName].contains "zzNotAControl" = false := by decide
+    simp only [lengthRegister, hn, hb, Bool.false_and, Bool.or_false]; rfl
   have hAt : rewriteCtrl.rewriteCtrlAt "zzNotAControl" pos raws start s = (none, s) := by
     rw [rewriteCtrlAt_named_scope "zzNotAControl" pos raws start s (by simp [hd]) hl
       rfl rfl (by simp only [plainAssign?, hreg, Bool.not_false, ite_true]) rfl hz]
@@ -18420,6 +18531,8 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
   let (opt, j) := takeRawOpt raws (i + 1)
   let (args, k) := takeGroups raws j 1
   if args.isEmpty then return none
+  -- LaTeX reads a release date after the package names.
+  let k := (takeRawOpt raws k).2
   let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
   let passed := PackageImports.literalOptions ((opt.map rawSrc).getD "")
   let mut keep : Array String := #[]

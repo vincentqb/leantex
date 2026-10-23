@@ -41,6 +41,8 @@ public structure TextArea where
   footskip : Length
   /-- `\maxdepth`, half the size file's `\topskip`. -/
   maxDepth : Length
+  /-- `\headheight`, the head's box above `\headsep`. -/
+  headheight : Length
   deriving Repr, BEq, Inhabited
 
 /-- What a class's area reads: the paper, the size option (10, 11 or 12), the body's whole points
@@ -124,7 +126,7 @@ private def sizeFileArea (f : SizeFile) (i : AreaInput) : TextArea :=
     (toPoint ((i.paperH - Dim.inch 2 - f.headheight - f.headsep - height - f.footskip) / 2))
   { width, height, top := Dim.inch 1 + top + f.headheight + f.headsep
     sides := if f.centred then some (Dim.pt 1, Dim.pt 1) else none
-    headsep := f.headsep, footskip := f.footskip, maxDepth := topskip / 2 }
+    headsep := f.headsep, footskip := f.footskip, maxDepth := topskip / 2, headheight := f.headheight }
 
 /-- Latin Modern Roman's alphabets at a `\normalsize`, which typearea's `DIV=calc` measures, their
 design size's scaled (lualatex 1.24: lmroman9 118.008 and 172.188pt, lmroman10 127.62 and 186.2pt,
@@ -187,7 +189,7 @@ private def typeareaOf (i : AreaInput) : TextArea :=
     top := vblk + head
     sides := if i.twoside then some (hblk + i.bcor, 2 * hblk)
       else if i.bcor != 0 then some (hblk * 3 / 2 + i.bcor, hblk * 3 / 2) else none
-    headsep := hs, footskip := fs, maxDepth := Dim.pt i.points / 2 }
+    headsep := hs, footskip := fs, maxDepth := Dim.pt i.points / 2, headheight := hh }
 
 /-- The width `n` characters of Latin Modern take at a `\normalsize`, by memoir's copy-fitting lines
 (45 and 65 characters from the lowercase alphabet), to the nearest pica, as `tex/ltkeys.sty` sets it
@@ -210,13 +212,13 @@ private def flowAreaOf (i : AreaInput) : TextArea :=
   let free := i.paperW - width
   { width, height, top := (i.paperH - height) / 3
     sides := if i.twoside then some (free / 3, free - free / 3) else none
-    headsep := Dim.pt 25, footskip := Dim.pt 30 -- size1x.clo's
+    headsep := Dim.pt 25, footskip := Dim.pt 30, headheight := Dim.pt 12 -- size1x.clo's
     maxDepth := Dim.pt (max 10 (min 12 i.option)) / 2 }
 
 /-- The rule a LaTeX class's name selects. -/
 public def AreaRule.ofClass (cls : String) : AreaRule :=
-  if cls == "article" || cls == "report" then .sizeFile
-  else if cls == "book" then .book else if cls == "memoir" then .memoir
+  if cls == "article" || cls == "report" || cls == "extarticle" || cls == "extreport" then .sizeFile
+  else if cls == "book" || cls == "extbook" then .book else if cls == "memoir" then .memoir
   else if cls == "letter" then .letter else if cls.startsWith "scr" then .typearea
   else if cls == "ltflow" then .flow else .engine
 

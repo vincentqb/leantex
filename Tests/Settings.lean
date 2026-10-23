@@ -64,6 +64,12 @@ def paramProbes : List (String × String × String × String) :=
    ("headsep", "\\runninghead{Alpha head}\\setlength{\\headsep}{40pt}",
      "\\runninghead{Alpha head}\\page{ headsep = 40pt }", "paras"),
    ("footskip", "\\setlength{\\footskip}{50pt}", "\\page{ footskip = 50pt }", "paras"),
+   ("oddsidemargin", "\\setlength{\\oddsidemargin}{20pt}", "\\page{ oddsidemargin = 20pt }",
+     "paras"),
+   ("evensidemargin", "\\usepackage[twoside]{geometry}\\setlength{\\evensidemargin}{20pt}",
+     "\\usepackage[twoside]{geometry}\\page{ evensidemargin = 20pt }", "note"),
+   ("topmargin", "\\setlength{\\topmargin}{20pt}", "\\page{ topmargin = 20pt }", "paras"),
+   ("headheight", "\\setlength{\\headheight}{30pt}", "\\page{ headheight = 30pt }", "paras"),
    ("textheight", "\\setlength{\\textheight}{500pt}", "\\page{ textheight-under = 500pt }", "paras"),
    ("floatsep", "\\setlength{\\floatsep}{30pt}", "\\tokens{ floatsep = 30pt }", "figure"),
    ("abovecaptionskip", "\\setlength{\\abovecaptionskip}{23pt}",
@@ -772,8 +778,7 @@ def kernelLengthNames : List String :=
 
 /-- The kernel lengths no row decides yet, held in both directions. -/
 def openKernelLengths : List String :=
-  ["paperwidth", "paperheight", "oddsidemargin", "evensidemargin", "topmargin",
-   "headheight", "columnseprule",
+  ["paperwidth", "paperheight", "columnseprule",
    "columnwidth", "linewidth", "topskip", "textfloatsep", "intextsep", "dblfloatsep",
    "dbltextfloatsep", "lineskip", "lineskiplimit", "parfillskip", "mathindent"]
 

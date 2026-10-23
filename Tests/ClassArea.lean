@@ -147,6 +147,22 @@ def classAreaChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the flow class's area sets its measure in characters"
     (let p := page "\\documentclass{resume}"
      p.width - 2 * p.hmargin == Ir.measureWidth p.fontSize 75)
+  -- lualatex 1.24 sets each probe's first line where these block edges put it.
+  for (pre, top, left) in [
+      ("\\oddsidemargin -0.125in \\topmargin 0in \\headheight 0in \\headsep 0in " ++
+        "\\textwidth 6.75in \\textheight 8.74in", 72000, 63000),
+      ("\\topmargin -39pt \\headheight 20pt \\headsep 38pt \\oddsidemargin 0cm", 91000, 72000),
+      ("\\headheight 30pt", 143270, 134270)] do
+    let p := page ("\\documentclass{article}" ++ pre)
+    t s!"latex.ltx's offsets {pre} set the text block {top} from the top and {left} from the left"
+      (near p.vmargin top 1000 && near (p.leftMargin 1) left 1000)
+  t "a two-sided page sets a verso's text block an inch beyond a declared \\evensidemargin"
+    (let p := page "\\documentclass[twoside]{article}\\evensidemargin 10pt"
+     near (p.leftMargin 2) 82000 1000 && near (p.leftMargin 1) 107270 1000)
+  t "a later page geometry replaces the kernel's offsets"
+    (let p := page ("\\documentclass{article}\\oddsidemargin 0in\\topmargin 0in" ++
+       "\\usepackage[left=20mm,right=20mm,top=25mm,bottom=25mm]{geometry}")
+     near (p.leftMargin 1) 56693 1000 && near p.vmargin 70866 1000)
   t "typearea's text height is the least whole baselines reaching its target"
     (Ir.linesReaching (Dim.pt 591) (Dim.pt 11) (Dim.pt 136 / 10) == Dim.pt 11 + 43 * (Dim.pt 136 / 10))
 
