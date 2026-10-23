@@ -4,11 +4,11 @@ These decide what the rules in `AGENTS.md` leave open, each naming its check (`s
 
 ## Always ship
 
-Every readable input yields an artifact. A loss is repaired where it occurs, marked in the
-artifact where content is absent, and reported once. Only unreadable input, a missing or cyclic
-\input, no usable font, an unwritable output or the document's own failed \assert stops the
-writer; the exit status is a separate policy (--werror, CI), never whether the artifact exists
-(`testdata/scoreboard/external.tsv`, `machineLossChecks`; owed (U37): `DiagCode.error_iff_fatal`).
+Every readable input yields an artifact; a loss is repaired where it occurs, marked where content
+is absent and reported once. Only unreadable input, a missing or too deep \input, no usable font,
+an unwritable output, a failed \assert, an output name no format writes or a refused publication
+stops the writer, each an error (`DiagCode.stopsWriter_error`), a loss resolved only unaccepted
+(`Diag.resolveAll_stops_exact`); other errors ship, the exit status apart (`machineLossChecks`).
 
 ## The standard is the specification
 

@@ -116,7 +116,7 @@ public theorem Loss.label_inj (a b : Loss) (h : a.label = b.label) : a = b := by
 
 /-- What a construct's place on the page owes a reader, declared once per loss class. -/
 public inductive Floor where
-  /-- No floor: a `dropped` loss fails the run, so no page exists. -/
+  /-- No floor: the content is absent, an error the exit status reports. -/
   | refuse
   /-- The construct's place may be empty; whatever stands there is its own content. -/
   | absent
@@ -763,10 +763,17 @@ public theorem DiagCode.censused_iff_ships (c : DiagCode) :
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
 /-- Whether a code's cause stops the writer: unreadable input, a missing or too deep `\input`, no
-usable font, an unwritable output or the document's own failed `\assert`. -/
+usable font, an unwritable output, a failed `\assert`, an output name or a refused publication. -/
 public def DiagCode.stopsWriter : DiagCode → Bool
   | .E0001 | .E0501 | .E0502 | .E0401 | .E0402 | .E0004 | .E0330 => true
+  | .E0003 | .E0005 | .E0006 | .E0606 => true
   | _ => false
+
+/-- Every cause that stops the writer is an error, so a run that writes nothing never exits 0. -/
+public theorem DiagCode.stopsWriter_error (c : DiagCode) (h : c.stopsWriter = true) :
+    c.loss.severity = .error := by
+  unfold DiagCode.stopsWriter at h
+  split at h <;> first | rfl | contradiction
 
 /-- Is this a loss about a place, whose header names no written token? -/
 public def DiagCode.namesPlace : DiagCode → Bool
@@ -1813,6 +1820,54 @@ public theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll :
     (fun r d0 => Resolution.record_append _ r
       (Diag.accept allowed allowAll d0).1 (Diag.accept allowed allowAll d0).2)
   simpa [step] using h
+
+private theorem Resolution.record_stops_zero (r : Resolution) (d : Diag) (accepted : Bool) :
+    (r.record d accepted).stops = 0 ↔
+      r.stops = 0 ∧ (d.severity == .error && d.kind.stopsWriter) = false := by
+  simp only [record]
+  cases (d.severity == .error && d.kind.stopsWriter) <;> simp
+
+private theorem Diag.accept_stops_false (allowed : Array String) (allowAll : Bool) (d : Diag) :
+    ((Diag.accept allowed allowAll d).1.severity == .error && d.kind.stopsWriter) = false ↔
+      (d.kind.stopsWriter = true →
+        d.demoted = true ∨ allowAll = true ∨ allowed.contains d.code = true) := by
+  cases hs : d.kind.stopsWriter
+  · simp
+  · have he := DiagCode.stopsWriter_error d.kind hs
+    have e1 : (Severity.error != Severity.note) = true := rfl
+    have e2 : (Severity.error == Severity.error) = true := rfl
+    have e3 : (Severity.note == Severity.error) = false := rfl
+    unfold Diag.accept Diag.severity
+    cases hd : d.demoted <;> cases ha : allowAll <;> cases hc : allowed.contains d.code <;>
+      simp [he, hd, e1, e2, e3]
+
+/-- The writer stops exactly when a diagnostic whose cause stops it stands unaccepted: neither
+delivered demoted, nor accepted by `\allow` or `--best-effort`. -/
+public theorem Diag.resolveAll_stops_exact (allowed : Array String) (allowAll : Bool)
+    (ds : Array Diag) :
+    (Diag.resolveAll allowed allowAll ds).stops = 0 ↔
+      ∀ d ∈ ds, d.kind.stopsWriter = true →
+        d.demoted = true ∨ allowAll = true ∨ allowed.contains d.code = true := by
+  rw [resolveAll_fold, ← Array.foldl_toList]
+  have go : ∀ (l : List Diag) (r : Resolution),
+      (l.foldl (fun r d0 => let (d, acc) := Diag.accept allowed allowAll d0
+        r.record d acc) r).stops = 0 ↔
+        r.stops = 0 ∧ ∀ d ∈ l, d.kind.stopsWriter = true →
+          d.demoted = true ∨ allowAll = true ∨ allowed.contains d.code = true := by
+    intro l
+    induction l with
+    | nil => intro r; simp
+    | cons d rest ih =>
+      intro r
+      rw [List.foldl_cons, ih]
+      have hk : (Diag.accept allowed allowAll d).1.kind = d.kind := by
+        unfold Diag.accept; split <;> rfl
+      rw [Resolution.record_stops_zero, hk, Diag.accept_stops_false]
+      simp only [List.mem_cons, forall_eq_or_imp]
+      constructor
+      · intro ⟨⟨h0, h1⟩, h2⟩; exact ⟨h0, h1, h2⟩
+      · intro ⟨h0, h1, h2⟩; exact ⟨⟨h0, h1⟩, h2⟩
+  exact (go ds.toList {}).trans (by simp)
 
 /-- The `\allow` entries no emitted or carried diagnostic matched. -/
 public def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
