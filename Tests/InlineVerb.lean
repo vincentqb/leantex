@@ -26,7 +26,8 @@ def inlineVerbChecks (ref : IO.Ref (List String)) : IO Unit := do
     (d4.body == #[.para #[code "x", .text " opens the paragraph"]])
   let (d5, _) := elabLocated "t.tex" (body "a \\verb|x y| b")
   let locatedVerb : Ir.Inline → Bool
-    | .located sp inner => sp.file == "t.tex" && sp.pos.line == 3 && inner == #[code "x y"]
+    | .located sp inner => sp.file == "t.tex" && sp.pos.line == 3 &&
+      inner == #[.styled .mono #[.text "x\u00a0y"]]
     | _ => false
   t "\\verb's text is located at the command"
     (match d5.body[0]? with

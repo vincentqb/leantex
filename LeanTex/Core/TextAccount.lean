@@ -28,8 +28,8 @@ public theorem Span.samePlace_self (s : Span) : Span.samePlace s s = true := by
 
 namespace Text
 
-/-- The ASCII spelling TeX sets a typographic punctuation character or a tie from, quotes of either
-hand read alike. -/
+/-- The ASCII spelling TeX sets a typographic punctuation character from, quotes of either hand
+read alike, and a no-break space as a space. -/
 @[expose] public def spell (c : Char) : List Char :=
   if c = '‘' ∨ c = '’' ∨ c = '`' then ['\'']
   else if c = '“' ∨ c = '”' ∨ c = '"' then ['\'', '\'']
@@ -51,8 +51,8 @@ hand read alike. -/
       if prior then squash true rest else ' ' :: squash true rest
     else c :: squash false rest
 
-/-- Text as a reader compares it: TeX's punctuation spellings as one, a white-space run as one
-space. -/
+/-- Text as a reader compares it: TeX's punctuation spellings as one, a tie as a space, a white-space
+run as one space. -/
 @[expose] public def norm (s : List Char) : List Char := squash false (canon s)
 
 /-- The characters a text keeps once the places `named` are excused: every character but those

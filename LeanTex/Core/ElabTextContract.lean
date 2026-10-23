@@ -1151,8 +1151,8 @@ public theorem elabInlines_modifier_text (ctx : Ctx) (raws : Array Raw) (st : ES
       { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] "" st hfit hr hm
 
 /-- `\verb` conserves its text: among the plain-text arms, the control words setting their own
-text and the text-font and decoration commands, `\verb|…|` reads as its characters, its spaces
-set as ties. -/
+text and the text-font and decoration commands, `\verb|…|` reads as its characters, `\verb*`'s
+spaces as the visible spaces the lexer reads. -/
 public theorem elabInlines_verb_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
     (hfit : Fits (fun n => PlainCtrl n ∨ ModCtrl n) ctx)
