@@ -374,25 +374,23 @@ theorem foldl_section (chunk : List (Nat × Char)) (hg : ∀ p ∈ chunk, p.1 < 
   simp only [PdfFont.uniStep, Array.toList_append, List.nil_append]
   exact bfchars_pairs chunk hg s.m
 
-theorem chunksOf_flatten {α : Type} (n : Nat) (hn : 0 < n) :
-    ∀ (fuel : Nat) (l : List α), l.length ≤ fuel → (chunksOf n fuel l).flatten = l
-  | 0, l, h => by
-    have : l = [] := List.eq_nil_of_length_eq_zero (by omega)
-    subst this; rfl
-  | _ + 1, [], _ => rfl
-  | fuel + 1, x :: xs, h => by
-    simp only [chunksOf, List.flatten_cons]
-    rw [chunksOf_flatten n hn fuel _ (by simp at h ⊢; omega), List.take_append_drop]
+theorem chunksOf_flatten {α : Type} (n : Nat) : ∀ (l : List α), (chunksOf n l).flatten = l
+  | [] => by rw [chunksOf]; rfl
+  | x :: xs => by
+    rw [chunksOf, List.flatten_cons, chunksOf_flatten n ((x :: xs).drop (max n 1)), List.take_append_drop]
+termination_by l => l.length
+decreasing_by simp only [List.length_drop, List.length_cons]; omega
 
-theorem chunksOf_mem {α : Type} (n : Nat) : ∀ (fuel : Nat) (l : List α) (c : List α),
-    c ∈ chunksOf n fuel l → ∀ x ∈ c, x ∈ l
-  | 0, _, _, h => by simp [chunksOf] at h
-  | _ + 1, [], _, h => by simp [chunksOf] at h
-  | fuel + 1, x :: xs, c, h => by
-    simp only [chunksOf, List.mem_cons] at h
+theorem chunksOf_mem {α : Type} (n : Nat) : ∀ (l : List α) (c : List α),
+    c ∈ chunksOf n l → ∀ x ∈ c, x ∈ l
+  | [], c, h => by rw [chunksOf] at h; simp at h
+  | x :: xs, c, h => by
+    rw [chunksOf, List.mem_cons] at h
     rcases h with rfl | h
     · intro y hy; exact List.mem_of_mem_take hy
-    · intro y hy; exact List.mem_of_mem_drop (chunksOf_mem n fuel _ c h y hy)
+    · intro y hy; exact List.mem_of_mem_drop (chunksOf_mem n _ c h y hy)
+termination_by l => l.length
+decreasing_by simp only [List.length_drop, List.length_cons]; omega
 
 theorem foldl_sections (cs : List (List (Nat × Char))) (hg : ∀ c ∈ cs, ∀ p ∈ c, p.1 < 65536)
     (s : PdfFont.UniSt) (h : s.mode = 0) :
@@ -415,10 +413,10 @@ theorem toUnicode_toUnicodeCMap (used : Array (Nat × Char)) (hg : ∀ p ∈ use
   unfold cmapToks
   rw [List.map_append, List.map_append, List.foldl_append, List.foldl_append,
     foldl_quiet _ cmapHead_quiet _ rfl]
-  have hc := chunksOf_mem 100 used.toList.length used.toList
-  obtain ⟨h1, h2⟩ := foldl_sections (chunksOf 100 used.toList.length used.toList)
+  have hc := chunksOf_mem 100 used.toList
+  obtain ⟨h1, h2⟩ := foldl_sections (chunksOf 100 used.toList)
     (fun c hcm p hp => hg p (by simpa using hc c hcm p hp)) ⟨{}, 0, #[]⟩ rfl
-  rw [foldl_quiet _ cmapTail_quiet _ h1, h2, chunksOf_flatten 100 (by decide) _ _ (Nat.le_refl _)]
+  rw [foldl_quiet _ cmapTail_quiet _ h1, h2, chunksOf_flatten 100]
 
 /-! ### One character per code -/
 
@@ -700,18 +698,18 @@ theorem usedAll_nodup (fs : FontSet) (pages : Array PageOut)
   · rw [Array.getElem?_eq_none (by omega)]
     exact List.nodup_nil
 
-/-- A face's ToUnicode CMap reads back as each code to the first character its glyph was painted
-for, and as nothing for a glyph the face does not paint. -/
+/-- The ToUnicode CMap the file embeds for face `k`, whose glyph count fits the two-byte codes,
+reads back as each code to the first character `painted` sets its glyph for, else as nothing. -/
 public theorem toUnicode_glyphs_exact (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) (k g : Nat) (hk : k < fs.fonts.size)
     (hn : fs.fonts[k].numGlyphs ≤ 65536) :
-    (PdfFont.toUnicode (toUnicodeCMap ((usedAll fs pages shaped)[k]?.getD #[])))[g]? =
+    (PdfFont.toUnicode (faceCMap (usedAll fs pages shaped) k))[g]? =
       if g < fs.fonts[k].numGlyphs then
         ((painted pages shaped).find? fun p => p.1 == k && p.2.1 == g).map fun p =>
           String.singleton p.2.2
       else none := by
   have hlt := usedAll_lt fs pages shaped k hk
-  rw [toUnicode_toUnicodeCMap _ (fun p hp => by have := hlt p hp; omega),
+  rw [faceCMap, toUnicode_toUnicodeCMap _ (fun p hp => by have := hlt p hp; omega),
     foldl_insertPair_get _ (usedAll_nodup fs pages shaped k), usedAll_find fs pages shaped k g hk]
   by_cases hg : g < fs.fonts[k].numGlyphs
   · simp only [hg, ite_true]

@@ -2540,7 +2540,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   for k in [0:nf] do
     let font := fs.get keep[k]!
     let prog := (programs[k]?.map (·.1)).getD font.data
-    let tuData := toUnicodeCMap usedPerFont[k]!
+    let tuData := faceCMap allUsed (keep[k]?.getD 0)
     rows := rows.push (flateRow (ObjTable.toUniId k) "" tuData)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {prog.size}"
     rows := rows.push (match fs.zdata[keep[k]!]?.getD none with

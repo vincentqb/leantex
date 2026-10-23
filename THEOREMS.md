@@ -155,15 +155,18 @@ Three gaps keep the composition open:
   punctuation mark follows a superscript, and each golden page's bytes read back as its lines'
   glyphs in paint order with the breaks its layout leaves (tested). Owed: the content stream read
   back from the writer's operators, owed (U21): `PdfContent.extract_text`. Proved: one character
-  per code, the ToUnicode CMap a face embeds reading back through the reader's CMap parser as each
-  code to the character its glyph was first painted for, so where a font maps two characters to one
-  glyph (Source Serif Pro sets U+2019 and U+02BC alike) the map keeps the first
-  (`Pdf.toUnicode_glyphs_exact`). Owed: a line-end hyphen marked generated, owed (U115):
+  per code, the ToUnicode CMap the writer embeds for a face whose glyph count fits two bytes reading
+  back, through the reader's CMap parser, as each code to the first character its glyph is set for
+  in the order `Pdf.painted` lists the pages' glyphs (line by line, a figure's labels then its
+  symbols'), so where a font maps two characters to one glyph (Source Serif Pro sets U+2019 and
+  U+02BC alike) the map keeps the first (`Pdf.toUnicode_glyphs_exact`); the stream's deflation is
+  the flate round trip's. Owed: a line-end hyphen marked generated, owed (U115):
   `Pdf.lineHyphen_generated`; and set lines carrying the IR text, owed (U110):
   `Layout.runFitted_text_accounts`. For the twin, the markdown reader's text of the emitted file,
   whose losses need a diagnostic channel `MarkdownDoc.emit` lacks today; owed (U110):
   `MarkdownDoc.emit_text_accounts`. Modules:
-  `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Pdf.lean`, `LeanTex/Core/PdfToUnicodeProof.lean`, `LeanTex/Core/Layout.lean`,
+  `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Pdf.lean`, `LeanTex/Core/PdfToUnicodeProof.lean`,
+  `LeanTex/Core/Layout.lean`,
   `LeanTex/Core/HtmlDoc.lean`, `LeanTex/Core/MarkdownDoc.lean`, `LeanTex/Core/MdParse.lean`; the
   readers `LeanTex/Core/HtmlRead.lean` and `LeanTex/Core/PdfTextRead.lean`.
 

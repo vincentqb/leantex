@@ -15,7 +15,7 @@ open LeanTex.Core.PdfContentLex (Tok)
 open LeanTex.Core.PdfRead (Obj)
 
 /-- A drawn figure's glyphs, each with its face and character: its labels, then each symbol's
-labels read once, since a symbol's glyphs are the same however many uses paint it. -/
+labels once. -/
 @[expose] public def figurePainted (fig : Gfx.Figure Gfx.Shaped) : List (Nat × Nat × Char) :=
   let runs := fig.symbols.foldl (fun acc b => Gfx.Node.labelsList Gfx.Affine.unit acc b.toList)
     (Gfx.Node.labelsList Gfx.Affine.unit #[] fig.nodes.toList)
@@ -31,7 +31,8 @@ figure's, whose text sets in the document's faces. -/
     | none => []
   | .image none .. | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .poly .. => []
 
-/-- Every glyph the pages paint, in paint order, each with its face and character. -/
+/-- Every glyph the pages set, each with its face and character: line by line, a figure's after
+its line's earlier runs. -/
 @[expose] public def painted (pages : Array PageOut) (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) :
     List (Nat × Nat × Char) :=
   pages.toList.flatMap fun p => p.lines.toList.flatMap fun l => l.segs.toList.flatMap (segPainted shaped)
@@ -76,11 +77,12 @@ public theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut)
 @[expose] public def hexObj (digits : String) : Obj :=
   PdfRead.strOf (60 :: digits.toList.map Char.toNat ++ [62])
 
-/-- A list cut into runs of `n`, the last possibly shorter, `fuel` bounding the cuts. -/
-@[expose] public def chunksOf {α : Type} (n : Nat) : Nat → List α → List (List α)
-  | 0, _ => []
-  | _ + 1, [] => []
-  | fuel + 1, l@(_ :: _) => l.take n :: chunksOf n fuel (l.drop n)
+/-- A list cut into runs of `n`, at least one, the last possibly shorter. -/
+@[expose] public def chunksOf {α : Type} (n : Nat) : List α → List (List α)
+  | [] => []
+  | x :: xs => (x :: xs).take (max n 1) :: chunksOf n ((x :: xs).drop (max n 1))
+termination_by l => l.length
+decreasing_by simp only [List.length_drop, List.length_cons]; omega
 
 /-- The CMap's header: its resource, system information, name, type and one two-byte codespace. -/
 @[expose] public def cmapHead : List (Tok × UInt8) :=
@@ -112,11 +114,15 @@ public theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut)
 /-- The CMap's tokens, each followed by its separator: the glyphs in sections of a hundred, the
 most a section may hold (§9.7.5.3). -/
 @[expose] public def cmapToks (used : List (Nat × Char)) : List (Tok × UInt8) :=
-  cmapHead ++ (chunksOf 100 used.length used).flatMap bfcharSection ++ cmapTail
+  cmapHead ++ (chunksOf 100 used).flatMap bfcharSection ++ cmapTail
 
 /-- The ToUnicode CMap for a face's painted glyphs, each glyph with the character it was first
 painted for. -/
 public def toUnicodeCMap (used : Array (Nat × Char)) : ByteArray :=
   PdfContentLex.renderSep false (cmapToks used.toList)
+
+/-- The ToUnicode CMap the file embeds for face `k`, from every face's used glyphs. -/
+@[expose] public def faceCMap (used : Array (Array (Nat × Char))) (k : Nat) : ByteArray :=
+  toUnicodeCMap (used[k]?.getD #[])
 
 end LeanTex.Core.Pdf
