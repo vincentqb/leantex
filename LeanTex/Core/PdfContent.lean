@@ -1899,7 +1899,7 @@ private theorem numberMarks_runs_list (ops : Array ContentOp) :
   rw [ContentOp.numberList_runs]
   simp
 
-private theorem gidHex_toList (g : Nat) :
+public theorem gidHex_toList (g : Nat) :
     (gidHex g).toList = [Hex.spell true (g / 4096), Hex.spell true (g / 256),
       Hex.spell true (g / 16), Hex.spell true g] := by
   simp [gidHex, pushGid, String.toList_push]

@@ -108,7 +108,7 @@ public structure St where
 
 /-- A text string's characters (§7.9.2.2): UTF-16BE or UTF-8 after their byte-order marks, else
 bytes PDFDocEncoding reads as themselves; `none` for a byte it reads otherwise. -/
-public def textString? (b : ByteArray) : Option String :=
+@[expose] public def textString? (b : ByteArray) : Option String :=
   let byte (i : Nat) : UInt8 := b[i]?.getD 0
   if b.size ≥ 2 && byte 0 == 0xFE && byte 1 == 0xFF then some (PdfFont.utf16 (b.extract 2 b.size))
   else if b.size ≥ 3 && byte 0 == 0xEF && byte 1 == 0xBB && byte 2 == 0xBF then
@@ -164,47 +164,58 @@ the larger size, a word break where the pen jumps along it by a fifth of the las
   if replaced st.opens || s.isEmpty then st
   else { st with items := st.items.push (.text (markOf st.opens) brk s) }
 
+/-- A string's codes shown so far: the state, the text pending since the last break, the break
+before it, and the first code's break. -/
+public structure ShowAcc where
+  st : St
+  cur : String
+  curBrk : Brk
+  first : Option Brk
+
+/-- One code of a string shown under text state `ts`: a break before it where the pen jumps or the
+baseline moves, its text pending, the text matrix advanced by its width. -/
+@[expose] public def St.showCode (ts : TextState) (a : ShowAcc) (code : PdfFont.Code) : ShowAcc :=
+  let m := a.st.tm.mul a.st.ctm
+  let s2 := ts.size * ts.size * (m.c * m.c + m.d * m.d)
+  let here := Brk.max (if a.cur.isEmpty then a.curBrk else .none) (breakAt s2 (m.a, m.b) a.st.pen m.e m.f)
+  let first := if a.first.isNone then some here else a.first
+  let split := !a.cur.isEmpty && here != .none
+  let st := if split then a.st.emitText a.curBrk a.cur else a.st
+  let cur := if split then "" else a.cur
+  let curBrk := if cur.isEmpty then here else a.curBrk
+  let st := if code.text.isEmpty then
+    { st with losses := st.losses.push s!"code {code.code} has no text" } else st
+  let ws := if code.bytes == 1 && code.code == 32 then ts.wordSp else 0
+  let tx := ((code.width / 1000) * ts.size + ts.charSp + ws) * ts.scale
+  let tm := st.tm.move tx 0
+  let e := tm.mul st.ctm
+  { st := { st with tm, pen := some (e.e, e.f, s2) }, cur := cur ++ code.text, curBrk, first }
+
 /-- A string shown in the current font (§9.4.3): each code's text, a word or line break before a
 code where the pen jumps or the baseline moves on the page, the text matrix advanced by its width. -/
-public def St.showBytes (st : St) (b : ByteArray) : St :=
+@[expose] public def St.showBytes (st : St) (b : ByteArray) : St :=
   match st.ts.font with
   | none => { st with losses := st.losses.push "a string shown with no font set" }
-  | some f => Id.run do
-    let ts := st.ts
-    let st0 := st
-    let mut st := st
-    let mut cur := ""
-    let mut curBrk := st.brk
-    let mut first : Option Brk := none
-    for code in f.codes? b do
-      let m := st.tm.mul st.ctm
-      let s2 := ts.size * ts.size * (m.c * m.c + m.d * m.d)
-      let here := Brk.max (if cur.isEmpty then curBrk else .none) (breakAt s2 (m.a, m.b) st.pen m.e m.f)
-      if first.isNone then first := some here
-      if !cur.isEmpty && here != .none then
-        st := st.emitText curBrk cur
-        cur := ""
-      if cur.isEmpty then curBrk := here
-      if code.text.isEmpty then st := { st with losses := st.losses.push s!"code {code.code} has no text" }
-      cur := cur ++ code.text
-      let ws := if code.bytes == 1 && code.code == 32 then ts.wordSp else 0
-      let tx := ((code.width / 1000) * ts.size + ts.charSp + ws) * ts.scale
-      st := { st with tm := st.tm.move tx 0 }
-      let e := st.tm.mul st.ctm
-      st := { st with pen := some (e.e, e.f, s2) }
-    if replaced st0.opens then
-      return { st with brk := if st0.held then st0.brk else (first.getD st0.brk),
-                       held := st0.held || first.isSome }
-    st := st.emitText curBrk cur
-    return { st with brk := if cur.isEmpty then curBrk else .none }
+  | some f =>
+    let a := (f.codes? b).foldl (St.showCode st.ts) ⟨st, "", st.brk, none⟩
+    if replaced st.opens then
+      { a.st with brk := if st.held then st.brk else (a.first.getD st.brk),
+                  held := st.held || a.first.isSome }
+    else
+      let s := a.st.emitText a.curBrk a.cur
+      { s with brk := if a.cur.isEmpty then a.curBrk else .none }
+
+/-- One element of a `TJ` array: a string shown, a number moving the pen back by thousandths of
+the size. -/
+@[expose] public def St.showElem (st : St) (o : Obj) : St :=
+  match PdfContentLex.strBytes? o with
+  | some b => st.showBytes b
+  | none => match num? o with
+    | some n => { st with tm := st.tm.move (-(n / 1000) * st.ts.size * st.ts.scale) 0 }
+    | none => st
 
 /-- A `TJ` array: its strings shown, its numbers moving the pen back by thousandths of the size. -/
-public def St.showArray (st : St) (xs : Array Obj) : St :=
-  xs.foldl (fun st o => match PdfContentLex.strBytes? o with
-    | some b => st.showBytes b
-    | none => match num? o with
-      | some n => { st with tm := st.tm.move (-(n / 1000) * st.ts.size * st.ts.scale) 0 }
-      | none => st) st
+@[expose] public def St.showArray (st : St) (xs : Array Obj) : St := xs.foldl St.showElem st
 
 /-- A text line moved by `tx`, `ty` in the line matrix's space (§9.4.2). -/
 @[expose] public def St.nextLine (st : St) (tx ty : Rat) : St :=
@@ -212,7 +223,7 @@ public def St.showArray (st : St) (xs : Array Obj) : St :=
   { st with tlm := m, tm := m }
 
 /-- One operator over the operands read before it (§8.4.4, §9.3–9.4, §14.6). -/
-public def St.op (res : Res) (st : St) (name : String) : St :=
+@[expose] public def St.op (res : Res) (st : St) (name : String) : St :=
   let a := st.args
   let st := { st with args := #[] }
   let n (i : Nat) : Rat := ((arg a i).bind num?).getD 0
@@ -282,7 +293,7 @@ public def St.op (res : Res) (st : St) (name : String) : St :=
   | _ => st
 
 /-- One token through the interpreter. -/
-public def St.tok (res : Res) (st : St) : Tok → St
+@[expose] public def St.tok (res : Res) (st : St) : Tok → St
   | .val o => { st with args := st.args.push o }
   | .op name => st.op res name
   | .inline _ _ => { st with args := #[] }
@@ -295,7 +306,7 @@ public def St.tok (res : Res) (st : St) : Tok → St
     items := #[], losses := #[] }
 
 /-- A content stream's items, read under `mark` and transformation `ctm`. -/
-public def readToks (res : Res) (mark : Mark) (toks : Array Tok) (ctm : Mat := Mat.id) :
+@[expose] public def readToks (res : Res) (mark : Mark) (toks : Array Tok) (ctm : Mat := Mat.id) :
     Array Item × Array String :=
   let st := toks.foldl (St.tok res) (St.init mark ctm)
   (st.items, st.losses)

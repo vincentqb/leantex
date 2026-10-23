@@ -3,6 +3,7 @@ module
 public import Tests.Support
 public import LeanTex.Core.PdfTextRead
 public import LeanTex.Core.PdfContent
+public import LeanTex.Core.PdfContentText
 
 public section
 
@@ -83,6 +84,30 @@ def heldLine (p : Layout.PageOut) (l : Layout.LineOut) : Bool :=
 /-- A page line's characters as a viewer reads them. -/
 def lineReadChars (p : Layout.PageOut) (l : Layout.LineOut) : List Char :=
   l.segs.toList.flatMap (segReadChars (heldLine p l))
+
+/-- Tokens as operators, each after its operands. -/
+def opGroups (toks : List PdfContentLex.Tok) : List (List PdfRead.Obj × String) :=
+  (toks.foldl (fun (acc, vs) t => match t with
+    | .val o => (acc, vs.push o)
+    | .op n => (acc.push (vs.toList, n), #[])
+    | .inline _ _ => (acc, vs)) ((#[] : Array (List PdfRead.Obj × String)), (#[] : Array PdfRead.Obj))).1.toList
+
+/-- The writer's operand spellings as the content tokenizer reads them back: a length's and a
+scaling's numbers, a colour's operators with their operands. -/
+def writerSpell : PdfContent.Spell where
+  len x := (PdfContentLex.numberObj x.toBpString).getD .null
+  scale p := (PdfContentLex.numberObj s!"{p / 10}.{p % 10}").getD .null
+  color c := opGroups (PdfContentLex.scan c.pdfFill.toUTF8).toList
+
+/-- Tokens compared one by one. -/
+def tokEq : PdfContentLex.Tok → PdfContentLex.Tok → Bool
+  | .val a, .val b => a == b
+  | .op a, .op b => a == b
+  | _, _ => false
+
+/-- Token lists compared one by one. -/
+def toksEq (a b : List PdfContentLex.Tok) : Bool :=
+  a.length == b.length && (a.zip b).all fun (x, y) => tokEq x y
 
 /-- A text with each run of white space one space, none at either end. -/
 def wsNorm (s : String) : String :=
@@ -194,6 +219,34 @@ BT /F1 10 Tf 1 0 0 1 5 -20 Tm (\\003) Tj ET") == [("a", .line), ("b", .line), ("
       (PdfContentLex.scan "BT /F1 12 Tf (\\000) Tj ET".toUTF8)).2.size == 1)
   t "pdf text: a UTF-16 ActualText decodes"
     (PdfTextRead.textString? ⟨#[0xFE, 0xFF, 0x20, 0x10]⟩ == some "‐")
+  let ink : Ir.Ink := { name := "Spot", c := 0, m := 1, y := 1, k := 0 }
+  let colors : List Ir.Color := [Ir.Color.black, { r := 200, g := 30, b := 30 },
+    { r := 10, g := 20, b := 30, cmyk := some (100, 200, 300, 400) },
+    { r := 0, g := 0, b := 0, pdfModel := some (.gray "0.5") },
+    { r := 0, g := 0, b := 0, pdfModel := some (.rgb "0.1" "0.2" "1") },
+    { r := 0, g := 0, b := 0, pdfModel := some (.cmyk "0" "0.25" "1" "0") },
+    { r := 0, g := 0, b := 0, pdfModel := some (.separation ink (1 / 2)) }]
+  let sample : Array Pdf.TextOp := #[.scale 20, .move (Dim.pt 10) (Dim.bp 80), .font 0 (Dim.pt 12)] ++
+    colors.toArray.map Pdf.TextOp.color ++
+    #[.show #[.kerned #[0x24, 0x25] #[0, -417], .glyphs #[0x26], .adjust 12],
+      .marked (.content "P" 3 0) #[.show #[.glyphs #[1, 2]]],
+      .marked (.artifact (some .pagination)) #[.show #[.kerned #[3, 4] #[-50, 0]]],
+      .marked (.artifact none) #[.show #[.glyphs #[5]]],
+      .marked (.artifact (some .layout)) #[.show #[.glyphs #[6]]],
+      .marked (.artifact (some .page)) #[.show #[.glyphs #[7]]],
+      .marked (.span Pdf.generatedHyphen) #[.show #[.glyphs #[0x10]]]]
+  t "pdf text: the writer's text object scans back as the text-operator tokens the reading is proved over, a colour as its own operators"
+    (toksEq (PdfContentLex.scan (Pdf.render #[.text sample]).toUTF8).toList
+      ([.op "BT"] ++ PdfContent.TextOp.toksList writerSpell sample.toList ++ [.op "ET"]))
+  t "pdf text: every colour model the writer sets in a text object is operators the text reading passes"
+    (colors.all fun c => (writerSpell.color c).all fun o => PdfContent.quietOp o.2)
+  let cspace : Array (Nat × Nat × Nat) := #[(1, 0, 0x80), (2, 0x8100, 0xFEFF)]
+  let ctext : Std.HashMap Nat String := Std.HashMap.ofList [(0x41, "A"), (0x8140, "B")]
+  let cfont : PdfFont.Loaded :=
+    ⟨.missing, .composite cspace #[(0, 0xFFFF, 0)] none false {} 1000 ctext false, #[]⟩
+  t "pdf text: a mixed-width codespace reads each code by the first range length holding it"
+    (((cfont.codes? ⟨#[0x41, 0x81, 0x40, 0xFF]⟩).toList.map fun c => (c.code, c.bytes, c.text)) ==
+      [(0x41, 1, "A"), (0x8140, 2, "B"), (0xFF, 1, "")])
   let hgeom : Layout.Geom :=
     { pageW := (Dim.pt 90), pageH := (Dim.pt 400), hmargin := (Dim.pt 10), vmargin := (Dim.pt 10)
       fontSize := (Dim.pt 10), hyphenate := true, justify := true }

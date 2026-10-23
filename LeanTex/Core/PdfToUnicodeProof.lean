@@ -156,31 +156,31 @@ theorem scan_toUnicodeCMap (used : Array (Nat × Char)) :
 /-! ### Codes and characters decode -/
 
 /-- A hexadecimal digit's byte. -/
-def digitByte (c : Char) : UInt8 := Nat.toUInt8 c.toNat
+@[expose] public def digitByte (c : Char) : UInt8 := Nat.toUInt8 c.toNat
 
-theorem digitByte_eq (c : Char) : digitByte c = UInt8.ofNat c.toNat := rfl
+public theorem digitByte_eq (c : Char) : digitByte c = UInt8.ofNat c.toNat := rfl
 
-theorem digitByte_spell (k : Nat) : (digitByte (Hex.spell true k)).toNat = (Hex.spell true k).toNat := by
+public theorem digitByte_spell (k : Nat) : (digitByte (Hex.spell true k)).toNat = (Hex.spell true k).toNat := by
   have := Hex.spell_ascii true k
   simp only [digitByte, Nat.toUInt8, UInt8.toNat_ofNat']
   omega
 
-theorem hexStep_spell_none (acc : ByteArray) (k : Nat) :
+public theorem hexStep_spell_none (acc : ByteArray) (k : Nat) :
     PdfContentLex.hexStep (acc, none) (digitByte (Hex.spell true k)) = (acc, some (k % 16)) := by
   simp [PdfContentLex.hexStep, digitByte_spell, Hex.val?_spell_exact]
 
-theorem hexStep_spell_some (acc : ByteArray) (h k : Nat) :
+public theorem hexStep_spell_some (acc : ByteArray) (h k : Nat) :
     PdfContentLex.hexStep (acc, some h) (digitByte (Hex.spell true k)) =
       (acc.push (UInt8.ofNat (h * 16 + k % 16)), none) := by
   simp [PdfContentLex.hexStep, digitByte_spell, Hex.val?_spell_exact]
 
-theorem digitList4 (n : Nat) : Hex.digitList true 4 n =
+public theorem digitList4 (n : Nat) : Hex.digitList true 4 n =
     [Hex.spell true (n / 16 / 16 / 16), Hex.spell true (n / 16 / 16), Hex.spell true (n / 16),
       Hex.spell true n] := by
   simp [Hex.digitList]
 
 /-- Four hexadecimal digits read as their two bytes. -/
-theorem hexStep_digits4 (acc : ByteArray) (n : Nat) :
+public theorem hexStep_digits4 (acc : ByteArray) (n : Nat) :
     ((Hex.digits true 4 n).toList.map digitByte).foldl PdfContentLex.hexStep (acc, none) =
       ((acc.push (UInt8.ofNat (n / 256 % 256))).push (UInt8.ofNat (n % 256)), none) := by
   simp only [Hex.digits, String.toList_ofList, digitList4, List.map_cons, List.map_nil,
@@ -188,7 +188,7 @@ theorem hexStep_digits4 (acc : ByteArray) (n : Nat) :
   congr 3 <;> first | omega | (apply UInt8.toNat_inj.mp; simp only [UInt8.toNat_ofNat']; omega)
 
 /-- A hex string's bytes from its delimited spelling of digits. -/
-theorem strBytes_hexObj (ds : String) :
+public theorem strBytes_hexObj (ds : String) :
     PdfContentLex.strBytes? (hexObj ds) =
       some (match (ds.toList.map digitByte).foldl PdfContentLex.hexStep (ByteArray.empty, none) with
         | (out, some h) => out.push (UInt8.ofNat (h * 16))

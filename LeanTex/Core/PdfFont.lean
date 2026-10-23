@@ -98,7 +98,7 @@ U+FFFD, a final odd byte dropped. -/
 termination_by l => l.length
 
 /-- UTF-16BE bytes as text; an unpaired surrogate as U+FFFD. -/
-public def utf16 (b : ByteArray) : String := utf16Into "" b.data.toList
+@[expose] public def utf16 (b : ByteArray) : String := utf16Into "" b.data.toList
 
 private def bumpText (b : ByteArray) (k : Nat) : String :=
   if b.size == 0 then "" else
@@ -540,41 +540,65 @@ public def load (d : Doc) (font : Obj) : Loaded :=
   | some (.name "Type0") => loadComposite d font
   | _ => loadSimple d font
 
+/-- Bytes `[i, i + n)` read big-endian, a byte past the end as zero. -/
+@[expose] public def bytesValue (s : ByteArray) (i n : Nat) : Nat :=
+  (List.range' i n).foldl (fun a k => a * 256 + (s.data[k]?.getD 0).toNat) 0
+
+/-- A composite font's code length at `i`: the first of one to four bytes a codespace range holds,
+else one (§9.7.6.2). -/
+@[expose] public def codeLen (space : Array (Nat × Nat × Nat)) (s : ByteArray) (i : Nat) : Nat :=
+  ((List.range' 1 4).find? fun n =>
+    i + n ≤ s.size && (let v := bytesValue s i n; space.any fun (bn, lo, hi) =>
+      bn == n && lo ≤ v && v ≤ hi)).getD 1
+
+public theorem codeLen_pos (space : Array (Nat × Nat × Nat)) (s : ByteArray) (i : Nat) :
+    0 < codeLen space s i := by
+  unfold codeLen
+  cases h : (List.range' 1 4).find? _ with
+  | none => simp
+  | some n =>
+    have := List.mem_of_find?_eq_some h
+    simp only [List.mem_range'] at this
+    simp only [Option.getD_some]
+    omega
+
+/-- One code of a composite font: its CID through the CID ranges, its glyph, width and text. -/
+@[expose] public def Loaded.compositeCode (program : Program) (cids : Array (Nat × Nat × Nat))
+    (gidOf : Option ByteArray) (cff : Bool) (widths : Std.HashMap Nat Rat) (dw : Rat)
+    (text : Std.HashMap Nat String) (code len : Nat) : Code :=
+  let cid := ((cids.find? fun (lo, hi, _) => lo ≤ code && code ≤ hi).map
+    fun (lo, _, c0) => c0 + (code - lo)).getD 0
+  let glyph : Option GlyphRef :=
+    match program with
+    | .ink src _ =>
+      if cff then (src.cidGlyph cid).map GlyphRef.gid
+      else match gidOf with
+        | some m => some (.gid ((m[2 * cid]?.getD 0).toNat * 256 + (m[2 * cid + 1]?.getD 0).toNat))
+        | none => some (.gid cid)
+    | _ => none
+  { code, bytes := len, glyph, width := (widths.get? cid).getD dw, text := (text.get? code).getD "" }
+
+/-- A composite font's codes of a string from byte `i` onto `out`. -/
+@[expose] public def Loaded.compositeCodes (program : Program) (space cids : Array (Nat × Nat × Nat))
+    (gidOf : Option ByteArray) (cff : Bool) (widths : Std.HashMap Nat Rat) (dw : Rat)
+    (text : Std.HashMap Nat String) (s : ByteArray) (i : Nat) (out : Array Code) : Array Code :=
+  if i < s.size then
+    let len := codeLen space s i
+    compositeCodes program space cids gidOf cff widths dw text s (i + len)
+      (out.push (compositeCode program cids gidOf cff widths dw text (bytesValue s i len) len))
+  else out
+termination_by s.size - i
+decreasing_by have := codeLen_pos space s i; omega
+
 /-- A string's codes (§9.4.3, §9.7.6.2), each with its byte length, glyph, width and text. -/
-public def Loaded.codes? (f : Loaded) (s : ByteArray) : Array Code := Id.run do
+@[expose] public def Loaded.codes? (f : Loaded) (s : ByteArray) : Array Code :=
   match f.codes with
   | .simple glyphs widths text =>
-    return s.foldl (fun acc b =>
+    s.foldl (fun acc b =>
       let c := b.toNat
       acc.push { code := c, bytes := 1, glyph := (glyphs[c]?).getD none
                  width := (widths[c]?).getD 0, text := (text[c]?).getD "" }) #[]
   | .composite space cids gidOf cff widths dw text _ =>
-    let mut out : Array Code := #[]
-    let mut i := 0
-    for _ in [0:s.size + 1] do
-      if i ≥ s.size then break
-      let mut len := 1
-      let mut found := false
-      for n in [1:5] do
-        if !found && i + n ≤ s.size then
-          let v := (s.extract i (i + n)).foldl (fun a x => a * 256 + x.toNat) 0
-          if space.any fun (bn, lo, hi) => bn == n && lo ≤ v && v ≤ hi then
-            len := n
-            found := true
-      let code := (s.extract i (i + len)).foldl (fun a x => a * 256 + x.toNat) 0
-      i := i + len
-      let cid := ((cids.find? fun (lo, hi, _) => lo ≤ code && code ≤ hi).map
-        fun (lo, _, c0) => c0 + (code - lo)).getD 0
-      let glyph : Option GlyphRef :=
-        match f.program with
-        | .ink src _ =>
-          if cff then (src.cidGlyph cid).map GlyphRef.gid
-          else match gidOf with
-            | some m => some (.gid ((m[2 * cid]?.getD 0).toNat * 256 + (m[2 * cid + 1]?.getD 0).toNat))
-            | none => some (.gid cid)
-        | _ => none
-      out := out.push { code, bytes := len, glyph, width := (widths.get? cid).getD dw
-                        text := (text.get? code).getD "" }
-    return out
+    Loaded.compositeCodes f.program space cids gidOf cff widths dw text s 0 #[]
 
 end LeanTex.Core.PdfFont

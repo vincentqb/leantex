@@ -241,7 +241,7 @@ completes a byte or waits for its low digit, anything else is skipped (§7.3.4.3
   | (out, none) => out
 
 /-- A string operand's bytes with its escapes resolved (§7.3.4). -/
-public def strBytes? (o : Obj) : Option ByteArray :=
+@[expose] public def strBytes? (o : Obj) : Option ByteArray :=
   match o with
   | .str raw =>
     if raw.size ≥ 2 && raw[0]? == some 60 then some (hexBody raw)
