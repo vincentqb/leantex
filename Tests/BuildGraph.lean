@@ -98,7 +98,7 @@ def largeReaders : List (String × List String) :=
      "LeanTex.Core.ElabRegistryContract", "LeanTex.Core.ElabTextContract",
      "LeanTex.Core.GroupContract", "LeanTex.Core.InputContract",
      "LeanTex.Core.PictureContract", "LeanTex.Core.TitleContract"]),
-   ("LeanTex.Core.HtmlDoc", ["LeanTex.Core.PdfAgreement"]),
+   ("LeanTex.Core.HtmlDoc", ["LeanTex.Core.HtmlInlineText", "LeanTex.Core.PdfAgreement"]),
    ("LeanTex.Core.Ir", ["LeanTex.Core.BibContract", "LeanTex.Core.ColorContract",
      "LeanTex.Core.ContrastContract", "LeanTex.Core.ControlContract",
      "LeanTex.Core.ElabRegistryContract", "LeanTex.Core.ElabTextContract", "LeanTex.Core.FloatNumberProof",

@@ -7237,7 +7237,8 @@ private theorem ref_link_projects (cfg : Config) (acc : Array Node) (key : Strin
       some (inlineNodeInto cfg acc (.ref key form shown (some a))) := by
   simp [Inline.refLink?, h, hp, inlineNodeInto, inlineNodesInto, Html.scriptUrl_fragment]
 
-private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
+/-- Inline content as emitted nodes. -/
+public def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
 
 public def tableCellTag (headerRows i : Nat) : String :=

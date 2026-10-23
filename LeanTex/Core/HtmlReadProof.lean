@@ -2885,7 +2885,7 @@ public theorem pageText_render_exact (lang : String) (head body : Array Node)
     Dom.bodyText]
   simp [List.find?, chars_elem, bodyChars]
 
-theorem inkInto_acc (l : List Node) : ∀ acc, Node.inkInto acc l = acc ++ Node.inkInto [] l := by
+public theorem inkInto_acc (l : List Node) : ∀ acc, Node.inkInto acc l = acc ++ Node.inkInto [] l := by
   induction l with
   | nil => intro acc; simp [Node.inkInto]
   | cons n rest ih =>
@@ -2896,12 +2896,12 @@ theorem inkInto_acc (l : List Node) : ∀ acc, Node.inkInto acc l = acc ++ Node.
 
 theorem inkList_nil : Node.inkList [] = [] := rfl
 
-theorem inkList_cons (n : Node) (rest : List Node) :
+public theorem inkList_cons (n : Node) (rest : List Node) :
     Node.inkList (n :: rest) = Node.ink n ++ Node.inkList rest := by
   simp only [Node.inkList, Node.inkInto]
   rw [inkInto_acc, List.nil_append]
 
-theorem ink_elem (tag : String) (a : Array (String × String)) (kids : Array Node) :
+public theorem ink_elem (tag : String) (a : Array (String × String)) (kids : Array Node) :
     Node.ink (.elem tag a kids) =
       if lower tag == "style" || lower tag == "script" then [] else Node.inkList kids.toList := by
   simp only [Node.ink, Node.inkList]
