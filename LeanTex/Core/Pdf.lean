@@ -15,6 +15,7 @@ public import LeanTex.Core.PdfFigures
 public import LeanTex.Core.PdfPress
 public import LeanTex.Core.PdfStruct
 public import LeanTex.Core.PdfXref
+public import LeanTex.Core.PdfToUnicode
 
 namespace LeanTex.Core.Pdf
 
@@ -75,48 +76,6 @@ private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := 
     | .bytes bs => out := out ++ bs
     | .ref l => out := out ++ (s!"{base + l} 0 R").toUTF8
   return out
-
-private def markUsed (fs : FontSet) (pages : Array PageOut)
-    (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) : Array (Array (Option Char)) :=
-  Id.run do
-  let mut seen : Array (Array (Option Char)) :=
-    fs.fonts.map fun f => Array.replicate f.numGlyphs none
-  for p in pages do
-    for l in p.lines do
-      for s in l.segs do
-        if let .run idx _ _ _ glyphs _ _ _ _ _ _ := s then
-          seen := seen.modify idx fun marks => Id.run do
-            let mut marks := marks
-            for (g, c, _) in glyphs do
-              if h : g < marks.size then
-                if marks[g].isNone then
-                  marks := marks.set g (some c)
-            return marks
-        -- A drawn figure's text sets in the document's faces, so its glyphs are the file's.
-        if let .image (some k) _ _ _ _ _ := s then
-          if let some fig := (shaped[k]?).join then
-            -- A symbol's glyphs are the same however many uses paint it: bodies are read unexpanded.
-            let runs := fig.symbols.foldl (fun acc b => Gfx.Node.labelsList Gfx.Affine.unit acc b.toList)
-              (Gfx.Node.labelsList Gfx.Affine.unit #[] fig.nodes.toList)
-            for (_, r) in runs do
-              for (face, g, c, _) in r.glyphs do
-                seen := seen.modify face fun marks =>
-                  if h : g < marks.size then
-                    if marks[g].isNone then marks.set g (some c) else marks
-                  else marks
-  return seen
-
-/-- Used glyphs per face, one char witness per gid in ascending order: the census embedding reads. -/
-public def usedAll (fs : FontSet) (pages : Array PageOut)
-    (shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]) : Array (Array (Nat × Char)) :=
-  let seen := markUsed fs pages shaped
-  (Array.range fs.fonts.size).map fun k =>
-    ((seen[k]?.getD #[]).zipIdx.filterMap fun (c?, g) => c?.map (g, ·))
-
-private theorem usedAll_size_exact (fs : FontSet) (pages : Array PageOut)
-    (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) :
-    (usedAll fs pages shaped).size = fs.fonts.size := by
-  simp [usedAll]
 
 /-- The faces the file embeds: those that contribute glyphs, or face 0 when nothing sets text. -/
 public def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
@@ -197,33 +156,6 @@ public def linkCount (geom : Geom) (pages : Array PageOut) : Nat :=
     | some frag => (Layout.landing? anchors pages frag).isSome
     | none => true
   pages.foldl (fun n p => n + ((linkRects geom p).filter fun (_, _, _, _, url) => lands url).size) 0
-
-private def toUnicode (used : Array (Nat × Char)) : String := Id.run do
-  let mut s := "/CIDInit /ProcSet findresource begin
-12 dict begin
-begincmap
-/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
-/CMapName /Adobe-Identity-UCS def
-/CMapType 2 def
-1 begincodespacerange
-<0000> <FFFF>
-endcodespacerange
-"
-  let mut remaining := used.toList
-  for _ in [0:used.size + 1] do
-    if remaining.isEmpty then
-      break
-    let chunk := remaining.take 100
-    remaining := remaining.drop 100
-    s := s ++ s!"{chunk.length} beginbfchar\n"
-    for (g, c) in chunk do
-      s := s ++ s!"<{Hex.digits true 4 g}> <{PdfRead.utf16Hex c}>\n"
-    s := s ++ "endbfchar\n"
-  s := s ++ "endcmap
-CMapName currentdict /CMap defineresource pop
-end
-end"
-  return s
 
 private def widthObj (μ : Int) : PdfRead.Obj :=
   if μ % 1000 == 0 then .int (μ / 1000) else
@@ -2608,7 +2540,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   for k in [0:nf] do
     let font := fs.get keep[k]!
     let prog := (programs[k]?.map (·.1)).getD font.data
-    let tuData := (toUnicode usedPerFont[k]!).toUTF8
+    let tuData := toUnicodeCMap usedPerFont[k]!
     rows := rows.push (flateRow (ObjTable.toUniId k) "" tuData)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {prog.size}"
     rows := rows.push (match fs.zdata[keep[k]!]?.getD none with

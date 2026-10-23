@@ -1,7 +1,7 @@
 module
 
 public import LeanTex.Core.PdfObj
-import LeanTex.Core.Hex
+public import LeanTex.Core.Hex
 
 /-! The content-stream tokenizer (ISO 32000-2 §7.8.2), total over arbitrary bytes: operands through
 the object reader, operators, and inline images. -/
@@ -172,6 +172,26 @@ public def Tok.renderInto (acc : ByteArray) : Tok → ByteArray
 public def render (toks : Array Tok) : ByteArray :=
   toks.foldl (fun acc t => (t.renderInto acc).push 10) ByteArray.empty
 
+/-- A token's bytes. -/
+@[expose] public def spell : Tok → ByteArray
+  | .val o => o.render
+  | .op n => n.toUTF8
+  | .inline d data => Tok.renderInto ByteArray.empty (.inline d data)
+
+/-- What follows a token: its byte, after the last token only when `trail`. -/
+@[expose] public def sepOf (trail : Bool) (w : UInt8) : List (Tok × UInt8) → ByteArray
+  | [] => if trail then ⟨#[w]⟩ else .empty
+  | _ :: _ => ⟨#[w]⟩
+
+/-- `renderSep trail` of the tokens, appended to `acc`. -/
+@[expose] public def renderSepInto (trail : Bool) (acc : ByteArray) : List (Tok × UInt8) → ByteArray
+  | [] => acc
+  | (t, w) :: rest => renderSepInto trail (acc ++ spell t ++ sepOf trail w rest) rest
+
+/-- Tokens each spelled and followed by its byte, the last token's byte only when `trail`. -/
+@[expose] public def renderSep (trail : Bool) (ts : List (Tok × UInt8)) : ByteArray :=
+  renderSepInto trail .empty ts
+
 /-- A number operand's sign, digits as one natural, and the power of ten they stand over (§7.3.3). -/
 public def numParts? (o : Obj) : Option (Bool × Nat × Nat) :=
   match o with
@@ -204,24 +224,27 @@ public theorem numRat?_parts (o : Obj) : numRat? o = (numParts? o).map fun (neg,
   unfold numRat?
   rfl
 
+/-- One byte of a hex string's body onto the bytes read and the pending high digit: a digit
+completes a byte or waits for its low digit, anything else is skipped (§7.3.4.3). -/
+@[expose] public def hexStep (acc : ByteArray × Option Nat) (x : UInt8) : ByteArray × Option Nat :=
+  match Hex.val? x.toNat with
+  | some v =>
+    match acc.2 with
+    | some h => (acc.1.push (UInt8.ofNat (h * 16 + v)), none)
+    | none => (acc.1, some v)
+  | none => acc
+
+/-- A hex string's bytes from its delimited spelling, a final odd digit read as followed by zero. -/
+@[expose] public def hexBody (raw : ByteArray) : ByteArray :=
+  match (raw.data.extract 1 (raw.size - 1)).foldl hexStep (ByteArray.empty, none) with
+  | (out, some h) => out.push (UInt8.ofNat (h * 16))
+  | (out, none) => out
+
 /-- A string operand's bytes with its escapes resolved (§7.3.4). -/
 public def strBytes? (o : Obj) : Option ByteArray :=
   match o with
   | .str raw =>
-    if raw.size ≥ 2 && raw[0]? == some 60 then some (Id.run do
-      let mut out := ByteArray.empty
-      let mut hi : Option Nat := none
-      for k in [1:raw.size - 1] do
-        match Hex.val? ((raw[k]?.map UInt8.toNat).getD 0) with
-        | some v =>
-          match hi with
-          | some h =>
-            out := out.push (UInt8.ofNat (h * 16 + v))
-            hi := none
-          | none => hi := some v
-        | none => pure ()
-      if let some h := hi then out := out.push (UInt8.ofNat (h * 16))
-      return out)
+    if raw.size ≥ 2 && raw[0]? == some 60 then some (hexBody raw)
     else if raw.size ≥ 2 && raw[0]? == some 40 then some (Id.run do
       let mut out := ByteArray.empty
       let mut k := 1

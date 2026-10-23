@@ -75,27 +75,30 @@ public def undecoded (key : String) (lost : Gfx.Loss) : Flate.Error → Gfx.Loss
 public def entry (d : Doc) (o : Obj) (k : String) : Option Obj :=
   (d.deref o).toOption.bind (·.get? k)
 
-private def codeOf (o : Obj) : Option (Nat × Nat) := do
+/-- A string operand as a code: its bytes read big-endian, and how many there are. -/
+@[expose] public def codeOf (o : Obj) : Option (Nat × Nat) := do
   let b ← strBytes? o
-  return (b.foldl (fun a x => a * 256 + x.toNat) 0, b.size)
+  return (b.data.foldl (fun a x => a * 256 + x.toNat) 0, b.size)
+
+/-- A UTF-16 code unit standing alone: a surrogate as U+FFFD. -/
+@[expose] public def unit16 (u : Nat) : Char :=
+  if 0xD800 ≤ u && u < 0xE000 then '�' else Char.ofNat u
+
+/-- UTF-16BE code units onto `out`: a surrogate pair as its character, an unpaired surrogate as
+U+FFFD, a final odd byte dropped. -/
+@[expose] public def utf16Into (out : String) : List UInt8 → String
+  | a :: b :: c :: d :: rest =>
+    let u := a.toNat * 256 + b.toNat
+    let l := c.toNat * 256 + d.toNat
+    if 0xD800 ≤ u && u < 0xDC00 && 0xDC00 ≤ l && l < 0xE000 then
+      utf16Into (out.push (Char.ofNat (0x10000 + (u - 0xD800) * 1024 + (l - 0xDC00)))) rest
+    else utf16Into (out.push (unit16 u)) (c :: d :: rest)
+  | a :: b :: rest => utf16Into (out.push (unit16 (a.toNat * 256 + b.toNat))) rest
+  | _ => out
+termination_by l => l.length
 
 /-- UTF-16BE bytes as text; an unpaired surrogate as U+FFFD. -/
-public def utf16 (b : ByteArray) : String := Id.run do
-  let mut out := ""
-  let mut i := 0
-  for _ in [0:b.size] do
-    if i + 1 ≥ b.size then break
-    let u := (b[i]?.getD 0).toNat * 256 + (b[i + 1]?.getD 0).toNat
-    i := i + 2
-    if 0xD800 ≤ u && u < 0xDC00 && i + 1 < b.size then
-      let l := (b[i]?.getD 0).toNat * 256 + (b[i + 1]?.getD 0).toNat
-      if 0xDC00 ≤ l && l < 0xE000 then
-        out := out.push (Char.ofNat (0x10000 + (u - 0xD800) * 1024 + (l - 0xDC00)))
-        i := i + 2
-      else out := out.push '�'
-    else if 0xD800 ≤ u && u < 0xE000 then out := out.push '�'
-    else out := out.push (Char.ofNat u)
-  return out
+public def utf16 (b : ByteArray) : String := utf16Into "" b.data.toList
 
 private def bumpText (b : ByteArray) (k : Nat) : String :=
   if b.size == 0 then "" else
@@ -104,39 +107,55 @@ private def bumpText (b : ByteArray) (k : Nat) : String :=
   let head := b.extract 0 (b.size - 2)
   utf16 (head.push (UInt8.ofNat (v / 256 % 256)) |>.push (UInt8.ofNat (v % 256)))
 
-/-- A ToUnicode CMap's mappings (§9.10.3), code to text. -/
-public def toUnicode (cmap : ByteArray) : Std.HashMap Nat String := Id.run do
-  let toks := scan cmap
-  let mut m : Std.HashMap Nat String := {}
-  let mut mode := 0
-  let mut args : Array Obj := #[]
-  for t in toks do
-    match t with
-    | .val o => if mode != 0 then args := args.push o
-    | .op "beginbfchar" => mode := 1; args := #[]
-    | .op "beginbfrange" => mode := 2; args := #[]
-    | .op "endbfchar" =>
-      for k in [0:args.size / 2] do
-        match codeOf (args[2 * k]?.getD .null), strBytes? (args[2 * k + 1]?.getD .null) with
-        | some (c, _), some dst => m := m.insert c (utf16 dst)
-        | _, _ => pure ()
-      mode := 0
-    | .op "endbfrange" =>
-      for k in [0:args.size / 3] do
-        match codeOf (args[3 * k]?.getD .null), codeOf (args[3 * k + 1]?.getD .null) with
-        | some (lo, _), some (hi, _) =>
-          if lo ≤ hi && hi - lo < 65536 then
-            match args[3 * k + 2]?.getD .null with
-            | .arr dsts =>
-              for i in [0:hi - lo + 1] do
-                if let some dst := (dsts[i]?).bind strBytes? then m := m.insert (lo + i) (utf16 dst)
-            | o =>
-              if let some dst := strBytes? o then
-                for i in [0:hi - lo + 1] do m := m.insert (lo + i) (bumpText dst i)
-        | _, _ => pure ()
-      mode := 0
-    | _ => pure ()
+/-- A `bfchar` section's pairs, source code then destination text, into the mappings. -/
+@[expose] public def bfchars : List Obj → Std.HashMap Nat String → Std.HashMap Nat String
+  | a :: b :: rest, m =>
+    bfchars rest (match codeOf a, strBytes? b with
+      | some (c, _), some dst => m.insert c (utf16 dst)
+      | _, _ => m)
+  | _, m => m
+
+/-- One `bfrange` triple, its codes from `lo` to `hi` onto an array of texts or one text counting
+up, into the mappings. -/
+public def bfrange (lo hi dst : Obj) (m : Std.HashMap Nat String) : Std.HashMap Nat String := Id.run do
+  let mut m := m
+  match codeOf lo, codeOf hi with
+  | some (lo, _), some (hi, _) =>
+    if lo ≤ hi && hi - lo < 65536 then
+      match dst with
+      | .arr dsts =>
+        for i in [0:hi - lo + 1] do
+          if let some dst := (dsts[i]?).bind strBytes? then m := m.insert (lo + i) (utf16 dst)
+      | o =>
+        if let some dst := strBytes? o then
+          for i in [0:hi - lo + 1] do m := m.insert (lo + i) (bumpText dst i)
+  | _, _ => pure ()
   return m
+
+/-- A `bfrange` section's triples into the mappings. -/
+@[expose] public def bfranges : List Obj → Std.HashMap Nat String → Std.HashMap Nat String
+  | a :: b :: c :: rest, m => bfranges rest (bfrange a b c m)
+  | _, m => m
+
+/-- A ToUnicode CMap read so far: its mappings, the section open (none, `bfchar` or `bfrange`) and
+the operands read inside it. -/
+public structure UniSt where
+  m : Std.HashMap Nat String
+  mode : Nat
+  args : Array Obj
+
+/-- One token of a ToUnicode CMap. -/
+@[expose] public def uniStep (s : UniSt) : Tok → UniSt
+  | .val o => if s.mode != 0 then { s with args := s.args.push o } else s
+  | .op "beginbfchar" => { s with mode := 1, args := #[] }
+  | .op "beginbfrange" => { s with mode := 2, args := #[] }
+  | .op "endbfchar" => { s with m := bfchars s.args.toList s.m, mode := 0 }
+  | .op "endbfrange" => { s with m := bfranges s.args.toList s.m, mode := 0 }
+  | _ => s
+
+/-- A ToUnicode CMap's mappings (§9.10.3), code to text. -/
+public def toUnicode (cmap : ByteArray) : Std.HashMap Nat String :=
+  ((scan cmap).foldl uniStep ⟨{}, 0, #[]⟩).m
 
 /-- An embedded CMap's codespace ranges and CID mappings (§9.7.6.1). -/
 public def cmapRanges (cmap : ByteArray) : Array (Nat × Nat × Nat) × Array (Nat × Nat × Nat) := Id.run do

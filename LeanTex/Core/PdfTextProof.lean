@@ -26,7 +26,7 @@ private theorem flatMap_literalByte_body (bs : List Nat) (h : ∀ b ∈ bs, b < 
     simp only [List.flatMap_cons]
     exact literalByte_body b (h b (by simp)) _ (ih fun x hx => h x (by simp [hx]))
 
-private theorem strOf_octets (bs : List Nat) (h : ∀ b ∈ bs, b < 256) :
+public theorem strOf_octets (bs : List Nat) (h : ∀ b ∈ bs, b < 256) :
     (bs.map Nat.toUInt8).map UInt8.toNat = bs := by
   induction bs with
   | nil => rfl
@@ -37,7 +37,7 @@ private theorem strOf_octets (bs : List Nat) (h : ∀ b ∈ bs, b < 256) :
     simp only [Nat.toUInt8, UInt8.toNat_ofNat']
     omega
 
-private theorem strOf_representable (bs : List Nat) (h : ∀ b ∈ bs, b < 256)
+public theorem strOf_representable (bs : List Nat) (h : ∀ b ∈ bs, b < 256)
     (hs : Obj.StringSpelling bs) : (strOf bs).Representable := by
   refine Obj.Representable.str ?_
   simpa [strOf, strOf_octets bs h] using hs
@@ -61,14 +61,14 @@ public theorem literal_representable (bs : ByteArray) : (literal bs).Representab
   have hl := literalBytes_spelled _ h
   exact strOf_representable _ hl.1 hl.2
 
-private theorem hexDigit_spelled (c : Char) (hc : ∃ k, c = Hex.spell true k) :
+public theorem hexDigit_spelled (c : Char) (hc : ∃ k, c = Hex.spell true k) :
     c.toNat < 256 ∧ Hex.val? c.toNat ≠ none := by
   obtain ⟨k, rfl⟩ := hc
   refine ⟨by have := Hex.spell_ascii true k; omega, ?_⟩
   rw [Hex.val?_spell_exact]
   simp
 
-private theorem utf16Hex_spelled (c x : Char) (hx : x ∈ (utf16Hex c).toList) :
+public theorem utf16Hex_spelled (c x : Char) (hx : x ∈ (utf16Hex c).toList) :
     ∃ k, x = Hex.spell true k := by
   dsimp only [utf16Hex] at hx
   split at hx

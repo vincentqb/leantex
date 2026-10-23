@@ -114,12 +114,6 @@ public def Spelled : List Tok → Prop
   | t :: rest => TokSpelled t ∧
     (∀ o, t = .val o → readByObj o = true → ∀ u ∈ rest.head?, leadR u = false) ∧ Spelled rest
 
-/-- A token's bytes. -/
-@[expose] public def spell : Tok → ByteArray
-  | .val o => o.render
-  | .op n => n.toUTF8
-  | .inline d data => Tok.renderInto ByteArray.empty (.inline d data)
-
 /-- A run of regular ASCII characters that no number starts: what the
 tokenizer reads as a word at a token's start. -/
 structure Word (w : String) : Prop where
@@ -130,20 +124,6 @@ structure Word (w : String) : Prop where
 
 /-- A byte that ends a token: the stream's end, or white space. -/
 def TermByte (c : Nat) : Prop := c = 256 ∨ isWs c = true
-
-/-- What follows a token: its byte, after the last token only when `trail`. -/
-@[expose] public def sepOf (trail : Bool) (w : UInt8) : List (Tok × UInt8) → ByteArray
-  | [] => if trail then ⟨#[w]⟩ else .empty
-  | _ :: _ => ⟨#[w]⟩
-
-/-- `renderSep trail` of the tokens, appended to `acc`. -/
-@[expose] public def renderSepInto (trail : Bool) (acc : ByteArray) : List (Tok × UInt8) → ByteArray
-  | [] => acc
-  | (t, w) :: rest => renderSepInto trail (acc ++ spell t ++ sepOf trail w rest) rest
-
-/-- Tokens each spelled and followed by its byte, the last token's byte only when `trail`. -/
-@[expose] public def renderSep (trail : Bool) (ts : List (Tok × UInt8)) : ByteArray :=
-  renderSepInto trail .empty ts
 
 theorem renderSepInto_acc (trail : Bool) (acc : ByteArray) (ts : List (Tok × UInt8)) :
     renderSepInto trail acc ts = acc ++ renderSep trail ts := by
