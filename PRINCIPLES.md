@@ -4,11 +4,11 @@ These decide what the rules in `AGENTS.md` leave open, each naming its check (`s
 
 ## Always ship
 
-Every readable input yields an artifact; a loss is repaired where it occurs, marked where content
+Every readable input yields an artifact, each loss repaired where it occurs, marked where content
 is absent and reported once. Only unreadable input, a missing or too deep \input, no usable font,
-an unwritable output, a failed \assert, an output name no format writes or a refused publication
-stops the writer, each an error (`DiagCode.stopsWriter_error`), a loss resolved only unaccepted
-(`Diag.resolveAll_stops_exact`); other errors ship, the exit status apart (`machineLossChecks`).
+an unwritable output, a failed \assert, an output name no format writes, a PDF its format cannot
+hold or a refused publication stops the writer, each an error (`DiagCode.stopsWriter_error`), one
+resolved only unaccepted (`Diag.resolveAll_stops_exact`); other errors ship (`machineLossChecks`).
 
 ## The standard is the specification
 

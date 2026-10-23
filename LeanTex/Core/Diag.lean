@@ -116,7 +116,7 @@ public theorem Loss.label_inj (a b : Loss) (h : a.label = b.label) : a = b := by
 
 /-- What a construct's place on the page owes a reader, declared once per loss class. -/
 public inductive Floor where
-  /-- No floor: the content is absent, an error the exit status reports. -/
+  /-- No floor: the content is absent, an error the exit status reports unless accepted. -/
   | refuse
   /-- The construct's place may be empty; whatever stands there is its own content. -/
   | absent
@@ -763,7 +763,8 @@ public theorem DiagCode.censused_iff_ships (c : DiagCode) :
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
 /-- Whether a code's cause stops the writer: unreadable input, a missing or too deep `\input`, no
-usable font, an unwritable output, a failed `\assert`, an output name or a refused publication. -/
+usable font, an unwritable output, a failed `\assert`, an output name or a PDF the engine cannot
+write, or a refused publication. -/
 public def DiagCode.stopsWriter : DiagCode → Bool
   | .E0001 | .E0501 | .E0502 | .E0401 | .E0402 | .E0004 | .E0330 => true
   | .E0003 | .E0005 | .E0006 | .E0606 => true
@@ -1841,8 +1842,8 @@ private theorem Diag.accept_stops_false (allowed : Array String) (allowAll : Boo
     cases hd : d.demoted <;> cases ha : allowAll <;> cases hc : allowed.contains d.code <;>
       simp [he, hd, e1, e2, e3]
 
-/-- The writer stops exactly when a diagnostic whose cause stops it stands unaccepted: neither
-delivered demoted, nor accepted by `\allow` or `--best-effort`. -/
+/-- A resolution stops the writer exactly when a diagnostic whose cause stops it stands unaccepted:
+neither delivered demoted, nor accepted by `\allow` or `--best-effort`. -/
 public theorem Diag.resolveAll_stops_exact (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) :
     (Diag.resolveAll allowed allowAll ds).stops = 0 ↔

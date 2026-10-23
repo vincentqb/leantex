@@ -5,6 +5,54 @@ import all LeanTex.Core.Lex
 
 namespace LeanTex.Core.Lex
 
+/-- A form whose argument the lexer reads raw: a blind environment's body up to its closer, `\verb`'s
+text between two copies of its delimiter, and a url.sty argument with its delimiters. -/
+public inductive Capture where
+  | env (closer : Array Char)
+  | verb
+  | url
+
+/-- A line end, which no one-line capture crosses. -/
+@[expose] public def lineEnd (c : Char) : Bool := c == '\n' || c == '\r'
+
+/-- The characters of `p` stand in `cs` from `m`. -/
+@[expose] public def occursAt (cs p : Array Char) (m : Nat) : Prop :=
+  ∀ t (h : t < p.size), cs[m + t]? = some p[t]
+
+/-- Every character strictly between `a` and `b` is neither `d` nor a line end. -/
+@[expose] public def plainBetween (cs : Array Char) (d : Char) (a b : Nat) : Prop :=
+  ∀ m, a < m → m < b → ∃ c, cs[m]? = some c ∧ c ≠ d ∧ lineEnd c = false
+
+/-- What a capture read from `j` owes: its text is the source characters it spans, `\verb*` showing
+each space as `␣`, ending at its closer's first copy, or where none stands on its line or in the input. -/
+@[expose] public def Capture.Exact : Capture → Array Char → Nat → Nat × Bool × String → Prop
+  | .env closer, cs, start, (stop, closed, s) =>
+    ∃ k, s.toList = (cs.extract start k).toList ∧
+      (∀ m, start ≤ m → m < k → ¬ occursAt cs closer m) ∧
+      (if closed then start ≤ k ∧ occursAt cs closer k ∧ stop = k + closer.size
+        else k = cs.size ∧ stop = cs.size)
+  | .verb, cs, j, (stop, closed, s) =>
+    let star := cs[j]? == some '*'
+    let k₀ := if star then j + 1 else j
+    ∃ k, k₀ ≤ k ∧ (∀ m, k₀ ≤ m → m < k → cs[m]? = some ' ' ∨ cs[m]? = some '\t') ∧
+      (∀ c, cs[k]? = some c → c ≠ ' ' ∧ c ≠ '\t') ∧
+      match cs[k]? with
+      | some d =>
+        if lineEnd d then stop = k ∧ closed = false ∧ s = ""
+        else ∃ e, k < e ∧ plainBetween cs d k e ∧
+          s.toList = (cs.extract (k + 1) e).toList.map
+            (fun c => if star && c == ' ' then '␣' else c) ∧
+          (closed = true ↔ cs[e]? = some d) ∧
+          (closed = false → ∀ c, cs[e]? = some c → lineEnd c = true) ∧
+          stop = (if closed then e + 1 else e)
+      | none => stop = k ∧ closed = false ∧ s = ""
+  | .url, cs, k, (stop, closed, s) =>
+    ∃ d e, cs[k]? = some d ∧ lineEnd d = false ∧ k < e ∧ plainBetween cs d k e ∧
+      s.toList = (cs.extract k stop).toList ∧
+      (closed = true ↔ cs[e]? = some d) ∧
+      (closed = false → ∀ c, cs[e]? = some c → lineEnd c = true) ∧
+      stop = (if closed then e + 1 else e)
+
 private theorem scanWhile_ge (cs : Array Char) (j : Nat) (p : Char → Bool) :
     j ≤ scanWhile cs j p := by
   fun_induction scanWhile cs j p <;> omega
@@ -227,9 +275,9 @@ private theorem urlFrom_exact (cs : Array Char) (k : Nat) (r : Nat × Bool × St
       · exact Or.inr (hq h)
     · by_cases hc : cs[e]? = some d <;> simp [hc]
 
-/-- Each capture the lexer reads raw is exactly the source characters it spans, `\verb*` showing
-each space as `␣`: a blind environment's body, `\verb`'s text, and a url.sty argument from the
-delimiter its gap leads to. -/
+/-- Each capture the lexer's raw readers make is exactly the source characters it spans, `\verb*`
+showing each space as `␣`: a blind environment's body before any rewrite, `\verb`'s text, and a
+url.sty argument from the delimiter its gap leads to. -/
 public theorem lex_verbatim_exact (cs : Array Char) :
     (∀ closer start, (Capture.env closer).Exact cs start (envRead cs start closer)) ∧
     (∀ j, Capture.verb.Exact cs j (verbRead cs j)) ∧
