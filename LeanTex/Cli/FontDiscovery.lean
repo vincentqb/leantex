@@ -2,6 +2,8 @@ module
 
 import LeanTex.Core.Font
 public import LeanTex.Core.FontDb
+import LeanTex.Core.SlotRecord
+import LeanTex.Cli.AtomicFile
 import Std.Data.HashMap
 
 /-! Filesystem font discovery: the bounded scan of font roots into `FontDb.Face` values,
@@ -210,7 +212,31 @@ public def cacheDir : IO (Option System.FilePath) := do
   return base.map (· / "leantex")
 
 /-- The probe cache's file name, which carries `Font.classifierVersion`. -/
-public def probeCacheName : String := s!"fontdb-{Font.classifierVersion}.tsv"
+public def probeCacheName : String := s!"fontdb-{Font.classifierVersion}.rec"
+
+/-- A cache table as stored: its text in a slot record keyed by the table's file name. -/
+public def encodeTable (name text : String) : ByteArray :=
+  SlotRecord.encode #[name] text.toUTF8
+
+/-- A stored table's text; a truncated, corrupted, foreign or unrecorded file is `none`. -/
+public def decodeTable (name : String) (bytes : ByteArray) : Option String :=
+  (SlotRecord.lookup #[name] bytes).bind String.fromUTF8?
+
+/-- A table file's lines, no lines where the file is absent, unreadable or fails its record. -/
+private def readTable (file : System.FilePath) : IO (List String) := do
+  let some name := file.fileName | return []
+  let bytes ← try IO.FS.readBinFile file catch _ => return []
+  return ((decodeTable name bytes).map (·.splitOn "\n")).getD []
+
+/-- Replace a table file whole, renamed into place, so a reader sees the old table or the new. -/
+private def writeTable (file : System.FilePath) (lines : List String) : IO Unit := do
+  let some name := file.fileName | return
+  let payload := (String.intercalate "\n" lines ++ "\n").toUTF8
+  unless SlotRecord.storable #[name] payload do return
+  try
+    if let some parent := file.parent then IO.FS.createDirAll parent
+    AtomicFile.write file (SlotRecord.encode #[name] payload)
+  catch _ => pure ()
 
 /-- One cache line per file: the tab-joined key (path, size, mtime), then the
 classification, or nothing for a rejected file; paths and names hold no tab or line
@@ -243,7 +269,7 @@ public def probeKey (path : String) : IO (Option String) := do
 
 /-- The listing cache's file name, which carries the extensions the walk keeps. -/
 public def listingCacheName : String :=
-  s!"fontdb-dirs-{"-".intercalate (FontDb.fontExtensions ++ FontDb.collectionExtensions)}.tsv"
+  s!"fontdb-dirs-{"-".intercalate (FontDb.fontExtensions ++ FontDb.collectionExtensions)}.rec"
 
 /-- One line per directory: path, mtime, then each sorted entry prefixed `F` (a font file)
 or `D` (a subdirectory). -/
@@ -320,11 +346,9 @@ public def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
   let dirsFile := cache.map (· / listingCacheName)
   let mut knownDirs : Std.HashMap String (String × Array (Bool × String)) := {}
   if let some df := dirsFile then
-    if ← df.pathExists then
-      let text ← try IO.FS.readFile df catch _ => pure ""
-      for line in text.splitOn "\n" do
-        if let some (path, mtime, entries) := parseDirLine line then
-          knownDirs := knownDirs.insert path (mtime, entries)
+    for line in ← readTable df do
+      if let some (path, mtime, entries) := parseDirLine line then
+        knownDirs := knownDirs.insert path (mtime, entries)
   let mut files : Array String := #[]
   let mut seenDirs : Array (String × String × Array (Bool × String)) := #[]
   let mut dirsDirty := false
@@ -341,20 +365,14 @@ public def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
       let mut merged := knownDirs
       for (k, m, es) in seenDirs do
         merged := merged.insert k (m, es)
-      try
-        if let some parent := df.parent then IO.FS.createDirAll parent
-        IO.FS.writeFile df (String.intercalate "\n"
-          (merged.toList.map fun (k, m, es) => dirLine k m es) ++ "\n")
-      catch _ => pure ()
+      writeTable df (merged.toList.map fun (k, m, es) => dirLine k m es)
   files ← facePaths files
   let cacheFile := cache.map (· / probeCacheName)
   let mut known : Std.HashMap String (Option Face) := {}
   if let some cf := cacheFile then
-    if ← cf.pathExists then
-      let text ← try IO.FS.readFile cf catch _ => pure ""
-      for line in text.splitOn "\n" do
-        if let some (key, face) := parseLine line then
-          known := known.insert key face
+    for line in ← readTable cf do
+      if let some (key, face) := parseLine line then
+        known := known.insert key face
   -- Misses are probed in parallel chunks, joined in listing order so tie-breaking is unchanged.
   let chunk := 64
   let mut keyed : Array (String × Option (String × String)) := #[]
@@ -402,11 +420,7 @@ public def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
         | (path, some (size, mtime)) =>
           merged := merged.insert (path ++ "\t" ++ size ++ "\t" ++ mtime) face?
         | _ => pure ()
-      try
-        if let some parent := cf.parent then IO.FS.createDirAll parent
-        IO.FS.writeFile cf (String.intercalate "\n"
-          (merged.toList.map fun (key, face?) => faceLine key face?) ++ "\n")
-      catch _ => pure ()
+      writeTable cf (merged.toList.map fun (key, face?) => faceLine key face?)
   return result.filterMap id
 
 /-- `scanRootsIn` through the host's own cache directory (`cacheDir`). -/

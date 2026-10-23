@@ -846,7 +846,7 @@ def probeCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let stale := key ++ "\tOld Classifier\tRegular\tfalse\tfalse\tfalse\t400\n"
   let scanWith (file : String) : IO (Option FontDb.Face) := do
     IO.FS.withTempDir fun dir => do
-      IO.FS.writeFile (dir / file) stale
+      IO.FS.writeBinFile (dir / file) (FontDiscovery.encodeTable file stale)
       let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
       return faces.find? (·.path == path)
   let legacy ← scanWith "fontdb.tsv"
@@ -879,7 +879,7 @@ def listingCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let empty := s!"{testFonts}\t{md.modified.sec}.{md.modified.nsec}\n"
   let scanWith (file : String) : IO Nat := do
     IO.FS.withTempDir fun dir => do
-      IO.FS.writeFile (dir / file) empty
+      IO.FS.writeBinFile (dir / file) (FontDiscovery.encodeTable file empty)
       let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
       return faces.size
   let legacy ← scanWith "fontdb-dirs.tsv"
@@ -889,6 +889,34 @@ def listingCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
 refuses it ({live} faces)" (live == 0)
   t "listing cache: the name carries every extension the walk keeps"
     (FontDb.fontExtensions.all fun ext => hasStr FontDiscovery.listingCacheName ext)
+
+/-- A cache file cut short, corrupted or in plain text is read as absent: the scan finds every face
+and writes the table back whole. -/
+def truncatedCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let want := (← FontDiscovery.scanRootsIn none [testFonts]).map (·.path)
+  for name in [FontDiscovery.listingCacheName, FontDiscovery.probeCacheName] do
+    let sound ← IO.FS.withTempDir fun dir => do
+      discard <| FontDiscovery.scanRootsIn (some dir) [testFonts]
+      IO.FS.readBinFile (dir / name)
+    t s!"truncated cache: a cold scan writes {name} as a record"
+      ((FontDiscovery.decodeTable name sound).isSome)
+    let raw := ((FontDiscovery.decodeTable name sound).getD "").toUTF8
+    -- A byte of the table flipped in place keeps the record's size, so its checksum refuses it.
+    let at_ := sound.size - 2
+    let flipped := sound.extract 0 at_ ++ ByteArray.mk #[(sound.data[at_]?.getD 0) ^^^ 1] ++
+      sound.extract (at_ + 1) sound.size
+    let plants := ((List.range 8).map fun k => (s!"cut at {k}/8", sound.extract 0 (sound.size * k / 8)))
+      ++ ((List.range 9).map fun k => (s!"its plain table cut at {k}/8", raw.extract 0 (raw.size * k / 8)))
+      ++ [("with a byte flipped", flipped)]
+    for (what, planted) in plants do
+      let (got, after) ← IO.FS.withTempDir fun dir => do
+        IO.FS.writeBinFile (dir / name) planted
+        let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
+        return (faces.map (·.path), ← IO.FS.readBinFile (dir / name))
+      t s!"truncated cache: {name} {what} is read as absent" (got == want)
+      t s!"truncated cache: {name} {what} is rewritten whole"
+        ((FontDiscovery.decodeTable name after).isSome)
 
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -912,6 +940,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   shippedFontChecks ref faces
   probeCacheChecks ref
   listingCacheChecks ref
+  truncatedCacheChecks ref
   match FontDb.resolve faces "Source Serif Pro" { bold := true } with
   | some (face, exact) =>
     t "fontdb bold is exact" exact

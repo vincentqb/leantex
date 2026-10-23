@@ -21,6 +21,8 @@ example : String → IO (Option Face) := probe
 example : IO (Option System.FilePath) := cacheDir
 example : String := probeCacheName
 example : String := listingCacheName
+example : String → String → ByteArray := encodeTable
+example : String → ByteArray → Option String := decodeTable
 example : String → IO (Option String) := probeKey
 example : List String → IO (List String) := fun dirs => systemRoots dirs
 example : Option System.FilePath → List String → IO (Array Face) := scanRootsIn
@@ -38,6 +40,8 @@ example : True := by
   fail_if_success have := LeanTex.Cli.FontDiscovery.dirsName
   fail_if_success have := LeanTex.Cli.FontDiscovery.dirLine
   fail_if_success have := LeanTex.Cli.FontDiscovery.parseDirLine
+  fail_if_success have := LeanTex.Cli.FontDiscovery.readTable
+  fail_if_success have := LeanTex.Cli.FontDiscovery.writeTable
   fail_if_success have := LeanTex.Cli.FontDiscovery.walkCached
   fail_if_success have := LeanTex.Cli.FontDiscovery.skipBytes
   fail_if_success have := LeanTex.Cli.FontDiscovery.readAt

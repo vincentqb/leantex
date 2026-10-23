@@ -1013,8 +1013,8 @@ def selftest : IO Unit := do
   require (invalidated 8 bytes edited edited r r) "valid invalidation failed"
   require (!invalidated 8 bytes bytes bytes r r) "unchanged artifact passed invalidation"
   require (!invalidated 8 bytes edited bytes r r) "stale cache passed invalidation"
-  let files := #[("fontdb-2.tsv", "old metadata"), ("imgs/grid.img", "answer")]
-  let metadataEdit := #[("fontdb-2.tsv", "new metadata"), ("imgs/grid.img", "answer")]
+  let files := #[("fontdb-2.rec", "old metadata"), ("imgs/grid.img", "answer")]
+  let metadataEdit := #[("fontdb-2.rec", "new metadata"), ("imgs/grid.img", "answer")]
   require (files != metadataEdit && answers files == answers metadataEdit)
     "answer judge must ignore only metadata changes"
   require (answers files != answers #[("imgs/grid.img", "changed answer")] &&
@@ -1101,7 +1101,7 @@ and its format's published answers, page streams for PDF and the vector's native
 def coldBuild (r : Run) (format : String) : IO Unit := do
   work r 0
   require (entries r.cache "imgs" ".img" == 1) "expected one alpha decode answer"
-  require (r.cache.any fun (name, _) => name.startsWith "fontdb-" && name.endsWith ".tsv")
+  require (r.cache.any fun (name, _) => name.startsWith "fontdb-" && name.endsWith ".rec")
     "font discovery populated no private cache"
   let (operation, ext) := if format == "pdf" then ("flate", ".answer") else ("faces", ".face")
   require (entries r.cache operation ext > 0) s!"no {operation} cache answers"

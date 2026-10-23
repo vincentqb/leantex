@@ -49,19 +49,23 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
   let liveFamily := (← FontDiscovery.probe path).map (·.family)
   check "the boundary fixture classifies" liveFamily.isSome
 
+  let plant (file : System.FilePath) (text : String) : IO Unit :=
+    IO.FS.writeBinFile file (FontDiscovery.encodeTable (file.fileName.getD "") text)
+  let stored (file : System.FilePath) : IO String := do
+    return (FontDiscovery.decodeTable (file.fileName.getD "") (← IO.FS.readBinFile file)).getD ""
   -- A negative row under a live file's key makes a cache hit observable.
-  IO.FS.writeFile probeFile (key ++ "\n")
+  plant probeFile (key ++ "\n")
   let rejected ← FontDiscovery.scanRootsIn (some cache) [dir.toString]
   let fresh ← FontDiscovery.scanRootsIn none [dir.toString]
   check "a current-key rejection is replayed" rejected.isEmpty
   check "bypassing the probe cache observes the font"
     (fresh.size == 1 && (fresh[0]?.map (·.family)) == liveFamily)
   check "bypassing the probe cache leaves its rows alone"
-    ((← IO.FS.readFile probeFile) == key ++ "\n")
+    ((← stored probeFile) == key ++ "\n")
   check "cache bypass did not need a changed file key"
     ((← FontDiscovery.probeKey path) == some key)
 
-  IO.FS.writeFile probeFile
+  plant probeFile
     (key ++ "\tInvented Family\tRegular\tfalse\tfalse\tfalse\t400\n")
   let trusted ← FontDiscovery.scanRootsIn (some cache) [dir.toString]
   check "current-key classification rows are trusted"
@@ -83,7 +87,7 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
     | throw <| IO.userError "fontcache-check: the rejected fixture cannot be stat'd"
   check "a rejected font produces no face" coldRejection.isEmpty
   check "a cold rejection writes a key-only row"
-    (((← IO.FS.readFile probeFile).splitOn "\n").contains rejectedKey)
+    (((← stored probeFile).splitOn "\n").contains rejectedKey)
   IO.FS.writeBinFile rejectedPath font
   check "replacing rejected bytes moves their key"
     ((← FontDiscovery.probeKey rejectedPath) != some rejectedKey)
@@ -93,14 +97,24 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
   let md ← dir.metadata
   let emptyListing := s!"{dir}\t{md.modified.sec}.{md.modified.nsec}\n"
   let listingFile := cache / FontDiscovery.listingCacheName
-  IO.FS.writeFile listingFile emptyListing
+  plant listingFile emptyListing
   check "a current-mtime empty listing is replayed"
     ((← FontDiscovery.scanRootsIn (some cache) [dir.toString]).isEmpty)
   let freshListing ← FontDiscovery.scanRootsIn none [dir.toString]
   check "bypassing the listing cache reads directory membership"
     (freshListing.size == 1 && (freshListing[0]?.map (·.family)) == liveFamily)
   check "bypassing the listing cache leaves its rows alone"
-    ((← IO.FS.readFile listingFile) == emptyListing)
+    ((← stored listingFile) == emptyListing)
+
+  -- A listing cut short is no listing at all.
+  let whole := FontDiscovery.encodeTable FontDiscovery.listingCacheName emptyListing
+  IO.FS.writeBinFile listingFile (whole.extract 0 (whole.size - 1))
+  let torn ← FontDiscovery.scanRootsIn (some cache) [dir.toString]
+  check "a torn listing is read as absent"
+    (torn.size == 1 && (torn[0]?.map (·.family)) == liveFamily)
+  check "a torn listing is rewritten whole"
+    ((FontDiscovery.decodeTable FontDiscovery.listingCacheName
+      (← IO.FS.readBinFile listingFile)).isSome)
 
   -- Format 12 maps only A to glyph ID 1, with no metrics or glyph program.
   let point := word32 65

@@ -8,6 +8,7 @@ import Tests.SvgParity
 import Tests.ProcessRuntime
 import Tests.PictureAssets
 import Tests.World
+import Tests.FontMath
 import Tests.MachineLoss
 import Tests.EngineCache
 import Tests.LeanStatements
@@ -128,8 +129,9 @@ def registry : List Premise := [
     statement := "Renaming a staged file onto its destination within one directory replaces the destination atomically for every reader, so a cache file AtomicFile publishes is read whole or not at all, and an answer whose envelope fails its content key, or a slot whose body fails its checksum, reads as a miss."
     transfers := [thm% ConvCache.refusal_replays_exact, thm% SlotRecord.decode_encode_id]
     sites := [("LeanTex/Cli/AtomicFile.lean", "write"), ("LeanTex/Cli/ConvCache.lean", "decode"),
-      ("LeanTex/Cli/PlanCache.lean", "decodeCached"), ("LeanTex/Core/KeyedRecord.lean", "checked")]
-    checks := [check% Tests.toolMemoChecks] },
+      ("LeanTex/Cli/PlanCache.lean", "decodeCached"), ("LeanTex/Core/KeyedRecord.lean", "checked"),
+      ("LeanTex/Cli/FontDiscovery.lean", "scanRootsIn")]
+    checks := [check% Tests.toolMemoChecks, check% truncatedCacheChecks] },
   { name := "content-keys", residue := .host "cache inputs", reach := .render
     statement := "No two inputs one cache meets share a content key, though Flate.contentKey is two FNV-1a passes from two seeds, a 128-bit key that resists no chosen collision."
     sites := [("LeanTex/Cli/ConvCache.lean", "slotName"), ("LeanTex/Cli/Compression.lean", "cachePath"),
@@ -201,10 +203,6 @@ def registry : List Premise := [
     statement := "A font file is what its path, size and modification time say, and a font directory lists what its modification time says, so the font scan's two caches answer as a fresh scan would."
     sites := [("LeanTex/Cli/FontDiscovery.lean", "scanRootsIn")]
     scripts := ["scripts/fontcache-check.lean"] },
-  { name := "font-cache-writes", residue := .host "filesystem", reach := .render
-    statement := "No build reads the font scan's metadata or listing cache while another build rewrites it, since both are written in place, where a line cut short can read as a rejected font or a directory with fewer entries."
-    sites := [("LeanTex/Cli/FontDiscovery.lean", "scanRootsIn")]
-    owed := some "Race two builds over one cache directory and require each to read the font set a fresh scan finds." },
   { name := "artifact-readers", residue := .host "filesystem", reach := .render
     statement := "No reader opens an artifact while a build rewrites it, since Publication.publish writes the PDF, the HTML and the markdown twin in place."
     sites := [("LeanTex/Cli/Publication.lean", "publish")]
@@ -378,7 +376,7 @@ def registry : List Premise := [
 check. -/
 def renderToolBaseline : Nat := 3
 def uncheckedBaseline : Nat := 9
-def owedBaseline : Nat := 24
+def owedBaseline : Nat := 23
 
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]

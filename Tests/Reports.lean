@@ -2517,7 +2517,12 @@ def reports : List Report := [
     pins := [check% censusChecks, check% Tests.LeanProse.leanProseChecks,
       thm% LeanProse.tableFor_contract]
     accept := ["main's binary at a90d1669 on the Lean prose fixture, its Moored phrase directive gone: For every b : Barge, if Moored b, then 0 < b.draft, the guards failing there; this tree says For every b : Barge, b is moored if and only if 0 < b.draft, and For every b : Barge that is moored, from the comment `b` is moored, its draft positive, while the name of b still follows the directive over the comment's the label of b, in the PDF, on the web page and in the twin"]
-    state := .guarded "a90d1669" .before .author }
+    state := .guarded "a90d1669" .before .author },
+  { id := "R293", date := "2026-10-23"
+    what := "a font listing cache cut short in the middle of a directory's entry was trusted, so a face in that directory read as missing and every document fell back to another face until the cache was removed"
+    pins := [check% truncatedCacheChecks]
+    accept := ["the tree at 1474c620 with the cache tables written and read as plain text again: thirteen of the listing's eighteen plants, each cut inside its entries or with a byte changed, drop shipped faces, the guard failing there; this tree reads every cut, corrupted or plain table as absent, finds every shipped face and writes the table back whole"]
+    state := .guarded "1474c620" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
