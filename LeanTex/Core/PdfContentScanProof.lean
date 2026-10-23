@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.PdfContentText
 public import LeanTex.Core.PdfContentLexProof
+public import LeanTex.Core.PdfGfxReadback
 import all LeanTex.Core.PdfGfxReadback
 import all LeanTex.Core.PdfContent
 import all LeanTex.Core.PdfContentLex
@@ -26,7 +27,7 @@ open LeanTex.Core.PdfTextRead
 /-- A number string as the operand the tokenizer reads it as. -/
 @[expose] public def numObj (s : String) : Obj := (PdfContentLex.numberObj s).getD .null
 
-/-- A number string the writer copies into a stream, spelled as the operand it reads back as. -/
+/-- A string the writer copies into a stream as an operand, spelled as the operand it reads back as. -/
 @[expose] public def NumSpelled (s : String) : Prop :=
   (numObj s).render = s.toUTF8 ∧ PdfContentLex.ValSpelled (numObj s)
 
@@ -49,7 +50,7 @@ mutual
 @[expose] public def TextOp.Spelled : TextOp → Prop
   | .color c => ColorSpelled c
   | .marked (.content s _ _) body => Obj.NameSpelling s ∧ TextOp.SpelledList body.toList
-  | .marked _ body => TextOp.SpelledList body.toList
+  | .marked (.artifact _) body | .marked (.span _) body => TextOp.SpelledList body.toList
   | .scale _ | .move _ _ | .font _ _ | .show _ => True
 
 @[expose] public def TextOp.SpelledList : List TextOp → Prop
@@ -59,10 +60,10 @@ mutual
 end
 
 /-- The scaling operand the writer spells: tenths of a percent. -/
-def scaleObj (p : Int) : Obj := .real s!"{p / 10}.{p % 10}"
+@[expose] public def scaleObj (p : Int) : Obj := .real s!"{p / 10}.{p % 10}"
 
 /-- A colour's fill operators as the writer spells them. -/
-def colorToks (c : Ir.Color) : List (List Obj × String) :=
+@[expose] public def colorToks (c : Ir.Color) : List (List Obj × String) :=
   match c.pdfModel with
   | some (.rgb r g b) => [([numObj r, numObj g, numObj b], "rg")]
   | some (.gray v) => [([numObj v], "g")]
@@ -76,7 +77,7 @@ def colorToks (c : Ir.Color) : List (List Obj × String) :=
         milliObj (Ir.Color.milli c.b)], "rg")]
 
 /-- The writer's spelling of the operands a text reading reads past. -/
-public def writerSpell : Spell where
+@[expose] public def writerSpell : Spell where
   len := lenObj
   scale := scaleObj
   color := colorToks

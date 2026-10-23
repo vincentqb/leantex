@@ -78,7 +78,7 @@ theorem posSpell (k : Nat) : (toString ((k : Nat) : Int)).toList = Nat.toDigits 
   simp only [hn, ↓reduceIte, Int.toNat_natCast, Nat.toList_repr]
 
 /-- A length's operand as the writer spells it: an integer for whole points, else a real. -/
-def lenObj (x : Length) : Obj :=
+@[expose] public def lenObj (x : Length) : Obj :=
   if x.toBpMilli.natAbs % 1000 = 0 then
     .int (if x.toBpMilli < 0 then -((x.toBpMilli.natAbs / 1000 : Nat) : Int)
       else ((x.toBpMilli.natAbs / 1000 : Nat) : Int))
@@ -233,7 +233,7 @@ magnitude in billionths, rounded half away from zero. -/
 @[expose] public def ratV (p q : Int) : Nat := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
 
 /-- A ratio's operand as the writer spells it: an integer without fraction, else a real. -/
-def ratObj (p q : Int) : Obj :=
+@[expose] public def ratObj (p q : Int) : Obj :=
   if ratV p q % 1000000000 = 0 then
     .int (if p < 0 ∧ ratV p q ≠ 0 then -((ratV p q / 1000000000 : Nat) : Int)
       else ((ratV p q / 1000000000 : Nat) : Int))
@@ -400,7 +400,7 @@ theorem ratOf_ratObj (p q : Int) : ratOf (ratObj p q) = some (ratRead p q) := by
     exact ratOf_real p q hf
 
 /-- A channel's operand as the writer spells it: the ends integers, anything between a real. -/
-def milliObj (v : Nat) : Obj :=
+@[expose] public def milliObj (v : Nat) : Obj :=
   if v = 0 then .int 0 else if v = 1000 then .int 1 else .real (Ir.Color.pdfMilli v)
 
 theorem intRender (k : Nat) : (Obj.int (k : Int)).render = (toString k).toUTF8 := by

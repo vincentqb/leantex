@@ -67,11 +67,11 @@ public def PathOp.render : PathOp → String
 
 /-- One glyph of a kerned string onto its `TJ` elements and the open hex string: a nonzero number
 closes the open string and stands before the glyph it moves. -/
-public def kernStep (acc : Array String × String) (p : Nat × Int) : Array String × String :=
+private def kernStep (acc : Array String × String) (p : Nat × Int) : Array String × String :=
   if p.2 != 0 then ((acc.1.push (acc.2.push '>')).push (toString p.2), pushGid "<" p.1)
   else (acc.1, pushGid acc.2 p.1)
 
-public theorem kernStep_eq (acc : Array String × String) (p : Nat × Int) :
+private theorem kernStep_eq (acc : Array String × String) (p : Nat × Int) :
     kernStep acc p = if p.2 != 0 then
       ((acc.1.push (acc.2 ++ String.singleton '>')).push (toString p.2),
         String.singleton '<' ++ gidHex p.1)
@@ -80,7 +80,7 @@ public theorem kernStep_eq (acc : Array String × String) (p : Nat × Int) :
   rfl
 
 /-- A `TJ` element run's spellings: hex strings of glyph ids, and the numbers between them. -/
-public def TextItem.parts : TextItem → Array String
+private def TextItem.parts : TextItem → Array String
   | .glyphs gids => #[(gids.foldl pushGid "<").push '>']
   | .kerned gids nums =>
     let r := gids.zipIdx.foldl (fun a (g, i) => kernStep a (g, nums.getD i 0)) (#[], "<")
@@ -1176,7 +1176,7 @@ public theorem glyphs_render_exact (gids : Array Nat) :
     ← Array.foldl_toList, foldl_append_eq, String.push_eq_append]
   rfl
 
-public theorem TextItem.parts_eq (it : TextItem) : it.parts = match it with
+private theorem TextItem.parts_eq (it : TextItem) : it.parts = match it with
     | .glyphs gids =>
       #[String.singleton '<' ++ String.join (gids.toList.map gidHex) ++ String.singleton '>']
     | .kerned gids nums =>
