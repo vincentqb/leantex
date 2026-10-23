@@ -21,7 +21,8 @@ p               := Elab.prepareExecuted f src.executed  -- with the listing repl
 (doc₀, dElab, spans) := Elab.runPrepared f p earlier metric wd  -- the last call on its path
 dFront          := Bib.accountFront (dElab ++ dSty) dBib notes refs
 doc             := FigureAlt.titled t (Input.resolveBibliography f doc₀ …).1, then the doc
-                   buildFontSet returns (Ir.resolveMathAlphas), the one every backend reads
+                   buildFontSet returns (Ir.resolveMathAlphas), or after a remeasure the
+                   driver's own Ir.resolveMathAlphas of doc₀, the one every backend reads
 fitted          := Layout.runFitted geom fs pats doc imgs;  pdf := Pdf.writeChecked … doc …
 tree            := Struct.ofDoc (Layout.pdfView doc)   -- Ir.keepFor "pdf"
 docH            := doc, or where a picture withdraws for the page alone a re-elaboration with it
@@ -32,8 +33,9 @@ D               := every diagnostic the run reports: each phase's batch through
                    Diag.resolveAll (Diag.forOutputs outs batch), and the refusals Ui.diag prints
 -- earlier is src.diags, and src.diags ++ listingDiags once listings are highlighted. The driver
 -- elaborates again when list notes renumber, a picture withdraws or a settled face measures a
--- label otherwise; doc₀ is the last elaboration on the path taken. The remeasure and the HTML
--- withdraw elaborations, and resolveMathAlphas there, drop their diagnostics today (U112).
+-- label otherwise; doc₀ is the last elaboration on the path taken, whose losses are the ones
+-- reported, beside the font set's over the first elaboration; the HTML withdraw elaboration,
+-- and resolveMathAlphas after it and after a remeasure, drop their diagnostics today (U112).
 
 -- A text is its characters, each from the source token at a place, a mark the engine adds, or
 -- text no place locates.

@@ -98,12 +98,17 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   else if d.severity != .note || ui.cfg.verbosity ≥ 1 then
     ui.errStream.putStrLn (Render.human ui.color d (showOutput := ui.showOutput))
 
+/-- One phase's diagnostics resolved as `Ui.resolve` prints them. -/
+def resolveFor (allowed : Array String) (allowAll : Bool) (outputs : Array Diag.Output)
+    (ds : Array Diag) : Resolution :=
+  Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
+
 /-- Resolve and print one phase against the document's acceptance (`\allow`,
 `--best-effort`): a repeated warning prints once with its count, its repeats as notes
 shown under `-v`; porcelain keeps every site. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
-  let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
+  let r := resolveFor allowed allowAll outputs ds
   for d in r.diags do
     ui.diag d
   return { r with diags := #[] }
@@ -922,11 +927,16 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let doc := FigureAlt.titled titles doc
     -- premise: svgTitleAltChecks — a figure's title answers N0376
     let diags := FigureAlt.unanswered titles doc diags
-    let mut resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
-    if resolved.stops > 0 then
-      ui.accepted resolved.accepted
-      ui.summary file resolved.errors (← since t0)
+    -- The elaboration's losses print once the page that ships is known, a remeasure's in its place.
+    let refuse (allow : Array String) (batches : Array (Array Diag)) : IO UInt32 := do
+      let mut r : Resolution := {}
+      for ds in batches do
+        r := r.append (← ui.resolve allow allowAll (outputs := outputs) ds)
+      ui.accepted r.accepted
+      ui.summary file r.errors (← since t0)
       return 1
+    if (resolveFor doc.allow allowAll outputs diags).stops > 0 then
+      return (← refuse doc.allow #[diags])
     let t ← IO.monoMsNow
     -- A provisional scan serves unless the body names another font directory.
     let reuse : Option FaceScan := front.scan.filter (·.dirs == doc.fonts.dirs)
@@ -936,16 +946,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     match ← buildFontSet doc scan front.cache .settled (Layout.storeScalars imgs0) reqSpans.faces with
     | .error d =>
       -- No usable font set: fatal whatever the document accepts.
+      let resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
       ui.diag (sourceDiag d)
-      ui.summary file 1 (← since t0)
+      ui.accepted resolved.accepted
+      ui.summary file (1 + resolved.errors) (← since t0)
       return 1
     | .ok (fs, doc, fontDiags, paths) =>
-      resolved := resolved.append
-        (← ui.resolve doc.allow allowAll (outputs := outputs) (fontDiags.map sourceDiag))
-      if resolved.stops > 0 then
-        ui.accepted resolved.accepted
-        ui.summary file resolved.errors (← since t0)
-        return 1
+      let fontDiags := fontDiags.map sourceDiag
+      if (resolveFor doc.allow allowAll outputs fontDiags).stops > 0 then
+        return (← refuse doc.allow #[diags, fontDiags])
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.fontPhase names paths scan.faces.size (← since t)
       let t ← IO.monoMsNow
@@ -954,14 +963,22 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "settle" (if settled then s!"provisional face holds ({ps.size} labels)"
           else s!"provisional face superseded \
 ({FontFix.disagreements pre metric ps} of {ps.size} labels)") (← since t)
-      let (doc, reqSpans) ← if settled then pure (doc, reqSpans) else do
+      let (doc, reqSpans, diags) ← if settled then pure (doc, reqSpans, diags) else do
         let t ← IO.monoMsNow
-        let (doc2, _, spans2) ←
+        let (doc2, diags2, spans2) ←
           elaborate ui file front.prepared front.earlier front.spliced metric
             (phases := false) (withdrawn := w.ids) (ledger := front.ledger)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
-        pure (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
+        let doc2 := FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1
+        let diags2 := FigureAlt.unanswered titles doc2
+          ((Boundary.foldLines doc2.allow allowAll (Boundary.linesOf tool w spans2.declined)
+            diags2).map sourceDiag)
+        pure (doc2, spans2, diags2)
+      if (resolveFor doc.allow allowAll outputs diags).stops > 0 then
+        return (← refuse doc.allow #[diags, fontDiags])
+      let mut resolved := (← ui.resolve doc.allow allowAll (outputs := outputs) diags).append
+        (← ui.resolve doc.allow allowAll (outputs := outputs) fontDiags)
       let t ← IO.monoMsNow
       let (imgs, imgDiags, imgHits, _, imgReads, judged) ←
         if Ir.imageRequests doc == Ir.imageRequests front.doc then
