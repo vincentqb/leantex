@@ -118,7 +118,7 @@ def registry : List Premise := [
     sites := [("scripts/ProofAudit.lean", "worldLoops"), ("scripts/ProofAudit.lean", "iteratorEntries")]
     unchecked := some "It is the toolchain's own code, which the reach audit reads as a leaf and no check written here can falsify short of reproving the library." },
   { name := "watch-unending", residue := .runtime, reach := .render
-    statement := "The watch mode's repeat in Driver.watch is the one loop the binary reaches that has no end: it rebuilds whenever the source changes until the user interrupts the process, and each pass is a build whose constants the reach audit reads, so every rebuild returns."
+    statement := "The watch mode's repeat in Driver.watch is the one loop the binary reaches that has no end: every 200 ms it reads the root file's modification time, a stat the host answers, and rebuilds when that changes, until the user interrupts the process; each pass is a build whose constants the reach audit reads and whose host calls the host-bounded premise holds to return."
     sites := [("LeanTex/Cli/Driver.lean", "watch"), ("scripts/ProofAudit.lean", "unendingLoops")]
     scripts := ["scripts/proofcheck.lean"] },
   { name := "host-bounded", residue := .host "process", reach := .render

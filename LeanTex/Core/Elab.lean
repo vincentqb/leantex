@@ -1682,6 +1682,16 @@ private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
   · exact absurd h (by simp)
   · exact latestNamed_lt h
 
+/-- The context a command's text expands under: the commands below it, its arguments bound. -/
+private def callInto (ctx : Ctx) (name : String) (pos : Pos) (k : Nat)
+    (args : Array (String × Option (Array Inline))) : Ctx :=
+  { ctx.atCall name pos with limit := k, args }
+
+/-- The context an environment's halves expand under: the environments below it and every
+command, its arguments bound. -/
+private def envInto (ctx : Ctx) (k : Nat) (args : Array (String × Option (Array Inline))) : Ctx :=
+  { ctx with limit := ctx.user.size, envLimit := k, args }
+
 /-- A chain of user expansions, each inside the one before, as the knot's call sites make them:
 a command under the commands below it, an environment's halves under the environments below it
 and at most `n` commands. -/
@@ -1790,6 +1800,12 @@ private def envContentArg : String := "environment content"
 /-- The mark an inline environment's begin code sets where its content stands, under the
 declarations it leaves open. -/
 private def envContentMark : Ir.Inline := .role envContentArg #[]
+
+/-- The context an inline environment's begin and end code expand under, its content's slot
+bound. -/
+private def halvesInto (ctx : Ctx) (k : Nat) (args : Array (String × Option (Array Inline))) :
+    Ctx :=
+  { envInto ctx k args with args := args.push (envContentArg, some #[envContentMark]) }
 
 -- conserves: none — a placement, not a rewrite
 /-- An inline environment's begin code with its content and end code set where its mark stands,
@@ -5581,6 +5597,14 @@ private def bindDefault (p : Param) (d : Array Raw) (v : Array Inline)
     (bindings : Array (String × Option (Array Inline))) : Array (String × Option (Array Inline)) :=
   bindParam p v (fun _ => rawSrc d) #[] ++ bindings.extract 1 bindings.size
 
+/-- An environment's bindings with an absent optional argument bound to its default, which `el`
+reads. -/
+private def withDefault (params : Array Param) (bindings : Array (String × Option (Array Inline)))
+    (el : Array Raw → EM (Array Inline)) : EM (Array (String × Option (Array Inline))) :=
+  match absentDefault? params bindings with
+  | some (p, d) => do pure (bindDefault p d (← el d) bindings)
+  | none => pure bindings
+
 /-- The index past the first `{...}` group at or after `k`, or `k` when none follows. -/
 private def pastGroupFrom (raws : Array Raw) (k : Nat) : Nat := Id.run do
   for j in [k:raws.size] do
@@ -5914,25 +5938,21 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
               simp [sliceWeight]
             omega
           let acc := flushText acc sb
-          let (bindings, ⟨j, _⟩) ← takeArgsFrom ctx env.params 0 name body 0 pos #[]
+          let taken ← takeArgsFrom ctx env.params 0 name body 0 pos #[]
+          let j := taken.2.1
           -- An absent optional argument takes its definition's default, read where the halves read.
-          let bindings ← match absentDefault? env.params bindings with
-            | some (p, d) => do
-              let dctx : Ctx := { ctx with limit := ctx.user.size, envLimit := k, args := bindings }
-              pure (bindDefault p d (← elabInlinesCore { dctx with argBody := true } d) bindings)
-            | none => pure bindings
-          let envCtx : Ctx := { ctx with
-            limit := ctx.user.size, envLimit := k, args := bindings }
+          let bindings ← withDefault env.params taken.1 fun d =>
+            elabInlinesCore { envInto ctx k taken.1 with argBody := true } d
           let ⟨inner, _⟩ : { a : Array Raw // rawWeightList a.toList < sliceWeight raws i } :=
             ⟨envBody env body j, Nat.lt_of_le_of_lt (envBody_le env body j) hb0⟩
-          let ⟨next, hnext⟩ : { n : Nat // i + 1 ≤ n } :=
+          let next : { n : Nat // i + 1 ≤ n } :=
             if env.ignoresAfterEnd then ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
             else ⟨i + 1, Nat.le_refl _⟩
-          have _ : sliceWeight raws next < sliceWeight raws i :=
-            Nat.lt_of_le_of_lt (sliceWeight_le raws hnext) hadv1
+          have _ : sliceWeight raws next.1 < sliceWeight raws i :=
+            Nat.lt_of_le_of_lt (sliceWeight_le raws next.2) hadv1
           -- premise: inlineEnvScopeChecks — the begin code runs first and its open declarations
           -- span the content and the end code, the environment one group
-          let halves : Ctx := { envCtx with args := envCtx.args.push (envContentArg, some #[envContentMark]) }
+          let halves := halvesInto ctx k bindings
           let literal := declaresMono env.beginBody
           let set ← inlineGroup ctx.palette do
             let opened ← elabInlinesCore halves
@@ -5941,7 +5961,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             let closed ← elabInlinesCore { halves with literalText := halves.literalText || literal }
               env.endBody
             pure (placeEnvContent opened (content ++ closed))
-          elabInlinesFrom ctx raws next (acc ++ set) ""
+          elabInlinesFrom ctx raws next.1 (acc ++ set) ""
         | none =>
         if reservedEnv.contains name then
           warnOnce ctx ("env:" ++ name) .W0307 (Diag.say .W0307 .environment name) pos
@@ -5987,9 +6007,10 @@ sets as a block")
         | some (k, cmd) =>
           have _ : k < ctx.limit := lookupUser_lt hu
           let acc := flushText acc sb
-          let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
-          let callCtx : Ctx := { ctx.atCall name pos with limit := k, args := bindings }
-          let expanded ← elabInlinesCore callCtx cmd.body
+          let taken ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
+          let j := taken.2.1
+          have hj : i + 1 ≤ j := taken.2.2
+          let expanded ← elabInlinesCore (callInto ctx name pos k taken.1) cmd.body
           if cmd.params.isEmpty then
             let (expanded, decls) := splitTrailingDecls expanded
             let acc := acc ++ expanded
@@ -15217,21 +15238,17 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     have hle2 : lookupUserEnv ctx n = some ke := (Option.some_get hle).symm
     have _ : ke.1 < ctx.envLimit := lookupUserEnv_lt hle2
     let env := ke.2
-    let (bindings, j) ← takeArgs ctx env.params n body 0 pos
+    let taken ← takeArgs ctx env.params n body 0 pos
     -- An absent optional argument takes its definition's default, read where the halves read.
-    let bindings ← match absentDefault? env.params bindings with
-      | some (p, d) => do
-        let dctx : Ctx := { ctx with limit := ctx.user.size, envLimit := ke.1, args := bindings }
-        pure (bindDefault p d (← elabInlinesCore { dctx with argBody := true } d) bindings)
-      | none => pure bindings
-    let ⟨envCtx, _⟩ : { c : Ctx // c.envLimit = ke.1 } ←
-      pure ⟨{ ctx with
-        limit := ctx.user.size, envLimit := ke.1, args := bindings }, rfl⟩
-    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.beginBody))
-    have _ := tail_measures body j
+    let bindings ← withDefault env.params taken.1 fun d =>
+      elabInlinesCore { envInto ctx ke.1 taken.1 with argBody := true } d
+    let halves : { c : Ctx // c.envLimit = ke.1 } ← pure ⟨envInto ctx ke.1 bindings, rfl⟩
+    have _ : halves.1.envLimit = ke.1 := halves.2
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope halves.1 env.beginBody))
+    have _ := tail_measures body taken.2
     blocks := blocks ++ (← splicedFrameScope (some blocks.size)
-      (elabBlockScope ctx (body.extract j body.size)))
-    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.endBody))
+      (elabBlockScope ctx (body.extract taken.2 body.size)))
+    blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope halves.1 env.endBody))
   else if n == "tikzpicture" || n == "tikzcd" then
     blocks ← pictureEnvArm ctx n body pos blocks
   else if reservedEnv.contains n then
@@ -15335,13 +15352,19 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else
   match hlk : lookupUser ctx sourceName with
   | some (k, cmd) =>
-    let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 n raws (i + 1)
-      pos #[]
-    let ⟨callCtx, _, _, _, _⟩ : { c : Ctx // c.envLimit = ctx.envLimit
+    let taken ← takeArgsFrom ctx cmd.params 0 n raws (i + 1) pos #[]
+    let j := taken.2.1
+    have hj : i + 1 ≤ j := taken.2.2
+    let call : { c : Ctx // c.envLimit = ctx.envLimit
         ∧ noteFlag c = noteFlag ctx
         ∧ visParsGo c.user c.limit = visParsGo ctx.user k
         ∧ visWeightGo c.user c.limit = visWeightGo ctx.user k } ←
-      pure ⟨{ ctx.atCall sourceName pos with limit := k, args := bindings }, rfl, rfl, rfl, rfl⟩
+      pure ⟨callInto ctx sourceName pos k taken.1, rfl, rfl, rfl, rfl⟩
+    let callCtx := call.1
+    have _ : callCtx.envLimit = ctx.envLimit := call.2.1
+    have _ : noteFlag callCtx = noteFlag ctx := call.2.2.1
+    have _ : visParsGo callCtx.user callCtx.limit = visParsGo ctx.user k := call.2.2.2.1
+    have _ : visWeightGo callCtx.user callCtx.limit = visWeightGo ctx.user k := call.2.2.2.2
     have _ := visPars_expand hlk
     have _ := visWeight_expand hlk
     have _ : slicePars cmd.body 0 ≤ rawParsList cmd.body.toList := by

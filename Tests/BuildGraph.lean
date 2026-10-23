@@ -94,8 +94,9 @@ def largeReads : List (String × List String) :=
 decision written here. -/
 def largeReaders : List (String × List String) :=
   [("LeanTex.Core.Compat", ["LeanTex.Core.ControlContract", "LeanTex.Core.InputContract"]),
-   ("LeanTex.Core.Elab", ["LeanTex.Core.ControlContract", "LeanTex.Core.ElabRegistryContract",
-     "LeanTex.Core.ElabTextContract", "LeanTex.Core.GroupContract", "LeanTex.Core.InputContract",
+   ("LeanTex.Core.Elab", ["LeanTex.Core.ControlContract", "LeanTex.Core.ElabNestContract",
+     "LeanTex.Core.ElabRegistryContract", "LeanTex.Core.ElabTextContract",
+     "LeanTex.Core.GroupContract", "LeanTex.Core.InputContract",
      "LeanTex.Core.PictureContract", "LeanTex.Core.TitleContract"]),
    ("LeanTex.Core.HtmlDoc", ["LeanTex.Core.PdfAgreement"]),
    ("LeanTex.Core.Ir", ["LeanTex.Core.BibContract", "LeanTex.Core.ColorContract",
