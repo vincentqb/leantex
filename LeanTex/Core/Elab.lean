@@ -5502,8 +5502,8 @@ private def inlineVerbatim (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos 
     let d := String.ofList (s.toList.take 1)
     return ← urlSet ctx env (if inner.endsWith d then (inner.dropEnd 1).toString else inner) pos
   if env == "verb" then
-    let kept := s.map fun c => if c == ' ' then '\u00a0' else c
-    return if kept.isEmpty then #[] else #[.styled .mono #[.text kept]]
+    let kept := Parse.verbTied s
+    return if kept.isEmpty then #[] else #[sourceInline ctx pos (.styled .mono #[.text kept])]
   if env == "mintinline" || env == "mint" then
     let some rawLang := v.lang | return #[]
     if env == "mint" then

@@ -404,10 +404,14 @@ space, none for `\hfill`, else the escape or text symbol it names from its place
       | some t => Text.chars (.source ⟨file, p⟩) t
       | none => []
 
+/-- A verbatim's characters as TeX sets them: `\verb`'s with its spaces tied, another's as captured. -/
+@[expose] public def verbText (env : String) (v : Verbatim) : String :=
+  if env = "verb" then verbTied v.text else v.text
+
 mutual
 
 /-- The text slots of raws read in `file`, onto `acc`: a word's, symbol's (a tie as its no-break
-space), formula's floor and verbatim's characters from their place, a space or break as a space,
+space), formula's floor and verbatim's characters (`verbText`) from their place, a space or break as a space,
 a group's or environment's body, an input's in its file, and a control word's own (`ctrlText`). -/
 @[expose] public def rawTextListOnto (file : String) (acc : Array (Char × Origin)) :
     List Raw → Array (Char × Origin)
@@ -424,7 +428,7 @@ a group's or environment's body, an input's in its file, and a control word's ow
   | .env name body _ => rawTextListOnto ((inputEnvFile? name).getD file) acc body.toList
   | .math _ body p =>
     acc ++ (Text.chars (.source ⟨file, p⟩) (Ir.mathFloor (rawSrc (mathReading body)))).toArray
-  | .verb _ v p => acc ++ (Text.chars (.source ⟨file, p⟩) v.text).toArray
+  | .verb env v p => acc ++ (Text.chars (.source ⟨file, p⟩) (verbText env v)).toArray
   | .ctrl name p => acc ++ (ctrlText file name p).toArray
 
 end
@@ -490,6 +494,10 @@ public theorem rawTextList_append (file : String) (a b : List Raw) :
 
 @[simp] public theorem rawTextOne_ctrl (file name : String) (p : Pos) :
     rawTextOne file (.ctrl name p) = ctrlText file name p := by
+  simp [rawTextOne, rawTextOnto]
+
+@[simp] public theorem rawTextOne_verb (file env : String) (v : Verbatim) (p : Pos) :
+    rawTextOne file (.verb env v p) = Text.chars (.source ⟨file, p⟩) (verbText env v) := by
   simp [rawTextOne, rawTextOnto]
 
 @[simp] public theorem rawTextOne_group (file : String) (body : Array Raw) (p : Pos) :

@@ -36,6 +36,9 @@ public structure Verbatim where
   text : String
   deriving Repr, BEq, Inhabited
 
+/-- `\verb`'s text as TeX sets it, each space the tie `\@xobeysp` makes it. -/
+@[expose] public def verbTied (s : String) : String := s.map fun c => if c = ' ' then '\u00a0' else c
+
 /-- A capture with no head. -/
 @[expose] public def Verbatim.plain (text : String) : Verbatim := ⟨#[], #[], none, "", text⟩
 
