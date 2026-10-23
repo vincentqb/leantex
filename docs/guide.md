@@ -469,20 +469,10 @@ several, a second for one constant, for a connective, with other slots than the
 explicit arguments, with a comma, a colon, a parenthesis, a brace, a quote or a
 full stop standing alone, or words that would
 not read back) and each no sentence on the page uses, as on a page that says
-nothing in words. A constant neither the table nor a directive names takes its
-words from its documentation comment's opening clause, read across the line ends
-of its first paragraph up to a full stop ending a sentence, a comma, a semicolon
-or a colon, each backticked explicit argument its slot: `` /-- `b` is moored,
-its draft positive. -/ `` says `Moored b` as b is moored, and `` /-- The label
-of `b`. -/ `` says `nameOf b` as the label of b. A clause opening on neither an
-argument nor an article, holding other code, markup, a `#`, `!` or `?`, or no
-argument, one the next clause qualifies (with unless, except, but, if, when,
-provided, or, and, only or whenever), or one the directive's rules refuse gives
-none, silently. A constant another module declares takes its comment's words
-the same way only where that module's first name is the file's, so a library's
-comments word only a file of that library. Views
-combine in the order given, as `show = prose, code`, `show = code, prose` or
-`show = math, prose, code`.
+nothing in words. Only these directives give a constant words of its own: a
+documentation comment or a name gives none, so a constant no directive names
+stays a formula. Views combine in the order given, as `show = prose, code`,
+`show = code, prose` or `show = math, prose, code`.
 
 Two more options shape a Lean file's page. `proofs = collapse` folds each
 top-level theorem's proof into a disclosure whose summary is Proof, after its

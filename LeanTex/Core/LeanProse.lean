@@ -2471,69 +2471,10 @@ private def declareStep (facts : LeanFacts.Facts) (acc : Declared) (e : String �
     { acc with table := tb, taken := c :: acc.taken, phrases := acc.phrases.push (e.1, t) }
   | .error r => { acc with refused := acc.refused.push (e.1, r) }
 
-/-- A documentation comment's opening clause as its constant's phrase, each backticked explicit
-binder its slot and an opening article lowered; none without a slot, with other code or markup,
-opening on neither, or before a clause qualifying it. -/
-public def docPhrase? (doc : String) (names : Array String) : Option String := Id.run do
-  let blank (l : String) : Bool := l.all Char.isWhitespace
-  let para := " ".intercalate (((doc.splitOn "\n").dropWhile blank).takeWhile (!blank ·))
-  let cs := para.toList.toArray
-  let mut out := ""
-  let mut code := ""
-  let mut inCode := false
-  let mut rest : List Char := []
-  for h : i in [0:cs.size] do
-    let c := cs[i]
-    let next := (cs[i + 1]?).getD ' '
-    if inCode then
-      if c == '`' then
-        match names.toList.findIdx? (fun (n : String) => n == code) with
-        | some k => out := out ++ s!"#{k + 1}"
-        | none => return none
-        code := ""
-        inCode := false
-      else code := code.push c
-    else if c == '`' then inCode := true
-    else if (c == '.' && next.isWhitespace) || c == ',' || c == ';' || c == ':' then
-      rest := (cs.extract (i + 1) cs.size).toList
-      break
-    else if "*_[]<>\\#!?|~$".contains c then return none
-    else out := out.push (if c.isWhitespace then ' ' else c)
-  if inCode then return none
-  let after := ((String.ofList rest).splitOn " ").find? (· != "")
-  if (after.map (·.decapitalize)).any (["unless", "except", "but", "if", "when", "provided", "or",
-      "and", "only", "whenever"].contains ·) then return none
-  let words := (out.splitOn " ").filter (· != "")
-  let said := " ".intercalate words
-  let first := words.headD ""
-  if !said.contains '#' then return none
-  if first.startsWith "#" then return some said
-  if ["the", "a", "an"].contains first.decapitalize then return some said.decapitalize
-  return none
-
-/-- A type's explicit binders' names, outermost first. -/
-def explicitNames : LeanFacts.Term → Array String → Array String
-  | .pi n b _ _ rest, acc => explicitNames rest (if b == .explicit then acc.push n else acc)
-  | _, acc => acc
-
-/-- Every constant's phrase its documentation gives, as the facts carry it: a declaration's own,
-its explicit binders named by its type, and every other constant's. -/
-public def docPhrases (facts : LeanFacts.Facts) : List (String × String) :=
-  let own := facts.decls.toList.filterMap fun d => d.doc.bind fun doc => d.type.bind fun t =>
-    (docPhrase? doc (explicitNames t #[])).map (d.name, ·)
-  let others := facts.docs.toList.filterMap fun (c, doc, ns) => (docPhrase? doc ns).map (c, ·)
-  own ++ others
-
 /-- What a page says its statements through: the core table, then each declared phrase it takes,
-with each refused one and why, then each constant's its documentation gives where neither the core
-table nor a directive names it, none of those refused or counted. -/
+with each refused one and why. -/
 public def tableFor (facts : LeanFacts.Facts) (declared : List (String × String)) : Declared :=
-  let core := coreTable facts.collectionFirst
-  let d := declared.foldl (declareStep facts) ⟨core, [], #[], #[]⟩
-  let said (c : String) := declared.any (fun e => (namedBy facts e.1).contains c) ||
-    core.rels.any (·.1 == c) || core.phrases.any (·.1 == c) || !facts.binders.any (·.1 == c)
-  let fromDocs := ((docPhrases facts).filter fun (c, _) => !said c).foldl (declareStep facts) d
-  { fromDocs with refused := d.refused, phrases := d.phrases }
+  declared.foldl (declareStep facts) ⟨coreTable facts.collectionFirst, [], #[], #[]⟩
 
 private theorem lookup_mem {β : Type} : ∀ {l : List (String × β)} {c : String} {v : β},
     l.lookup c = some v → v ∈ l.map (·.2)

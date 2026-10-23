@@ -291,30 +291,14 @@ run_cmd do
     unless seen.contains w.id do
       lines := lines.push (s!"\{\"failed\":{jstr w.name.toString},\"kind\":\"{w.kind}\"," ++
         s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}],\"proof\":{spanText w.val}}")
-  let ownRoot := (moduleName.splitOn ".").headD ""
   for c in consts.toList do
     if let some ci := env.find? c then
       let field ← liftTermElabM <| try fieldOf c ci.type catch _ => pure none
       let fieldPart := match field with
         | some i => s!",\"field\":{i}"
         | none => ""
-      let own : Bool := match env.getModuleIdxFor? c with
-        | none => true
-        | some i => ownRoot != "" &&
-          (env.header.moduleNames[i.toNat]?).any (·.getRoot.toString == ownRoot)
-      let docPart ← match ← if own then findDocString? env c else pure none with
-        | some d => do
-          let names ← liftTermElabM do
-            try
-              Meta.forallTelescope ci.type fun xs _ => xs.filterMapM fun x => do
-                let decl ← x.fvarId!.getDecl
-                let n := jstr decl.userName.eraseMacroScopes.toString
-                pure (if decl.binderInfo.isExplicit then some n else none)
-            catch _ => pure #[]
-          pure s!",\"doc\":{jstr d},\"names\":[{",".intercalate names.toList}]"
-        | none => pure ""
       lines := lines.push
-        s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"{fieldPart}{docPart}}"
+        s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"{fieldPart}}"
   for (a, b) in read do
     lines := lines.push s!"\{\"command\":{spanText (some (a, b))},\"text\":{jstr (between textLines a b)}}"
   lines := lines.push s!"\{\"leantex-lean-export-end\":{decls}}"

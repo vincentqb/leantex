@@ -1,4 +1,4 @@
--- leantex: show = prose, code, facts = code-lean-prose.facts, glossary = where, phrase.nameOf = "the name of #1"
+-- leantex: show = prose, code, facts = code-lean-prose.facts, glossary = where, phrase.Moored = "#1 is moored", phrase.nameOf = "the name of #1"
 /-! # Laid-out statements
 
 Invented statements whose scopes the prose view sets as indented blocks and whose clauses it
@@ -42,10 +42,8 @@ structure Barge where
   hull : Nat
   draft : Nat
 
-/-- `b` is moored, its draft positive. -/
 def Moored (b : Barge) : Prop := 0 < b.draft
 
-/-- The label of `b`, its hull number. -/
 def nameOf (b : Barge) : String := toString b.hull
 
 /-- Three clauses over a list: a disjunction, a witness and a bound. -/

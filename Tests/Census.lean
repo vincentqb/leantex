@@ -1503,7 +1503,7 @@ def censusCodeRows :
     let bounds := (c.toList.flatMap (·.lines.toList)).dropWhile
       (!hasStr ·.text "Theorem (Ebb.barge_bounds).")
     let opening (w : String) : Option CensusLine := bounds.find? (·.text.startsWith w)
-    [("four pages", c.size == 4),
+    [("three pages", c.size == 3),
      ("a quantified hypothesis stands a step in under its condition, the conclusion back at its margin",
        linesStepAt step hyp 1 "for every" 1 && linesStepAt step hyp 2 "then False." 0),
      ("a laid-out paragraph's lines stand a leading apart, no gap between them, the head's taller faces aside",
@@ -1532,10 +1532,6 @@ def censusCodeRows :
        let said := " ".intercalate ((c.toList.flatMap (·.lines.toList)).map (·.text))
        hasStr said "Definition (Ebb.Moored)." && hasStr said "is moored if and only if" &&
          hasStr said "is moored means"),
-     ("a predicate's documentation comment gives its words where no directive does, and a directive wins over a comment",
-       let said := " ".intercalate ((c.toList.flatMap (·.lines.toList)).map (·.text))
-       hasStr said "b is moored if and only if" && !hasStr said "or Moored b" &&
-         hasStr said "the name of b" && !hasStr said "the label of b"),
      ("a conjunction of quantified statements sets as a numbered list right of the head's margin, each item a sentence",
        match both[0]?, both[1]?, both[2]? with
        | some h, some a, some b =>

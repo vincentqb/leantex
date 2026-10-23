@@ -47,7 +47,7 @@ private theorem foldl_contract (facts : LeanFacts.Facts) :
 /-- A page's table is well formed, whatever phrases its directive declares. -/
 public theorem tableFor_contract (facts : LeanFacts.Facts) (declared : List (String × String)) :
     (tableFor facts declared).table.lexicon.wf = true :=
-  foldl_contract facts _ _ (foldl_contract facts declared _ (coreTable_contract _))
+  foldl_contract facts declared _ (coreTable_contract _)
 
 /-- Every statement a page says in words, through the core table or the one its phrases make, reads
 back as itself. -/

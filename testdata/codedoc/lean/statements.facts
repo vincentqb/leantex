@@ -51,7 +51,7 @@
 {"const":"Membership.mem","binders":"iicdd"}
 {"const":"Exists","binders":"id"}
 {"const":"sorryAx","binders":"dd"}
-{"const":"Tide.height","binders":"dd","doc":"The height a tide reaches after `n` steps of `rise`. ","names":["rise","n"]}
+{"const":"Tide.height","binders":"dd"}
 {"const":"GE.ge","binders":"icdd"}
 {"const":"Fin.mk","binders":"idd"}
 {"const":"HDiv.hDiv","binders":"iiicdd"}

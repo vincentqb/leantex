@@ -70,8 +70,6 @@ public structure Decl where
   prop : Bool
   /-- A predicate definition's value, where the facts carry it. -/
   value : Option Term := none
-  /-- Its documentation comment, where it has one. -/
-  doc : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- A declaration the file writes by name that Lean added nothing for: its name as written, its
@@ -101,8 +99,6 @@ public structure Facts where
   binders : Array (String × Array Binder)
   /-- The leading binder Lean's field notation reads each constant's receiver from, where it has one. -/
   fields : Array (String × Nat) := #[]
-  /-- Each documented constant's documentation and the names of its explicit binders. -/
-  docs : Array (String × String × Array String) := #[]
   failed : Array Failed := #[]
   commands : Array Command := #[]
   deriving Repr, BEq, Inhabited
@@ -233,13 +229,7 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let fields := match j.getObjValAs? Nat "field" with
       | .ok k => facts.fields.push (c, k)
       | .error _ => facts.fields
-    let names := match j.getObjValAs? (Array Json) "names" with
-      | .ok ns => ns.filterMap fun n => (n.getStr?).toOption
-      | .error _ => #[]
-    let docs := match j.getObjValAs? String "doc" with
-      | .ok d => facts.docs.push (c, d, names)
-      | .error _ => facts.docs
-    return { facts with binders := facts.binders.push (c, bs.toArray), fields, docs }
+    return { facts with binders := facts.binders.push (c, bs.toArray), fields }
   | .error _, .ok name =>
     let some kind := kindOf? (← j.getObjValAs? String "kind") | throw "an unknown kind"
     let range ← j.getObjValAs? (Array Json) "range"
@@ -266,9 +256,8 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let value ← match j.getObjValD "value" with
       | .null => pure none
       | v => some <$> (termOf (← v.getArr?))
-    let doc := (j.getObjValAs? String "doc").toOption
     let decl : Decl :=
-      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop, value, doc }
+      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop, value }
     return { facts with decls := facts.decls.push decl }
 
 /-- An answer, whole or refused whole. -/
