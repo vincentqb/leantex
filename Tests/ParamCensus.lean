@@ -121,6 +121,7 @@ def shipped (fonts : Font.FontSet) (src : String) : Shipped :=
   let (doc, ds) := bibBuild src #[("refs", refsBib), ("refs.bib", refsBib), ("rich", richBib)]
   let out := layoutOf fonts doc
   let (head, tree, hds) := HtmlDoc.emitTree {} doc
+  let twin := MarkdownDoc.emitReport doc
   let lang := doc.info.language.getD "en"
   let reads := readProps (Html.document lang head tree)
   let html := Html.document lang (dropUnreadNodes reads #[] head.toList)
@@ -130,7 +131,7 @@ def shipped (fonts : Font.FontSet) (src : String) : Shipped :=
     css := String.join ((dropUnreadNodes reads #[] head.toList).toList.filterMap fun
       | .style c => some c
       | _ => none)
-    md := MarkdownDoc.emit doc, diags := ds ++ out.diags ++ hds }
+    md := twin.1, diags := ds ++ out.diags ++ hds ++ twin.2 }
 
 /-- Whether `key` stands in `msg` as a whole token, not inside a longer name. -/
 def spells (msg key : String) : Bool := Id.run do

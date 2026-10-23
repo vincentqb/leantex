@@ -111,6 +111,25 @@ def asideRows (emit : Ir.Doc → String) (cases : List String) : Array Row × Na
     if (reread emit d).1.body == d.body then exact := exact + 1
   return (#[{ item := "aside.reread-exact", value := (exact : Int) }], exact)
 
+/-- Pictures the twin sets as their text alternative, each with the words it should read back. -/
+def pictureCases : List (String × String) :=
+  [("\\begin{tikzpicture}\\node at (0,0) {Kqzv}; \\node at (1,0) {Wxyb};\\end{tikzpicture}",
+    "Kqzv, Wxyb"),
+   ("\\begin{tikzpicture}[alt={A ring of dots}]\\draw (0,0) circle (1);\\end{tikzpicture}",
+    "A ring of dots"),
+   ("\\begin{figure}\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}" ++
+    "\\caption{A rising line}\\end{figure}", "Figure 1: A rising line")]
+
+/-- The picture rows: pictures whose twin re-reads to one paragraph of their alternative's words. -/
+def pictureRows (emit : Ir.Doc → String) (cases : List (String × String)) : Array Row × Nat := Id.run do
+  let mut exact : Nat := 0
+  for (body, said) in cases do
+    let d := (elabStr (dvDoc "" body)).1
+    match (reread emit d).1.body.toList with
+    | [.para xs] => if Ir.plainText xs == said then exact := exact + 1
+    | _ => pure ()
+  return (#[{ item := "picture.reread-alt", value := (exact : Int) }], exact)
+
 /-- A cited document's twin built again with the `.bib` texts its bibliography named. -/
 def rebuiltWith (emit : Ir.Doc → String) (d : Ir.Doc) (found : Array (String × String)) : Ir.Doc :=
   (rereadWith emit d found).1
@@ -142,6 +161,7 @@ def measureWith (emit : Ir.Doc → String) : IO (Array String × Array Row) := d
   let (cite, citeExact) := citeRows emit citeCases
   let (ink, cited, inked) := citeInkRows emit (found.filter fun (d, _) => !(Ir.bibRefs d).isEmpty)
   let (aside, asideExact) := asideRows emit asideCases
+  let (picture, pictureExact) := pictureRows emit pictureCases
   return (#[s!"# source: {cases.size} CommonMark 0.31.2 examples, {accepted} accepted by the \
 reader, {exact} of them re-read from their twin to the same IR body",
     s!"# source: {docs.size} corpus documents, {clean} twins re-read with no error, \
@@ -151,7 +171,9 @@ same IR body",
     s!"# source: {cited} cited corpus documents, {inked} of them setting the same text from their \
 twin built again with their bibliography",
     s!"# source: {asideCases.length} MyST margin notes, {asideExact} re-read from their twin to the \
-same IR body"], cm ++ corpus ++ cite ++ ink ++ aside)
+same IR body",
+    s!"# source: {pictureCases.length} pictures, {pictureExact} re-read from their twin as one \
+paragraph of their alternative"], cm ++ corpus ++ cite ++ ink ++ aside ++ picture)
 
 /-- A twin that writes `*` unescaped: the round trip it fails is the one a
 lost escape loses. -/

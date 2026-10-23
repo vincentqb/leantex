@@ -27,7 +27,7 @@ tree            := Struct.ofDoc (Layout.pdfView doc)   -- Ir.keepFor "pdf"
 docH            := doc, or where a picture withdraws for the page alone a re-elaboration with it
                    withdrawn, titled and resolved as doc is
 (html, dHtml)   := prepareHtml f hcfg { docH with body := Ir.squeezeFrames docH.body sq } natives
-md              := MarkdownDoc.emit doc bibName
+(md, dMd)       := MarkdownDoc.emitReport doc bibName
 D               := every diagnostic the run reports: each phase's batch through
                    Diag.resolveAll (Diag.forOutputs outs batch), and the refusals Ui.diag prints
 -- earlier is src.diags, and src.diags ++ listingDiags once listings are highlighted. The driver
@@ -90,7 +90,7 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 | Accounting: every loss reaches D once | `Elab.runPrepared_reports_contract`, `Elab.accountFront_reports_contract`, `Layout.runFitted_projects`, `Layout.runFitted_accounts`, `Diag.foldRepeats_shown_exact`, `Diag.foldRepeats_visible_inj`, `Diag.tallySites_sum_exact` | owed (U112): `Driver.build_reports_contract` |
 | PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`; one character per code, the first `Pdf.painted` lists its glyph with: `Pdf.toUnicode_glyphs_exact`; tested: `pdfTextChecks`, each page's bytes read back as its lines' glyphs and breaks in paint order; the reader's text is pdftotext's: `testdata/scoreboard/textlayer.tsv` | owed (U21): `PdfContent.extract_text`; owed (U110): `Layout.runFitted_text_accounts` |
 | HTML page text | `Html.parse_render_exact`, `Html.pageText_render_exact`, `Html.pageText_render_ink`, `HtmlDoc.emit_parse_exact`, `HtmlDoc.emit_pageText_ink`, `mathml_glyphs_agree`; tested: `htmlReadChecks`, every corpus page meets `Html.DocOk`; the reader's tree is Chromium's: `testdata/scoreboard/textlayer.tsv` | owed (U110): `HtmlDoc.emit_text_accounts` |
-| Markdown twin | `rowLine_cells_exact`; the text escaper's spelling reads back under a model of the inline scan's markup: `MarkdownDoc.escape_read_id`; tested: `twinEscapeReadChecks`, that the markdown door reads it back alike, up to the typography and white space `Text.norm` reads alike | owed (U49): `MarkdownDoc.inlineText_read_id`, the inline spelling with the spaces it writes after an abbreviation and its line-start escapes; owed (U110): `MarkdownDoc.emit_text_accounts` |
+| Markdown twin | `rowLine_cells_exact`; the text escaper's spelling reads back under a model of the inline scan's markup: `MarkdownDoc.escape_read_id`; tested: `twinEscapeReadChecks`, that the markdown door reads it back alike, up to the typography and white space `Text.norm` reads alike; a picture the twin sets as its labels' words is named once, read off the walk that writes the twin (`MarkdownDoc.emitReport`); tested: `twinPictureChecks` | owed (U49): `MarkdownDoc.inlineText_read_id`, the inline spelling with the spaces it writes after an abbreviation and its line-start escapes; owed (U110): `MarkdownDoc.emit_text_accounts`, owing a markdown reader's text model with origins, irText over blocks (`Ir.locatedBlocks`, U111), and the twin's silent drops named: a picture in a table cell, a boundary picture's image |
 | Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; tested: `htmlContainedCorpusChecks` | owed (U113): `HtmlDoc.emit_scripts_mem` |
 | Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free`; the driver's reads, by a line scan: `undeclaredConfigRead` | owed (U112): `Driver.build_flag_free` |
 | The headline | the rows above, composed | owed (U112): `compile_text_accounts` |
@@ -163,8 +163,9 @@ Three gaps keep the composition open:
   it (`decodeStream_deflate_exact`). Owed: a line-end hyphen marked generated, owed (U115):
   `Pdf.lineHyphen_generated`; and set lines carrying the IR text, owed (U110):
   `Layout.runFitted_text_accounts`. For the twin, the markdown reader's text of the emitted file,
-  whose losses need a diagnostic channel `MarkdownDoc.emit` lacks today; owed (U110):
-  `MarkdownDoc.emit_text_accounts`. Modules:
+  whose losses reach D through `MarkdownDoc.emitReport` (a picture's drawing, W0471, its labels'
+  words set in its place); owed (U110): `MarkdownDoc.emit_text_accounts`, which waits on a
+  model of the reader's text with origins and on irText over blocks (`Ir.locatedBlocks`). Modules:
   `LeanTex/Core/PdfContent.lean`, `LeanTex/Core/Pdf.lean`, `LeanTex/Core/PdfToUnicodeProof.lean`,
   `LeanTex/Core/Layout.lean`, `LeanTex/Core/HtmlDoc.lean`, `LeanTex/Core/MarkdownDoc.lean`,
   `LeanTex/Core/MdParse.lean`; the

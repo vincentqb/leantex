@@ -1356,11 +1356,18 @@ private def itemPut (cont : String) (pen : ItemPen) (leadsList : Bool) (s : Stri
     | some first => { acc := pen.acc ++ itemHead first cont s ++ "\n", first := none, prev := none }
     | none => { pen with acc := pen.acc ++ (if leadsList then "" else "\n") ++ s ++ "\n", prev := none }
 
+/-- What a picture set as its labels' words leaves after its paragraph in a marked twin. -/
+private def pictureMark : String := "\uE001"
+
 /-- What the twin writes blocks against: the document's locale, and whether the twin declares the
 document's bibliography, so its citations are spelled and its list stands in a division. -/
 private structure Twin where
   loc : Locale
   cites : Bool
+  /-- Whether a float's caption with words stands for the pictures it holds. -/
+  captioned : Bool := false
+  /-- Whether a picture set as its labels' words leaves `pictureMark` after its paragraph. -/
+  mark : Bool := false
 
 mutual
 
@@ -1449,8 +1456,20 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
   | .logo _ => acc
   -- A rule is decorative ink.
   | .rule _ _ _ => acc
-  -- A picture's labels are not prose in reading order.
-  | .picture _ => acc
+  -- A drawing has no markdown spelling; its text alternative stands in its place, or the caption of
+  -- its float, and a refused picture's stand-in, already named, sets nothing.
+  | .picture pic =>
+    if tw.captioned || pic.said == DiagCode.W0362.code then acc else
+    let said := match pic.alternative, tw.cites with
+      | .citing runs, true =>
+        let spelled := altSpelling true runs
+        if spelled.contains unspelled.front then inlineText #[.text pic.alternative.text] true
+        else spelled
+      | a, _ => inlineText #[.text a.text] tw.cites
+    if said.trimAscii.isEmpty then acc
+    else
+      let mark := if tw.mark && pic.alt matches .undeclared then pictureMark else ""
+      acc ++ paraText ind ind said ++ mark ++ "\n\n"
   | .frame title _ _ _ body =>
     let head := if title.isEmpty then "" else ind ++ "## " ++ headingText title tw.cites ++ "\n\n"
     blocksInto tw summary ind (acc ++ head) none body.toList
@@ -1476,8 +1495,9 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
       else
         paraText ind ind (inlineText (Ir.numberedCaption tw.loc kind num caption) tw.cites) ++
           "\n\n"
-    if capAbove then blocksInto tw summary ind (acc ++ cap) none body.toList
-    else blocksInto tw summary ind acc none body.toList ++ cap
+    let inner := { tw with captioned := tw.captioned || (Ir.plainText caption).any (!·.isWhitespace) }
+    if capAbove then blocksInto inner summary ind (acc ++ cap) none body.toList
+    else blocksInto inner summary ind acc none body.toList ++ cap
   -- A twin that declares the bibliography places its list where the reader reads it back.
   | .bibliography src _ items =>
     let entries := bibItemsText tw.cites ind items
@@ -1698,8 +1718,9 @@ public def twinMeta (doc : Doc) (bibName : String → String := id) : String :=
       optLine ++ nociteLine ++ "\n---\n"
   | _, _ => ""
 
-/-- The twin in a citation mode: its body, its footnotes, then `back`. -/
-public def twinIn (doc : Doc) (cites : Bool) (back : String) : String :=
+/-- The twin in a citation mode, each picture set as its labels' words marked where `mark`: its
+body, its footnotes, then `back`. -/
+private def twinInWith (mark : Bool) (doc : Doc) (cites : Bool) (back : String) : String :=
   let doc := { doc with body := twinBody doc }
   let summary := match doc.info.subject with
     | some s => "> " ++ summaryLine s cites ++ "\n\n"
@@ -1709,8 +1730,12 @@ public def twinIn (doc : Doc) (cites : Bool) (back : String) : String :=
     | some t => if bodyTitled then "" else "# " ++ titleLine t cites ++ "\n\n"
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
-  tighten (preamble ++ blocksInto ⟨doc.info.locale, cites⟩ summary "" "" none doc.body.toList)
+  tighten (preamble ++ blocksInto { loc := doc.info.locale, cites, mark } summary "" "" none
+    doc.body.toList)
     ++ noteDefs cites doc.body ++ back
+
+/-- The twin in a citation mode: its body, its footnotes, then `back`. -/
+public def twinIn (doc : Doc) (cites : Bool) (back : String) : String := twinInWith false doc cites back
 
 /-- The twin's closing metadata block, with `bibName` placing its bibliography. -/
 public def twinBack (doc : Doc) (bibName : String → String) : String :=
@@ -1727,6 +1752,27 @@ closes with, where they read back so, else as their marks. -/
 public def emit (doc : Doc) (bibName : String → String := id) : String :=
   let cites := twinCites doc bibName
   twinIn doc cites (if cites then twinBack doc bibName else "")
+
+/-- The twin, and W0471 for each picture it sets as its labels' words, its drawing absent, read off
+the very walk that writes it, each named by those words. -/
+public def emitReport (doc : Doc) (bibName : String → String := id) : String × Array Diag :=
+  let cites := twinCites doc bibName
+  let back := if cites then twinBack doc bibName else ""
+  let marked := twinInWith true doc cites back
+  if !marked.contains pictureMark.front then (marked, #[]) else
+  let twin := twinIn doc cites back
+  let pieces := marked.splitOn pictureMark
+  let k := pieces.length - (twin.splitOn pictureMark).length
+  -- each mark ends its paragraph, the words after the blank line before it
+  let words := (pieces.take k).map fun piece =>
+    ((piece.splitOn "\n\n").getLast?.getD "").trimAscii.toString
+  (twin, words.toArray.map fun w =>
+    let shown := if w.length > 40 then (w.take 40).toString ++ "…" else w
+    Diag.of .W0471 (Diag.say .W0471 .picture)
+      (detail := some s!"its labels' words, {shown.quote}, stand for it")
+      (help := some "say what the drawing shows with alt={...} on the picture, which the \
+twin, the page and the PDF read alike")
+      (subject := some s!"md:picture:{shown}") (output := some .md))
 
 -- Sealed so unification cannot unfold the collection walk.
 seal noteDefs
@@ -1821,7 +1867,12 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
   | .pagebreak => append_nil acc
   | .logo _ => append_nil acc
   | .rule _ _ _ => append_nil acc
-  | .picture _ => append_nil acc
+  | .picture _ => by
+    simp only [blockInto]
+    repeat' split
+    all_goals first
+      | exact append_nil acc
+      | exact append_chain₃ _ _ _ _
   | .frame title _ _ _ body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends tw summary ind
       (acc ++ if title.isEmpty then "" else ind ++ "## " ++ headingText title tw.cites ++ "\n\n")
@@ -1834,12 +1885,12 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
   | .float kind num capAbove body caption => by
     simp only [blockInto]
     split
-    · exact extends_comp ⟨_, rfl⟩ (blocksInto_extends tw summary ind
+    · exact extends_comp ⟨_, rfl⟩ (blocksInto_extends _ summary ind
         (acc ++ if caption.isEmpty then "" else
           paraText ind ind (inlineText (Ir.numberedCaption tw.loc kind num caption) tw.cites) ++
             "\n\n")
         none body.toList)
-    · exact extends_comp (blocksInto_extends tw summary ind acc none body.toList) ⟨_, rfl⟩
+    · exact extends_comp (blocksInto_extends _ summary ind acc none body.toList) ⟨_, rfl⟩
 
 private theorem blocksInto_extends (tw : Twin) (summary ind acc : String)
     (prev : Option (Bool × Bool)) :
@@ -2075,12 +2126,12 @@ public theorem emit_meta_title_first (doc : Doc) (bibName : String → String) (
   let c := twinCites doc bibName
   let back := if c then twinBack doc bibName else ""
   obtain ⟨q, hq⟩ := tighten_head (titleLine t c) (summaryLine s c)
-    (blocksInto ⟨doc.info.locale, c⟩ ("> " ++ summaryLine s c ++ "\n\n") "" "" none
+    (blocksInto { loc := doc.info.locale, cites := c } ("> " ++ summaryLine s c ++ "\n\n") "" "" none
       (twinBody doc).toList)
     (fun x hx => (titleLine_contract t _ x hx).1) (fun x hx => (summaryLine_contract s _ x hx).1)
   refine ⟨q ++ noteDefs c (twinBody doc) ++ back, ?_⟩
   show twinIn doc c back = _
-  simp only [twinIn, ht, hs, hbody, Bool.false_eq_true, ↓reduceIte]
+  simp only [twinIn, twinInWith, ht, hs, hbody, Bool.false_eq_true, ↓reduceIte]
   rw [hq]
   simp only [String.append_assoc]
   rfl
@@ -2101,7 +2152,7 @@ public theorem emit_body_title_first (doc : Doc) (bibName : String → String) (
     Array.contains_eq_true_of_mem h0
   let c := twinCites doc bibName
   let back := if c then twinBack doc bibName else ""
-  let tw : Twin := ⟨doc.info.locale, c⟩
+  let tw : Twin := { loc := doc.info.locale, cites := c }
   let sm := "> " ++ summaryLine s c ++ "\n\n"
   have hfirst : blocksInto tw sm "" "" none (twinBody doc).toList =
       blocksInto tw sm "" ("# " ++ headingText ttl c ++ "\n\n" ++ sm) none rest := by
@@ -2115,12 +2166,12 @@ public theorem emit_body_title_first (doc : Doc) (bibName : String → String) (
   show twinIn doc c back = _
   cases hT : doc.info.title with
   | some t =>
-    simp only [twinIn, hs, hbt, hT, ite_true, String.empty_append]
+    simp only [twinIn, twinInWith, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw, hq]
     simp only [String.append_assoc]
     rfl
   | none =>
-    simp only [twinIn, hs, hbt, hT, ite_true, String.empty_append]
+    simp only [twinIn, twinInWith, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw, hq]
     simp only [String.append_assoc]
     rfl

@@ -463,6 +463,51 @@ def twinEscapeReadChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"twin: unescaped markup {raw} reads as none under the model and as markup at the door"
       (MarkdownDoc.readText true false none raw.toList == none && Ir.plainText xs != raw)
 
+/-- A picture's drawing has no markdown spelling: the twin sets its text alternative in its place,
+or the caption that gave it, and names once each picture whose labels' words stand for it; one with
+a declared, decorative or empty alternative, or one the twin does not write, names nothing. -/
+def twinPictureChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let picBody (opts body : String) := "Before.\n\n\\begin{tikzpicture}" ++ opts ++ body ++
+    "\\end{tikzpicture}\n\nAfter."
+  let labels := "\\node at (0,0) {Kqzv}; \\node at (1,0) {Wxyb};"
+  for (kind, body, said, named) in [("labelled", picBody "" labels, some "Kqzv, Wxyb", 1),
+      ("described", picBody "[alt={A ring of Kqzv}]" labels, some "A ring of Kqzv", 0),
+      ("decorative", picBody "[artifact]" labels, none, 0),
+      ("unlabelled", picBody "" "\\draw (0,0) -- (1,1);", none, 0)] do
+    let (tw, ds) := MarkdownDoc.emitReport (elabStr (dvDoc "" body)).1
+    let w := ds.filter (·.kind == .W0471)
+    t s!"twin: a {kind} picture sets {said.getD "nothing"} ({repr tw})"
+      (hasStr tw ("Before.\n\n" ++ (said.map (· ++ "\n\n")).getD "" ++ "After."))
+    t s!"twin: a {kind} picture names {named}"
+      (w.size == named && w.all (·.output == some .md) && !hasStr tw "\uE001")
+  let fig := "\\begin{figure}\\begin{tikzpicture}" ++ labels ++
+    "\\end{tikzpicture}\\caption{A rising line}\\end{figure}"
+  let (tw, ds) := MarkdownDoc.emitReport (elabStr (dvDoc "" fig)).1
+  t s!"twin: a captioned picture's caption stands for it once ({repr tw})"
+    ((tw.splitOn "A rising line").length == 2 && !ds.any (·.kind == .W0471))
+  for (kind, cap) in [("labelled", "\\label{f}"), ("empty", "")] do
+    let src := "\\begin{figure}\\begin{tikzpicture}" ++ labels ++ "\\end{tikzpicture}\\caption{" ++
+      cap ++ "}\\end{figure}"
+    let (tw, ds) := MarkdownDoc.emitReport (elabStr (dvDoc "" src)).1
+    t s!"twin: a picture under a caption of no words sets its labels' words ({kind}: {repr tw})"
+      (hasStr tw "Kqzv, Wxyb" && (ds.filter (·.kind == .W0471)).size == 1)
+  let sub := "\\begin{figure}\\begin{subfigure}{0.4\\textwidth}\\begin{tikzpicture}" ++ labels ++
+    "\\end{tikzpicture}\\end{subfigure}\\caption{Two panels}\\end{figure}"
+  let (tw, _) := MarkdownDoc.emitReport (elabStr (dvDoc "\\usepackage{subcaption}\n" sub)).1
+  t s!"twin: a subfigure's picture is stood for by its figure's caption once ({repr tw})"
+    ((tw.splitOn "Two panels").length == 2)
+  let (_, ds) := MarkdownDoc.emitReport
+    (elabStr (dvDoc "" (picBody "" labels ++ "\n\n" ++ picBody "" labels))).1
+  t "twin: each picture is named apart"
+    ((ds.filter (·.kind == .W0471)).map (·.subject) ==
+      #[some "md:picture:Kqzv, Wxyb", some "md:picture:Kqzv, Wxyb"])
+  let (tw, ds) := MarkdownDoc.emitReport (elabStr (dvDeck ""
+    ("\\begin{frame}Kqzv\\note{\\begin{tikzpicture}\\node at (0,0) {Wxyb};" ++
+      "\\end{tikzpicture}}\\end{frame}"))).1
+  t s!"twin: a picture the twin leaves out with its note names nothing ({repr tw})"
+    (!hasStr tw "Wxyb" && !ds.any (·.kind == .W0471))
+
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinDisclosureChecks ref
   twinLinesChecks ref
@@ -475,5 +520,6 @@ def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinDriverChecks ref
   twinEdgeChecks ref
   twinEscapeReadChecks ref
+  Tests.MarkdownTwin.twinPictureChecks ref
 
 end Tests.MarkdownTwin

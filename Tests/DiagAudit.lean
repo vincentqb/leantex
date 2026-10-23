@@ -27,6 +27,7 @@ import scripts.Rung
 import Tests.MonoDefault
 import Tests.InlineBoxes
 import Tests.MarginNote
+import Tests.MarkdownTwin
 import Tests.LeanStatements
 import Tests.LeanViews
 import Tests.LeanProse
@@ -181,6 +182,7 @@ def registry : List AuditRow :=
    ⟨.W0452, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
    ⟨.W0455, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
    ⟨.W0457, .keep, .degraded, check% Tests.MarginNote.checks⟩,
+   ⟨.W0471, .keep, .degraded, check% Tests.MarkdownTwin.twinPictureChecks⟩,
    ⟨.W0453, .keep, .degraded, check% Tests.CodeDoc.docMarkupChecks⟩,
    ⟨.W0454, .keep, .degraded, check% Tests.CodeDoc.docMarkupChecks⟩,
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,

@@ -2544,6 +2544,11 @@ def dvH (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
   if w.sourceOnly then ds else ds ++ (HtmlDoc.emit {} doc).2
 
+/-- Elaboration's diagnostics, then the markdown twin's own. -/
+def dvT (src : String) (w : WitnessRun := {}) : Array Diag :=
+  let (doc, ds) := w.elab src
+  if w.sourceOnly then ds else ds ++ (MarkdownDoc.emitReport doc).2
+
 /-- A one-face set: every slot and variant maps to index 0. -/
 def oneFaceOf (font : Font) : Font.FontSet := Font.FontSet.ofFace font
 

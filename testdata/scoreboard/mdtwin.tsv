@@ -5,6 +5,7 @@
 # source: 17 Pandoc citations, 17 re-read from their twin to the same IR body
 # source: 5 cited corpus documents, 5 of them setting the same text from their twin built again with their bibliography
 # source: 3 MyST margin notes, 3 re-read from their twin to the same IR body
+# source: 3 pictures, 3 re-read from their twin as one paragraph of their alternative
 aside.reread-exact	3
 cite.reread-exact	17
 cite.reread-ink	5
@@ -35,3 +36,4 @@ cm.Textual content.reread-exact	3
 cm.Thematic breaks.reread-exact	18
 corpus.reread-clean	123
 corpus.twin-stable	110
+picture.reread-alt	3

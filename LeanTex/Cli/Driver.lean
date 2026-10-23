@@ -1106,7 +1106,10 @@ in the HTML" (← since t)
       if emit.contains .md then
         let t ← IO.monoMsNow
         let names := twinBibNames file mdPath doc
-        let md := MarkdownDoc.emit doc fun n => ((names.find? (·.1 == n)).map (·.2)).getD n
+        let (md, mdDiags) := MarkdownDoc.emitReport doc fun n =>
+          ((names.find? (·.1 == n)).map (·.2)).getD n
+        resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
+          (mdDiags.map front.prepared.sourceTriggers.attribute))
         ui.phase "markdown" s!"{md.utf8ByteSize} bytes" (← since t)
         mdBuilt := some md
       let mut pdfBuilt : Option ByteArray := none

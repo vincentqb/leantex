@@ -562,6 +562,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0452 => dvE (w := w) (dvDoc "" "A \\fbox{\\begin{minipage}{2cm}Kqzv\\end{minipage}} b.")
   | .W0455 => dvE (w := w) (dvDoc "" "A \\fbox{\\begin{itemize}\\item Kqzv\\end{itemize}} b.")
   | .W0457 => dvE (w := w) (dvDoc "" "\\begin{figure}Kqzv\\marginpar{Kqzv}\\end{figure}")
+  | .W0471 => dvT (w := w) (dvDoc "" "\\begin{tikzpicture}\\node at (0,0) {Kqzv};\\end{tikzpicture}")
   -- A Javadoc inline tag with nothing to stand for, and a link to a program element.
   | .W0453 => (Surface.read (.code .java) "t.java" (w.rep "/** {@inheritDoc} */\nvoid f() {}\n")).2
   | .W0454 => (Surface.read (.code .java) "t.java" (w.rep "/** See {@link Other}. */\nvoid f() {}\n")).2
