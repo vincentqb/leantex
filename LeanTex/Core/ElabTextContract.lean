@@ -465,18 +465,30 @@ private theorem lookupUser_fits (K : String → Prop) (ctx : Ctx) (name : String
 private theorem inlineVerbatim_verb (ctx : Ctx) (v : Parse.Verbatim) (p : Pos) (st : ESt) :
     (inlineVerbatim ctx "verb" v p).run st =
       (if (Parse.verbTied v.text).isEmpty then #[]
-        else #[sourceInline ctx p (.styled .mono #[.text (Parse.verbTied v.text)])], st) := by
+        else #[.styled .mono #[.text (Parse.verbTied v.text)]], st) := by
   have hu : Lex.urlCommands.contains "verb" = false := by decide
   simp only [inlineVerbatim, hu, Bool.false_eq_true, ↓reduceIte, beq_self_eq_true]
   split <;> rfl
 
-private theorem verb_located (c : Ctx) (q : Pos) (t : String) (hc : c.callSite = none) :
-    locatedText #[sourceInline c q (.styled .mono #[.text t])] = chars (.source ⟨c.file, q⟩) t := by
-  have hs : locatedOne (.source ⟨c.file, q⟩) (.styled .mono #[.text t]) =
-      chars (.source ⟨c.file, q⟩) t := by
-    show locatedList _ [.text _] = _
-    simp [locatedList_cons]
-  simp [locatedText, sourceInline, Ctx.sourceSpan, hc, locatedList_cons, hs]
+private theorem verbTied_toList (t : String) :
+    (Parse.verbTied t).toList = t.toList.map fun c => if c = ' ' then '\u00a0' else c :=
+  String.toList_map
+
+private theorem verbTied_canon (t : String) :
+    canon (Parse.verbTied t).toList = canon t.toList := by
+  rw [verbTied_toList]
+  simp only [canon, List.flatMap_map]
+  congr 1
+  funext c
+  by_cases hc : c = ' '
+  · subst hc
+    decide
+  · simp [hc]
+
+private theorem verb_located (o : Origin) (s : Span) (t : String) :
+    locatedOne o (.located s #[.styled .mono #[.text t]]) = chars (.source s) t := by
+  show locatedList _ [.text _] = _
+  simp [locatedList_cons]
 
 /-- What the spine owes at `raws`, `i`: its run accounts for the raws from `i`. -/
 private def SpineAccounts (ctx : Ctx) (raws : Array Raw) (i : Nat) (acc : Array Inline)
@@ -982,13 +994,21 @@ private theorem spine_step (K M V : String → Prop) (hK : ∀ n, K n → PlainC
         (ih { ctx with macroRoles := roles } raws (i + 1) _ "" st hnext hfit hr hm)
         (by simp) (by simp) ?_
       intro named _ tail
-      simp only [locatedText_append, locatedText_flushText, chars_empty, List.append_nil,
-        Parse.rawTextOne_verb, Parse.verbText, ↓reduceIte, List.append_assoc]
+      simp only [Parse.rawTextOne_verb, chars_empty, List.append_nil, List.append_assoc]
       split
       · rename_i he
-        have he' : Parse.verbTied v.text = "" := by simpa using he
-        simp [he', chars]
-      · rw [verb_located _ q _ rfl]
+        have he' : v.text.toList = [] := by
+          have : (Parse.verbTied v.text).toList = [] := by simpa using he
+          simpa [verbTied_toList] using this
+        simp [locatedText_flushText, chars, he']
+      · have hne : (#[.styled .mono #[.text (Parse.verbTied v.text)]] : Array Inline).isEmpty =
+            false := rfl
+        simp only [hne, Bool.false_eq_true, ↓reduceIte, locatedText_push,
+          locatedText_flushText, Ctx.sourceSpan, Option.map_none, Option.getD_none, verb_located,
+          List.append_assoc]
+        have := view_token named ⟨ctx.file, q⟩ (verbTied_canon v.text)
+          (locatedText acc' ++ chars .unplaced sb') tail
+        simpa only [List.append_assoc] using this
     case h_12.mod name p hMn =>
       exact absurd ⟨name, p, by rw [Array.getElem?_eq_getElem h, heq], hMn⟩ hmod
     case h_4.sym p | h_5.sym p | h_6.sym p =>
@@ -1131,8 +1151,8 @@ public theorem elabInlines_modifier_text (ctx : Ctx) (raws : Array Raw) (st : ES
       { ctx with macroRoles := ctx.macroRoles.enter } raws 0 #[] "" st hfit hr hm
 
 /-- `\verb` conserves its text: among the plain-text arms, the control words setting their own
-text and the text-font and decoration commands, `\verb|…|` reads as its characters, each space
-the tie TeX sets it as. -/
+text and the text-font and decoration commands, `\verb|…|` reads as its characters, its spaces
+set as ties. -/
 public theorem elabInlines_verb_text (ctx : Ctx) (raws : Array Raw) (st : ESt)
     (hsite : ctx.callSite = none) (hwhen : ctx.literalWhen = none)
     (hfit : Fits (fun n => PlainCtrl n ∨ ModCtrl n) ctx)

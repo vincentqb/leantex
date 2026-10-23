@@ -11,7 +11,7 @@ spaces held (`\verb*` shows U+2423), and an unclosed delimiter is E0102. -/
 def inlineVerbChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let body (s : String) := s!"\\documentclass\{article}\n\\begin\{document}\n{s}\n\\end\{document}"
-  let code (s : String) : Ir.Inline := .styled .mono #[.text (s.map fun c => if c == ' ' then '\u00a0' else c)]
+  let code (s : String) : Ir.Inline := .styled .mono #[.text (Parse.verbTied s)]
   let (d1, ds1) := elabStr (body "a \\verb|\\small x+y| b")
   t "\\verb keeps a control word as code, inline"
     (ds1.isEmpty && d1.body == #[.para #[.text "a ", code "\\small x+y", .text " b"]])
@@ -24,6 +24,14 @@ def inlineVerbChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (d4, _) := elabStr (body "\\verb|x| opens the paragraph")
   t "a paragraph opening with \\verb is one paragraph"
     (d4.body == #[.para #[code "x", .text " opens the paragraph"]])
+  let (d5, _) := elabLocated "t.tex" (body "a \\verb|x y| b")
+  let locatedVerb : Ir.Inline → Bool
+    | .located sp inner => sp.file == "t.tex" && sp.pos.line == 3 && inner == #[code "x y"]
+    | _ => false
+  t "\\verb's text is located at the command"
+    (match d5.body[0]? with
+      | some (Ir.Block.para xs) => xs.any locatedVerb
+      | _ => false)
   t "a \\verb with no closing delimiter on its line is E0102"
     ((elabStr (body "\\verb|abc\nnext")).2.map (·.code) == #["E0102"])
   match ← serifFacesSet with

@@ -5503,7 +5503,7 @@ private def inlineVerbatim (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos 
     return ← urlSet ctx env (if inner.endsWith d then (inner.dropEnd 1).toString else inner) pos
   if env == "verb" then
     let kept := Parse.verbTied s
-    return if kept.isEmpty then #[] else #[sourceInline ctx pos (.styled .mono #[.text kept])]
+    return if kept.isEmpty then #[] else #[.styled .mono #[.text kept]]
   if env == "mintinline" || env == "mint" then
     let some rawLang := v.lang | return #[]
     if env == "mint" then
@@ -5991,7 +5991,8 @@ sets as a block")
     | .verb env s vpos =>
       let acc := flushText acc sb
       let code ← inlineVerbatim ctx env s vpos
-      elabInlinesFrom ctx raws (i + 1) (acc ++ code) ""
+      let acc := if code.isEmpty then acc else acc.push (.located (ctx.sourceSpan vpos) code)
+      elabInlinesFrom ctx raws (i + 1) acc ""
     | .ctrl name pos =>
       -- Parameters, then definitions, come before built-ins: order is the rule.
       if let some (_, binding) := ctx.args.find? (·.1 == name) then
