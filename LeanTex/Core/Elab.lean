@@ -7630,11 +7630,17 @@ private def columnWidthOf (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.
         else return none
       | none => return none
 
+/-- Compat's mark of beamer's own column as its width's source spells it. -/
+private def columnMarkSrc : String := Parse.rawSrcOne (.env Compat.beamerColumnsMark #[] {})
+
+/-- A column width's source as the document wrote it, Compat's mark taken off. -/
+private def unmarkedWidth (src : String) : String :=
+  if src.endsWith columnMarkSrc then (src.dropEnd columnMarkSrc.length).toString else src
+
 /-- A box's declared width (`columnWidthOf`), a column's Compat marks beamer's own (`column`). -/
 private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth :=
-  let mark := Parse.rawSrcOne (.env Compat.beamerColumnsMark #[] {})
-  if src.endsWith mark then
-    (columnWidthOf ctx (src.dropEnd mark.length).toString).map ({ · with column := true })
+  if src.endsWith columnMarkSrc then
+    (columnWidthOf ctx (unmarkedWidth src)).map ({ · with column := true })
   else columnWidthOf ctx src
 
 /-- The verbatim captures that always run inline: `\verb`, the inline code commands and url.sty's
@@ -14897,7 +14903,8 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
         width := read.getD .share
         if read.isNone then
           warnOnce ctx "env:column-width" .W0314
-            (Diag.say .W0314 .width (Diag.Name.value src) (some (some .environment, "column"))) cpos
+            (Diag.say .W0314 .width (Diag.Name.value (unmarkedWidth src))
+              (some (some .environment, "column"))) cpos
             (help := "write a factor like {0.5\\textwidth}")
       have _ := tail_measures cbody m2
       have _ := nestedParsList_le cbody.toList

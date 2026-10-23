@@ -421,7 +421,7 @@ warning: duplicate command \muted [W0311]
 warning: missing argument for \title [W0312]
   note: write \title{...}
 ── W0314 (degraded) column width is not a fraction of the text width
-warning: invalid width 'banana\begin{ beamer column}\end{ beamer column}' for environment column [W0314]
+warning: invalid width 'banana' for environment column [W0314]
   note: write a factor like {0.5\textwidth}
 ── W0315 (standard) low-contrast colour pairing (WCAG 2.2)
 warning: illegible colour 'yellow!50' [W0315]

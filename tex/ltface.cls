@@ -13,10 +13,11 @@
 \ExplSyntaxOff
 \input{ltfacesource.tex}
 \ExplSyntaxOn
-% A size option sets the body, the last one given.
+% A size option or `fontsize` sets the body, the last one given.
 \clist_map_inline:cn { @raw@opt@ltface.cls }
   {
     \tl_set:Ne \l_tmpa_tl { \tl_trim_spaces:n {#1} }
+    \regex_replace_once:nnN { \A fontsize \s* = \s* } { } \l_tmpa_tl
     \regex_match:nVT { \A \d+ pt \Z } \l_tmpa_tl { \tl_set_eq:NN \l_lt_fontsize_tl \l_tmpa_tl }
   }
 % The body at its size, each line a leading of 1.2 of it; the title line kept by a talk alone.

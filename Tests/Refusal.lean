@@ -173,7 +173,8 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let markers := Marker.Kind.words.map fun (w, k) => Marker.name k (w.take 1).toString
   let others := [Parse.citeSetupMark, Parse.markdownBibControl, Compat.metaTextMark,
      Compat.vspaceAnchorMark, Compat.frameRestartMark, Compat.cancelOptionsMark,
-     Compat.blueprintSiteMark, Compat.linkedBoxRowMark, Compat.alertMark true,
+     Compat.blueprintSiteMark, Compat.linkedBoxRowMark, Compat.beamerColumnsMark,
+     Compat.alertMark true,
      Compat.alertMark false, BeamerColor.marker, BeamerColor.starMarker,
      BeamerColor.standoutMarker, BeamerColor.siteMarker, Ir.titlePageBeginRole,
      Ir.titlePageEndRole, Ir.noticeRole, Picture.scopeCtrl] ++
