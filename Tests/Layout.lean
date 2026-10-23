@@ -2211,10 +2211,8 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a deck's paragraphs advance by the body leading, spending no parskip"
     (deckYs.size == 2 &&
       deckYs[1]! - deckYs[0]! == Ir.leadingFor deckFontSize)
-  t "a markdown page's flow still spends its rhythm quantum between paragraphs"
-    (flowYs.size == 2 &&
-      flowYs[1]! - flowYs[0]! ==
-        Ir.leadingFor Ir.baseFontSize + Ir.rhythmQuantum Ir.baseFontSize)
+  t "a markdown page's PDF paragraphs stand one baselineskip apart, as the article's"
+    (flowYs.size == 2 && flowYs[1]! - flowYs[0]! == Ir.leadingFor Ir.baseFontSize)
   t "an article's paragraphs stand one baselineskip apart, as its class's parskip sets them"
     (articleYs.size == 2 && articleYs[1]! - articleYs[0]! == Ir.leadingFor Ir.baseFontSize)
 

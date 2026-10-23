@@ -42,8 +42,8 @@ colours it derives (`DeclaredColors.checks`).
 Every class declares a coherent default independent of what the host ranks first: a superfamily
 (text, sans, mono, math) chosen as data and resolved by design size, a fixed-pitch mono, literal
 text never hyphenated or smartened, code that wraps on paper, images that fit the measure, ragged
-slides, LaTeX's paragraphs but blocks in markdown and code (`testdata/scoreboard/typeset.tsv`,
-`monoCompanion_contract`, `parIndentChecks`; owed (U35): `slotFill_mem`).
+slides, LaTeX's paragraphs, MyST's in markdown and code PDFs, their HTML blocks (`parIndentChecks`,
+`testdata/scoreboard/typeset.tsv`, `monoCompanion_contract`; owed (U35): `slotFill_mem`).
 
 ## One fact in one IR value
 

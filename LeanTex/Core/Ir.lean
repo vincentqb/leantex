@@ -352,6 +352,8 @@ public structure PageSpec where
   web : Option WebLayout := none
   /-- Whether the web page's measure is its layout's, the surface leaving the text block undeclared. -/
   webMeasure : Bool := false
+  /-- Whether the web page sets block paragraphs, `parindent` indenting the PDF's alone. -/
+  webBlocks : Bool := false
   /-- The rule under a running head, fancyhdr's `\headrulewidth` thick, a strut's depth below its
   baseline. -/
   headRule : Option Length := none
@@ -471,6 +473,11 @@ public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texPars
 
 /-- The page's `\parindent`: what it declares or its class sets, else none. -/
 public def parIndentOf (spec : PageSpec) : Dim.SymLength := spec.parindent.getD {}
+
+/-- The page's `\parindent` as its web page sets it: none where it sets block paragraphs
+(`PageSpec.webBlocks`). -/
+public def PageSpec.webParIndent (spec : PageSpec) : Option Dim.SymLength :=
+  if spec.webBlocks then none else spec.parindent
 
 public def baselineSkipOf (spec : PageSpec) : Length := leadingFor spec.fontSize spec.leading
 
@@ -6176,6 +6183,16 @@ going on setting it, and every other block says by `Block.continuesPar`. -/
   | .setPalette _ | .setTokens _ | .float .. => before
   | b => if pageMarkerBlock b then before || b.continuesPar
     else if b.isSkip then before else b.continuesPar
+
+/-- Whether the paragraph after `b` opens with no indent on a page of `surface`: markdown and code
+cannot say a paragraph goes on past a block, so there a heading alone leaves the next one flush. -/
+@[expose] public def Block.parContOn (surface : Surface) (b : Block) (before : Bool) : Bool :=
+  if surface == .tex then b.parContAfter before
+  else match b with
+    | .section .. => true
+    | .para c => before && anchorsOnly c
+    | .setPalette _ | .setTokens _ | .float .. | .disclosure .. => before
+    | b => if pageMarkerBlock b || b.isSkip then before else false
 
 public theorem pageOpening_continuesPar (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : (Block.role n #[]).continuesPar = false := by
@@ -20481,6 +20498,7 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     (match doc.page.parindent with
       | some l => s!" parindent {dumpGlue { width := l }}"
       | none => "") ++
+    (if doc.page.webBlocks then " web-blocks" else "") ++
     (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toBpString}" else "") ++
     String.join (doc.page.drawn.toList.map fun r =>
       s!" drawn {r.x.toBpString} {r.y.toBpString} {r.w.toBpString} {r.h.toBpString} {r.color}" ++

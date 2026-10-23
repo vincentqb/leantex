@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253
+page 612x792 vmargin 124.802 hmargin 134.144 bmargin 119.253 parindent 15pt web-blocks
 meta title "Long statements"
 section* 0
   text "Long statements"

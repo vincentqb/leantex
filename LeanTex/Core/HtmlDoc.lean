@@ -6197,7 +6197,7 @@ public def baseRules (doc : Doc) (ex : Length) (ch : Nat) (pairs : List (Nat × 
   listIndentCss doc.docClass.record.htmlLists (lengthBasisOf doc) doc.preambleFace ++
   quoteKindCss doc.docClass.record.htmlLists (lengthBasisOf doc) doc.preambleFace
     doc.docClass.record.quotationIndent (Ir.quoteKindsOf doc.body) ++
-  parIndentCss (lengthBasisOf doc) doc.preambleFace doc.page.parindent ++
+  parIndentCss (lengthBasisOf doc) doc.preambleFace doc.page.webParIndent ++
   (if doc.abstractForm == .quotation && doc.body.any (· matches .abstract _) then
     s!".abstract.quoted p.u-indent \{ text-indent: {cssLength doc.docClass.record.quotationIndent}; }\n"
    else "") ++
@@ -10550,7 +10550,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                           (fun m (s, i) => m.insert s i) {}
                         abstractForm := doc.abstractForm
                         preamble := doc.preambleFace
-                        indents := doc.page.parindent.isSome }
+                        indents := doc.page.webParIndent.isSome }
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false

@@ -193,16 +193,46 @@ def parIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let pre := (elabStr (doc "{article}" "\\setlength{\\parindent}{3em}" two)).1
   t "par indent: a preamble parindent is the page's, fixed in its font"
     (pre.page.parindent == some (.ofLength (Dim.pt 30)) && (pre.tokens.find? "parindent").isNone)
-  -- A markdown page keeps block paragraphs, half a line apart, where a tex page declaring no class
-  -- takes the article's.
-  let md := (elabMd "Alpha first paragraph.\n\nBravo second paragraph.\n").1
+  -- lualatex on MyST's plain_latex spelling of the same probe, each block its own paragraph:
+  -- article's 15pt indent but after a heading, and paragraphs a baselineskip apart, where the web
+  -- page keeps block paragraphs.
+  let mdSrc := "Alpha opens the document.\n\nBravo is the second paragraph.\n\n## Heading\n\n" ++
+    "Charlie follows the heading.\n\nDelta follows Charlie.\n\n- Echo item.\n- Foxtrot item.\n\n" ++
+    "Golf follows the list.\n\n> India quoted.\n\nJuliet follows the quote.\n\n```\ncode\n```\n\n" ++
+    "Kilo follows the code.\n"
+  let md := (elabMd mdSrc).1
   let mdOut := layoutOf oneFace md
-  t "par indent: a markdown page sets its paragraphs flush, half a line apart"
-    (md.page.parindent.isNone && md.page.parskip.isNone && indentOf mdOut "Bravo" == some 0 &&
-      (do let c := censusOf (coveredColorsOf md) mdOut
-          let a ← lineYOf c 0 "Alpha"
-          let b ← lineYOf c 0 "Bravo"
-          pure (b - a - Ir.baselineSkipOf md.page)) == some (Dim.pt 6))
+  let mdWords := ["Alpha", "Bravo", "Charlie", "Delta", "Golf", "Juliet", "Kilo"]
+  let mdGot := mdWords.map (indentOf mdOut)
+  t s!"par indent: a markdown page's PDF sets the article's indent but after a heading ({mdGot})"
+    (mdGot == [15, 15, 0, 15, 15, 15, 15].map (some ∘ Dim.pt))
+  t "par indent: a markdown page's paragraphs stand one baselineskip apart"
+    ((do let c := censusOf (coveredColorsOf md) mdOut
+         let a ← lineYOf c 0 "Alpha"
+         let b ← lineYOf c 0 "Bravo"
+         pure (b - a - Ir.baselineSkipOf md.page)) == some 0)
+  let blockPage := { md with page := { md.page with parskip := none, parindent := none
+                                                    webBlocks := false } }
+  t "par indent: a markdown page's web page keeps block paragraphs"
+    ((HtmlDoc.emit {} md).1 == (HtmlDoc.emit {} blockPage).1 &&
+      mdWords.all fun w => htmlIndented md w != some true)
+  -- A display ends its paragraph in markdown, so the text after it opens a new one.
+  let myst := (elabMd ("---\nkernelspec:\n  name: python3\n---\nAlpha opens.\n\n$$\nx = y\n$$\n\n" ++
+    "Bravo after a block display.\nCharlie in it.\n$$\nz\n$$\nDelta right after a display.\n")).1
+  let mystOut := layoutOf oneFace myst
+  t "par indent: a markdown display ends its paragraph"
+    (["Bravo", "Delta"].map (indentOf mystOut) == [some (Dim.pt 15), some (Dim.pt 15)])
+  -- A target names the block after it and leaves that block's gap as it stands without it.
+  let codeY (src : String) : Option Dim.Length :=
+    let d := (elabMd ("---\nkernelspec:\n  name: python3\n---\nAlpha opens.\n\n" ++ src ++
+      "```\nbravo_code\n```\n")).1
+    lineYOf (censusOf (coveredColorsOf d) (layoutOf oneFace d)) 0 "bravo_code"
+  t "par indent: a markdown target leaves the gap before the block it names"
+    ((codeY "(code-x)=\n").isSome && codeY "(code-x)=\n" == codeY "")
+  let code := (elabCode "probe.py" "\"\"\"Alpha opens the module.\n\nBravo second.\n\"\"\"\n\nx = 1\n").1
+  t "par indent: a code page's PDF sets the article's indent"
+    (["Alpha", "Bravo"].map (indentOf (layoutOf oneFace code)) == [some 0, some (Dim.pt 15)] &&
+      code.page.webBlocks)
   -- A markdown file a LaTeX host includes takes the host's indent, as the markdown package's LaTeX
   -- does, each of its paragraphs one of its own.
   let (host, _) := includedDoc "host.tex" (neutralHost "note.md")
@@ -210,6 +240,12 @@ def parIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "par indent: an included markdown file's paragraphs take the host's indent"
     (let out := layoutOf oneFace host
      indentOf out "Alpha" == some (Dim.pt 15) && indentOf out "Delta" == some (Dim.pt 15))
+  -- A disclosure on a tex page sets its paragraphs flush, as every container but a role does there.
+  let (dhost, _) := includedDoc "host.tex" (neutralHost "note.md")
+    [("note.md", "note.md", "<details>\n<summary>Echo summary</summary>\n\nFoxtrot body.\n\n" ++
+      "Golf body.\n\n</details>\n")]
+  t "par indent: a disclosure an included markdown file holds sets its paragraphs flush"
+    (indentOf (layoutOf oneFace dhost) "Golf" == some 0)
   t "par indent: a tex page declaring no class sets the article's paragraphs"
     (indents oneFace two ["Bravo"] == [some (Dim.pt 15)] && gaps oneFace two ["Alpha", "Bravo"] == some [0])
   let css := (HtmlDoc.emit {} (elabStr (doc "{article}" "" two)).1).1

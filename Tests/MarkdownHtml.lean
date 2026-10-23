@@ -545,8 +545,6 @@ def breakRunDebt : List (String × String) :=
   [("markdown <br><br>", "LeanTex/Core/Layout.lean"),
    ("markdown backslash breaks", "LeanTex/Core/Layout.lean"),
    ("tex breaks", "LeanTex/Core/Layout.lean"),
-   ("markdown leading <br>", "LeanTex/Core/Layout.lean"),
-   ("markdown leading backslash break", "LeanTex/Core/Layout.lean"),
    ("tex leading break", "LeanTex/Core/Elab.lean, which keeps a break LaTeX refuses")]
 
 /-- Hard breaks set as many lines in both artifacts, or their disagreement is a `breakRunDebt`

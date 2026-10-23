@@ -10191,6 +10191,8 @@ public structure Spacing.Pending where
   /-- The next paragraph opens with no indent: it goes on past an environment or a display, follows
   a heading or opens on a theorem's head (`Ir.Block.continuesPar`). -/
   private parCont : Bool := false
+  /-- The last block set was a paragraph (`Spacing.Pending.paraGap`). -/
+  private paraBefore : Bool := false
   /-- A heading was set and no paragraph since, so the next one takes no page break before its
   second line (latex.ltx `\@nobreak`, read by `\@afterheading` and `\@item`). -/
   private noBreakNext : Bool := false
@@ -10285,9 +10287,11 @@ private theorem Spacing.Context.underParskip_inFloat (r : Rd) (tk : Ir.Tokens) :
   unfold Spacing.Context.underParskip; dsimp only; split <;> rfl
 
 /-- The reader inside `blk`: its paragraphs flush where it sets `\parindent` to zero
-(`Ir.Block.keepsParIndent`). -/
+(`Ir.Block.keepsParIndent`), but in a markdown or code page's disclosure, set as its bold summary's
+paragraphs. -/
 private def Spacing.Context.inside (r : Rd) (blk : Block) : Rd :=
-  if blk.keepsParIndent then r else { r with parIndent := none }
+  if blk.keepsParIndent || (r.surface != .tex && blk matches .disclosure ..) then r
+  else { r with parIndent := none }
 
 private theorem Spacing.Context.inside_keeps (r : Rd) (blk : Block)
     (h : blk.keepsParIndent = true) : r.inside blk = r := by
@@ -10322,6 +10326,31 @@ private def Spacing.Context.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) 
 /-- The next line is a peer of the last: the default gap, unless something
 is declared. -/
 private def Spacing.Pending.wantGap (a : Acc) : Acc := { a with wantDefault := true }
+
+/-- On a markdown or code page a paragraph of `content` after a paragraph stands TeX's `\parskip`
+apart, as the article its PDF reads sets it, where a run-in head, a picture and every other block
+keep the page's peer gap. -/
+private def Spacing.Pending.paraGap (a : Acc) (r : Rd) (content : Array Inline) : Acc :=
+  if r.surface != .tex && a.paraBefore && !Ir.opensFlush content && !Ir.anchorsOnly content &&
+      a.wantDefault && a.owed.isEmpty then
+    { a with wantDefault := false, owed := #[r.resolve r.geom.texParskip] }
+  else a
+
+private theorem Spacing.Pending.paraGap_ops (a : Acc) (r : Rd) (c : Array Inline) :
+    (a.paraGap r c).ops = a.ops := by
+  unfold Spacing.Pending.paraGap; split <;> rfl
+
+private theorem Spacing.Pending.paraGap_leafNext (a : Acc) (r : Rd) (c : Array Inline) :
+    (a.paraGap r c).leafNext = a.leafNext := by
+  unfold Spacing.Pending.paraGap; split <;> rfl
+
+/-- Whether the block after `b` follows a plain paragraph, a declaration, mark, skip or disclosure
+keeping what stood before. -/
+private def Spacing.Pending.paraAfter (b : Block) (before : Bool) : Bool :=
+  match b with
+  | .para c => !Ir.opensFlush c && (before || !Ir.anchorsOnly c)
+  | .setPalette _ | .setTokens _ | .disclosure .. => before
+  | b => (Ir.pageMarkerBlock b || b.isSkip) && before
 
 /-- `\vskip`: glue the document asked for, on top of whatever is owed. -/
 private def Spacing.Pending.vskip (a : Acc) (g : Glue) : Acc :=
@@ -14143,7 +14172,7 @@ private def ruleBlock : Block → Bool
 /-- Walk a block sequence, spacing peers by `parskip`. -/
 private def collectBlocks (r : Rd) (a : Acc)
     (blocks : Array Block) (indent : Length) : Acc :=
-  collectBlockList r a blocks.toList indent true false
+  collectBlockList r { a with paraBefore := false } blocks.toList indent true false
 
 private def collectBlockList (r : Rd) (a : Acc)
     (blocks : List Block) (indent : Length) (first prevRule : Bool) : Acc :=
@@ -14153,14 +14182,15 @@ private def collectBlockList (r : Rd) (a : Acc)
   | blk :: rest =>
     if statefulBlock blk then
       let a := collectBlock r a blk indent
-      collectBlockList r { a with parCont := blk.parContAfter a.parCont } rest indent first prevRule
+      collectBlockList r { a with parCont := blk.parContOn r.surface a.parCont } rest indent first prevRule
     else
     -- Until a frame's body sets its first line no peer gap is owed (`Spacing.Pending.frameTop`).
     let a := if first || a.frameTop then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let (rb, a) := r.meetLabels a blk indent
     let a := collectBlock rb a blk indent
-    let a := { a with parCont := blk.parContAfter a.parCont }
+    let a := { a with parCont := blk.parContOn r.surface a.parCont
+                      paraBefore := Spacing.Pending.paraAfter blk a.paraBefore }
     let a := if prevRule then { a with declaredSkip := false } else a
     let waits := match labelMeet blk with
       | .waits => true
@@ -14558,7 +14588,7 @@ private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Length) : Acc :=
   let r := (r.underParskip a.tokens).inside blk
   match blk with
-  | .para content => collectParaBlock r a content indent
+  | .para content => collectParaBlock r (a.paraGap r content) content indent
   | .lines ls => collectLaid r a ls.toList indent
   | .equation num content => collectEquation r a num content indent
   | .section level _ num title => collectSection r a level num title indent
@@ -14726,8 +14756,9 @@ private def collectBlock (r : Rd) (a : Acc)
         let (a, leaf) := ({ a with itemMarker := none } : Acc).leafRange (Struct.leafCountInlines content)
         collectPara r a content indent false r.geom.fontSize
           (marker := some marker) (leaf := leaf) (span := Struct.leafCountInlines content)
-      | none => collectParaBlock r a content indent
-    collectBlockList r a body.toList indent false false
+      | none => collectParaBlock r (a.paraGap r content) content indent
+    collectBlockList r { a with parCont := (Block.para content).parContOn r.surface a.parCont
+                                paraBefore := !Ir.opensFlush content } body.toList indent false false
   | .titled kind title body =>
     let d := Ir.Design.ofPalette a.pal
     let look := d.titledBody kind
@@ -21406,7 +21437,8 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
       (page := Ir.standsOnPage doc.body[i + 1]?) (pageNext := doc.body[i + 1]?)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
-  return ({ acc with parCont := blk.parContAfter acc.parCont }, firstBlk)
+  return ({ acc with parCont := blk.parContOn rd.surface acc.parCont
+                     paraBefore := Spacing.Pending.paraAfter blk acc.paraBefore }, firstBlk)
 
 /-- The source loop, its state recording whether a real block has appeared. -/
 private def collectDocBody (rd : Rd) (doc : Doc)
@@ -21687,7 +21719,7 @@ private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc)
   dsimp only [pure, Id]
   rw [collectBlock, Spacing.Context.inside_keeps _ (.para xs) rfl,
     collectParaBlock_leafNext _ _ _ _ hp (by rw [Spacing.Context.underParskip_labels]; exact hl)]
-  simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
+  simp only [sourceLeafSum_para, plainInlines_leafCount xs hp, Spacing.Pending.paraGap_leafNext]
   split <;> rfl
 
 private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
@@ -21702,9 +21734,11 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
   dsimp only [pure, Id]
   rw [collectBlock, Spacing.Context.inside_keeps _ (.para xs) rfl]
   apply sourceBound_collectParaBlock
-  · split <;> exact ha
+  · simp only [Spacing.Pending.SourceBound, Spacing.Pending.paraGap_ops]
+    split <;> exact ha
   · exact hp
-  · split <;> simpa only [hb, sourceLeafSum_para, plainInlines_leafCount xs hp, Spacing.Pending.wantGap] using hn
+  · simp only [Spacing.Pending.paraGap_leafNext]
+    split <;> simpa only [hb, sourceLeafSum_para, plainInlines_leafCount xs hp, Spacing.Pending.wantGap] using hn
   · rw [Spacing.Context.underParskip_labels]; exact hl
 
 private theorem sourceRange_progress {β : Type}
@@ -21986,6 +22020,23 @@ private theorem collectParaBlock_census (r : Rd) (a : Acc) (xs : Array Inline)
       (a.leafRange (Struct.leafCountInlines xs)).2 (Struct.leafCountInlines xs)
       (r.firstIndent a xs) hp hr ha pick
 
+private theorem collectParaBlock_gap_census (r : Rd) (a : Acc) (xs : Array Inline)
+    (indent : Length) (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) (ha : a.Prose)
+    (pick : Option Nat → Bool → Bool) (hl : r.labels = #[]) :
+    let out := collectParaBlock r (a.paraGap r xs) xs indent
+    out.Prose ∧ (out.Clean → a.Clean ∧
+      inkCensus (out.census pick) = inkCensus (a.census pick) ++
+        if pick (if xs.size == 0 then none else some (Spacing.Pending.leafNext a)) (!(Spacing.Context.inFloat r))
+        then inkCensus (Ir.plainText xs).toList else []) := by
+  have hc : Spacing.Pending.Clean (a.paraGap r xs) = Spacing.Pending.Clean a := by
+    simp only [Spacing.Pending.Clean, Spacing.Pending.paraGap_ops]
+  have hk : Spacing.Pending.census pick (a.paraGap r xs) = Spacing.Pending.census pick a := by
+    simp only [Spacing.Pending.census, Spacing.Pending.paraGap_ops]
+  have h := collectParaBlock_census r (a.paraGap r xs) xs indent hp hr
+    (by simpa only [Spacing.Pending.Prose, Spacing.Pending.paraGap_ops] using ha) pick hl
+  rw [hc, hk, Spacing.Pending.paraGap_leafNext] at h
+  exact h
+
 private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
@@ -22007,10 +22058,10 @@ private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     rw [Spacing.Context.underParskip_labels]; exact hl
   split
   · rw [← Spacing.Context.underParskip_inFloat rd st.1.tokens]
-    refine collectParaBlock_census _ _ xs 0 hp (hr' _) ?_ pick (hl' _)
+    refine collectParaBlock_gap_census _ _ xs 0 hp (hr' _) ?_ pick (hl' _)
     exact ha
   · rw [← Spacing.Context.underParskip_inFloat rd (Spacing.Pending.wantGap st.1).tokens]
-    refine collectParaBlock_census _ _ xs 0 hp (hr' _) ?_ pick (hl' _)
+    refine collectParaBlock_gap_census _ _ xs 0 hp (hr' _) ?_ pick (hl' _)
     exact ha
 
 private def sourceInkAt (pick : Option Nat → Bool → Bool) (body : Array Block)

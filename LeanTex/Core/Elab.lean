@@ -20122,13 +20122,15 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         Ir.classParskip? v (Ir.sizeFileLeading page.fontSize page.spread "normalsize")
       else none
     | _ => none
-  -- A markdown or code page keeps the engine's own paragraphs.
+  -- A markdown or code page's PDF indents as its class does, its web page setting block paragraphs.
   let tex := Ir.Surface.ofPath file == .tex
   if page.parskip.isNone then
     if let some g := (classOpts.filterMap optionSkip).getLast? <|>
         (if tex then record.parskip else none) then
       page := { page with parskip := some g }
-  if page.parindent.isNone && tex then
+  if !tex && page.parindent.isNone then
+    page := { page with webBlocks := true }
+  if page.parindent.isNone then
     let indent := classParIndent record classOpts page.fontSize
     if indent != {} then page := { page with parindent := some indent }
   -- A measure in characters sets a flow page's text block; a frame or a face keeps its own.

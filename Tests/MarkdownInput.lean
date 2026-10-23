@@ -291,6 +291,9 @@ def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, ds) := elabMd (opener ++ body)
     t s!"{opener}: the page sets the disclosure as its bold-summary spelling sets"
       (shippedLinesOf fonts doc == shippedLinesOf fonts (elabMd "**Amber**\n\nCedar\n").1)
+    t s!"{opener}: past a heading and before a paragraph, the page sets it as that spelling sets"
+      (shippedLinesOf fonts (elabMd ("# Head\n\n" ++ opener ++ body ++ "\nDelta after.\n")).1 ==
+        shippedLinesOf fonts (elabMd "# Head\n\n**Amber**\n\nCedar\n\nDelta after.\n").1)
     t s!"{opener}: the HTML page ships the element, open exactly where the tag is"
       (hasStr (docTreeOf doc) (element tag)
         && (elemNodesList (· == "details") #[] (docNodesOf doc).toList).size == 1)
