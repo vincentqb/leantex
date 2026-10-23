@@ -180,6 +180,7 @@ public import LeanTex.Core.FigureStore
 public import LeanTex.Cli.Args
 public import LeanTex.Cli.Render
 public import LeanTex.Cli.DriverDiag
+public import LeanTex.Cli.Headline
 public import LeanTex.Cli.Input
 public import LeanTex.Cli.FontEnv
 public import LeanTex.Cli.FontFix

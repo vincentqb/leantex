@@ -26,6 +26,11 @@ public inductive Origin where
 public theorem Span.samePlace_self (s : Span) : Span.samePlace s s = true := by
   simp [Span.samePlace]
 
+public theorem Span.samePlace_trans {a b c : Span} (h₁ : Span.samePlace a b = true)
+    (h₂ : Span.samePlace b c = true) : Span.samePlace a c = true := by
+  simp only [Span.samePlace, beq_iff_eq] at *
+  exact h₁.trans h₂
+
 namespace Text
 
 /-- The ASCII spelling TeX sets a typographic punctuation character from, quotes of either hand
@@ -212,6 +217,47 @@ public theorem view_named (named : List Span) (s : Span) (hs : s ∈ named)
   simp only [view, norm, keep_append, hk, List.nil_append]
 
 @[simp] public theorem chars_empty (o : Origin) : chars o "" = [] := rfl
+
+/-- `a` reads as `b` wherever at least the places of `base` are excused. -/
+@[expose] public def ReadsAs (base : List Span) (a b : List (Char × Origin)) : Prop :=
+  ∀ named : List Span, (∀ s ∈ base, s ∈ named) → view named a = view named b
+
+public theorem ReadsAs.trans {b₁ b₂ : List Span} {a b c : List (Char × Origin)}
+    (h₁ : ReadsAs b₁ a b) (h₂ : ReadsAs b₂ b c) : ReadsAs (b₁ ++ b₂) a c := fun named h =>
+  (h₁ named fun s hs => h s (List.mem_append_left _ hs)).trans
+    (h₂ named fun s hs => h s (List.mem_append_right _ hs))
+
+public theorem ReadsAs.mono {base base' : List Span} {a b : List (Char × Origin)}
+    (hb : ∀ s ∈ base, s ∈ base') (h : ReadsAs base a b) : ReadsAs base' a b :=
+  fun named hn => h named fun s hs => hn s (hb s hs)
+
+/-- Excusing a place `named` already excuses changes nothing. -/
+public theorem keep_places (named extra : List Span)
+    (h : ∀ s ∈ extra, ∃ s' ∈ named, Span.samePlace s' s = true) (t : List (Char × Origin)) :
+    keep (named ++ extra) t = keep named t := by
+  have hany : ∀ s : Span,
+      (named ++ extra).any (Span.samePlace · s) = named.any (Span.samePlace · s) := by
+    intro s
+    rw [List.any_append]
+    cases hn : named.any (Span.samePlace · s)
+    · cases he : extra.any (Span.samePlace · s)
+      · rfl
+      · obtain ⟨x, hx, hxs⟩ := List.any_eq_true.mp he
+        obtain ⟨s', hs', hs'x⟩ := h x hx
+        have : named.any (Span.samePlace · s) = true :=
+          List.any_eq_true.mpr ⟨s', hs', Span.samePlace_trans hs'x hxs⟩
+        rw [hn] at this
+        exact absurd this (by decide)
+    · rfl
+  simp only [keep, hany]
+
+/-- A reading above `base` holds where every place of `base` is excused, at some span of it. -/
+public theorem ReadsAs.at_places {base : List Span} {a b : List (Char × Origin)}
+    (h : ReadsAs base a b) (named : List Span)
+    (hc : ∀ s ∈ base, ∃ s' ∈ named, Span.samePlace s' s = true) :
+    view named a = view named b := by
+  have := h (named ++ base) fun s hs => List.mem_append_right _ hs
+  simpa only [view, keep_places named base hc] using this
 
 end Text
 
