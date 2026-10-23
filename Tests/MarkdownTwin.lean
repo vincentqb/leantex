@@ -424,6 +424,45 @@ def twinLinesChecks (ref : IO.Ref (List String)) : IO Unit := do
         "If " ++ step ++ "for every n, n is 0, " ++ step ++ step ++ "deeper then False."
       | _ => false) && !hasError ds && MarkdownDoc.emit back == tw)
 
+/-- The markdown door reads the twin's escaped text as itself, up to what `Text.norm` reads alike,
+and markup as markup, as `MarkdownDoc.escape_read_id`'s model does. -/
+def twinEscapeReadChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let special := "\\`*_[]<>&@|!#$%^~{}()-+.:;=?/\"' \t\n".toList
+  let edges := ["see...@kqzv", "a.@kqzv", "-@kqzv", "x -@kqzv", "a@kqzv", "@{kqzv}", "[@kqzv]",
+    "@kqzv@wxyb", "(@kqzv)", "a\n@kqzv", "@*"]
+  let samples := (special.map ([·]) ++ special.flatMap fun a => special.map fun b => [a, b]).map
+    String.ofList ++ edges
+  -- smart punctuation respells these, and the door folds white space runs
+  let typographic (s : String) := s.any fun c => "'\"-.`".toList.contains c
+  let spaced (s : String) := hasStr s "  " || s.any (· == '\t') || hasStr s " \n" ||
+    hasStr s "\n "
+  for (front, ats) in [("", false), (worksMeta, true)] do
+    let texts := samples.map fun s => "Kqzv " ++ s ++ "x Kqzv"
+    let escaped := texts.map fun s => MarkdownDoc.escapeChars true ats s.toList
+    let src := front ++ "\n\n".intercalate (escaped.map String.ofList) ++ "\n"
+    let paras := (elabMd src).1.body.toList.filterMap fun b => match b with
+      | .para xs => some xs
+      | _ => none
+    let cites (xs : Array Ir.Inline) := Ir.foldInlines (fun n x => match x with
+      | .cite .. | .cited .. => n + 1
+      | _ => n) 0 xs
+    let bad := ((texts.zip escaped).zip paras).filter fun ((s, e), xs) =>
+      let got := Ir.plainText xs
+      let same := if spaced s then Text.norm got.toList == Text.norm s.toList
+        else if typographic s then Text.canon got.toList == Text.canon s.toList
+        else got == s
+      cites xs > 0 || !same || MarkdownDoc.readText true ats none e != some s.toList
+    t s!"twin: escaped text reads back as itself (cites {ats}; {bad.length} of {texts.length} not, \
+{paras.length} paragraphs: {(bad.take 6).map (·.1.1)})"
+      (paras.length == texts.length && bad.isEmpty)
+  for raw in ["*Kqzv*", "_Kqzv_", "`Kqzv`", "<https://example.org>", "&amp;", "[Kqzv](#x)"] do
+    let xs := match (elabMd (raw ++ "\n")).1.body.toList with
+      | [.para xs] => xs
+      | _ => #[]
+    t s!"twin: unescaped markup {raw} reads as none under the model and as markup at the door"
+      (MarkdownDoc.readText true false none raw.toList == none && Ir.plainText xs != raw)
+
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinDisclosureChecks ref
   twinLinesChecks ref
@@ -435,5 +474,6 @@ def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinHeadChecks ref
   twinDriverChecks ref
   twinEdgeChecks ref
+  twinEscapeReadChecks ref
 
 end Tests.MarkdownTwin

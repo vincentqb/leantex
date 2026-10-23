@@ -104,6 +104,7 @@ public import LeanTex.Core.HtmlReadProof
 public import LeanTex.Core.HtmlDocRead
 public import LeanTex.Core.HtmlFaces
 public import LeanTex.Core.MarkdownDoc
+public import LeanTex.Core.MarkdownEscape
 public import LeanTex.Core.Layout
 public import LeanTex.Core.LayoutCensus
 public import LeanTex.Core.Layout.TextConservation

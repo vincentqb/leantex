@@ -14,15 +14,15 @@ namespace LeanTex.Core.MarkdownDoc
 
 open LeanTex.Core LeanTex.Core.Ir
 
-/-- Whether an `@` would open a citation on reading back: not after a letter, a digit or a `.`,
-and before a key's first character or its brace. -/
-private def citeOpens (prev : Option Char) (rest : List Char) : Bool :=
-  !(prev.any fun p => CiteKey.isAlnum p || p == '.') &&
+/-- Whether an `@` may open a citation on reading back: not after a letter or a digit, and before
+a key's first character or its brace; after a `.`, which an ellipsis ends, it may. -/
+public def citeOpens (prev : Option Char) (rest : List Char) : Bool :=
+  !(prev.any CiteKey.isAlnum) &&
     (rest.head?.any fun d => CiteKey.regular d || d == '{')
 
 /-- Escapes the characters that would read as markup anywhere in a line, after `prev`; an `@` that
 would open a citation where `ats` says the twin reads citations. -/
-private def escapeCharsFrom (pipes ats : Bool) (prev : Option Char) : List Char → List Char
+public def escapeCharsFrom (pipes ats : Bool) (prev : Option Char) : List Char → List Char
   | [] => []
   | c :: rest =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
@@ -34,7 +34,7 @@ private def escapeCharsFrom (pipes ats : Bool) (prev : Option Char) : List Char 
     else c :: escapeCharsFrom pipes ats (some c) rest
 
 /-- Escapes the characters that would read as markup anywhere in a line. -/
-private def escapeChars (pipes ats : Bool) (l : List Char) : List Char :=
+public def escapeChars (pipes ats : Bool) (l : List Char) : List Char :=
   escapeCharsFrom pipes ats none l
 
 private def escapeText (pipes ats : Bool) (s : String) : String :=
