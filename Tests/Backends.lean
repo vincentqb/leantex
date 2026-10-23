@@ -3108,11 +3108,11 @@ byte, gaps placed by the viewer's arithmetic. -/
 def contentOpsTextExpected : String :=
   "q 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\n" ++
-  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-417<0026>] TJ\n" ++
-  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
-  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-359<0001>] TJ\n" ++
+  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025> -417 <0026>] TJ\n" ++
+  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027> <0028>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000> -359 <0001>] TJ\n" ++
   "100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n[<0033>] TJ\n" ++
-  "1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nET\n" ++
+  "1 0 0 1 532 37 Tm\n[<0034> <0035>] TJ\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nET\n" ++
   "q 20 0 0 15 50 20 cm /Im1 Do Q\n" ++
   "q 0.62 0.62 0.66 RG 0.75 w 70 20 20 15 re S Q\n" ++
   "q 0.62 0.62 0.66 RG 0.75 w 90 20 10 5 re S Q\n" ++
@@ -3133,11 +3133,11 @@ bleed and nothing else changes. -/
 def contentOpsBleedExpected : String :=
   "q 0.941 0.941 0.941 rg 3 3 200 100 re f Q\n" ++
   "q 1 0 0 0 k 8 88 50 10 re f Q\n" ++
-  "BT\n1 0 0 1 13 83 Tm\n/F1 12 Tf\n[<00240025>-417<0026>] TJ\n" ++
-  "1 0 0 1 68 86 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
-  "102.0 Tz\n1 0 0 1 13 63 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-359<0001>] TJ\n" ++
+  "BT\n1 0 0 1 13 83 Tm\n/F1 12 Tf\n[<00240025> -417 <0026>] TJ\n" ++
+  "1 0 0 1 68 86 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027> <0028>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 13 63 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000> -359 <0001>] TJ\n" ++
   "100.0 Tz\n1 0 0 1 15 43 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 525 43 Tm\n[<0033>] TJ\n" ++
-  "1 0 0 1 535 40 Tm\n[<0034><0035>] TJ\n1 0 0 1 103 23 Tm\n[<0036>] TJ\nET\n" ++
+  "1 0 0 1 535 40 Tm\n[<0034> <0035>] TJ\n1 0 0 1 103 23 Tm\n[<0036>] TJ\nET\n" ++
   "q 20 0 0 15 53 23 cm /Im1 Do Q\n" ++
   "q 0.62 0.62 0.66 RG 0.75 w 73 23 20 15 re S Q\n" ++
   "q 0.62 0.62 0.66 RG 0.75 w 93 23 10 5 re S Q\n" ++
@@ -3505,12 +3505,12 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
 def artifactTextExpected : String :=
   "/Artifact BMC\nq 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\nEMC\n" ++
-  "BT\n/P << /MCID 0 >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-417<0026>] TJ\n" ++
-  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\nEMC\n" ++
+  "BT\n/P << /MCID 0 >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025> -417 <0026>] TJ\n" ++
+  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027> <0028>] TJ\nEMC\n" ++
   "/H2 << /MCID 1 >> BDC\n102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n" ++
-  "[<11701000>-359<0001>] TJ\nEMC\n" ++
+  "[<11701000> -359 <0001>] TJ\nEMC\n" ++
   "/Artifact BMC\n100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n" ++
-  "[<0033>] TJ\n1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\nEMC\n" ++
+  "[<0033>] TJ\n1 0 0 1 532 37 Tm\n[<0034> <0035>] TJ\nEMC\n" ++
   "/Artifact BMC\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nEMC\nET\n" ++
   "/Artifact BMC\nq 20 0 0 15 50 20 cm /Im1 Do Q\nEMC\n" ++
   "/Artifact << /Type /Layout >> BDC\nq 0.62 0.62 0.66 RG 0.75 w 70 20 20 15 re S Q\nEMC\n" ++

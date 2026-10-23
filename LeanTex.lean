@@ -15,6 +15,7 @@ public import LeanTex.Core.PdfReadProof
 public import LeanTex.Core.PdfTextProof
 public import LeanTex.Core.PdfToUnicodeProof
 public import LeanTex.Core.PdfContentText
+public import LeanTex.Core.PdfContentScanProof
 public import LeanTex.Core.PdfCensus
 public import LeanTex.Core.PdfTextRead
 public import LeanTex.Core.PdfContract

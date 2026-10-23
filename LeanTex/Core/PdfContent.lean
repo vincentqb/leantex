@@ -29,7 +29,7 @@ public def MarkTag.opener : MarkTag → String
   | .artifact (some .pagination) => "/Artifact << /Type /Pagination >> BDC"
   | .artifact (some .layout) => "/Artifact << /Type /Layout >> BDC"
   | .artifact (some .page) => "/Artifact << /Type /Page >> BDC"
-  | .content s mcid _ => s!"/{s} << /MCID {mcid} >> BDC"
+  | .content s mcid _ => s!"/{PdfLex.escapeName s} << /MCID {mcid} >> BDC"
   | .span s =>
     "/Span << /ActualText " ++ String.ofList ((PdfRead.textStringBytes s).map Char.ofNat) ++ " >> BDC"
 
@@ -65,16 +65,29 @@ public def PathOp.render : PathOp → String
   | .close => "h "
   | .rect x y w h => s!"{x.toBpString} {y.toBpString} {w.toBpString} {h.toBpString} re "
 
-public def TextItem.render : TextItem → String
-  | .glyphs gids => (gids.foldl pushGid "<").push '>'
-  | .kerned gids nums => Id.run do
-    let mut s := "<"
-    for h : i in [0:gids.size] do
-      let n := nums.getD i 0
-      if n != 0 then s := ((s.push '>') ++ toString n).push '<'
-      s := pushGid s gids[i]
-    return s.push '>'
-  | .adjust d => toString d
+/-- One glyph of a kerned string onto its `TJ` elements and the open hex string: a nonzero number
+closes the open string and stands before the glyph it moves. -/
+public def kernStep (acc : Array String × String) (p : Nat × Int) : Array String × String :=
+  if p.2 != 0 then ((acc.1.push (acc.2.push '>')).push (toString p.2), pushGid "<" p.1)
+  else (acc.1, pushGid acc.2 p.1)
+
+public theorem kernStep_eq (acc : Array String × String) (p : Nat × Int) :
+    kernStep acc p = if p.2 != 0 then
+      ((acc.1.push (acc.2 ++ String.singleton '>')).push (toString p.2),
+        String.singleton '<' ++ gidHex p.1)
+    else (acc.1, acc.2 ++ gidHex p.1) := by
+  simp only [kernStep, pushGid_eq, String.push_eq_append]
+  rfl
+
+/-- A `TJ` element run's spellings: hex strings of glyph ids, and the numbers between them. -/
+public def TextItem.parts : TextItem → Array String
+  | .glyphs gids => #[(gids.foldl pushGid "<").push '>']
+  | .kerned gids nums =>
+    let r := gids.zipIdx.foldl (fun a (g, i) => kernStep a (g, nums.getD i 0)) (#[], "<")
+    r.1.push (r.2.push '>')
+  | .adjust d => #[toString d]
+
+public def TextItem.render (it : TextItem) : String := " ".intercalate it.parts.toList
 
 mutual
 
@@ -85,7 +98,7 @@ public def TextOp.render : TextOp → String
   | .move x y => s!"1 0 0 1 {x.toBpString} {y.toBpString} Tm"
   | .font res size => s!"/F{res + 1} {size.toBpString} Tf"
   | .color c => c.pdfFill
-  | .show items => (items.foldl (fun acc it => acc ++ it.render) "[") ++ "] TJ"
+  | .show items => "[" ++ " ".intercalate (items.toList.flatMap fun it => it.parts.toList) ++ "] TJ"
   | .marked t body => TextOp.renderLines (t.opener ++ "\n") body.toList ++ "EMC"
 
 private def TextOp.renderLines (acc : String) : List TextOp → String
@@ -1158,10 +1171,26 @@ public theorem text_render_exact (ops : Array TextOp) :
 public theorem glyphs_render_exact (gids : Array Nat) :
     (TextItem.glyphs gids).render
       = String.singleton '<' ++ String.join (gids.toList.map gidHex) ++ String.singleton '>' := by
-  simp only [TextItem.render]
+  simp only [TextItem.render, TextItem.parts, List.toList_toArray, String.intercalate_singleton]
   rw [show pushGid = fun acc g => acc ++ gidHex g from funext fun _ => funext fun _ => pushGid_eq ..,
     ← Array.foldl_toList, foldl_append_eq, String.push_eq_append]
   rfl
+
+public theorem TextItem.parts_eq (it : TextItem) : it.parts = match it with
+    | .glyphs gids =>
+      #[String.singleton '<' ++ String.join (gids.toList.map gidHex) ++ String.singleton '>']
+    | .kerned gids nums =>
+      let r := gids.zipIdx.foldl (fun a (g, i) => kernStep a (g, nums.getD i 0)) (#[], "<")
+      r.1.push (r.2 ++ String.singleton '>')
+    | .adjust d => #[toString d] := by
+  cases it with
+  | glyphs gids =>
+    simp only [TextItem.parts, String.push_eq_append]
+    rw [show pushGid = fun acc g => acc ++ gidHex g from funext fun _ => funext fun _ => pushGid_eq ..,
+      ← Array.foldl_toList, foldl_append_eq]
+    rfl
+  | kerned gids nums => simp only [TextItem.parts, String.push_eq_append]
+  | adjust d => rfl
 
 private theorem paint_render_exact (fl : Option PaintFill) (st : Option PaintStroke)
     (gs : Option ExtG) (segs : Array PathOp) :

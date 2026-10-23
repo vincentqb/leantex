@@ -110,6 +110,26 @@ public theorem Color.pdfFill_plain (c : Color) (hm : c.pdfModel = none) (hc : c.
   simp only [pdfFill, hm, hc]
   rfl
 
+public theorem Color.pdfFill_eq (c : Color) : c.pdfFill =
+    match c.pdfModel with
+    | some (.rgb r g b) => r ++ " " ++ g ++ " " ++ b ++ " rg"
+    | some (.gray v) => v ++ " g"
+    | some (.cmyk cy m y k) => cy ++ " " ++ m ++ " " ++ y ++ " " ++ k ++ " k"
+    | some (.separation i t) =>
+      "/" ++ PdfLex.escapeName i.resKey ++ " cs " ++ Dim.ratString t.num t.den ++ " scn"
+    | none =>
+      match c.cmyk with
+      | some (cy, m, y, k) =>
+        pdfMilli cy ++ " " ++ pdfMilli m ++ " " ++ pdfMilli y ++ " " ++ pdfMilli k ++ " k"
+      | none => c.pdfComponents ++ " rg" := by
+  unfold pdfFill
+  cases h : c.pdfModel with
+  | none =>
+    cases h' : c.cmyk with
+    | none => rfl
+    | some q => obtain ⟨cy, m, y, k⟩ := q; rfl
+  | some p => cases p <;> rfl
+
 public theorem Color.pdfStroke_plain (c : Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     c.pdfStroke = c.pdfComponents ++ " RG" := by
   simp only [pdfStroke, hm, hc]
