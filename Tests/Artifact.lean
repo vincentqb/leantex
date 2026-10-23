@@ -712,6 +712,7 @@ edge; W0333 names it, and a footline should break or shrink what it cannot fit")
 def artTagIsArtifact : Pdf.MarkTag → Bool
   | .artifact _ => true
   | .content _ _ _ => false
+  | .span _ => false
 
 mutual
 

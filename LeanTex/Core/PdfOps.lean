@@ -35,11 +35,13 @@ public inductive ArtifactKind where
   | page
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The tag a marked-content sequence opens with (§14.6.2): an artifact, or content with its
-structure type, page-unique MCID and structure leaf. -/
+/-- The tag a marked-content sequence opens with (§14.6.2): an artifact, content with its
+structure type, page-unique MCID and structure leaf, or a span replacing its text. -/
 public inductive MarkTag where
   | artifact (kind : Option ArtifactKind)
   | content (s : String) (mcid : Nat) (leaf : Nat)
+  /-- A span whose text reads as `actual` in place of its glyphs' (§14.9.4). -/
+  | span (actual : String)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- Text-object operators (§9.3–9.4), with marked content nested as a balanced pair. -/

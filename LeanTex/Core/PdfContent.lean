@@ -4,6 +4,7 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.Layout
 public import LeanTex.Core.PdfOps
 public import LeanTex.Core.GfxPdf
+import LeanTex.Core.PdfText
 
 /-! A page's content stream as typed operators: the layout walk that builds them and the pure
 renderer that spells them. -/
@@ -29,6 +30,8 @@ public def MarkTag.opener : MarkTag → String
   | .artifact (some .layout) => "/Artifact << /Type /Layout >> BDC"
   | .artifact (some .page) => "/Artifact << /Type /Page >> BDC"
   | .content s mcid _ => s!"/{s} << /MCID {mcid} >> BDC"
+  | .span s =>
+    "/Span << /ActualText " ++ String.ofList ((PdfRead.textStringBytes s).map Char.ofNat) ++ " >> BDC"
 
 /-- What a line's ink stands for: running furniture, a structure leaf under its holder's type, or ink no leaf owns. -/
 public inductive Origin where
@@ -273,6 +276,8 @@ public structure TextSt where
   /-- The filled polygons the lines carried, in page coordinates. -/
   polys : Array (Ir.Color × Array (Length × Length)) := #[]
   images : Array ImgOut := #[]
+  /-- The line's operators showing the hyphen the breaker set at its end. -/
+  hyphens : Array Nat := #[]
 
 private def TextSt.op (st : TextSt) (o : TextOp) : TextSt := { st with ops := st.ops.push o }
 
@@ -446,6 +451,17 @@ private def stepRun (remap : Array Nat) (lineSize ypdf : Length) (st : TextSt) (
     ⟨Array.mkEmpty glyphs.size, Array.mkEmpty glyphs.size, p.adv, 0⟩
   st.pushRun (runItem r.gids r.nums) w { p with adv := r.adv }
 
+/-- Whether a run is the hyphen the breaker set at a line end. -/
+@[expose] public def lineHyphen (attr : Attribution) (glyphs : Array (Nat × Char × Length)) : Bool :=
+  attr == .hyphen && !glyphs.isEmpty
+
+/-- A line-end hyphen's run as a `TJ` of its own, its operator's place noted. -/
+private def stepHyphen (remap : Array Nat) (lineSize ypdf : Length) (st : TextSt) (idx : Nat)
+    (color : Ir.Color) (w : Length) (glyphs : Array (Nat × Char × Length)) (segSize raise : Length) :
+    TextSt :=
+  let s := (stepRun remap lineSize ypdf st.closeTJ idx color w glyphs segSize raise).closeTJ
+  { s with hyphens := s.hyphens.push (s.ops.size - 1) }
+
 private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize ypdf : Length)
     (og : Origin) (st : TextSt) : Seg → TextSt
   | .rule w thickness raise color _ =>
@@ -462,13 +478,15 @@ private def stepSeg (remap : Array Nat) (imgMap : Array (Option Nat)) (lineSize 
                                          origin := og, store := idx },
               x := st.x + w }
   | .gap w _ | .decoratedGap w _ _ => { st with x := st.x + w }
-  | .run idx color _ w glyphs segSize _ _ raise _ _ =>
-    stepRun remap lineSize ypdf st idx color w glyphs segSize raise
+  | .run idx color _ w glyphs segSize _ _ raise _ attr =>
+    if lineHyphen attr glyphs then
+      stepHyphen remap lineSize ypdf st idx color w glyphs segSize raise
+    else stepRun remap lineSize ypdf st idx color w glyphs segSize raise
 
 private def lineSt (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat)) (og : Origin)
     (st : TextSt) (l : LineOut) : TextSt :=
   let ypdf := geom.bleed + geom.pageH - l.y
-  let st : TextSt := { st with ops := #[] }
+  let st : TextSt := { st with ops := #[], hyphens := #[] }
   let st := if l.expand != st.tz then { st.op (.scale (1000 + l.expand)) with tz := l.expand }
     else st
   let st := { st with x := geom.bleed + l.x, pen := none }
@@ -485,19 +503,29 @@ private def polyOp (p : Ir.Color × Array (Length × Length)) : ContentOp :=
 
 private def furnitureTag : MarkTag := .artifact (some .pagination)
 
-/-- One line onto the text object, under the wrapper its origin names; a line with no operators adds
-nothing unless it is furniture, which is wrapped whatever it holds. -/
+/-- The text a line-end hyphen reads as: a soft hyphen, a break no word holds. -/
+@[expose] public def generatedHyphen : String := String.singleton (Char.ofNat 0xAD)
+
+/-- A line's operators with each one showing a generated hyphen under a span reading as one. -/
+@[expose] public def markHyphens (ops : Array TextOp) (hyphens : Array Nat) : Array TextOp :=
+  if hyphens.isEmpty then ops
+  else ops.mapIdx fun i o => if hyphens.contains i then .marked (.span generatedHyphen) #[o] else o
+
+/-- One line onto the text object, under the wrapper its origin names, a generated hyphen under a
+span; a line with no operators adds nothing unless it is furniture, which is wrapped whatever it
+holds. -/
 public def stepLine (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
   let og := Origin.of tags l
   let s := lineSt geom remap imgMap og st l
+  let body := markHyphens s.ops s.hyphens
   match og with
-  | .furniture => { s with ops := st.ops.push (.marked furnitureTag s.ops) }
+  | .furniture => { s with ops := st.ops.push (.marked furnitureTag body) }
   | .unattributed =>
-    { s with ops := if s.ops.isEmpty then st.ops else st.ops.push (.marked (.artifact none) s.ops) }
+    { s with ops := if s.ops.isEmpty then st.ops else st.ops.push (.marked (.artifact none) body) }
   | .leaf k tag =>
     { s with ops := if s.ops.isEmpty then st.ops
-                    else st.ops.push (.marked (.content tag 0 k) s.ops) }
+                    else st.ops.push (.marked (.content tag 0 k) body) }
 
 private def stepLinePlain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
@@ -721,6 +749,9 @@ private def TextOp.number (n : Nat) : TextOp → TextOp × Nat
   | .marked (.artifact a) body =>
     let r := TextOp.numberList n #[] body.toList
     (.marked (.artifact a) r.1, r.2)
+  | .marked (.span a) body =>
+    let r := TextOp.numberList n #[] body.toList
+    (.marked (.span a) r.1, r.2)
   | .marked (.content s _ k) body =>
     let r := TextOp.numberList (n + 1) #[] body.toList
     (.marked (.content s n k) r.1, r.2)
@@ -752,6 +783,9 @@ private def ContentOp.number (n : Nat) : ContentOp → ContentOp × Nat
   | .marked (.artifact a) body =>
     let r := ContentOp.numberList n #[] body.toList
     (.marked (.artifact a) r.1, r.2)
+  | .marked (.span a) body =>
+    let r := ContentOp.numberList n #[] body.toList
+    (.marked (.span a) r.1, r.2)
   | .marked (.content s _ k) body =>
     let r := ContentOp.numberList (n + 1) #[] body.toList
     (.marked (.content s n k) r.1, r.2)
@@ -853,6 +887,65 @@ end
 
 /-- Every glyph run a content stream paints, in stream order. -/
 public def runsOf (ops : Array ContentOp) : List (Array Nat) := ops.toList.flatMap ContentOp.runs
+
+mutual
+
+/-- The glyph runs a text operator shows under a span reading as a generated hyphen. -/
+public def TextOp.spanRuns : TextOp → List (Array Nat)
+  | .scale _ => []
+  | .move _ _ => []
+  | .font _ _ => []
+  | .color _ => []
+  | .show _ => []
+  | .marked (.span a) body =>
+    if a = generatedHyphen then TextOp.runsList body.toList else TextOp.spanRunsList body.toList
+  | .marked (.artifact _) body => TextOp.spanRunsList body.toList
+  | .marked (.content _ _ _) body => TextOp.spanRunsList body.toList
+
+public def TextOp.spanRunsList : List TextOp → List (Array Nat)
+  | [] => []
+  | o :: rest =>
+    let tail := TextOp.spanRunsList rest
+    o.spanRuns ++ tail
+
+end
+
+mutual
+
+/-- The glyph runs a page stream's operator shows under a generated-hyphen span; a form's content is
+its own stream. -/
+public def ContentOp.spanRuns : ContentOp → List (Array Nat)
+  | .fill _ _ _ _ _ => []
+  | .paint _ _ _ _ => []
+  | .shade _ _ => []
+  | .outline _ _ _ => []
+  | .group _ _ _ body => ContentOp.spanRunsList body.toList
+  | .xobject _ _ _ _ => []
+  | .text ops => TextOp.spanRunsList ops.toList
+  | .image _ _ _ _ _ => []
+  | .imageMissing _ _ _ _ => []
+  | .marked _ body => ContentOp.spanRunsList body.toList
+
+public def ContentOp.spanRunsList : List ContentOp → List (Array Nat)
+  | [] => []
+  | o :: rest =>
+    let tail := ContentOp.spanRunsList rest
+    o.spanRuns ++ tail
+
+end
+
+/-- Every glyph run a page stream shows as a generated hyphen, in stream order. -/
+public def spanRunsOf (ops : Array ContentOp) : List (Array Nat) :=
+  ops.toList.flatMap ContentOp.spanRuns
+
+/-- The glyph run a segment ships as the hyphen the breaker set at a line end. -/
+public def segHyphenRuns : Seg → List (Array Nat)
+  | .run _ _ _ _ glyphs _ _ _ _ _ attr =>
+    if lineHyphen attr glyphs then [glyphs.map (·.1)] else []
+  | .gap _ _ | .decoratedGap _ _ _ => []
+  | .rule _ _ _ _ _ | .decoration _ _ _ _ _ _ => []
+  | .image _ _ _ _ _ _ => []
+  | .poly _ _ => []
 
 /-- One line of a content stream as the renderer lays it: an operator, a sequence opener, or an `EMC`. -/
 public inductive Line where
@@ -1396,6 +1489,17 @@ private theorem stepRun_runs (remap : Array Nat) (ls y : Length) (st : TextSt) (
     congr 1
     simp only [apply_ite TextSt.runs, setFace_runs, toPen_runs, ite_self]
 
+private theorem stepHyphen_runs (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat)
+    (c : Ir.Color) (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length) :
+    (stepHyphen remap ls y st idx c w glyphs ss raise).runs
+      = st.runs ++ (if glyphs.isEmpty then [] else [glyphs.map (·.1)]) := by
+  have h1 := closeTJ_runs (stepRun remap ls y st.closeTJ idx c w glyphs ss raise)
+  have h2 := stepRun_runs remap ls y st.closeTJ idx c w glyphs ss raise
+  have h3 := closeTJ_runs st
+  have e : (stepHyphen remap ls y st idx c w glyphs ss raise).runs =
+      (stepRun remap ls y st.closeTJ idx c w glyphs ss raise).closeTJ.runs := rfl
+  rw [e, h1, h2, h3]
+
 private theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length) (og : Origin)
     (st : TextSt) (seg : Seg) : (stepSeg remap imgMap ls y og st seg).runs = st.runs ++ segRuns seg := by
   cases seg with
@@ -1403,7 +1507,11 @@ private theorem stepSeg_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (
   | image => simp [stepSeg, TextSt.runs, segRuns]
   | gap | decoratedGap => simp [stepSeg, TextSt.runs, segRuns]
   | poly => simp [stepSeg, TextSt.runs, segRuns]
-  | run => exact stepRun_runs ..
+  | run =>
+    simp only [stepSeg]
+    split
+    · exact stepHyphen_runs ..
+    · exact stepRun_runs ..
 
 private theorem foldl_segs_runs (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (segs : List Seg) (st : TextSt) :
@@ -1440,6 +1548,47 @@ private theorem lineSt_items (geom : Geom) (remap : Array Nat) (imgMap : Array (
   unfold lineSt
   exact closeTJ_items _
 
+private theorem flatMap_mapIdx_same {β : Type} (g : TextOp → List β) :
+    ∀ (l : List TextOp) (F : Nat → TextOp → TextOp), (∀ i o, g (F i o) = g o) →
+      (l.mapIdx F).flatMap g = l.flatMap g
+  | [], _, _ => rfl
+  | o :: rest, F, hF => by
+    rw [List.mapIdx_cons, List.flatMap_cons, List.flatMap_cons, hF,
+      flatMap_mapIdx_same g rest (fun i => F (i + 1)) (fun i => hF (i + 1))]
+
+private theorem mapIdx_id_of {α : Type} : ∀ (l : List α) (f : Nat → α → α), (∀ i o, f i o = o) →
+    l.mapIdx f = l
+  | [], _, _ => rfl
+  | o :: rest, f, hf => by
+    rw [List.mapIdx_cons, hf, mapIdx_id_of rest (fun i => f (i + 1)) (fun i => hf (i + 1))]
+
+private theorem markHyphens_eq (ops : Array TextOp) (hs : Array Nat) :
+    markHyphens ops hs =
+      ops.mapIdx fun i o => if hs.contains i then .marked (.span generatedHyphen) #[o] else o := by
+  unfold markHyphens
+  split
+  · next h =>
+    apply Array.toList_inj.mp
+    rw [Array.toList_mapIdx, mapIdx_id_of]
+    intro i o
+    have : hs = #[] := Array.isEmpty_iff.mp h
+    simp [this]
+  · rfl
+
+private theorem markHyphens_flatMap {β : Type} (g : TextOp → List β)
+    (hg : ∀ o, g (.marked (.span generatedHyphen) #[o]) = g o) (ops : Array TextOp) (hs : Array Nat) :
+    (markHyphens ops hs).toList.flatMap g = ops.toList.flatMap g := by
+  rw [markHyphens_eq, Array.toList_mapIdx]
+  apply flatMap_mapIdx_same g
+  intro i o
+  split
+  · exact hg o
+  · rfl
+
+private theorem markHyphens_runs (ops : Array TextOp) (hs : Array Nat) :
+    (markHyphens ops hs).toList.flatMap TextOp.runs = ops.toList.flatMap TextOp.runs :=
+  markHyphens_flatMap TextOp.runs (fun o => by simp [TextOp.runs, TextOp.runsList]) ops hs
+
 private theorem stepLine_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
     (stepLine geom remap imgMap tags st l).runs = st.runs ++ l.segs.toList.flatMap segRuns := by
@@ -1456,17 +1605,17 @@ private theorem stepLine_runs (geom : Geom) (remap : Array Nat) (imgMap : Array 
     rw [← List.append_eq_nil_iff, ← hs, Array.isEmpty_iff.mp he]
     simp
   split
-  · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, hs,
+  · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, markHyphens_runs, hs,
       List.append_assoc]
   · split
     · rename_i he
       simp [(hempty he).1, (hempty he).2]
-    · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, hs,
+    · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, markHyphens_runs, hs,
         List.append_assoc]
   · split
     · rename_i he
       simp [(hempty he).1, (hempty he).2]
-    · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, hs,
+    · simp [Array.toList_push, List.flatMap_append, TextOp.runs, TextOp.runsList_eq, markHyphens_runs, hs,
         List.append_assoc]
 
 private theorem stepLine_items (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
@@ -1537,7 +1686,11 @@ private theorem stepSeg_stores (remap : Array Nat) (imgMap : Array (Option Nat))
     (stepSeg remap imgMap ls y og st seg).stores = st.stores ++ segStores seg := by
   cases seg with
   | image idx w h _ _ => simp [stepSeg, TextSt.stores, segStores]
-  | run => simp [stepSeg, TextSt.stores, segStores, stepRun_images]
+  | run =>
+    simp only [stepSeg]
+    split
+    · simp [stepHyphen, TextSt.stores, segStores, stepRun_images, closeTJ_images]
+    · simp [TextSt.stores, segStores, stepRun_images]
   | rule | decoration | gap | decoratedGap | poly => simp [stepSeg, TextSt.stores, segStores]
 
 private theorem foldl_segs_stores (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
@@ -1679,6 +1832,10 @@ private theorem TextOp.number_runs : ∀ (o : TextOp) (n : Nat), (TextOp.number 
     have h := TextOp.numberList_runs body.toList n #[]
     simp only [List.flatMap_nil, List.nil_append] at h
     simp [TextOp.number, TextOp.runs, TextOp.runsList_eq, h]
+  | .marked (.span a) body, n => by
+    have h := TextOp.numberList_runs body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [TextOp.number, TextOp.runs, TextOp.runsList_eq, h]
   | .marked (.content s m k) body, n => by
     have h := TextOp.numberList_runs body.toList (n + 1) #[]
     simp only [List.flatMap_nil, List.nil_append] at h
@@ -1714,6 +1871,10 @@ private theorem ContentOp.number_runs : ∀ (o : ContentOp) (n : Nat),
     simp only [List.flatMap_nil, List.nil_append] at h
     simp [ContentOp.number, ContentOp.runs, h]
   | .marked (.artifact a) body, n => by
+    have h := ContentOp.numberList_runs body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.runs, ContentOp.runsList_eq, h]
+  | .marked (.span a) body, n => by
     have h := ContentOp.numberList_runs body.toList n #[]
     simp only [List.flatMap_nil, List.nil_append] at h
     simp [ContentOp.number, ContentOp.runs, ContentOp.runsList_eq, h]
@@ -2139,6 +2300,17 @@ private theorem inkText_push_marked (ops : Array TextOp) (t : MarkTag) (body : A
     inkText (ops.push (.marked t body)) = inkText ops ++ inkText body := by
   simp [inkText, TextOp.inkList_append, TextOp.inkList, TextOp.ink]
 
+private theorem TextOp.inkList_eq (l : List TextOp) : TextOp.inkList l = l.flatMap TextOp.ink := by
+  induction l with
+  | nil => rfl
+  | cons o rest ih => simp [TextOp.inkList, ih]
+
+private theorem markHyphens_inkText (ops : Array TextOp) (hs : Array Nat) :
+    inkText (markHyphens ops hs) = inkText ops := by
+  unfold inkText
+  rw [TextOp.inkList_eq, TextOp.inkList_eq,
+    markHyphens_flatMap TextOp.ink (fun o => by simp [TextOp.ink, TextOp.inkList]) ops hs]
+
 private def TextSt.plain (st : TextSt) : TextSt := { st with ops := inkText st.ops }
 
 private theorem lineSt_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
@@ -2155,15 +2327,15 @@ private theorem stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap : Array
     intro a b hb
     rw [Array.isEmpty_iff.mp hb, Array.append_empty]
   split
-  · simp [inkText_push_marked, inkText_append]
+  · simp [inkText_push_marked, inkText_append, markHyphens_inkText]
   · split
     · rename_i he
       rw [hempty _ _ he]
-    · simp [inkText_push_marked, inkText_append]
+    · simp [inkText_push_marked, inkText_append, markHyphens_inkText]
   · split
     · rename_i he
       rw [hempty _ _ he]
-    · simp [inkText_push_marked, inkText_append]
+    · simp [inkText_push_marked, inkText_append, markHyphens_inkText]
 
 private theorem stepLinePlain_resp (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) {st st' : TextSt} (h : st.plain = st'.plain) (l : LineOut) :
@@ -2263,7 +2435,11 @@ private theorem stepSeg_plainOps (remap : Array Nat) (imgMap : Array (Option Nat
   | image => exact h
   | gap | decoratedGap => exact h
   | poly => exact h
-  | run => exact stepRun_plainOps _ _ _ _ _ _ _ _ _ _ h
+  | run =>
+    simp only [stepSeg]
+    split
+    · exact closeTJ_plainOps _ (stepRun_plainOps _ _ _ _ _ _ _ _ _ _ (closeTJ_plainOps _ h))
+    · exact stepRun_plainOps _ _ _ _ _ _ _ _ _ _ h
 
 private theorem foldl_segs_plainOps (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
     (og : Origin) (segs : List Seg) (st : TextSt) (h : inkText st.ops = st.ops) :
@@ -2826,6 +3002,10 @@ private theorem TextOp.number_ink : ∀ (o : TextOp) (n : Nat), (TextOp.number n
     have h := TextOp.numberList_ink body.toList n #[]
     simp only [TextOp.inkList, List.nil_append] at h
     simp [TextOp.number, TextOp.ink, h]
+  | .marked (.span a) body, n => by
+    have h := TextOp.numberList_ink body.toList n #[]
+    simp only [TextOp.inkList, List.nil_append] at h
+    simp [TextOp.number, TextOp.ink, h]
   | .marked (.content s m k) body, n => by
     have h := TextOp.numberList_ink body.toList (n + 1) #[]
     simp only [TextOp.inkList, List.nil_append] at h
@@ -2862,6 +3042,10 @@ private theorem ContentOp.number_ink : ∀ (o : ContentOp) (n : Nat), (ContentOp
     simp only [TextOp.inkList, List.nil_append] at h
     simp [ContentOp.number, ContentOp.ink, inkText, h]
   | .marked (.artifact a) body, n => by
+    have h := ContentOp.numberList_ink body.toList n #[]
+    simp only [ContentOp.inkList, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.ink, h]
+  | .marked (.span a) body, n => by
     have h := ContentOp.numberList_ink body.toList n #[]
     simp only [ContentOp.inkList, List.nil_append] at h
     simp [ContentOp.number, ContentOp.ink, h]
@@ -3082,6 +3266,7 @@ public theorem artifacts_covers (geom : Geom) (remap : Array Nat) (widths : Arra
 private def Line.contentOpen : Line → Option (Nat × Nat)
   | .open (.content _ m k) => some (m, k)
   | .open (.artifact _) => none
+  | .open (.span _) => none
   | .op _ => none
   | .emc => none
 
@@ -3091,6 +3276,7 @@ public def Line.isPaginationOpen : Line → Bool
   | .open (.artifact (some .page)) => false
   | .open (.artifact none) => false
   | .open (.content _ _ _) => false
+  | .open (.span _) => false
   | .op _ => false
   | .emc => false
 
@@ -3106,6 +3292,7 @@ private def TextOp.marks (acc : Array (Nat × Nat)) : TextOp → Array (Nat × N
   | .color _ => acc
   | .show _ => acc
   | .marked (.artifact _) body => TextOp.marksList acc body.toList
+  | .marked (.span _) body => TextOp.marksList acc body.toList
   | .marked (.content _ m k) body => TextOp.marksList (acc.push (m, k)) body.toList
 
 private def TextOp.marksList (acc : Array (Nat × Nat)) : List TextOp → Array (Nat × Nat)
@@ -3127,6 +3314,7 @@ private def ContentOp.marks (acc : Array (Nat × Nat)) : ContentOp → Array (Na
   | .image _ _ _ _ _ => acc
   | .imageMissing _ _ _ _ => acc
   | .marked (.artifact _) body => ContentOp.marksList acc body.toList
+  | .marked (.span _) body => ContentOp.marksList acc body.toList
   | .marked (.content _ m k) body => ContentOp.marksList (acc.push (m, k)) body.toList
 
 private def ContentOp.marksList (acc : Array (Nat × Nat)) : List ContentOp → Array (Nat × Nat)
@@ -3179,6 +3367,13 @@ private theorem TextOp.number_mcids : ∀ (o : TextOp) (n : Nat),
   | .color _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
   | .show _, _ => by simp [TextOp.number, TextOp.lines, contentOpens, Line.contentOpen]
   | .marked (.artifact a) body, n => by
+    have h := TextOp.numberList_mcids body.toList n #[]
+    simp only [TextOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [TextOp.number, TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append, List.filterMap_nil, List.append_nil]
+    exact h
+  | .marked (.span a) body, n => by
     have h := TextOp.numberList_mcids body.toList n #[]
     simp only [TextOp.linesList, contentOpens_nil, List.map_nil,
       List.nil_append] at h
@@ -3249,6 +3444,13 @@ private theorem ContentOp.number_mcids : ∀ (o : ContentOp) (n : Nat),
     simp only [ContentOp.number, ContentOp.lines, contentOpens, List.filterMap_cons,
       Line.contentOpen, List.filterMap_append, List.filterMap_nil, List.append_nil]
     exact h
+  | .marked (.span a) body, n => by
+    have h := ContentOp.numberList_mcids body.toList n #[]
+    simp only [ContentOp.linesList, contentOpens_nil, List.map_nil,
+      List.nil_append] at h
+    simp only [ContentOp.number, ContentOp.lines, contentOpens, List.filterMap_cons,
+      Line.contentOpen, List.filterMap_append, List.filterMap_nil, List.append_nil]
+    exact h
   | .marked (.content s m k) body, n => by
     have h := ContentOp.numberList_mcids body.toList (n + 1) #[]
     simp only [ContentOp.linesList, contentOpens_nil, List.map_nil,
@@ -3289,6 +3491,9 @@ private theorem TextOp.marks_eq_contentOpens : ∀ (o : TextOp) (acc : Array (Na
   | .marked (.artifact a) body, acc => by
     rw [TextOp.marks, TextOp.marksList_eq_contentOpens body.toList]
     simp [TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen, List.filterMap_append]
+  | .marked (.span a) body, acc => by
+    rw [TextOp.marks, TextOp.marksList_eq_contentOpens body.toList]
+    simp [TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen, List.filterMap_append]
   | .marked (.content s m k) body, acc => by
     rw [TextOp.marks, TextOp.marksList_eq_contentOpens body.toList]
     simp [TextOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen, List.filterMap_append]
@@ -3326,6 +3531,10 @@ private theorem ContentOp.marks_eq_contentOpens : ∀ (o : ContentOp) (acc : Arr
     simp [ContentOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
       List.filterMap_append]
   | .marked (.artifact a) body, acc => by
+    rw [ContentOp.marks, ContentOp.marksList_eq_contentOpens body.toList]
+    simp [ContentOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
+      List.filterMap_append]
+  | .marked (.span a) body, acc => by
     rw [ContentOp.marks, ContentOp.marksList_eq_contentOpens body.toList]
     simp [ContentOp.lines, contentOpens, List.filterMap_cons, Line.contentOpen,
       List.filterMap_append]
@@ -3467,20 +3676,37 @@ public theorem Origin.of_furniture_iff (tags : Array (Option String)) (l : LineO
     · split <;> simp
     · simp
 
+private theorem TextOp.linesList_eq (l : List TextOp) : TextOp.linesList l = l.flatMap TextOp.lines := by
+  induction l with
+  | nil => rfl
+  | cons o rest ih => simp [TextOp.linesList, ih]
+
+private theorem markHyphens_textArtifacts (ops : Array TextOp) (hs : Array Nat) :
+    textArtifacts (markHyphens ops hs) = textArtifacts ops := by
+  unfold textArtifacts
+  rw [TextOp.linesList_eq, TextOp.linesList_eq, List.countP_eq_length_filter,
+    List.countP_eq_length_filter, List.filter_flatMap, List.filter_flatMap,
+    markHyphens_flatMap (fun o => o.lines.filter Line.isPaginationOpen)
+      (fun o => by simp [TextOp.lines, TextOp.linesList, Line.isPaginationOpen]) ops hs]
+
 private theorem stepLine_textArtifacts (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
     textArtifacts (stepLine geom remap imgMap tags st l).ops
       = textArtifacts st.ops + (if l.furniture then 1 else 0) := by
   unfold textArtifacts
   have hpush : ∀ og t, (TextOp.linesList (st.ops.push (.marked t
-      (lineSt geom remap imgMap og st l).ops)).toList).countP Line.isPaginationOpen
+      (markHyphens (lineSt geom remap imgMap og st l).ops
+        (lineSt geom remap imgMap og st l).hyphens))).toList).countP Line.isPaginationOpen
       = (TextOp.linesList st.ops.toList).countP Line.isPaginationOpen
         + (if (Line.open t).isPaginationOpen then 1 else 0) := by
     intro og t
     have h0 := lineSt_textArtifacts geom remap imgMap og st l
     unfold textArtifacts at h0
+    have hm := markHyphens_textArtifacts (lineSt geom remap imgMap og st l).ops
+      (lineSt geom remap imgMap og st l).hyphens
+    unfold textArtifacts at hm
     rw [TextOp.linesList_push, List.countP_append, TextOp.lines, List.countP_cons,
-      List.countP_append, h0]
+      List.countP_append, hm, h0]
     simp [Line.isPaginationOpen]
   simp only [stepLine]
   generalize hog : Origin.of tags l = og
@@ -3533,5 +3759,520 @@ public theorem furniture_covers (geom : Geom) (remap : Array Nat) (imgMap : Arra
       split <;> simp; omega
   rw [← Array.foldl_toList, h, ← Array.length_toList, Array.toList_filter]
   simp [textArtifacts, TextOp.linesList]
+
+/-! ### Generated hyphens -/
+
+/-- `st'` holds `st`'s operators and hyphen places, then operators showing nothing as a hyphen. -/
+private def HExt (st st' : TextSt) : Prop :=
+  (∃ ext : Array TextOp, st'.ops = st.ops ++ ext ∧ ∀ o ∈ ext, o.spanRuns = []) ∧
+    st'.hyphens = st.hyphens
+
+private theorem HExt.refl (st : TextSt) : HExt st st := ⟨⟨#[], by simp, by simp⟩, rfl⟩
+
+private theorem HExt.trans {a b c : TextSt} (h1 : HExt a b) (h2 : HExt b c) : HExt a c := by
+  obtain ⟨⟨e1, he1, hs1⟩, hh1⟩ := h1
+  obtain ⟨⟨e2, he2, hs2⟩, hh2⟩ := h2
+  refine ⟨⟨e1 ++ e2, by rw [he2, he1, Array.append_assoc], ?_⟩, by rw [hh2, hh1]⟩
+  intro o ho
+  rcases Array.mem_append.mp ho with h | h
+  · exact hs1 o h
+  · exact hs2 o h
+
+private theorem HExt.ofEq {a b : TextSt} (hops : b.ops = a.ops) (hh : b.hyphens = a.hyphens) :
+    HExt a b := ⟨⟨#[], by simp [hops], by simp⟩, hh⟩
+
+private theorem HExt.push (st : TextSt) (o : TextOp) (h : o.spanRuns = []) :
+    HExt st { st with ops := st.ops.push o } :=
+  ⟨⟨#[o], by simp, by simpa using h⟩, rfl⟩
+
+private theorem closeTJ_hext (st : TextSt) : HExt st st.closeTJ := by
+  unfold TextSt.closeTJ
+  split
+  · exact HExt.refl st
+  · exact HExt.push st _ rfl
+
+private theorem op_hext (st : TextSt) (o : TextOp) (h : o.spanRuns = []) : HExt st (st.op o) :=
+  HExt.push st o h
+
+private theorem moveTo_hext (st : TextSt) (y : Length) : HExt st (st.moveTo y) :=
+  (closeTJ_hext st).trans (op_hext st.closeTJ (.move st.x y) rfl)
+
+private theorem toPen_hext (st : TextSt) (c : Bool) (y : Length) : HExt st (st.toPen c y) := by
+  unfold TextSt.toPen
+  split
+  · dsimp only
+    split
+    · split
+      · exact HExt.refl st
+      · exact HExt.ofEq rfl rfl
+    · exact moveTo_hext st y
+  · exact moveTo_hext st y
+
+private theorem setFace_hext (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length)
+    (c : Ir.Color) : HExt st (st.setFace remap idx size c) := by
+  unfold TextSt.setFace TextSt.setColor TextSt.setFont
+  have h1 := closeTJ_hext st
+  split <;> split
+  · exact (h1.trans (op_hext _ _ rfl)).trans (op_hext _ _ rfl)
+  · exact h1.trans (op_hext _ _ rfl)
+  · exact h1.trans (op_hext _ _ rfl)
+  · exact h1
+
+/-- `st'` holds `st`'s operators, then operators showing no glyph, with no pending `TJ` item. -/
+private def HFresh (st st' : TextSt) : Prop :=
+  (∃ ext : Array TextOp, st'.ops = st.ops ++ ext ∧ ∀ o ∈ ext, o.spanRuns = [] ∧ o.runs = []) ∧
+    st'.items = #[] ∧ st'.hyphens = st.hyphens
+
+private theorem HFresh.trans {a b c : TextSt} (h1 : HFresh a b) (h2 : HFresh b c) : HFresh a c := by
+  obtain ⟨⟨e1, he1, hs1⟩, -, hh1⟩ := h1
+  obtain ⟨⟨e2, he2, hs2⟩, hi2, hh2⟩ := h2
+  refine ⟨⟨e1 ++ e2, by rw [he2, he1, Array.append_assoc], ?_⟩, hi2, by rw [hh2, hh1]⟩
+  intro o ho
+  rcases Array.mem_append.mp ho with h | h
+  · exact hs1 o h
+  · exact hs2 o h
+
+private theorem HFresh.refl (st : TextSt) (h : st.items = #[]) : HFresh st st :=
+  ⟨⟨#[], by simp, by simp⟩, h, rfl⟩
+
+private theorem closeTJ_fresh (st : TextSt) (h : st.items = #[]) : st.closeTJ = st := by
+  unfold TextSt.closeTJ
+  simp [h]
+
+private theorem op_fresh (st : TextSt) (o : TextOp) (h : st.items = #[]) (hs : o.spanRuns = [])
+    (hr : o.runs = []) : HFresh st (st.op o) :=
+  ⟨⟨#[o], by simp [TextSt.op], by simp [hs, hr]⟩, h, rfl⟩
+
+private theorem toPen_fresh (st : TextSt) (c : Bool) (y : Length) (h : st.items = #[]) :
+    HFresh st (st.toPen c y) := by
+  have hm : HFresh st (st.moveTo y) := by
+    unfold TextSt.moveTo
+    rw [closeTJ_fresh st h]
+    exact op_fresh st _ h rfl rfl
+  unfold TextSt.toPen
+  split
+  · dsimp only
+    rw [ite_eq_right (by simp [h])]
+    exact hm
+  · exact hm
+
+private theorem setFace_fresh (st : TextSt) (remap : Array Nat) (idx : Nat) (size : Length)
+    (c : Ir.Color) (h : st.items = #[]) : HFresh st (st.setFace remap idx size c) := by
+  unfold TextSt.setFace TextSt.setColor TextSt.setFont
+  rw [closeTJ_fresh st h]
+  split <;> split
+  · exact (op_fresh st _ h rfl rfl).trans (op_fresh _ _ h rfl rfl)
+  · exact op_fresh st _ h rfl rfl
+  · exact op_fresh st _ h rfl rfl
+  · exact HFresh.refl st h
+
+/-- A run set from no pending `TJ` item leaves its glyphs as the one item pending. -/
+private theorem stepRun_fresh (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat)
+    (c : Ir.Color) (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length)
+    (h : st.items = #[]) (hg : glyphs.isEmpty = false) :
+    ∃ ext item, (stepRun remap ls y st idx c w glyphs ss raise).ops = st.ops ++ ext ∧
+      (∀ o ∈ ext, o.spanRuns = [] ∧ o.runs = []) ∧
+      (stepRun remap ls y st idx c w glyphs ss raise).items = #[item] ∧
+      item.runs = [glyphs.map (·.1)] ∧
+      (stepRun remap ls y st idx c w glyphs ss raise).hyphens = st.hyphens := by
+  unfold stepRun
+  rw [ite_eq_right (by simp [hg])]
+  dsimp only
+  generalize (st.font != (idx : Int) || st.size != (if ss == 0 then ls else ss) || st.color != c) = ch
+  have h1 := toPen_fresh st ch (y + raise) h
+  have h2 : HFresh st (if ch then (st.toPen ch (y + raise)).setFace remap idx
+      (if ss == 0 then ls else ss) c else st.toPen ch (y + raise)) := by
+    split
+    · exact h1.trans (setFace_fresh _ _ _ _ _ h1.2.1)
+    · exact h1
+  generalize (if ch then (st.toPen ch (y + raise)).setFace remap idx
+      (if ss == 0 then ls else ss) c else st.toPen ch (y + raise)) = s2 at h2 ⊢
+  obtain ⟨⟨ext, he, hq⟩, hi, hh⟩ := h2
+  simp only [TextSt.pushRun, hi, he, hh, List.push_toArray, List.nil_append]
+  refine ⟨ext, _, rfl, hq, rfl, ?_, ?_⟩
+  · rw [runItem_runs]
+    simp only [Array.mkEmpty_eq]
+    rw [place_glyphs_id]
+  · trivial
+
+private theorem stepRun_hext (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat)
+    (c : Ir.Color) (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length) :
+    HExt st (stepRun remap ls y st idx c w glyphs ss raise) := by
+  unfold stepRun
+  split
+  · exact HExt.ofEq rfl rfl
+  · dsimp only
+    generalize (st.font != (idx : Int) || st.size != (if ss == 0 then ls else ss) || st.color != c) = ch
+    have h2 : HExt st (if ch then (st.toPen ch (y + raise)).setFace remap idx
+        (if ss == 0 then ls else ss) c else st.toPen ch (y + raise)) := by
+      split
+      · exact (toPen_hext st ch _).trans (setFace_hext _ _ _ _ _)
+      · exact toPen_hext st ch _
+    generalize (if ch then (st.toPen ch (y + raise)).setFace remap idx
+        (if ss == 0 then ls else ss) c else st.toPen ch (y + raise)) = s2 at h2 ⊢
+    exact h2.trans (HExt.ofEq rfl rfl)
+
+private theorem TextOp.spanRunsList_eq (l : List TextOp) :
+    TextOp.spanRunsList l = l.flatMap TextOp.spanRuns := by
+  induction l with
+  | nil => rfl
+  | cons o rest ih => simp [TextOp.spanRunsList, ih]
+
+private theorem markHyphens_append (ops ext : Array TextOp) (hs : Array Nat)
+    (h : ∀ i ∈ hs, i < ops.size) : markHyphens (ops ++ ext) hs = markHyphens ops hs ++ ext := by
+  apply Array.toList_inj.mp
+  simp only [markHyphens_eq, Array.toList_mapIdx, Array.toList_append, List.mapIdx_append]
+  congr 1
+  apply mapIdx_id_of
+  intro i o
+  have : i + ops.size ∉ hs := fun hm => by have := h _ hm; omega
+  simp [this]
+
+/-- A line's operators so far show `acc` as generated hyphens, its hyphen places in range. -/
+private def HJ (st : TextSt) (acc : List (Array Nat)) : Prop :=
+  TextOp.spanRunsList (markHyphens st.ops st.hyphens).toList = acc ∧ ∀ i ∈ st.hyphens, i < st.ops.size
+
+private theorem HJ.hext {st st' : TextSt} {acc : List (Array Nat)} (hj : HJ st acc) (he : HExt st st') :
+    HJ st' acc := by
+  obtain ⟨hs, hlt⟩ := hj
+  obtain ⟨⟨ext, he, hq⟩, hh⟩ := he
+  refine ⟨?_, ?_⟩
+  · rw [he, hh, markHyphens_append _ _ _ hlt, Array.toList_append, TextOp.spanRunsList_eq,
+      List.flatMap_append, ← TextOp.spanRunsList_eq, hs]
+    rw [List.flatMap_eq_nil_iff.mpr (fun o ho => hq o (Array.mem_toList_iff.mp ho)), List.append_nil]
+  · intro i hi
+    rw [he, Array.size_append]
+    have := hlt i (hh ▸ hi)
+    omega
+
+private theorem mapIdx_congr_lt {α : Type} : ∀ (l : List α) (f g : Nat → α → α),
+    (∀ i < l.length, ∀ o, f i o = g i o) → l.mapIdx f = l.mapIdx g
+  | [], _, _, _ => rfl
+  | o :: rest, f, g, h => by
+    rw [List.mapIdx_cons, List.mapIdx_cons, h 0 (by simp) o,
+      mapIdx_congr_lt rest (fun i => f (i + 1)) (fun i => g (i + 1))
+        (fun i hi o => h (i + 1) (by simp; omega) o)]
+
+private theorem markHyphens_congr (ops : Array TextOp) (hs hs' : Array Nat)
+    (h : ∀ i < ops.size, (i ∈ hs ↔ i ∈ hs')) : markHyphens ops hs = markHyphens ops hs' := by
+  apply Array.toList_inj.mp
+  simp only [markHyphens_eq, Array.toList_mapIdx]
+  apply mapIdx_congr_lt
+  intro i hi o
+  have := h i (by simpa using hi)
+  simp only [Array.contains_iff_mem]
+  by_cases hm : i ∈ hs
+  · simp [hm, this.mp hm]
+  · have hm' : i ∉ hs' := fun h' => hm (this.mpr h')
+    simp [hm, hm']
+
+private theorem markHyphens_snoc (ops : Array TextOp) (o : TextOp) (hs : Array Nat) :
+    markHyphens (ops.push o) (hs.push ops.size) =
+      (markHyphens ops hs).push (.marked (.span generatedHyphen) #[o]) := by
+  apply Array.toList_inj.mp
+  simp only [markHyphens_eq, Array.toList_mapIdx, Array.toList_push, List.mapIdx_append,
+    List.mapIdx_cons, List.mapIdx_nil, Array.contains_iff_mem, Array.mem_push]
+  congr 1
+  · apply mapIdx_congr_lt
+    intro i hi o'
+    have hne : i ≠ ops.size := by simp at hi; omega
+    simp [hne]
+  · simp
+
+private theorem stepHyphen_hj (remap : Array Nat) (ls y : Length) (st : TextSt) (idx : Nat)
+    (c : Ir.Color) (w : Length) (glyphs : Array (Nat × Char × Length)) (ss raise : Length)
+    {acc : List (Array Nat)} (hj : HJ st acc) (hg : glyphs.isEmpty = false) :
+    HJ (stepHyphen remap ls y st idx c w glyphs ss raise) (acc ++ [glyphs.map (·.1)]) := by
+  have hj0 := hj.hext (closeTJ_hext st)
+  have hi0 := closeTJ_items st
+  unfold stepHyphen
+  dsimp only
+  generalize st.closeTJ = s0 at hj0 hi0 ⊢
+  obtain ⟨ext, item, hops, hq, hit, hrun, hhy⟩ :=
+    stepRun_fresh remap ls y s0 idx c w glyphs ss raise hi0 hg
+  generalize stepRun remap ls y s0 idx c w glyphs ss raise = s1 at hops hit hhy ⊢
+  have hj1 : HJ { s1 with ops := s0.ops ++ ext } acc :=
+    hj0.hext ⟨⟨ext, rfl, fun o ho => (hq o ho).1⟩, hhy⟩
+  have hco : s1.closeTJ.ops = (s0.ops ++ ext).push (.show #[item]) := by
+    unfold TextSt.closeTJ
+    rw [ite_eq_right (by simp [hit])]
+    simp [hit, hops]
+  have hch : s1.closeTJ.hyphens = s1.hyphens := by
+    unfold TextSt.closeTJ
+    split <;> rfl
+  obtain ⟨hs1, hlt1⟩ := hj1
+  simp only at hs1 hlt1
+  refine ⟨?_, ?_⟩
+  · simp only
+    rw [hco, hch, Array.size_push, Nat.add_sub_cancel, markHyphens_snoc, Array.toList_push,
+      TextOp.spanRunsList_eq, List.flatMap_append, ← TextOp.spanRunsList_eq, hs1]
+    simp [TextOp.spanRuns, TextOp.runsList, TextOp.runs, hrun]
+  · simp only
+    intro i hi
+    rw [hco, Array.size_push]
+    rw [hch, hco, Array.size_push, Nat.add_sub_cancel, Array.mem_push] at hi
+    rcases hi with hi | hi
+    · have := hlt1 i hi; omega
+    · omega
+
+private theorem stepSeg_hj (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
+    (og : Origin) (st : TextSt) (seg : Seg) {acc : List (Array Nat)} (hj : HJ st acc) :
+    HJ (stepSeg remap imgMap ls y og st seg) (acc ++ segHyphenRuns seg) := by
+  cases seg with
+  | run idx color link w glyphs size m decs raise ground attr =>
+    simp only [stepSeg, segHyphenRuns]
+    split
+    · next h =>
+      simp only [lineHyphen, Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true] at h
+      exact stepHyphen_hj remap ls y st idx color w glyphs size raise hj h.2
+    · simpa using hj.hext (stepRun_hext ..)
+  | rule | decoration | image | gap | decoratedGap | poly =>
+    simp only [segHyphenRuns, List.append_nil]
+    exact hj.hext (HExt.ofEq rfl rfl)
+
+private theorem foldl_segs_hj (remap : Array Nat) (imgMap : Array (Option Nat)) (ls y : Length)
+    (og : Origin) (segs : List Seg) (st : TextSt) {acc : List (Array Nat)} (hj : HJ st acc) :
+    HJ (segs.foldl (stepSeg remap imgMap ls y og) st) (acc ++ segs.flatMap segHyphenRuns) := by
+  induction segs generalizing st acc with
+  | nil => simpa using hj
+  | cons s rest ih =>
+    rw [List.foldl_cons, List.flatMap_cons, ← List.append_assoc]
+    exact ih _ (stepSeg_hj remap imgMap ls y og st s hj)
+
+private theorem lineSt_hj (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (og : Origin) (st : TextSt) (l : LineOut) :
+    HJ (lineSt geom remap imgMap og st l) (l.segs.toList.flatMap segHyphenRuns) := by
+  unfold lineSt
+  dsimp only
+  have h0 : HJ { st with ops := #[], hyphens := #[] } [] := ⟨rfl, by simp⟩
+  have h1 : HJ (if l.expand != st.tz then
+      { ({ st with ops := #[], hyphens := #[] } : TextSt).op (.scale (1000 + l.expand)) with tz := l.expand }
+      else { st with ops := #[], hyphens := #[] }) [] := by
+    split
+    · exact h0.hext (op_hext _ _ rfl)
+    · exact h0
+  generalize (if l.expand != st.tz then
+      { ({ st with ops := #[], hyphens := #[] } : TextSt).op (.scale (1000 + l.expand)) with tz := l.expand }
+      else { st with ops := #[], hyphens := #[] }) = s1 at h1 ⊢
+  have h2 : HJ { s1 with x := geom.bleed + l.x, pen := none } [] := h1.hext (HExt.ofEq rfl rfl)
+  have h3 := foldl_segs_hj remap imgMap l.size (geom.bleed + geom.pageH - l.y) og l.segs.toList _ h2
+  rw [List.nil_append, Array.foldl_toList] at h3
+  exact h3.hext (closeTJ_hext _)
+
+private theorem ContentOp.spanRunsList_eq (l : List ContentOp) :
+    ContentOp.spanRunsList l = l.flatMap ContentOp.spanRuns := by
+  induction l with
+  | nil => rfl
+  | cons o rest ih => simp [ContentOp.spanRunsList, ih]
+
+private theorem stepLine_spanRuns (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) :
+    (stepLine geom remap imgMap tags st l).ops.toList.flatMap TextOp.spanRuns =
+      st.ops.toList.flatMap TextOp.spanRuns ++ l.segs.toList.flatMap segHyphenRuns := by
+  have hj := lineSt_hj geom remap imgMap (Origin.of tags l) st l
+  obtain ⟨hs, -⟩ := hj
+  rw [TextOp.spanRunsList_eq] at hs
+  have hempty : (lineSt geom remap imgMap (Origin.of tags l) st l).ops.isEmpty = true →
+      l.segs.toList.flatMap segHyphenRuns = [] := by
+    intro he
+    rw [← hs, Array.isEmpty_iff.mp he, markHyphens_eq]
+    rfl
+  unfold stepLine
+  dsimp only
+  split
+  · simp [Array.toList_push, TextOp.spanRuns, TextOp.spanRunsList_eq, hs, furnitureTag]
+  · split
+    · rename_i he
+      simp [hempty he]
+    · simp [Array.toList_push, TextOp.spanRuns, TextOp.spanRunsList_eq, hs]
+  · split
+    · rename_i he
+      simp [hempty he]
+    · simp [Array.toList_push, TextOp.spanRuns, TextOp.spanRunsList_eq, hs]
+
+private theorem foldl_lines_spanRuns (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (ls : List LineOut) (st : TextSt) :
+    (ls.foldl (stepLine geom remap imgMap tags) st).ops.toList.flatMap TextOp.spanRuns =
+      st.ops.toList.flatMap TextOp.spanRuns ++ ls.flatMap fun l => l.segs.toList.flatMap segHyphenRuns := by
+  induction ls generalizing st with
+  | nil => simp
+  | cons l rest ih =>
+    rw [List.foldl_cons, ih, stepLine_spanRuns, List.flatMap_cons, List.append_assoc]
+
+mutual
+
+private theorem TextOp.number_spanRuns : ∀ (o : TextOp) (n : Nat),
+    (TextOp.number n o).1.spanRuns = o.spanRuns
+  | .scale _, _ => rfl
+  | .move _ _, _ => rfl
+  | .font _ _, _ => rfl
+  | .color _, _ => rfl
+  | .show _, _ => rfl
+  | .marked (.artifact a) body, n => by
+    have h := TextOp.numberList_spanRuns body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [TextOp.number, TextOp.spanRuns, TextOp.spanRunsList_eq, h]
+  | .marked (.span a) body, n => by
+    have h := TextOp.numberList_spanRuns body.toList n #[]
+    have hr := TextOp.numberList_runs body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h hr
+    simp [TextOp.number, TextOp.spanRuns, TextOp.spanRunsList_eq, TextOp.runsList_eq, h, hr]
+  | .marked (.content s m k) body, n => by
+    have h := TextOp.numberList_spanRuns body.toList (n + 1) #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [TextOp.number, TextOp.spanRuns, TextOp.spanRunsList_eq, h]
+
+private theorem TextOp.numberList_spanRuns : ∀ (l : List TextOp) (n : Nat) (acc : Array TextOp),
+    (TextOp.numberList n acc l).1.toList.flatMap TextOp.spanRuns
+      = acc.toList.flatMap TextOp.spanRuns ++ l.flatMap TextOp.spanRuns
+  | [], _, acc => by simp [TextOp.numberList]
+  | o :: rest, n, acc => by
+    rw [TextOp.numberList]
+    simp [TextOp.numberList_spanRuns rest, Array.toList_push, TextOp.number_spanRuns o n]
+
+end
+
+mutual
+
+private theorem ContentOp.number_spanRuns : ∀ (o : ContentOp) (n : Nat),
+    (ContentOp.number n o).1.spanRuns = o.spanRuns
+  | .fill _ _ _ _ _, _ => rfl
+  | .paint _ _ _ _, _ => rfl
+  | .shade _ _, _ => rfl
+  | .outline _ _ _, _ => rfl
+  | .xobject _ _ _ _, _ => rfl
+  | .group m gs clips body, n => by
+    have h := ContentOp.numberList_spanRuns body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.spanRuns, ContentOp.spanRunsList_eq, h]
+  | .image _ _ _ _ _, _ => rfl
+  | .imageMissing _ _ _ _, _ => rfl
+  | .text ops, n => by
+    have h := TextOp.numberList_spanRuns ops.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.spanRuns, TextOp.spanRunsList_eq, h]
+  | .marked (.artifact a) body, n => by
+    have h := ContentOp.numberList_spanRuns body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.spanRuns, ContentOp.spanRunsList_eq, h]
+  | .marked (.span a) body, n => by
+    have h := ContentOp.numberList_spanRuns body.toList n #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.spanRuns, ContentOp.spanRunsList_eq, h]
+  | .marked (.content s m k) body, n => by
+    have h := ContentOp.numberList_spanRuns body.toList (n + 1) #[]
+    simp only [List.flatMap_nil, List.nil_append] at h
+    simp [ContentOp.number, ContentOp.spanRuns, ContentOp.spanRunsList_eq, h]
+
+private theorem ContentOp.numberList_spanRuns : ∀ (l : List ContentOp) (n : Nat) (acc : Array ContentOp),
+    (ContentOp.numberList n acc l).1.toList.flatMap ContentOp.spanRuns
+      = acc.toList.flatMap ContentOp.spanRuns ++ l.flatMap ContentOp.spanRuns
+  | [], _, acc => by simp [ContentOp.numberList]
+  | o :: rest, n, acc => by
+    rw [ContentOp.numberList]
+    simp [ContentOp.numberList_spanRuns rest, Array.toList_push, ContentOp.number_spanRuns o n]
+
+end
+
+mutual
+
+private theorem figureOnly_spanRuns : ∀ (o : ContentOp), o.figureOnly = true → o.spanRuns = []
+  | .paint _ _ _ _, _ => rfl
+  | .shade _ _, _ => rfl
+  | .outline _ _ _, _ => rfl
+  | .xobject _ _ _ _, _ => rfl
+  | .group _ _ _ body, h => by
+    simp only [ContentOp.figureOnly] at h
+    simp only [ContentOp.spanRuns]
+    exact figureOnlyList_spanRuns body.toList h
+  | .fill _ _ _ _ _, h => by simp [ContentOp.figureOnly] at h
+  | .text _, h => by simp [ContentOp.figureOnly] at h
+  | .image _ _ _ _ _, h => by simp [ContentOp.figureOnly] at h
+  | .imageMissing _ _ _ _, h => by simp [ContentOp.figureOnly] at h
+  | .marked _ _, h => by simp [ContentOp.figureOnly] at h
+
+private theorem figureOnlyList_spanRuns : ∀ (l : List ContentOp), ContentOp.figureOnlyList l = true →
+    ContentOp.spanRunsList l = []
+  | [], _ => rfl
+  | o :: rest, h => by
+    simp only [ContentOp.figureOnlyList, Bool.and_eq_true] at h
+    simp only [ContentOp.spanRunsList, figureOnly_spanRuns o h.1, figureOnlyList_spanRuns rest h.2,
+      List.append_nil]
+
+end
+
+mutual
+
+private theorem TextOp.ink_spanRuns : ∀ (o : TextOp), ∀ x ∈ o.ink, x.spanRuns = []
+  | .scale _ => by simp [TextOp.ink, TextOp.spanRuns]
+  | .move _ _ => by simp [TextOp.ink, TextOp.spanRuns]
+  | .font _ _ => by simp [TextOp.ink, TextOp.spanRuns]
+  | .color _ => by simp [TextOp.ink, TextOp.spanRuns]
+  | .show _ => by simp [TextOp.ink, TextOp.spanRuns]
+  | .marked _ body => by
+    simp only [TextOp.ink]
+    exact TextOp.inkList_spanRuns body.toList
+
+private theorem TextOp.inkList_spanRuns : ∀ (l : List TextOp), ∀ x ∈ TextOp.inkList l, x.spanRuns = []
+  | [] => by simp [TextOp.inkList]
+  | o :: rest => by
+    intro x hx
+    simp only [TextOp.inkList, List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact TextOp.ink_spanRuns o x hx
+    · exact TextOp.inkList_spanRuns rest x hx
+
+end
+
+private theorem picOp_spanRuns (o : ContentOp) (h : PicOp o) : o.spanRuns = [] := by
+  rcases h with h | ⟨t, rfl, ht⟩
+  · exact figureOnly_spanRuns o h
+  · simp only [GfxPdf.textGroup, ContentOp.spanRuns, ContentOp.spanRunsList, TextOp.spanRunsList_eq,
+      List.append_nil]
+    rw [← ht]
+    unfold inkText
+    rw [List.toList_toArray]
+    exact List.flatMap_eq_nil_iff.mpr (TextOp.inkList_spanRuns t.toList)
+
+private theorem artifactBlock_spanRuns (k : Option ArtifactKind) (ops : Array ContentOp) :
+    (artifactBlock k ops).toList.flatMap ContentOp.spanRuns = ops.toList.flatMap ContentOp.spanRuns := by
+  unfold artifactBlock
+  split
+  · rename_i h
+    simp [Array.isEmpty_iff.mp h]
+  · simp [ContentOp.spanRuns, ContentOp.spanRunsList_eq]
+
+private theorem imageOp_spanRuns (ix : GfxPdf.Request → Nat) (figs : Array (Option FigForm))
+    (i : ImgOut) : (imageOp ix figs i).spanRuns = [] := by
+  unfold imageOp
+  split
+  · simp [figOp, ContentOp.spanRuns, ContentOp.spanRunsList]
+  · split <;> simp [artifact, ContentOp.spanRuns, ContentOp.spanRunsList]
+
+/-- The hyphen the breaker sets at a line end ships under a span reading as a soft hyphen: the glyph
+runs the page stream shows under such spans are exactly its body lines' line-end hyphen runs, in
+order. -/
+public theorem lineHyphen_generated (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
+    (figs : Array (Option FigForm)) (page : PageOut) :
+    spanRunsOf (contentOps geom remap widths imgMap tags ix figs page) =
+      (bodyLines page).toList.flatMap fun l => l.segs.toList.flatMap segHyphenRuns := by
+  have hpaths : (inkGroups geom ix (pageLabels geom remap widths imgMap tags page).text tags
+      page.inks).toList.flatMap ContentOp.spanRuns = [] := by
+    apply List.flatMap_eq_nil_iff.mpr
+    intro o ho
+    obtain ⟨t, body, rfl, hb⟩ := inkGroups_shape geom ix _ tags page.inks
+      (pageLabels_setter geom remap widths imgMap tags page) o (Array.mem_toList_iff.mp ho)
+    simp only [ContentOp.spanRuns, ContentOp.spanRunsList_eq]
+    exact List.flatMap_eq_nil_iff.mpr fun b hb' => picOp_spanRuns b (hb b (Array.mem_toList_iff.mp hb'))
+  have hl := foldl_lines_spanRuns geom remap imgMap tags (bodyLines page).toList { widths }
+  rw [Array.foldl_toList] at hl
+  unfold contentOps spanRunsOf numberMarks
+  simp only [Array.toList_append, List.flatMap_append, artifactBlock_spanRuns]
+  rw [ContentOp.numberList_spanRuns]
+  simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
+    List.flatMap_nil, Array.toList_map, List.flatMap_map, hpaths, imageOp_spanRuns,
+    ContentOp.spanRuns, TextOp.spanRunsList_eq, hl, polyOp, List.nil_append, List.append_nil]
+  simp only [flatMap_nil_fun, List.nil_append, List.append_nil]
 
 end LeanTex.Core.Pdf

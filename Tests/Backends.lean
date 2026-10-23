@@ -3590,7 +3590,7 @@ def paginationRuns (ops : Array Pdf.TextOp) : List (Array Nat) :=
     match o with
     | .marked (.artifact (some .pagination)) body => Pdf.TextOp.runsList body.toList
     | .marked (.artifact (some .layout)) _ | .marked (.artifact (some .page)) _
-    | .marked (.artifact none) _ | .marked (.content _ _ _) _
+    | .marked (.artifact none) _ | .marked (.content _ _ _) _ | .marked (.span _) _
     | .scale _ | .move _ _ | .font _ _ | .color _ | .show _ => []
 
 def furnitureRuns (page : Layout.PageOut) : List (Array Nat) :=
@@ -3601,6 +3601,7 @@ def isArtifactOpen (l : Pdf.Line) : Bool :=
   match l with
   | .open (.artifact _) => true
   | .open (.content _ _ _) => false
+  | .open (.span _) => false
   | .op _ | .emc => false
 
 /-- Every painting operator sits inside a wrapper with its ink unmoved, on synthetic pages and every
@@ -3687,7 +3688,7 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"artifacts {n} p{i}: every mark's tag is the type of the element holding its leaf"
         ((Pdf.contentOpens ls).length == pm.size && ls.all fun l => match l with
           | .open (.content s _ k) => tags[k]?.join == some s
-          | .open (.artifact _) | .op _ | .emc => true)
+          | .open (.artifact _) | .open (.span _) | .op _ | .emc => true)
       t s!"artifacts {n} p{i}: BDC and EMC lines pair off"
         (ls.countP Pdf.Line.isOpen == ls.countP Pdf.Line.isEmc
           && ((s.splitOn "\n").filter fun l => l.endsWith " BDC" || l.endsWith " BMC").length

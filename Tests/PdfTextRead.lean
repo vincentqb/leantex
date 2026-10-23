@@ -69,6 +69,18 @@ def onePage (content : String) (xobjects catalog : String) (more : Array String)
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     streamObj "" content] ++ more)
 
+/-- A body segment's characters as a viewer reads them: a line-end hyphen as the soft hyphen its
+span reads as. -/
+def segReadChars : Layout.Seg → List Char
+  | s@(.run _ _ _ _ glyphs _ _ _ _ _ attr) =>
+    if Pdf.lineHyphen attr glyphs then Pdf.generatedHyphen.toList else s.glyphChars
+  | s => s.glyphChars
+
+/-- A page line's characters as a viewer reads them, a held picture label's as its glyphs. -/
+def lineReadChars (p : Layout.PageOut) (l : Layout.LineOut) : List Char :=
+  if Pdf.heldBy (Pdf.routesLabels p.inks) (Pdf.inkLabelKeys p.inks) l then l.glyphChars
+  else l.segs.toList.flatMap segReadChars
+
 /-- A text with each run of white space one space, none at either end. -/
 def wsNorm (s : String) : String :=
   " ".intercalate ((s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty))
@@ -78,17 +90,18 @@ run's advances under the line's horizontal scaling, falls a fifth of its size sh
 glyph, and a line feed between lines. -/
 def paintWords (p : Layout.PageOut) : String :=
   (Pdf.paintLines p).foldl (fun acc l => Id.run do
+    let held := Pdf.heldBy (Pdf.routesLabels p.inks) (Pdf.inkLabelKeys p.inks) l
     let mut out := if acc.isEmpty then acc else acc.push '\n'
     let mut gap : Int := 0
     let mut last : Option Dim.Length := none
     for seg in l.segs do
       match seg with
-      | .run _ _ _ w glyphs size _ _ _ _ _ =>
+      | s@(.run _ _ _ w glyphs size _ _ _ _ _) =>
         let sz := if size == 0 then l.size else size
         if glyphs.isEmpty then gap := gap + w.units else
           if let some ls := last then
             if 5 * gap > ls.units then out := out.push ' '
-          for (_, c, _) in glyphs do out := out.push c
+          for c in (if held then s.glyphChars else segReadChars s) do out := out.push c
           let drawn := glyphs.foldl (fun (s : Int) (_, _, a) => s + a.units) 0 * (1000 + l.expand)
           gap := w.units - drawn / 1000
           last := some sz
@@ -178,6 +191,24 @@ BT /F1 10 Tf 1 0 0 1 5 -20 Tm (\\003) Tj ET") == [("a", .line), ("b", .line), ("
       (PdfContentLex.scan "BT /F1 12 Tf (\\000) Tj ET".toUTF8)).2.size == 1)
   t "pdf text: a UTF-16 ActualText decodes"
     (PdfTextRead.textString? ⟨#[0xFE, 0xFF, 0x20, 0x10]⟩ == some "‐")
+  let hgeom : Layout.Geom :=
+    { pageW := (Dim.pt 90), pageH := (Dim.pt 400), hmargin := (Dim.pt 10), vmargin := (Dim.pt 10)
+      fontSize := (Dim.pt 10), hyphenate := true, justify := true }
+  let hdoc : Ir.Doc := { body := #[.para #[.text
+    "Extraordinarily comprehensive internationalization considerations accompany representative \
+documentation throughout"]] }
+  let hout := Layout.run hgeom fs (some Hyphen.english.get) hdoc
+  let hset := hout.pages.toList.any fun p => p.lines.toList.any fun l =>
+    l.segs.toList.any fun s => !(segReadChars s == s.glyphChars)
+  match PdfTextRead.extract (Pdf.write hgeom fs hout.pages hdoc.info) with
+  | .error e => t s!"pdf text: the hyphenated paragraph reads ({e})" false
+  | .ok x =>
+    let text := x.contentText true
+    let src := inkOf "Extraordinarily comprehensive internationalization considerations accompany \
+representative documentation throughout"
+    t "pdf text: a hyphen the breaker sets at a line end reads back as a soft hyphen, no word's"
+      (hset && text.toList.contains '\u00AD' && !text.toList.contains '-' &&
+        (inkOf (String.ofList (text.toList.filter (· != '\u00AD')))).take src.length == src)
   let mut docs := 0
   for name in goldenNames do
     let (doc, _) ← goldenDoc name
@@ -194,7 +225,7 @@ BT /F1 10 Tf 1 0 0 1 5 -20 Tm (\\003) Tj ET") == [("a", .line), ("b", .line), ("
       for (p, (_, runs)) in out.pages.zip x.pages do
         t s!"pdf text: {name} page {i}: the bytes read as the lines' glyphs in paint order"
           (inkOf (PdfTextRead.runsText runs) ==
-            inkOf (String.ofList ((Pdf.paintLines p).flatMap Layout.LineOut.glyphChars)))
+            inkOf (String.ofList ((Pdf.paintLines p).flatMap (lineReadChars p))))
         t s!"pdf text: {name} page {i}: the bytes break words and lines where the layout leaves room"
           (wsNorm (PdfTextRead.runsText runs) == wsNorm (paintWords p))
         i := i + 1
