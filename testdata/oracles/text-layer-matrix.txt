@@ -2,7 +2,7 @@
 target: pdftotext chromium
 tools: pdftotext 26.09.0  chromium 151.0.7922.34
 reader-key: 217f7a1838ccde11
-artifact-key: c6e0be9cfab15d00
+artifact-key: d19be89d090fa9bc
 
 [pdf]
 # fixture          pdftotext
