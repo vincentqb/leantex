@@ -688,7 +688,7 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/Layout.lean", 41),
   ("LeanTex/Core/Lex.lean", 2),
   ("LeanTex/Core/MathParse.lean", 1),
-  ("LeanTex/Core/Pdf.lean", 8)]
+  ("LeanTex/Core/Pdf.lean", 5)]
 
 /-- The line's string text, one space where each literal opens, lexed alone. -/
 def stringsOnly (l : String) : String :=

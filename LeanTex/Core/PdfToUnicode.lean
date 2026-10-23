@@ -4,9 +4,9 @@ public import LeanTex.Core.PdfContentLex
 public import LeanTex.Core.PdfText
 public import LeanTex.Core.Layout
 
-/-! The glyphs each face paints and the ToUnicode CMap the writer embeds for it (ISO 32000-2
-§9.10.3): one `bfchar` entry per glyph its pages paint, the glyph's code to the character it was
-first painted for. -/
+/-! The glyphs each face sets and the ToUnicode CMap the writer embeds for it (ISO 32000-2
+§9.10.3): one `bfchar` entry per glyph its pages set, the glyph's code to the first character
+`painted` lists it with. -/
 
 namespace LeanTex.Core.Pdf
 
@@ -46,7 +46,7 @@ of range. -/
       if marks[p.2.1].isNone then marks.set p.2.1 (some p.2.2) else marks
     else marks
 
-/-- A segment's glyphs marked, in paint order. -/
+/-- A segment's glyphs marked, in `painted`'s order. -/
 @[expose] public def markSeg (shaped : Array (Option (Gfx.Figure Gfx.Shaped)))
     (seen : Array (Array (Option Char))) : Seg → Array (Array (Option Char))
   | .run idx _ _ _ glyphs _ _ _ _ _ _ => glyphs.foldl (fun seen (g, c, _) => markOne seen (idx, g, c)) seen
@@ -55,7 +55,7 @@ of range. -/
     | none => seen
   | .image none .. | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .poly .. => seen
 
-/-- Each face's glyphs marked with the character each was first painted for. -/
+/-- Each face's glyphs marked with the first character `painted` lists each with. -/
 @[expose] public def markUsed (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) : Array (Array (Option Char)) :=
   pages.foldl (fun seen p => p.lines.foldl (fun seen l => l.segs.foldl (markSeg shaped) seen) seen)
@@ -116,8 +116,7 @@ most a section may hold (§9.7.5.3). -/
 @[expose] public def cmapToks (used : List (Nat × Char)) : List (Tok × UInt8) :=
   cmapHead ++ (chunksOf 100 used).flatMap bfcharSection ++ cmapTail
 
-/-- The ToUnicode CMap for a face's painted glyphs, each glyph with the character it was first
-painted for. -/
+/-- The ToUnicode CMap for a face's used glyphs, each with its character. -/
 public def toUnicodeCMap (used : Array (Nat × Char)) : ByteArray :=
   PdfContentLex.renderSep false (cmapToks used.toList)
 

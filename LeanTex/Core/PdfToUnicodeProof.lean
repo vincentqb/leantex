@@ -11,7 +11,7 @@ import all LeanTex.Core.PdfContentLexProof
 import Std.Data.HashMap.Lemmas
 
 /-! The ToUnicode CMap the writer embeds reads back, through the reader's CMap parser, as one
-character per code: each painted glyph's code to the character it was first painted for. -/
+character per code: each used glyph's code to the first character `painted` lists it with. -/
 
 namespace LeanTex.Core.Pdf
 
@@ -549,7 +549,7 @@ theorem markOne_markAt (seen : Array (Array (Option Char))) (p : Nat × Nat × C
         · simp [hg]
   · simp [hk]
 
-/-- Marking in paint order leaves each glyph's first character. -/
+/-- Marking in `painted`'s order leaves each glyph's first character. -/
 theorem foldl_markOne (l : List (Nat × Nat × Char)) (seen : Array (Array (Option Char))) (k g : Nat) :
     markAt (l.foldl markOne seen) k g =
       if markAt seen k g = some none then
@@ -612,7 +612,7 @@ theorem markSeg_painted (shaped : Array (Option (Gfx.Figure Gfx.Shaped)))
       cases (shaped[k]?).join <;> rfl
   all_goals rfl
 
-/-- Marking walks the painted glyphs in paint order. -/
+/-- Marking walks the glyphs in `painted`'s order. -/
 theorem markUsed_painted (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) :
     markUsed fs pages shaped =
@@ -629,7 +629,7 @@ theorem markUsed_painted (fs : FontSet) (pages : Array PageOut)
   funext seen s
   exact markSeg_painted shaped seen s
 
-/-- A face's used glyph `g`, with the first character a glyph `g` of the face is painted for. -/
+/-- A face's used glyph `g`, with the first character `painted` lists a glyph `g` of it with. -/
 theorem usedAll_find (fs : FontSet) (pages : Array PageOut)
     (shaped : Array (Option (Gfx.Figure Gfx.Shaped))) (k g : Nat) (hk : k < fs.fonts.size) :
     ((usedAll fs pages shaped)[k]?.getD #[]).toList.find? (·.1 == g) =

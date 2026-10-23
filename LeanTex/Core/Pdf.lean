@@ -2538,12 +2538,13 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     rows := rows.push (formRow gi (t.figFormId j) t.resId (pressFig press (nameRes figs r)))
 
   for k in [0:nf] do
-    let font := fs.get keep[k]!
+    let face := keep[k]!
+    let font := fs.get face
     let prog := (programs[k]?.map (·.1)).getD font.data
-    let tuData := faceCMap allUsed (keep[k]?.getD 0)
+    let tuData := faceCMap allUsed face
     rows := rows.push (flateRow (ObjTable.toUniId k) "" tuData)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {prog.size}"
-    rows := rows.push (match fs.zdata[keep[k]!]?.getD none with
+    rows := rows.push (match fs.zdata[face]?.getD none with
       | some z => zRow (t.fileId k) ffDict prog z
       | none => flateRow (t.fileId k) ffDict prog)
 
