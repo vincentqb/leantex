@@ -65,6 +65,7 @@ public import LeanTex.Core.Data
 public import LeanTex.Core.ListMark
 public import LeanTex.Core.Theme
 public import LeanTex.Core.ThemeContract
+public import LeanTex.Core.ThemeImport
 public import LeanTex.Core.DesignRoleContract
 public import LeanTex.Core.BeamerColorContract
 public import LeanTex.Core.Oklab

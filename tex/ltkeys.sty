@@ -3,6 +3,9 @@
 \sys_if_engine_luatex:F
   { \PackageError { ltkeys } { The~leantex~classes~need~lualatex } { } }
 \file_input:n { ltdefaults.tex }
+\file_input:n { ltbeamercolors.tex }
+% The ground depth a theme's palette is realized at: a class sets decks or posters.
+\cs_set_nopar:Npn \ltdepth { documents }
 
 \int_new:N \l_lt_measure_int
 \fp_new:N \l_lt_ratio_fp
@@ -136,9 +139,20 @@
         \str_set:Ne \l__lt_colour_str { \tl_to_str:n {#1} }
         \str_if_eq:eeTF { \str_head:N \l__lt_colour_str } { \c_hash_str }
           {
-            \str_set:Ne \l__lt_colour_str
-              { \str_range:Nnn \l__lt_colour_str { -6 } { -1 } }
-            \definecolor { ltx- \l_keys_key_str } { HTML } { \l__lt_colour_str }
+            % `\tl_to_str:n` doubles the hash a value opens with.
+            \regex_replace_once:nnN { \A \x{23}+ } { } \l__lt_colour_str
+            % Three digits stand for six, each doubled, as CSS and leantex read them.
+            \regex_replace_once:nnN { \A ([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f]) \Z } { \1\1\2\2\3\3 }
+              \l__lt_colour_str
+            \regex_match:nVTF { \A [0-9A-Fa-f]{6} \Z } \l__lt_colour_str
+              {
+                \definecolor { ltx- \l_keys_key_str } { HTML } { \l__lt_colour_str }
+                \cs_if_exist:NT \setbeamercolor { \cs_if_exist_use:c { lt_beamer_ \l_keys_key_str : } }
+              }
+              {
+                \exp_args:Nne \lt_unread:nn { palette }
+                  { \l_keys_key_str \c_space_tl = \c_space_tl \c_hash_str \l__lt_colour_str }
+              }
           }
           { \lt_unread:nn { palette } { \l_keys_key_str~=~#1 } }
       } ,
@@ -151,7 +165,10 @@
     \IfValueT {#1} { \lt_unread:nn { palette } { [#1] } }
     \keys_set:nn { lt / palette } {#2}
   }
-\NewDocumentCommand \theme { m } { \file_input:n { lttheme- #1 .tex } }
+\NewDocumentCommand \theme { m }
+  { \file_if_exist_input:nF { lttheme- #1 .tex } { \msg_warning:nnn { ltkeys } { theme } {#1} } }
+\msg_new:nnn { ltkeys } { theme }
+  { theme~'#1'~is~none~of~the~leantex~classes'~themes;~the~page~keeps~its~colours }
 
 \msg_new:nnn { ltkeys } { preset } { unknown~preset~'#2'~of~#1;~its~first~preset~'#3'~stands }
 \cs_new:Npn \__lt_key:w #1 = #2 \q_stop { #1 }

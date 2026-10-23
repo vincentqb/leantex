@@ -31,6 +31,7 @@
 \dim_set_eq:NN \l_lt_frameside_dim \l_lt_hmargin_dim
 \dim_set_eq:NN \l_lt_frametop_dim \l_lt_vmargin_dim
 \dim_zero:N \l_lt_frameband_dim
+\str_if_eq:VnT \l_lt_preset_tl { poster } { \cs_set_nopar:Npn \ltdepth { posters } }
 \ExplSyntaxOff
 \input{ltgridframe.tex}
 \ExplSyntaxOn

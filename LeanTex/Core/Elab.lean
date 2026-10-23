@@ -18901,7 +18901,18 @@ margins stand{replaced}"
         return s
       match Theme.find? tname with
       | some th =>
-        if !s.docClass.record.chrome then
+        -- A leantex class's theme is its palette alone (`tex/lttheme-<name>.tex`).
+        let own := s.docClass.record.design.isSome
+        if own then
+          let inert := (if th.tokens != ({} : Tokens) then ["tokens"] else []) ++
+            (if th.styles != ({} : Styles) then ["styles"] else []) ++
+            (if th.chrome.hasFooter then ["chrome"] else []) ++
+            (if th.sectionPage then ["section pages"] else [])
+          unless inert.isEmpty do
+            diagDetail s.ctx .W0355 (Diag.say .W0355 .template (obj := some (some .theme, tname)))
+              (some pos) (String.intercalate ", " inert)
+              (help := s!"the {s.docClass.name} class takes a theme's palette alone")
+        else if !s.docClass.record.chrome then
           let inert := (if th.chrome.hasFooter then ["chrome"] else []) ++
             ["frametitle", "sectionpage", "standout"].filter
               (fun e => (th.styles.find? e).isSome)
@@ -18922,7 +18933,7 @@ margins stand{replaced}"
         -- A theme with a section page sets its own hooks, as beamer's does, over earlier ones.
         -- premise: sectionPageChecks — the replaced hook is named
         let mut hooked := s.ctx
-        if th.sectionPage then
+        if th.sectionPage && !own then
           if let some (_, cmd) := lookupUser s.ctx (Ir.sectionHookName false false) then
             unless themeHook cmd do
               diagDetail s.ctx .W0104 (Diag.say .W0104 .command "\\AtBeginSection") (some pos)
@@ -18949,6 +18960,8 @@ margins stand{replaced}"
         let pal ← match pal.coveredFraction with
           | some n => reseedCovered s.ctx pos pal s.docClass.record.groundDepth n
           | none => pure pal
+        if own then
+          return { s with palette := pal, ctx := { hooked with palette := pal } }
         return { s with
           palette := pal
           tokens := ds.tokens

@@ -16,6 +16,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Struct
 import LeanTex.Core.Theme
+import LeanTex.Core.ThemeImport
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab
 import LeanTex.Core.Contrast
@@ -1335,5 +1336,37 @@ public def main (argv : List String) : IO UInt32 := do
       for th in Theme.builtin do
         IO.println th.name
       return 0
+    | .themeImport source file maps =>
+      let bytes ← match ← (Host.answer (.readFile file) : IO (Except World.Failure ByteArray)) with
+        | .ok b => pure b
+        | .error _ =>
+          IO.eprintln s!"leantex: cannot read {file}"
+          return 1
+      let some src := String.fromUTF8? bytes
+        | IO.eprintln s!"leantex: {file} is not UTF-8"
+          return 1
+      let entries ← match source with
+        | .beamer =>
+          let (es, ds) := ThemeImport.ofBeamer file src
+          let ui ← Ui.mk' cfg
+          for d in ds do
+            ui.diag d
+          pure es
+        | .css =>
+          let (es, skips) := ThemeImport.ofCss src maps
+          for skip in skips do
+            IO.eprintln s!"leantex: {file}: {skip.describe}"
+          pure es
+      let text := ThemeImport.themeFile file entries
+      match cfg.output with
+      | some o =>
+        match ← (Host.answer (.writeAtomic o text.toUTF8) : IO (Except World.Failure Unit)) with
+        | .ok _ => return 0
+        | .error _ =>
+          IO.eprintln s!"leantex: cannot write {o}"
+          return 1
+      | none =>
+        IO.print text
+        return 0
 
 end LeanTex.Cli.Driver

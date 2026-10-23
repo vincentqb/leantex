@@ -14,6 +14,7 @@
 \dim_set:Nn \l_lt_frameside_dim { 2 \l_lt_frameL_dim }
 \dim_set:Nn \l_lt_frametop_dim { \l_lt_frameL_dim / 2 }
 \dim_set_eq:NN \l_lt_frameband_dim \l_lt_frameL_dim
+\cs_set_nopar:Npn \ltdepth { decks }
 \ExplSyntaxOff
 \input{ltgridframe.tex}
 \ExplSyntaxOn

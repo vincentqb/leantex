@@ -25,6 +25,14 @@ public inductive ColorMode where
   | never
   deriving Repr, BEq
 
+/-- The colour source a theme is imported from. -/
+public inductive ThemeSource where
+  /-- A beamer colour theme (`beamercolortheme<x>.sty`). -/
+  | beamer
+  /-- A stylesheet's `:root` custom properties. -/
+  | css
+  deriving Repr, BEq
+
 public inductive Cmd where
   | help
   | version
@@ -35,6 +43,9 @@ public inductive Cmd where
   | fonts
   /-- List the built-in theme bundles, one per line. -/
   | themes
+  /-- Write a theme file from a beamer colour theme or a stylesheet, each `--map name=key` naming
+  the palette key a custom property declares. -/
+  | themeImport (source : ThemeSource) (file : String) (maps : List (String × String))
   deriving Repr, BEq
 
 public structure Config where
@@ -80,6 +91,27 @@ public def inputKinds : String :=
   | [one] => one
   | last :: rest => ", ".intercalate rest.reverse ++ " or " ++ last
 
+/-- `theme import`'s arguments: its source and file, its maps and `-o`. -/
+private def themeImportArgs (cfg : Config) : List String → Except String Config
+  | "import" :: rest => go rest none [] cfg.output
+  | _ => throw "'theme' takes 'import --beamer <file.sty>' or 'import --css <file.css>'"
+where
+  go : List String → Option (ThemeSource × String) → List (String × String) → Option String →
+      Except String Config
+    | [], some (.beamer, _), _ :: _, _ =>
+      throw "'--map' names a stylesheet's property; a beamer colour theme's colours name their roles"
+    | [], some (src, f), maps, out =>
+      pure { cfg with cmd := .themeImport src f maps.reverse, output := out }
+    | [], none, _, _ => throw "'theme import' needs --beamer <file.sty> or --css <file.css>"
+    | "--beamer" :: f :: rest, none, maps, out => go rest (some (.beamer, f)) maps out
+    | "--css" :: f :: rest, none, maps, out => go rest (some (.css, f)) maps out
+    | "--map" :: m :: rest, src, maps, out =>
+      match m.splitOn "=" with
+      | [n, k] => go rest src ((n.trimAscii.toString, k.trimAscii.toString) :: maps) out
+      | _ => throw s!"'--map' takes name=key, got '{m}'"
+    | "-o" :: o :: rest, src, maps, _ => go rest src maps (some o)
+    | a :: _, _, _, _ => throw s!"unexpected argument '{a}' for 'theme import'"
+
 /-- What the arguments read so far set. -/
 private structure ArgsRead where
   cfg : Config
@@ -121,6 +153,9 @@ private def readArg (a : String) (rest : List String) (st : ArgsRead) :
     | [] => throw "'--color' needs a mode: auto | always | never"
   | "--emit" =>
     throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
+  | "theme" =>
+    if cmd.isNone && wantsFile.isNone then return .inl (← themeImportArgs cfg rest)
+    throw "unexpected argument 'theme'"
   | "--css" =>
     throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
   | "--math-boundary" =>
@@ -302,6 +337,9 @@ commands:
   hyphenate <word>...     show hyphenation points (--file <path> for a list)
   fonts                   list the font families leantex can see
   themes                  list the built-in theme bundles (\\theme{name})
+  theme import --beamer <file.sty> | --css <file.css> [--map name=key]...
+                          write a theme file (\\palette) from a beamer colour
+                          theme or a stylesheet's custom properties
   version · help
 
 flags:
