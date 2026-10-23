@@ -563,6 +563,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0455 => dvE (w := w) (dvDoc "" "A \\fbox{\\begin{itemize}\\item Kqzv\\end{itemize}} b.")
   | .W0457 => dvE (w := w) (dvDoc "" "\\begin{figure}Kqzv\\marginpar{Kqzv}\\end{figure}")
   | .W0471 => dvT (w := w) (dvDoc "" "\\begin{tikzpicture}\\node at (0,0) {Kqzv};\\end{tikzpicture}")
+  | .W0470 => dvH (w := w) (dvDoc "" "\\href{javascript:void(0)}{Kqzv}")
   -- A Javadoc inline tag with nothing to stand for, and a link to a program element.
   | .W0453 => (Surface.read (.code .java) "t.java" (w.rep "/** {@inheritDoc} */\nvoid f() {}\n")).2
   | .W0454 => (Surface.read (.code .java) "t.java" (w.rep "/** See {@link Other}. */\nvoid f() {}\n")).2
@@ -1576,7 +1577,7 @@ keeps once (`Layout.uniqueDiags`)")
 '\\maketitle' sets again as one record")
     ["W0386"] ++
   unexercisedAs "one record per link target, which the repetition links again"
-    ["W0326", "W0377"] ++
+    ["W0326", "W0377", "W0470"] ++
   unexercisedAs "one record per label key, which the repetition refers to again"
     ["W0349", "W0380"] ++
   unexercisedAs "one record per citation key, which the repetition cites again"

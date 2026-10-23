@@ -774,6 +774,9 @@ warning: unsupported definition for environment probenote [W0458]
 ── W0471 (degraded) a picture's drawing is not in the markdown twin; its labels' words stand for it
 warning: substituted picture [W0471]
   note: its labels' words, "Kqzv", stand for it
+── W0470 (degraded) a link whose URL runs script; every artifact sets its text unlinked
+warning: unsupported link 'javascript:void(0)' [W0470]
+  note: link to a page or an anchor, as \href{https://example.org}{words} does; a script URL runs code wherever it is followed
 ── W0503 (degraded) a bibliography file is not there or not declared; its entries are absent and what cites them is unresolved
 warning: missing file references [W0503]
   note: put the file at ./references.bib, or correct its name in \bibliography

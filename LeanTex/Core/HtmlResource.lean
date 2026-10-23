@@ -392,31 +392,39 @@ private def svgReferenceAttr (tag name : String) : Bool :=
     ["fill", "stroke", "filter", "clip-path", "mask", "marker", "marker-start",
       "marker-mid", "marker-end"].contains name
 
+/-- One attribute's rendering dependencies, or its refusal. -/
+public def attrRequest (tag : String) (attrs : Array (String × String)) (kv : String × String) :
+    Array Request :=
+  let (name, value) := kv
+  if name.isEmpty || !name.toList.all (fun c =>
+      c.isAlphanum || c == '-' || c == '_' || c == ':') then
+    #[.refused "unsupported HTML attribute name"]
+  else
+  let name := name.toLower
+  if name.startsWith "on" ||
+      ["srcdoc", "xml:base", "http-equiv", "is", "attributionsrc"].contains name then
+    #[.refused ("unsupported active HTML attribute: " ++ name)]
+  else if Html.scriptLink name value then
+    #[.refused "a link whose URL runs script"]
+  else if svgReferenceAttr tag name then
+    let refs := if name == "href" || name == "xlink:href" then #[Request.url value]
+      else cssRequests value
+    refs.map (fun r => match r with
+      | .url value => if value.startsWith "#" then .localFragment value else r
+      | .localFragment _ | .script _ | .refused _ => r)
+  else if name == "style" || ["fill", "stroke", "filter", "clip-path", "mask",
+      "marker", "marker-start", "marker-mid", "marker-end", "cursor"].contains name then
+    cssRequests value
+  else if ["src", "srcset", "imagesrcset", "poster", "background", "data"].contains name ||
+      ((name == "href" || name == "xlink:href") && !navigation tag attrs) then
+    -- a generated srcset is one data URL with no descriptor, so it is not split
+    #[.url value]
+  else #[]
+
 public def attrRequests (tag : String) (attrs : Array (String × String)) : Array Request :=
-  attrs.foldl (init := #[]) fun acc (name, value) =>
-    if name.isEmpty || !name.toList.all (fun c =>
-        c.isAlphanum || c == '-' || c == '_' || c == ':') then
-      acc.push (.refused "unsupported HTML attribute name")
-    else
-    let name := name.toLower
-    if name.startsWith "on" ||
-        ["srcdoc", "xml:base", "http-equiv", "is", "attributionsrc"].contains name then
-      acc.push (.refused ("unsupported active HTML attribute: " ++ name))
-    else if svgReferenceAttr tag name then
-      let refs := if name == "href" || name == "xlink:href" then #[Request.url value]
-        else cssRequests value
-      acc ++ refs.map (fun r => match r with
-        | .url value => if value.startsWith "#" then .localFragment value else r
-        | .localFragment _ | .script _ | .refused _ => r)
-    else if name == "style" || ["fill", "stroke", "filter", "clip-path", "mask",
-        "marker", "marker-start", "marker-mid", "marker-end", "cursor"].contains name then
-      let refs := cssRequests value
-      acc ++ refs
-    else if ["src", "srcset", "imagesrcset", "poster", "background", "data"].contains name ||
-        ((name == "href" || name == "xlink:href") && !navigation tag attrs) then
-      -- a generated srcset is one data URL with no descriptor, so it is not split
-      acc.push (.url value)
-    else acc
+  attrs.foldl (init := #[]) fun acc kv =>
+    let more := attrRequest tag attrs kv
+    acc ++ more
 
 mutual
   /-- The rendering dependencies of a node; raw style and script are refused outside HTML
@@ -466,7 +474,8 @@ public def requests (head body : Array Html.Node) : Array Request :=
   listRequests true (listRequests true #[] head.toList) body.toList
 
 /-- Whether a request resolves: a URL to a ready embedded resource, a fragment, or a declared
-script; a navigation link is no request, so its URL scheme is outside the gate. -/
+script; a navigation link is no request but where its URL runs script, so its other URL schemes
+are outside the gate. -/
 public def resolves (resources : Array Embedded) (svgChecked : Array ByteArray)
     (scripts : Array String) : Request → Bool
   | .url value => resources.any (fun r => r.ready svgChecked && r.uri == value)
@@ -569,6 +578,16 @@ public theorem close_covers (resources : Array Embedded) (svgChecked : Array Byt
     cases h
     exact ⟨rfl, Array.all_eq_true'.mp
       ((compile_admission_exact resources svgChecked scripts _).mp hc)⟩
+  · contradiction
+
+/-- A page `close` returns is the one it was given. -/
+public theorem close_fields {resources : Array Embedded} {svgChecked : Array ByteArray}
+    {scripts : Array String} {lang : String} {head body : Array Html.Node} {page : ClosedPage scripts}
+    (h : close resources svgChecked scripts lang head body = .ok page) :
+    page.lang = lang ∧ page.head = head ∧ page.body = body := by
+  dsimp only [close] at h
+  split at h
+  · cases h; exact ⟨rfl, rfl, rfl⟩
   · contradiction
 
 end LeanTex.Core.HtmlResource

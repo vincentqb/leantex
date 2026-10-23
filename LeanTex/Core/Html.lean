@@ -1,5 +1,7 @@
 module
 
+public import LeanTex.Core.ScriptUrl
+
 namespace LeanTex.Core.Html
 
 /-! Typed HTML tree and its renderer: text and attribute values are escaped, and a
@@ -862,6 +864,17 @@ private def inlineRenderListInto (acc : String) : List Node → String
   | k :: rest => inlineRenderListInto (inlineRenderInto acc k) rest
 
 end
+
+/-- Whether a URL navigates by running script (`Url.runsScript`). -/
+@[expose] public def scriptUrl (url : String) : Bool := Url.runsScript url
+
+/-- Whether an attribute, its name lower-cased, links to a script URL. -/
+@[expose] public def scriptLink (name value : String) : Bool :=
+  (name == "href" || name == "xlink:href") && scriptUrl value
+
+/-- An in-page fragment never runs script. -/
+public theorem scriptUrl_fragment (a : String) : scriptUrl ("#" ++ a) = false :=
+  Url.runsScript_fragment a
 
 public def render (n : Node) (indent : Nat) : String :=
   renderInto "" n indent

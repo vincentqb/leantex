@@ -97,11 +97,14 @@ public import LeanTex.Core.FontDb
 public import LeanTex.Core.HyphenData
 public import LeanTex.Core.Hyphen
 public import LeanTex.Core.Decl
+public import LeanTex.Core.ScriptUrl
 public import LeanTex.Core.Html
 public import LeanTex.Core.MathMl
 public import LeanTex.Core.HtmlDoc
 public import LeanTex.Core.HtmlRead
+public import LeanTex.Core.HtmlRun
 public import LeanTex.Core.HtmlReadProof
+public import LeanTex.Core.HtmlScripts
 public import LeanTex.Core.HtmlDocRead
 public import LeanTex.Core.HtmlFaces
 public import LeanTex.Core.MarkdownDoc

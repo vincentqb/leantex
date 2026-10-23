@@ -124,6 +124,73 @@ def htmlContainedAdmissionChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "contained script: harmless raw JSON text remains supported"
       ((close #[.script #[("type", "application/ld+json")] raw] following).isOk)
 
+/-- A link whose URL runs script is no link on the page: the emitter sets its text unlinked and
+names it once, and admission refuses one built by hand, in any spelling the URL parser reads as the
+script scheme. -/
+def htmlContainedScriptLinkChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let close := HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" #[]
+  let runs (body : Array Html.Node) := HtmlDoc.scripts (Html.document "en" #[] body)
+  for url in ["javascript:void(0)", "JavaScript:void(0)", "  javascript:void(0)",
+      "\x01javascript:void(0)", "java\tscript:void(0)", "javas\ncript:void(0)"] do
+    for (tag, name) in [("a", "href"), ("area", "href"), ("A", "HREF"), ("a", "xlink:href")] do
+      let node := Html.elem tag #[Html.text "Kqzv"] #[(name, url)]
+      t s!"contained script link: admission refuses {tag} {name} {url.quote}"
+        (!(close #[node]).isOk)
+    t s!"contained script link: the parser's reading runs {url.quote}"
+      (!(runs #[Html.elem "a" #[Html.text "Kqzv"] #[("href", url)]]).isEmpty)
+  for url in ["https://example.org/javascript:", "#javascript:", "javascript", "./javascript:x",
+      "mailto:someone@example.org"] do
+    let node := Html.elem "a" #[Html.text "Kqzv"] #[("href", url)]
+    t s!"contained script link: admission keeps {url.quote}"
+      ((close #[node]).isOk && (runs #[node]).isEmpty)
+  t "contained script link: the deck's constant is what a deck page runs"
+    (runs #[Html.Node.script #[] HtmlDoc.deckScript] ==
+      [.script (HtmlRead.trimWs HtmlDoc.deckScript.toList)])
+  for tag in ["iframe", "object", "embed"] do
+    let node := Html.elem tag #[] #[("title", "Kqzv")]
+    t s!"contained script link: an embedding {tag} runs and is refused"
+      (!(HtmlRead.Dom.runs (.elem tag #[] #[])).isEmpty && !(close #[node]).isOk)
+  t "contained script link: a handler runs and is refused"
+    (let node := Html.elem "p" #[Html.text "Kqzv"] #[("onclick", "x()")]
+     !(runs #[node]).isEmpty && !(close #[node]).isOk)
+  t "contained script link: a data block runs nothing"
+    ((runs #[Html.Node.script #[("type", "application/ld+json")] "{}"]).isEmpty)
+  for (src, kind) in [("\\href{javascript:void(0)}{Kqzv}", "inline"),
+      ("\\href{ JavaScript:alert(1)}{Kqzv} and \\href{javascript:void(0)}{Kqzv}", "repeated")] do
+    let (doc, ds) := elabStr src
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    let anchors := elemAttrsList (· == "a") #[] body.toList
+    t s!"contained script link: the {kind} link ships as its text"
+      (anchors.all (fun (_, attrs) => attrs.all fun (_, v) => !Html.scriptUrl v) &&
+        hasStr (Html.document "en" head body) "Kqzv")
+    t s!"contained script link: the {kind} page closes"
+      ((HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" head body).isOk)
+    t s!"contained script link: each {kind} script URL is named once"
+      ((ds.filter (·.kind == .W0470)).size == (if kind == "inline" then 1 else 2))
+  let twice := (elabStr "\\href{javascript:void(0)}{Kqzv} and \\href{javascript:void(0)}{Wxyb}").2
+  t "contained script link: one URL linked twice is named once"
+    ((twice.filter (·.kind == .W0470)).size == 1)
+  t "contained script link: every format names the loss, from elaboration"
+    ((Ir.scriptLinkDiags { info := { url := some "javascript:x" } }).size == 1)
+  let jsMono := (elabStr "\\texttt{\\href{javascript:void(0)}{Kqzv}}").1
+  t s!"contained script link: a monospace script link is text in the twin"
+    (!hasStr (MarkdownDoc.emit jsMono) "javascript")
+  let blockLink : Ir.Doc := { body := #[.link "javascript:void(0)" #[.para #[.text "Kqzv"]]] }
+  let (bh, bb, _) := HtmlDoc.emitTree {} blockLink
+  t "contained script link: a block link to a script URL ships its blocks unlinked"
+    ((elemAttrsList (· == "a") #[] bb.toList).isEmpty && hasStr (Html.document "en" bh bb) "Kqzv" &&
+      (Ir.scriptLinkDiags blockLink).size == 1 &&
+      (HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" bh bb).isOk)
+  let twinDoc := (elabStr "\\href{javascript:void(0)}{Kqzv}").1
+  let twin := MarkdownDoc.emit twinDoc
+  t s!"contained script link: the twin sets the link's text unlinked ({twin.quote})"
+    (hasStr twin "Kqzv" && !hasStr twin "javascript")
+  let (safe, ds) := elabStr "\\href{https://example.org/x}{Kqzv}"
+  let (_, body, _) := HtmlDoc.emitTree {} safe
+  t "contained script link: an ordinary link keeps its anchor and names nothing"
+    ((elemAttrsList (· == "a") #[] body.toList).size == 1 && !ds.any (·.kind == .W0470))
+
 /-- Prepared closure retains exact captured bytes, rejects unready entries even
 among duplicates, and preserves the typed carriers and first refusal. -/
 def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -204,6 +271,7 @@ def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
 def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   htmlContainedRawContextChecks ref
   htmlContainedCssAtRuleChecks ref
+  htmlContainedScriptLinkChecks ref
   htmlContainedAdmissionChecks ref
   htmlContainedIndexChecks ref
   let t := check ref

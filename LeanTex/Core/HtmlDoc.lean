@@ -7116,7 +7116,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[("style", "color: " ++ cfg.paint name c)])
   | .located _ body => inlineNodesInto cfg acc body.toList
   | .link url body =>
-    if cfg.inLink then inlineNodesInto cfg acc body.toList
+    if cfg.inLink || Html.scriptUrl url then inlineNodesInto cfg acc body.toList
     else acc.push (Html.elem "a" (inlineNodesInto { cfg with inLink := true } #[] body.toList)
       #[("href", url), ("style", "color: inherit")])
   | .label key => acc.push (labelSpan key)
@@ -7234,7 +7234,7 @@ private theorem ref_link_projects (cfg : Config) (acc : Array Node) (key : Strin
     (form : Ir.RefForm) (shown a : String) (h : form.linked = true) (hp : form.paged = false) :
     (Inline.ref key form shown (some a)).refLink?.map (inlineNodeInto cfg acc) =
       some (inlineNodeInto cfg acc (.ref key form shown (some a))) := by
-  simp [Inline.refLink?, h, hp, inlineNodeInto, inlineNodesInto]
+  simp [Inline.refLink?, h, hp, inlineNodeInto, inlineNodesInto, Html.scriptUrl_fragment]
 
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
@@ -9460,7 +9460,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- an anchor's content model is transparent; elaboration refuses nested anchors
   | .link target body =>
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
-      (Html.elem "a" (blockNodesInto cfg.within #[] body.toList)
+      (if Html.scriptUrl target then Html.elem "div" (blockNodesInto cfg.within #[] body.toList)
+       else Html.elem "a" (blockNodesInto cfg.within #[] body.toList)
         #[("href", target), ("style", "display: block")])
   | .quote q body =>
     -- A quotation's kind and the spacing it declares read their rules by its classes.
@@ -10458,7 +10459,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       head := head.push (Html.elem "meta" #[] #[("name", name), ("content", v)])
   -- the declared web identity: canonical URL, icon, and Open Graph from facts declared once
   if let some url := doc.info.url then
-    head := head.push (Html.elem "link" #[] #[("rel", "canonical"), ("href", url)])
+    unless Html.scriptUrl url do
+      head := head.push (Html.elem "link" #[] #[("rel", "canonical"), ("href", url)])
   if let some icon := doc.info.favicon then
     let href := match cfg.favicon with
       | some (source, r) => if source == icon then r.uri else icon
@@ -10475,7 +10477,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     if let some s := doc.info.subject then
       head := head.push (og "og:description" s)
     if let some u := doc.info.url then
-      head := head.push (og "og:url" u)
+      unless Html.scriptUrl u do head := head.push (og "og:url" u)
     if let some i := doc.info.image then
       head := head.push (og "og:image" i)
     head := head.push (og "og:type" "website")
@@ -10495,7 +10497,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       [s!"  {jstr "@context"}: {jstr "https://schema.org"}",
        s!"  {jstr "@type"}: {jstr "WebPage"}"] ++
       field "name" doc.info.title ++ field "description" doc.info.subject ++
-      field "url" doc.info.url ++ field "image" doc.info.image ++ author
+      field "url" (doc.info.url.filter (!Html.scriptUrl ·)) ++ field "image" doc.info.image ++ author
     head := head.push (Node.script #[("type", "application/ld+json")]
       ("{\n" ++ String.intercalate ",\n" fields ++ "\n}"))
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
@@ -10992,11 +10994,11 @@ public theorem PageResources.resources_exact (cfg : Config) :
     Array.filterMap_map, Function.id_comp, Array.append_assoc]
 
 /-- The scripts a page may carry: the deck's constant and the declared math renderer. -/
-public def admittedScripts (renderer : Option String) : Array String :=
+@[expose] public def admittedScripts (renderer : Option String) : Array String :=
   #[deckScript] ++ renderer.toArray
 
-/-- A checked page whose only scripts are the deck's constant and the declared renderer; a link's
-URL scheme is outside the gate. -/
+/-- A checked page whose only scripts are the deck's constant and the declared renderer, and whose
+links run none; a link's other URL schemes are outside the gate. -/
 public abbrev ClosedPage (renderer : Option String) :=
   HtmlResource.ClosedPage (admittedScripts renderer)
 
@@ -11026,6 +11028,16 @@ public theorem emitClosed_covers (cfg : Config) (doc : Doc) (svgChecked : Array 
   · rw [← PageResources.resources_exact]
     exact HtmlResource.close_covers _ svgChecked (admittedScripts cfg.mathRenderer)
       (doc.info.language.getD "en") _ _ h
+
+/-- The page publication ships is the tree `emitTree` builds, closed. -/
+public theorem emitClosed_fields (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray)
+    {page : ClosedPage cfg.mathRenderer} (hp : (emitClosed cfg doc svgChecked).1 = .ok page) :
+    page.lang = doc.info.language.getD "en" ∧ page.head = (emitTree cfg doc).1 ∧
+      page.body = (emitTree cfg doc).2.1 := by
+  dsimp only [emitClosed] at hp
+  split at hp
+  · contradiction
+  · exact HtmlResource.close_fields hp
 
 public theorem emit_lang_declared (cfg : Config) (doc : Doc) :
     ∃ head body,

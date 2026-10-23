@@ -21154,7 +21154,8 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let outline := Ir.outlineDiags doc
   -- File images only: the driver judges boundary pictures after fulfilment.
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
-  let links := Ir.linkDiags doc
+  let scriptLinks := Ir.scriptLinkDiags doc
+  let links := Ir.linkDiags doc ++ scriptLinks
   let sequences := Ir.footerSequenceDiags doc
   let unread := if st.spans.tokenKeys.isEmpty then #[]
     else unreadPaletteKeys (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color)

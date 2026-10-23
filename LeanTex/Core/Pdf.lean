@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Dim
 import LeanTex.Core.Flate
+import LeanTex.Core.ScriptUrl
 import LeanTex.Core.FigureLoss
 public import LeanTex.Core.Font
 import LeanTex.Core.FontSubset
@@ -154,7 +155,7 @@ public def linkCount (geom : Geom) (pages : Array PageOut) : Nat :=
   let anchors := Layout.anchorIndex pages
   let lands (url : String) : Bool := match Ir.linkFragment? url with
     | some frag => (Layout.landing? anchors pages frag).isSome
-    | none => true
+    | none => !Url.runsScript url
   pages.foldl (fun n p => n + ((linkRects geom p).filter fun (_, _, _, _, url) => lands url).size) 0
 
 private def widthObj (μ : Int) : PdfRead.Obj :=
@@ -1225,8 +1226,9 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .cidFontType0 => (keepFaces fs pages imgs.shaped).any fun k => (fs.get k).isCff
   | .cidFontType2 => (keepFaces fs pages imgs.shaped).any fun k => !(fs.get k).isCff
   | .linkURI => info.pdfx.isNone &&
-    (pages.any (fun p => (linkRects geom p).any (fun r => !r.2.2.2.2.startsWith "#"))
-      || outline.any (fun e => e.page.isNone && e.url.isSome))
+    (pages.any (fun p => (linkRects geom p).any (fun r =>
+        !r.2.2.2.2.startsWith "#" && !Url.runsScript r.2.2.2.2))
+      || outline.any (fun e => e.page.isNone && e.url.any (!Url.runsScript ·)))
   | .outlines => outline.size > 0
   | .xmp => true
   | .trimBox => geom.bleed != 0 || geom.boxes.any (·.kind == .trim) || info.pdfx.isSome
@@ -2093,14 +2095,16 @@ public def destObj (t : ObjTable) (geom : Geom) (fs : FontSet) : Layout.Landing 
     .arr #[.ref (t.pageId 0) 0, .name "XYZ", .int 0, ptObj (geom.pageH + 2 * geom.bleed), .null]
 
 /-- What a link to `url` carries (§12.5.6.5): an in-page fragment's explicit destination where it
-lands, none where it lands nowhere, never a name the file would have to define; else a URI
-action. -/
+lands, none where it lands nowhere, never a name the file would have to define; none where the URL
+runs script (W0470); else a URI action. -/
 public def linkEntry (t : ObjTable) (geom : Geom) (fs : FontSet)
     (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut) (url : String) :
     Option (String × PdfRead.Obj) :=
   match Ir.linkFragment? url with
   | some frag => (Layout.landing? anchors pages frag).map fun l => ("Dest", destObj t geom fs l)
-  | none => some ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
+  | none =>
+    if Url.runsScript url then none
+    else some ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
 
 /-- An in-page link's destination names the page object of a page the file writes. -/
 public theorem linkEntry_page_lt (t : ObjTable) (geom : Geom) (fs : FontSet)
@@ -2118,8 +2122,10 @@ public theorem linkEntry_page_lt (t : ObjTable) (geom : Geom) (fs : FontSet)
     obtain ⟨_, rfl⟩ := he
     refine ⟨l.page, Layout.landing?_page_lt pages _ l hl, ?_⟩
     rcases l with ⟨page, line | k⟩ | _ <;> rfl
-  · simp only [Option.some.injEq, Prod.mk.injEq] at h
-    exact absurd (h.1.trans hk) (by decide)
+  · split at h
+    · contradiction
+    · simp only [Option.some.injEq, Prod.mk.injEq] at h
+      exact absurd (h.1.trans hk) (by decide)
 
 /-- A link to an in-page fragment carries an explicit destination or no annotation, never an
 action. -/
@@ -2197,7 +2203,7 @@ private def optEntry (key : String) : Option PdfRead.Obj → Array (String × Pd
   | none => #[]
 
 /-- Where an outline entry leads: as a link does, else a bare page keeping the reader's view
-(/XYZ null null null), else a URI action. -/
+(/XYZ null null null), else a URI action, or nothing where the URL runs script. -/
 private def outlineTarget (t : ObjTable) (geom : Geom) (fs : FontSet)
     (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
     (e : OutlineEntry) : Array (String × PdfRead.Obj) :=
@@ -2206,7 +2212,9 @@ private def outlineTarget (t : ObjTable) (geom : Geom) (fs : FontSet)
     | some l => #[("Dest", destObj t geom fs l)]
     | none => #[]
   | none, some p, _ => #[("Dest", .arr #[.ref (t.pageId p) 0, .name "XYZ", .null, .null, .null])]
-  | none, none, some u => #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
+  | none, none, some u =>
+    if Url.runsScript u then #[]
+    else #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
   | none, none, none => #[]
 
 /-- One outline item (ISO 32000-2 Table 151): its title, its place in the tree and its target. -/

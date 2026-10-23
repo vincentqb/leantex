@@ -43,6 +43,7 @@ that fails when the decision regresses; `scripts/diagaudit.lean` ratchets the co
 
 open LeanTex.Core
 open Tests (listingProviderChecks listingStyleTableChecks htmlContainedCliChecks
+  htmlContainedScriptLinkChecks
   publicationPathChecks)
 open Tests.LayoutInkContracts (layoutInkChecks)
 
@@ -183,6 +184,7 @@ def registry : List AuditRow :=
    ⟨.W0455, .keep, .degraded, check% Tests.InlineBoxes.boxBlockChecks⟩,
    ⟨.W0457, .keep, .degraded, check% Tests.MarginNote.checks⟩,
    ⟨.W0471, .keep, .degraded, check% Tests.MarkdownTwin.twinPictureChecks⟩,
+   ⟨.W0470, .keep, .degraded, check% htmlContainedScriptLinkChecks⟩,
    ⟨.W0453, .keep, .degraded, check% Tests.CodeDoc.docMarkupChecks⟩,
    ⟨.W0454, .keep, .degraded, check% Tests.CodeDoc.docMarkupChecks⟩,
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,

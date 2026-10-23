@@ -10,6 +10,7 @@ public import LeanTex.Core.Gfx
 public import LeanTex.Core.Decl
 public import LeanTex.Core.Image
 public import LeanTex.Core.Math
+public import LeanTex.Core.ScriptUrl
 public import LeanTex.Core.LocaleContract
 public import LeanTex.Core.ListingHighlight
 public import LeanTex.Core.DesignRole
@@ -17245,7 +17246,7 @@ private def sansTextLinkStep (out : Array String)
     (x : Inline) : Array String :=
   match x with
   | .link url body =>
-    if (linkReading body).isEmpty && !out.contains url then out.push url
+    if (linkReading body).isEmpty && !out.contains url && !Url.runsScript url then out.push url
     else out
   | _ => out
 
@@ -18971,6 +18972,44 @@ public theorem mapBlocks_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
     Conserves blocksText (mapBlocks f) :=
   mapBlocksPic_text id f hf
+
+/-- One step of the census of links whose URL runs script: each such URL once, at its link's
+first place. -/
+private def scriptLinkStep (acc : Array (String × Option Span)) (url : String) (at_ : Option Span) :
+    Array (String × Option Span) :=
+  if Url.runsScript url && !acc.any (·.1 == url) then acc.push (url, at_) else acc
+
+/-- The first place blocks' inlines locate. -/
+-- conserves: none — reads provenance.
+private def blocksSource (body : Array Block) : Option Span :=
+  foldBlocks (fun s _ => s) (fun s x => s.orElse fun _ => match x with
+    | .located sp _ => some sp
+    | _ => none) none body
+
+/-- A URL as a diagnostic names it: on one line, its controls shown as spaces, cut after 80. -/
+private def urlShown (url : String) : String :=
+  let cs := url.toList.map fun c => if c.toNat < 0x20 || c.toNat == 0x7f then ' ' else c
+  if cs.length > 80 then String.ofList (cs.take 80) ++ "…" else String.ofList cs
+
+/-- W0470 once for each URL a link, or the document itself, names that runs script, which every
+artifact sets as text or leaves out. -/
+public def scriptLinkDiags (doc : Doc) : Array Diag :=
+  let inl (acc : Array (String × Option Span)) (x : Inline) := match x with
+    | .link url body => scriptLinkStep acc url (inlineSource body)
+    | _ => acc
+  let blk (acc : Array (String × Option Span)) (b : Block) := match b with
+    | .link target body => scriptLinkStep acc target (blocksSource body)
+    | _ => acc
+  let found := foldBlocks blk inl #[] doc.body
+  let found := (furnitureInlines doc).foldl (foldInlines inl) found
+  let found := match doc.info.url with
+    | some u => scriptLinkStep found u none
+    | none => found
+  found.map fun (url, sp) =>
+    Diag.of .W0470 (Diag.say .W0470 .link (some (Diag.Name.value (urlShown url)))) sp
+      (help := some "link to a page or an anchor, as \\href{https://example.org}{words} does; \
+a script URL runs code wherever it is followed")
+      (subject := some url)
 
 /-- Push one leaf onto a reversed region, joining neighbouring text leaves
 only, never across a style, link, overlay, footnote or other semantic

@@ -4998,6 +4998,13 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (bytesContain pdf "/Outlines" && bytesContain pdf "/Title (One)" &&
      bytesContain pdf "/Title (Two)" && bytesContain pdf "/Dest [" &&
      bytesContain pdf "/S /URI /URI (https://example.org)")
+  let (jsDoc, _) := elabStr ("\\documentclass{article}\\begin{document}\n" ++
+    "\\begin{nav}\\href{javascript:void(0)}{Kqzv}\\end{nav}\n\n" ++
+    "See \\href{javascript:void(0)}{Wxyb}.\n\\end{document}")
+  let jsOut := layoutOf oneFace jsDoc geom
+  let jsPdf := pdfText (Pdf.write geom oneFace jsOut.pages {} {} jsOut.outline)
+  t "a link or outline entry whose URL runs script carries no action in the PDF (W0470)"
+    (!bytesContain jsPdf "javascript" && !bytesContain jsPdf "/S /URI")
   let (plainDoc, _) := elabStr "\\documentclass{article}\\begin{document}\nx\n\\end{document}"
   let plainOut := layoutOf oneFace plainDoc geom
   t "no nav, no outline, nothing emitted"

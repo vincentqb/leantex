@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Ir
 import LeanTex.Core.CiteKey
+import LeanTex.Core.ScriptUrl
 import LeanTex.Core.Nfc
 import LeanTex.Core.MdSmart
 import LeanTex.Core.Contents
@@ -539,6 +540,7 @@ private def monoInto (acc : String) (run : Array Inline) : List Inline → Strin
     let span := codeSpan (twinPlain run)
     acc ++ span
   | .link url body :: rest =>
+    if Url.runsScript url then monoInto acc (run ++ body) rest else
     let span := codeSpan (twinPlain run)
     let text := codeSpan (twinPlain body)
     let dest := linkDest url
@@ -899,8 +901,10 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
     if n == Ir.urlTildeRole then acc ++ "~" else
     let out := inlinesInto site cites acc none after 0 body.toList
     if n == Ir.itemLabelRole && out != acc then out ++ " " else out
+  -- A link whose URL runs script is set as its text (W0470).
   | .link url body =>
-    if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
+    if Url.runsScript url then inlinesInto site cites acc none after 0 body.toList
+    else if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
     else
       let inner := inlinesInto site cites "" none true 0 body.toList
       let dest := linkDest url
