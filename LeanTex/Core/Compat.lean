@@ -19122,4 +19122,16 @@ public def rewriteText (file : String) (raws : Array Raw) (warned : Array String
     { file := file, warned := warned, sourceTriggers := sourceTriggers file {} raws.toList }
   (out, st.diags, st.warned)
 
+public theorem overlayName_plain {name : String}
+    (h : name.startsWith "overlay native " = false) : overlayName name = name := by
+  simp [overlayName, h]
+
+public theorem alertMark_eq (themed : Bool) :
+    alertMark themed = if themed then "alert themed" else "alert plain" := by
+  unfold alertMark; rfl
+
+public theorem overlayWord?_group (body : Array Raw) (p : Pos) :
+    overlayWord? (.group body p) = none := by
+  unfold overlayWord?; rfl
+
 end LeanTex.Core.Compat
