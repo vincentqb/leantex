@@ -3,7 +3,6 @@ module
 public import LeanTex.Core.TextAccount
 public import LeanTex.Core.HtmlDocRead
 public import LeanTex.Core.PdfCensus
-public import LeanTex.Core.PdfWriteContract
 public import LeanTex.Core.PdfTextRead
 public import LeanTex.Cli.Args
 
@@ -25,7 +24,7 @@ public structure Run where
   shipped : List Diag.Output
   /-- The executed source's text slots an artifact's target reads. -/
   srcText : Diag.Output → List (Char × Origin)
-  /-- The located text of the last elaboration, `Elab.runPrepared`'s. -/
+  /-- The located text of the elaboration an artifact's document comes from. -/
   elabText : Diag.Output → List (Char × Origin)
   /-- The located text of the document an artifact's backend reads. -/
   irText : Diag.Output → List (Char × Origin)
@@ -49,38 +48,24 @@ public structure Run where
 @[expose] public def Run.named (D : Array Diag) (A : Diag.Output) : List Span :=
   (Run.lost D A).toList.flatMap Diag.piece
 
-@[expose] public def Run.output : Emit → Diag.Output
-  | .pdf => .pdf
-  | .html => .html
-  | .md => .md
-
 /-- The characters of a text, origins aside. -/
 @[expose] public def Run.chars (t : List (Char × Origin)) : String := String.ofList (t.map (·.1))
 
-/-- The rows the headline composes over every run `compile` presents, the document `x` declaring
-the formats `formats x`; each field is the statement of the theorem it names. -/
-public structure Rows {σ : Type} (formats : σ → Array String) (compile : Config → σ → Run) :
-    Prop where
+/-- The rows the headline composes over every run `compile` presents, each field the statement of
+the theorem it names or, for the readers, what an artifact's text is. -/
+public structure Rows {σ : Type} (compile : Config → σ → Run) : Prop where
   /-- DiagCode.error_iff_fatal, with the driver writing every artifact it emits. -/
   ships : ∀ cfg x, (∀ d ∈ (compile cfg x).D,
       ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606]) →
     (compile cfg x).shipped = (compile cfg x).emitted
-  /-- Driver.build_written_exact: the run emits the backends the flags and the document ask. -/
-  emits : ∀ cfg x,
-    (compile cfg x).emitted = ((cfg.effectiveEmit (formats x)).map Run.output).toList ∧
-      ∀ A ∈ (compile cfg x).shipped, A ∈ (compile cfg x).emitted
-  /-- Driver.build_written_exact: the PDF shipped is what the checked writer returns. -/
-  writesPdf : ∀ cfg x, .pdf ∈ (compile cfg x).shipped →
-    ∃ geom fs pages info imgs outline streams tree ops programs,
-      Pdf.writeChecked geom fs pages info imgs outline streams tree ops programs =
-        .ok ((compile cfg x).bytes .pdf)
   /-- Driver.build_written_exact: the page shipped is the closed emission over the boundary read. -/
   writesPage : ∀ cfg x, .html ∈ (compile cfg x).shipped →
     (∃ p, (HtmlDoc.emitClosed (compile cfg x).hcfg (compile cfg x).docH
       (compile cfg x).svgChecked).1 = .ok p) ∧
     (compile cfg x).html = (HtmlDoc.emit (compile cfg x).hcfg (compile cfg x).docH).1 ∧
     (compile cfg x).bytes .html = (compile cfg x).html.toUTF8 ∧
-    (compile cfg x).boundaryText = (compile cfg x).hcfg.mathRenderer
+    (compile cfg x).boundaryText = (compile cfg x).hcfg.mathRenderer ∧
+    (compile cfg x).boundaryText.isSome = cfg.mathBoundary.isSome
   /-- The readers' text is each artifact's, its origins owed with the backend rows. -/
   extracted : ∀ cfg x,
     (.pdf ∈ (compile cfg x).shipped → PdfTextRead.structureText ((compile cfg x).bytes .pdf) =
@@ -117,24 +102,23 @@ public structure Rows {σ : Type} (formats : σ → Array String) (compile : Con
   /-- Driver.build_reports_contract, no loss reported twice at one place. -/
   once : ∀ cfg x, ∀ A ∈ (compile cfg x).shipped,
     ((Run.lost (compile cfg x).D A).toList.map fun d => (d.kind, d.span.map Span.place)).Nodup
-  /-- Pdf.writeChecked_census. -/
-  census : ∀ geom fs pages info imgs outline streams tree ops programs b,
-    Pdf.writeChecked geom fs pages info imgs outline streams tree ops programs = .ok b →
-      (PdfCensus.census b).isOk
-  /-- HtmlDoc.emitTree_docOk. -/
-  docOk : ∀ (hcfg : HtmlDoc.Config) (doc : Ir.Doc),
-    Html.DocOk (doc.info.language.getD "en") (HtmlDoc.emitTree hcfg doc).1
-      (HtmlDoc.emitTree hcfg doc).2.1 = true
-  /-- Driver.build_flag_free, the bytes reading only the flags
-  artifact_flag_free projects and the font directories. -/
-  flagFree : ∀ cfg cfg' x, (∀ fm, cfg.effectiveEmit fm = cfg'.effectiveEmit fm) →
-    cfg.mathBoundary = cfg'.mathBoundary → cfg.fontDirs = cfg'.fontDirs →
+  /-- Pdf.writeChecked_census, over the file the run ships. -/
+  census : ∀ cfg x, .pdf ∈ (compile cfg x).shipped →
+    (PdfCensus.census ((compile cfg x).bytes .pdf)).isOk
+  /-- HtmlDoc.emitTree_docOk, over the page the run ships. -/
+  docOk : ∀ cfg x, .html ∈ (compile cfg x).shipped →
+    Html.DocOk ((compile cfg x).docH.info.language.getD "en")
+      (HtmlDoc.emitTree (compile cfg x).hcfg (compile cfg x).docH).1
+      (HtmlDoc.emitTree (compile cfg x).hcfg (compile cfg x).docH).2.1 = true
+  /-- Driver.build_flag_free, the bytes reading no flag but the output, the boundary and the
+  font directories. -/
+  flagFree : ∀ cfg cfg' x, cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
+    cfg'.fontDirs = cfg.fontDirs →
     ∀ A ∈ (compile cfg x).shipped, A ∈ (compile cfg' x).shipped →
       (compile cfg' x).bytes A = (compile cfg x).bytes A
 
 /-- Each shipped artifact's backend reads its document's text as its viewer extracts it. -/
-private theorem Rows.backend {σ : Type} {formats : σ → Array String}
-    {compile : Config → σ → Run} (rows : Rows formats compile) (cfg : Config) (x : σ) :
+private theorem Rows.backend {σ : Type} {compile : Config → σ → Run} (rows : Rows compile) (cfg : Config) (x : σ) :
     ∀ A ∈ (compile cfg x).shipped,
       ReadsAs (Run.named (compile cfg x).D A) ((compile cfg x).irText A)
         ((compile cfg x).text A) := by
@@ -149,8 +133,8 @@ private theorem Rows.backend {σ : Type} {formats : σ → Array String}
 /-- Nothing is lost silently: each shipped artifact's text is its source's less the places its
 losses name, each once, its bytes well formed and read from no flag but the output, the boundary
 and the fonts. -/
-public theorem compile_text_accounts {σ : Type} (formats : σ → Array String)
-    (compile : Config → σ → Run) (rows : Rows formats compile) (cfg : Config) (x : σ) :
+public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Run)
+    (rows : Rows compile) (cfg : Config) (x : σ) :
     let r := compile cfg x
     ((∀ d ∈ r.D, ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606]) →
       r.shipped = r.emitted) ∧
@@ -172,17 +156,21 @@ public theorem compile_text_accounts {σ : Type} (formats : σ → Array String)
     rcases List.mem_append.mp hs with hs | hs
     · exact rows.reports cfg x A hA s hs
     · exact ⟨s, hs, Span.samePlace_self s⟩
-  · obtain ⟨geom, fs, pages, info, imgs, outline, streams, tree, ops, programs, hw⟩ :=
-      rows.writesPdf cfg x hp
-    exact rows.census geom fs pages info imgs outline streams tree ops programs _ hw
-  · obtain ⟨⟨p, hp⟩, hhtml, hbytes, hbound⟩ := rows.writesPage cfg x hh
+  · exact rows.census cfg x hp
+  · obtain ⟨⟨p, hp⟩, hhtml, hbytes, hbound, -⟩ := rows.writesPage cfg x hh
     refine ⟨hbytes, fun y hy => ?_⟩
     rw [hhtml] at hy
     rw [hbound]
-    exact (HtmlDoc.emitClosed_scripts_mem _ _ _ hp (rows.docOk _ _)).2 y hy
+    exact (HtmlDoc.emitClosed_scripts_mem _ _ _ hp (rows.docOk cfg x hh)).2 y hy
   · intro cfg' ho hm hf _ A hA hA'
-    exact rows.flagFree cfg cfg' x
-      (fun fm => congrArg Prod.fst (artifact_flag_free cfg cfg' ho.symm hm.symm fm))
-      hm.symm hf.symm A hA hA'
+    exact rows.flagFree cfg cfg' x ho hm hf A hA hA'
+
+/-- Some compile meets every row: one shipping nothing. -/
+example : Rows fun (_ : Config) (_ : Unit) =>
+    ({ D := #[], dFront := #[], emitted := [], shipped := [], srcText := fun _ => [],
+       elabText := fun _ => [], irText := fun _ => [], setText := [], text := fun _ => [],
+       hcfg := {}, docH := {}, svgChecked := #[], html := "", boundaryText := none,
+       bytes := fun _ => .empty } : Run) := by
+  constructor <;> intros <;> simp_all
 
 end LeanTex.Cli
