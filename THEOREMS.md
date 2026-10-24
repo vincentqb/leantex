@@ -43,8 +43,9 @@ inductive Origin | source (span : Span) | engine | unplaced
 -- A run's fields (Cli.Run), each artifact A a Diag.Output:
 srcText A    : List (Char × Origin)  -- the executed source's slots A's target reads, owed (U111)
                                      -- as Parse.rawTextFor A.target f ex.raws
-elabText A, irText A : List (Char × Origin)  -- Ir.locatedText of the elaboration A's doc comes
-                                     -- from, and of A's doc (docH for HTML); setText, fitted's lines
+elabText A, irText A : List (Char × Origin)  -- owed (U111) as Ir.locatedText of the elaboration
+                                     -- A's doc comes from, and of A's doc (docH for HTML)
+setText      : List (Char × Origin)  -- owed (U110) as the located text of fitted's lines
 text A       : List (Char × Origin)  -- what a viewer extracts from A's bytes, origins annotated:
   -- PdfTextRead.structureText, HtmlRead.pageText, the markdown reader's text (owed (U110))
 Run.lost D A : Array Diag :=
