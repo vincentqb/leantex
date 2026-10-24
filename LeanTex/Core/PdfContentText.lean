@@ -142,7 +142,8 @@ theorem itemsText_push_text (items : Array Item) (m : Mark) (b : Brk) (s : Strin
   simp [itemsText, Item.text?, List.filterMap_append, String.join_append]
 
 /-- What a step of the reader keeps: the open sequences, the font and the pending operands. -/
-def Keeps (a b : St) : Prop := b.opens = a.opens ∧ b.ts.font = a.ts.font ∧ b.args = a.args
+def Keeps (a b : St) : Prop :=
+  b.opens = a.opens ∧ b.ts.font = a.ts.font ∧ b.args = a.args ∧ b.saved = a.saved
 
 theorem emitText_text (st : St) (brk : Brk) (s : String) :
     itemsText (st.emitText brk s).items =
@@ -171,7 +172,7 @@ theorem showCode_step (ts : TextState) (st0 : St) (a : ShowAcc) (code : PdfFont.
       itemsText (St.showCode ts a code).st.items ++
           (if replaced st0.opens then "" else (St.showCode ts a code).cur) =
         itemsText st0.items ++ (if replaced st0.opens then "" else pre ++ code.text) := by
-  obtain ⟨ho, hts, hargs⟩ := hk
+  obtain ⟨ho, hts, hargs, hsv⟩ := hk
   unfold St.showCode
   dsimp only
   generalize (!a.cur.isEmpty && _ != Brk.none) = sp
@@ -180,7 +181,7 @@ theorem showCode_step (ts : TextState) (st0 : St) (a : ShowAcc) (code : PdfFont.
   rw [ho] at he
   cases sp <;> cases hl : code.text.isEmpty <;>
     simp only [Bool.false_eq_true, ite_false, ite_true] <;>
-    refine ⟨⟨?_, ?_, ?_⟩, ?_⟩ <;>
+    refine ⟨⟨?_, ?_, ?_, ?_⟩, ?_⟩ <;>
     simp_all [Keeps] <;>
     (by_cases hr : replaced st0.opens = true <;> simp_all [String.append_assoc])
   all_goals rw [← String.append_assoc, ht, String.append_assoc]
@@ -201,10 +202,10 @@ theorem showCode_fold (ts : TextState) (st0 : St) (codes : List PdfFont.Code) :
     have := ih _ (pre ++ c.text) hk' ht'
     simpa [codesText, String.append_assoc] using this
 
-theorem Keeps.refl (st : St) : Keeps st st := ⟨rfl, rfl, rfl⟩
+theorem Keeps.refl (st : St) : Keeps st st := ⟨rfl, rfl, rfl, rfl⟩
 
 theorem Keeps.trans {a b c : St} (h1 : Keeps a b) (h2 : Keeps b c) : Keeps a c :=
-  ⟨h2.1.trans h1.1, h2.2.1.trans h1.2.1, h2.2.2.trans h1.2.2⟩
+  ⟨h2.1.trans h1.1, h2.2.1.trans h1.2.1, h2.2.2.1.trans h1.2.2.1, h2.2.2.2.trans h1.2.2.2⟩
 
 /-- The text a string shows in the font in force: its codes' text, none where a span replaces it
 or no font is set. -/
@@ -218,7 +219,7 @@ theorem showBytes_text (st : St) (b : ByteArray) :
       itemsText (st.showBytes b).items = itemsText st.items ++ shownText st b := by
   unfold St.showBytes shownText
   split
-  · next hf => exact ⟨⟨rfl, rfl, rfl⟩, by simp [hf]⟩
+  · next hf => exact ⟨⟨rfl, rfl, rfl, rfl⟩, by simp [hf]⟩
   · next f hf =>
     dsimp only
     have h := showCode_fold st.ts st (f.codes? b).toList ⟨st, "", st.brk, none⟩ ""
@@ -561,7 +562,7 @@ theorem toks_read (res : Res) (sp : Spell) (T : Nat → Nat → String)
     have hs0o : s0.opens = st.opens := by rw [← hs0]
     have hs0i : s0.items = st.items := by rw [← hs0]
     obtain ⟨hk, ht⟩ := showArray_text s0 (items.toList.flatMap TextItem.objs).toArray
-    refine ⟨⟨by rw [hk.2.2, hs0a], ?_, ha.2.2.1, ?_⟩, by rw [hk.1, hs0o], ?_⟩
+    refine ⟨⟨by rw [hk.2.2.1, hs0a], ?_, ha.2.2.1, ?_⟩, by rw [hk.1, hs0o], ?_⟩
     · simp only [TextOp.shown]; rw [hk.2.1, hs0f]; exact ha.2.1
     · rw [hk.1, hs0o]; exact ha.2.2.2
     · rw [ht, hs0i]
