@@ -1663,14 +1663,14 @@ end
 the writer's spellings: each text object's glyphs' text in the font in force, a saved state restoring
 the font after it, a span's actual text for its content, a painted form's text left to the form. -/
 public theorem streamText_exact (res : Res) (T : Nat → Nat → String) (hT : FontReads res T)
-    (ops : Array ContentOp) (h : ContentOp.SpelledList ops.toList) :
-    itemsText (readToks res .unmarked (PdfContentLex.scan (render ops).toUTF8)).1 =
+    (mark : PdfTextRead.Mark) (ctm : PdfTextRead.Mat) (ops : Array ContentOp) (h : ContentOp.SpelledList ops.toList) :
+    itemsText (readToks res mark (PdfContentLex.scan (render ops).toUTF8) ctm).1 =
       (ContentOp.shownList res T false none ops.toList).2 := by
   rw [scan_render_page ops h]
   unfold readToks
   dsimp only
   rw [← Array.foldl_toList, List.toList_toArray]
-  have h0 : Agrees res (PdfTextRead.St.init .unmarked Mat.id) none false := ⟨rfl, rfl, by simp, rfl⟩
+  have h0 : Agrees res (PdfTextRead.St.init mark ctm) none false := ⟨rfl, rfl, by simp, rfl⟩
   obtain ⟨-, -, -, ht⟩ := read_ops res T hT ops.toList _ none false h0
   rw [ht]
   simp [PdfTextRead.St.init, itemsText]

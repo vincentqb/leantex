@@ -141,7 +141,8 @@ theorem itemsText_push_text (items : Array Item) (m : Mark) (b : Brk) (s : Strin
     itemsText (items.push (.text m b s)) = itemsText items ++ s := by
   simp [itemsText, Item.text?, List.filterMap_append, String.join_append]
 
-/-- What a step of the reader keeps: the open sequences, the font and the pending operands. -/
+/-- What a step of the reader keeps: the open sequences, the font, the pending operands and the saved
+states. -/
 def Keeps (a b : St) : Prop :=
   b.opens = a.opens ∧ b.ts.font = a.ts.font ∧ b.args = a.args ∧ b.saved = a.saved
 
