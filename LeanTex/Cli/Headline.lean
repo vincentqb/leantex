@@ -18,6 +18,9 @@ the run reports, and what it writes. -/
 public structure Run where
   /-- Every diagnostic the run reports. -/
   D : Array Diag
+  /-- The codes the document's `\allow` accepts, and whether `--best-effort` accepts every one. -/
+  allowed : Array String
+  allowAll : Bool
   /-- The diagnostics the front stages report, through `Bib.accountFront`. -/
   dFront : Array Diag
   emitted : List Diag.Output
@@ -54,10 +57,10 @@ public structure Run where
 /-- The rows the headline composes over every run `compile` presents, each field the statement of
 the theorem it names or, for the readers, what an artifact's text is. -/
 public structure Rows {σ : Type} (compile : Config → σ → Run) : Prop where
-  /-- DiagCode.error_iff_fatal, with the driver writing every artifact it emits. -/
-  ships : ∀ cfg x, (∀ d ∈ (compile cfg x).D,
-      ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606]) →
-    (compile cfg x).shipped = (compile cfg x).emitted
+  /-- Driver.build_reports_contract: the driver writes every artifact it emits where resolving its
+  diagnostics stops nothing. -/
+  ships : ∀ cfg x, (Diag.resolveAll (compile cfg x).allowed (compile cfg x).allowAll
+      (compile cfg x).D).stops = 0 → (compile cfg x).shipped = (compile cfg x).emitted
   /-- Driver.build_written_exact: the page shipped is the closed emission over the boundary read. -/
   writesPage : ∀ cfg x, .html ∈ (compile cfg x).shipped →
     (∃ p, (HtmlDoc.emitClosed (compile cfg x).hcfg (compile cfg x).docH
@@ -118,7 +121,8 @@ public structure Rows {σ : Type} (compile : Config → σ → Run) : Prop where
       (compile cfg' x).bytes A = (compile cfg x).bytes A
 
 /-- Each shipped artifact's backend reads its document's text as its viewer extracts it. -/
-private theorem Rows.backend {σ : Type} {compile : Config → σ → Run} (rows : Rows compile) (cfg : Config) (x : σ) :
+private theorem Rows.backend {σ : Type} {compile : Config → σ → Run} (rows : Rows compile)
+    (cfg : Config) (x : σ) :
     ∀ A ∈ (compile cfg x).shipped,
       ReadsAs (Run.named (compile cfg x).D A) ((compile cfg x).irText A)
         ((compile cfg x).text A) := by
@@ -136,8 +140,7 @@ and the fonts. -/
 public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Run)
     (rows : Rows compile) (cfg : Config) (x : σ) :
     let r := compile cfg x
-    ((∀ d ∈ r.D, ¬ d.kind.stopsWriter ∧ d.kind ∉ [.E0003, .E0005, .E0006, .E0606]) →
-      r.shipped = r.emitted) ∧
+    ((∀ d ∈ r.D, ¬ d.kind.stopsWriter) → r.shipped = r.emitted) ∧
     (∀ A ∈ r.shipped,
       Text.view (Run.named r.D A) (r.text A) = Text.view (Run.named r.D A) (r.srcText A) ∧
       ((Run.lost r.D A).toList.map fun d => (d.kind, d.span.map Span.place)).Nodup) ∧
@@ -149,7 +152,8 @@ public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Ru
       cfg'.fontDirs = cfg.fontDirs → let r' := compile cfg' x
       ∀ A ∈ r.shipped, A ∈ r'.shipped → r'.bytes A = r.bytes A := by
   intro r
-  refine ⟨rows.ships cfg x, fun A hA => ⟨?_, rows.once cfg x A hA⟩, fun hp => ?_, fun hh => ?_, ?_⟩
+  refine ⟨fun hs => rows.ships cfg x ((Diag.resolveAll_stops_exact _ _ _).mpr fun d hd hw =>
+    absurd hw (hs d hd)), fun A hA => ⟨?_, rows.once cfg x A hA⟩, fun hp => ?_, fun hh => ?_, ?_⟩
   · have front := ((rows.knots cfg x A hA).trans (rows.passes cfg x A hA)).mono
       (base' := Run.named r.dFront A) fun s hs => by simpa using hs
     refine ((front.trans (rows.backend cfg x A hA)).at_places _ fun s hs => ?_).symm
@@ -167,7 +171,8 @@ public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Ru
 
 /-- Some compile meets every row: one shipping nothing. -/
 example : Rows fun (_ : Config) (_ : Unit) =>
-    ({ D := #[], dFront := #[], emitted := [], shipped := [], srcText := fun _ => [],
+    ({ D := #[], allowed := #[], allowAll := false, dFront := #[], emitted := [], shipped := [],
+       srcText := fun _ => [],
        elabText := fun _ => [], irText := fun _ => [], setText := [], text := fun _ => [],
        hcfg := {}, docH := {}, svgChecked := #[], html := "", boundaryText := none,
        bytes := fun _ => .empty } : Run) := by

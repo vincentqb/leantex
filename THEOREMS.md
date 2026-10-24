@@ -40,26 +40,44 @@ D               := every diagnostic the run reports: each phase's batch through
 -- A text is its characters, each from the source token at a place, a mark the engine adds, or
 -- text no place locates.
 inductive Origin | source (span : Span) | engine | unplaced
-srcText A ex : List (Char × Origin) := Parse.rawTextFor A.target f ex.raws  -- A's target's slots
-irText A     : List (Char × Origin)  -- Ir.locatedText over the inlines of A's doc, docH for HTML
-text A       : List (Char × Origin)  -- what a viewer extracts from A, with the origins A marks:
-  -- PdfTextRead.structureText, HtmlRead.pageText, the markdown reader's text; origins owed
-lost D A     : Array Diag :=
-  (Diag.forOutputs #[A.output] D).filter fun d => d.kind.loss matches .dropped | .pending
-named D A    : List Span := (lost D A).toList.flatMap Diag.piece
+-- A run's fields (Cli.Run), each artifact A a Diag.Output:
+srcText A    : List (Char × Origin)  -- the executed source's slots A's target reads, owed (U111)
+                                     -- as Parse.rawTextFor A.target f ex.raws
+elabText A, irText A : List (Char × Origin)  -- Ir.locatedText of the elaboration A's doc comes
+                                     -- from, and of A's doc (docH for HTML); setText, fitted's lines
+text A       : List (Char × Origin)  -- what a viewer extracts from A's bytes, origins annotated:
+  -- PdfTextRead.structureText, HtmlRead.pageText, the markdown reader's text (owed (U110))
+Run.lost D A : Array Diag :=
+  (Diag.forOutputs #[A] D).filter fun d => d.kind.loss matches .dropped | .pending
+Run.named D A : List Span := (Run.lost D A).toList.flatMap Diag.piece
 
-theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) :
-    let r := compile cfg src E      -- the stages above; src is f and every file the run reads
+-- r := compile cfg x is one run of the stages above, x the document and the host's faces, cfg a
+-- Cli.Config; Rows compile, the rows below as hypotheses (LeanTex/Cli/Headline.lean).
+theorem compile_text_accounts (compile : Config → σ → Run) (rows : Rows compile)
+    (cfg : Config) (x : σ) :
+    let r := compile cfg x
     ((∀ d ∈ r.D, ¬ d.kind.stopsWriter) → r.shipped = r.emitted) ∧
     (∀ A ∈ r.shipped,
-      Text.view (named r.D A) (text A) = Text.view (named r.D A) (srcText A r.ex) ∧
-      ((lost r.D A).toList.map fun d => (d.kind, d.span.map Span.place)).Nodup) ∧
-    (PdfCensus.census r.pdf).isOk ∧
-    (∀ x ∈ HtmlDoc.scripts r.html, x = .script (HtmlRead.trimWs HtmlDoc.deckScript.toList) ∨
+      Text.view (Run.named r.D A) (r.text A) = Text.view (Run.named r.D A) (r.srcText A) ∧
+      ((Run.lost r.D A).toList.map fun d => (d.kind, d.span.map Span.place)).Nodup) ∧
+    (.pdf ∈ r.shipped → (PdfCensus.census (r.bytes .pdf)).isOk) ∧
+    (.html ∈ r.shipped → r.bytes .html = r.html.toUTF8 ∧ ∀ x ∈ HtmlDoc.scripts r.html,
+      x = .script (HtmlRead.trimWs HtmlDoc.deckScript.toList) ∨
       ∃ js, r.boundaryText = some js ∧ x = .script (HtmlRead.trimWs js.toList)) ∧  -- the file read
     ∀ cfg', cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
-      cfg'.fontDirs = cfg.fontDirs → let r' := compile cfg' src E
+      cfg'.fontDirs = cfg.fontDirs → let r' := compile cfg' x
       ∀ A ∈ r.shipped, A ∈ r'.shipped → r'.bytes A = r.bytes A
+-- The driver is an IO action, so no Lean term is its run yet: the statement holds of every
+-- compile whose runs meet the rows, and the driver as a host program (U112) supplies that
+-- compile. Each field of Rows states, for the runs compile presents, the theorem it names (what
+-- the driver ships and reports, the page's bytes, each stage's text, the census, the emitted
+-- tree's well-formedness, the flags read) or what an artifact's text is: the PDF reader's and the
+-- page reader's characters, origins annotated. The shipping clause is composed with
+-- Diag.resolveAll_stops_exact, the text and script clauses with the stages' readings and
+-- HtmlDoc.emitClosed_scripts_mem; the Nodup, census, page-bytes and flag clauses are rows passed
+-- through. The text clause is relative to srcText, a field until Parse.rawTextFor defines it
+-- (U111); the twin's text and bytes and every origin are the rows' to fix (U110). A judge of an
+-- artifact's bytes reads them only where it ships; an example compile meets every row.
 -- A result exists because every stage is total and terminates. Only dropped and pending losses
 -- excuse text (Diag.piece): an error or a warning the default run shows, a repeat its shown line
 -- counts (Diag.foldRepeats), or a loss the document accepts; no loss is reported twice at one
@@ -77,11 +95,12 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 -- white-space run as one space (Text.squash); NFC, glyph ligatures and the hyphen a line break
 -- sets are the backends' to read back (U110), and an artifact marking no origins, the twin's or
 -- a page's, owes its characters irText's origins through its census (U110).
--- Composition, for each artifact A: surface ∘ elaboration ∘ passes gives
--- Text.view (named dFront A) (irText A) = Text.view (named dFront A) (srcText A ex); each
--- backend gives Text.view (named D A) (text A) = Text.view (named D A) (irText A), the PDF
--- through Ir.keepFor "pdf" and the page through Ir.squeezeFrames; the accounting gives
--- src.diags ⊆ dFront ⊆ D, up to site counts and demotion, so named dFront A ⊆ named D A.
+-- Composition, for each artifact A: each stage's text reads as the next wherever at least its
+-- losses' places are excused (Text.ReadsAs, as an accounted arm reads above the places it adds:
+-- Elab.Accounts.readsAs); surface ∘ elaboration ∘ passes above named dFront A, each backend above
+-- named D A, the PDF through Ir.keepFor "pdf" and the set lines, the page through
+-- Ir.squeezeFrames; the stages chain (Text.ReadsAs.trans), and every front loss reaching D at its
+-- place, up to site counts and demotion, the chain holds at named D A (Text.ReadsAs.at_places).
 ```
 
 | Stage | Proved | Owed |
@@ -94,11 +113,11 @@ theorem compile_text_accounts (cfg : Cli.Config) (src : Document) (E : FontEnv) 
 | PDF text layer | `Struct.ofDoc_text`, `mcids_partition_covers`, `parentTree_covers`, `Layout.Census.runPost_body_exact`; one character per code, the first `Pdf.painted` lists its glyph with: `Pdf.toUnicode_glyphs_exact`; a body line's line-end hyphen ships under a soft-hyphen span: `Pdf.lineHyphen_generated`; a text object's tokens read back, breaks and marks set aside, as each shown glyph's text in the font the last Tf set, a span's actual text for its glyphs: `PdfContent.extract_text`, through two-byte identity fonts: `PdfContent.extract_text_identity`, a generated hyphen's span reading as a soft hyphen: `PdfContent.spanText_hyphen`; a text object's bytes scanning back as those tokens, its colours and tags spelled, so read as that text: `PdfContent.scan_render_text`, `PdfContent.extract_text_bytes`; a whole content stream's bytes read, breaks and marks set aside, as its text objects' text, a saved state restoring the font after it: `PdfContent.streamText_exact`; tested: `pdfTextChecks`, each page's bytes read back as its lines' glyphs and breaks in paint order; the reader's text is pdftotext's: `testdata/scoreboard/textlayer.tsv` | owed (U21): `PdfContent.textOps_spelled`, `PdfContent.contentOps_spelled`, `PdfContent.embedded_identity`, `PdfContent.pageText_accounts`; owed (U110): `Layout.runFitted_text_accounts` |
 | HTML page text | `Html.parse_render_exact`, `Html.pageText_render_exact`, `Html.pageText_render_ink`, `HtmlDoc.emit_parse_exact`, `HtmlDoc.emit_pageText_ink`, `mathml_glyphs_agree`; the inline emitter's nodes hold irText's characters, white space aside, where no picture, formula, icon, footnote, overlay alternation or paged reference stands in it, nor a margin note set apart as an aside: `HtmlDoc.inlines_projects`; tested: `htmlReadChecks`, every corpus page meets `Html.DocOk`; the reader's tree is Chromium's: `testdata/scoreboard/textlayer.tsv` | owed (U110): `HtmlDoc.emit_text_accounts`, which waits on irText over blocks (`Ir.locatedBlocks`, U111), on origins for the text the emitter sets itself (numbers, marks, a figure's names), and on the inline arms the proved inline step leaves out |
 | Markdown twin | `rowLine_cells_exact`; the text escaper's spelling reads back under a model of the inline scan's markup: `MarkdownDoc.escape_read_id`; tested: `twinEscapeReadChecks`, that the markdown door reads it back alike, up to the typography and white space `Text.norm` reads alike; a picture the twin sets as its labels' words is named once, read off the walk that writes the twin (`MarkdownDoc.emitReport`); tested: `twinPictureChecks` | owed (U49): `MarkdownDoc.inlineText_read_id`, the inline spelling with the spaces it writes after an abbreviation and its line-start escapes; owed (U110): `MarkdownDoc.emit_text_accounts`, owing a markdown reader's text model with origins, irText over blocks (`Ir.locatedBlocks`, U111), and the twin's silent drops named: a picture in a table cell, a boundary picture's image |
-| Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; what the HTML parser finds a published page runs, its tree reading as a stack: `HtmlDoc.emit_scripts_mem`, `HtmlDoc.emitClosed_scripts_mem`; tested: `htmlContainedCorpusChecks`, `htmlContainedScriptLinkChecks` | owed (U113): `HtmlDoc.emitTree_docOk`, that every tree the emitter builds reads as a stack, tested on the corpus |
+| Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; what the HTML parser finds a published page runs, its tree reading as a stack: `HtmlDoc.emit_scripts_mem`, `HtmlDoc.emitClosed_scripts_mem`; tested: `htmlContainedCorpusChecks`, `htmlContainedScriptLinkChecks` | owed (U113): `HtmlDoc.emitTree_docOk`, that every tree the emitter builds reads as a stack, tested on the corpus; owed (U113): `Pdf.writeChecked_census`, that the census reads every file the writer checks |
 | Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free`; the driver's reads, by a line scan: `undeclaredConfigRead` | owed (U112): `Driver.build_flag_free` |
-| The headline | the rows above, composed | owed (U112): `compile_text_accounts` |
+| The headline | the rows above, composed, from the statements of their owed theorems as the fields of Rows (`LeanTex/Cli/Headline.lean`), a run shipping every emitted artifact where none of its losses stops the writer through `Diag.resolveAll_stops_exact`, the page's scripts through `HtmlDoc.emitClosed_scripts_mem`, the once-only, census, page-bytes and flag clauses passed through: `compile_text_accounts`; the text stages chained, each reading as the next above its losses' places: `Text.ReadsAs.trans`, `Text.ReadsAs.at_places`; supporting, the proved arms in the rows' shape: `Elab.Accounts.readsAs` | owed (U112): the driver as a host program whose run is the compile the headline quantifies over, and `Driver.build_written_exact`, the page it ships being the closed emission over the math boundary it read; the HTML re-elaboration's losses reach D but not dFront, which the front rows read |
 
-Three gaps keep the composition open:
+The composition is proved from the rows; three gaps keep their theorems, its hypotheses, open:
 
 - Termination: every function a run calls returns. No constant the binary's entry reaches through
   kernel values is partial, a repeat loop or a nested type's derived equality included
