@@ -6,7 +6,7 @@ public import LeanTex.Core.PdfCensus
 public import LeanTex.Core.PdfTextRead
 public import LeanTex.Cli.Args
 
-/-! The headline, nothing is lost silently, composed from the rows that state each stage. -/
+/-! The headline's statement, composed over any compile meeting the rows that state each stage. -/
 
 namespace LeanTex.Cli
 
@@ -136,10 +136,9 @@ private theorem Rows.backend {σ : Type} {compile : Config → σ → Run} (rows
   | html => exact rows.page cfg x hA
   | md => exact rows.twin cfg x hA
 
-/-- Nothing is lost silently: each shipped artifact's text is its executed source's less the places
-its losses name, each once, the PDF passing the census, the page running only what it declares, and
-the bytes read from no flag but the output, the boundary and the fonts. -/
-public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Run)
+/-- Over any compile meeting the rows, each shipped artifact's text reads as its source's text field
+less the places its losses name, and the page runs only the scripts it declares. -/
+public theorem compile_text_accounts_of_rows {σ : Type} (compile : Config → σ → Run)
     (rows : Rows compile) (cfg : Config) (x : σ) :
     let r := compile cfg x
     ((∀ d ∈ r.D, ¬ d.kind.stopsWriter) → r.shipped = r.emitted) ∧
