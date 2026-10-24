@@ -171,15 +171,6 @@ are tokens of `src`, and once they are excused its text reads as `pre` then `src
     ∀ named : List Span, (∀ s ∈ added, s ∈ named) →
       view named (locatedText run.1) = view named (pre ++ Parse.rawTextList file src)
 
-/-- An accounted run reads as its source above the places its own diagnostics excuse. -/
-public theorem Accounts.readsAs {file : String} {src : List Raw} {run : Array Inline × ESt}
-    {st : ESt} (h : Accounts file src run st []) :
-    ∃ added : List Span,
-      run.2.diags.toList.flatMap Diag.piece = st.diags.toList.flatMap Diag.piece ++ added ∧
-      ReadsAs added (Parse.rawTextList file src) (locatedText run.1) := by
-  obtain ⟨added, hd, _, hv⟩ := h
-  exact ⟨added, hd, fun named hn => (hv named hn).symm⟩
-
 private theorem accounts_prefix (file : String) (rs src : List Raw) (run : Array Inline × ESt)
     (st st1 : ESt) (pre pre' : List (Char × Origin)) (added0 : List Span)
     (h : Accounts file src run st1 pre')

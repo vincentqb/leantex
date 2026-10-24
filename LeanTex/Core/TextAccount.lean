@@ -218,7 +218,7 @@ public theorem view_named (named : List Span) (s : Span) (hs : s ∈ named)
 
 @[simp] public theorem chars_empty (o : Origin) : chars o "" = [] := rfl
 
-/-- `a` reads as `b` wherever at least the places of `base` are excused. -/
+/-- `a` reads as `b` wherever at least the spans of `base` are excused. -/
 @[expose] public def ReadsAs (base : List Span) (a b : List (Char × Origin)) : Prop :=
   ∀ named : List Span, (∀ s ∈ base, s ∈ named) → view named a = view named b
 

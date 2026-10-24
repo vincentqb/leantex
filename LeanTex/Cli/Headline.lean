@@ -18,11 +18,13 @@ the run reports, and what it writes. -/
 public structure Run where
   /-- Every diagnostic the run reports. -/
   D : Array Diag
-  /-- The codes the document's `\allow` accepts, and whether `--best-effort` accepts every one. -/
+  /-- The codes the document's `\allow` accepts. -/
   allowed : Array String
+  /-- Whether `--best-effort` accepts every loss. -/
   allowAll : Bool
-  /-- The diagnostics the front stages report, through `Bib.accountFront`. -/
-  dFront : Array Diag
+  /-- The diagnostics the front stages report for an artifact's document, through
+  `Bib.accountFront`. -/
+  dFront : Diag.Output → Array Diag
   emitted : List Diag.Output
   shipped : List Diag.Output
   /-- The executed source's text slots an artifact's target reads. -/
@@ -51,6 +53,13 @@ public structure Run where
 @[expose] public def Run.named (D : Array Diag) (A : Diag.Output) : List Span :=
   (Run.lost D A).toList.flatMap Diag.piece
 
+/-- The refusals the driver prints without resolving them: the output name's, the PDF writer's and
+publication's, and a missing font set. -/
+@[expose] public def Run.refusals : List DiagCode := [.E0003, .E0005, .E0006, .E0606, .E0401]
+
+theorem Run.refusals_stop : ∀ c ∈ Run.refusals, c.stopsWriter = true := by
+  simp [Run.refusals, DiagCode.stopsWriter]
+
 /-- The characters of a text, origins aside. -/
 @[expose] public def Run.chars (t : List (Char × Origin)) : String := String.ofList (t.map (·.1))
 
@@ -58,17 +67,17 @@ public structure Run where
 the theorem it names or, for the readers, what an artifact's text is. -/
 public structure Rows {σ : Type} (compile : Config → σ → Run) : Prop where
   /-- Driver.build_reports_contract: the driver writes every artifact it emits where resolving its
-  diagnostics stops nothing. -/
-  ships : ∀ cfg x, (Diag.resolveAll (compile cfg x).allowed (compile cfg x).allowAll
-      (compile cfg x).D).stops = 0 → (compile cfg x).shipped = (compile cfg x).emitted
+  diagnostics stops nothing and it prints no refusal. -/
+  ships : ∀ cfg x, (∀ d ∈ (compile cfg x).D, d.kind ∉ Run.refusals) →
+    (Diag.resolveAll (compile cfg x).allowed (compile cfg x).allowAll (compile cfg x).D).stops = 0 →
+    (compile cfg x).shipped = (compile cfg x).emitted
   /-- Driver.build_written_exact: the page shipped is the closed emission over the boundary read. -/
   writesPage : ∀ cfg x, .html ∈ (compile cfg x).shipped →
     (∃ p, (HtmlDoc.emitClosed (compile cfg x).hcfg (compile cfg x).docH
       (compile cfg x).svgChecked).1 = .ok p) ∧
     (compile cfg x).html = (HtmlDoc.emit (compile cfg x).hcfg (compile cfg x).docH).1 ∧
     (compile cfg x).bytes .html = (compile cfg x).html.toUTF8 ∧
-    (compile cfg x).boundaryText = (compile cfg x).hcfg.mathRenderer ∧
-    (compile cfg x).boundaryText.isSome = cfg.mathBoundary.isSome
+    (compile cfg x).boundaryText = (compile cfg x).hcfg.mathRenderer
   /-- The readers' text is each artifact's, its origins owed with the backend rows. -/
   extracted : ∀ cfg x,
     (.pdf ∈ (compile cfg x).shipped → PdfTextRead.structureText ((compile cfg x).bytes .pdf) =
@@ -77,11 +86,11 @@ public structure Rows {σ : Type} (compile : Config → σ → Run) : Prop where
       HtmlRead.pageText (compile cfg x).html = some (Run.chars ((compile cfg x).text .html)))
   /-- Elab.runPrepared_text_accounts, from execution through both knots. -/
   knots : ∀ cfg x, ∀ A ∈ (compile cfg x).shipped,
-    ReadsAs (Run.named (compile cfg x).dFront A) ((compile cfg x).srcText A)
+    ReadsAs (Run.named ((compile cfg x).dFront A) A) ((compile cfg x).srcText A)
       ((compile cfg x).elabText A)
   /-- Driver.passes_text_accounts, the driver's IR passes. -/
   passes : ∀ cfg x, ∀ A ∈ (compile cfg x).shipped,
-    ReadsAs (Run.named (compile cfg x).dFront A) ((compile cfg x).elabText A)
+    ReadsAs (Run.named ((compile cfg x).dFront A) A) ((compile cfg x).elabText A)
       ((compile cfg x).irText A)
   /-- Layout.runFitted_text_accounts. -/
   layout : ∀ cfg x, .pdf ∈ (compile cfg x).shipped →
@@ -100,7 +109,7 @@ public structure Rows {σ : Type} (compile : Config → σ → Run) : Prop where
     ReadsAs (Run.named (compile cfg x).D .md) ((compile cfg x).irText .md)
       ((compile cfg x).text .md)
   /-- Driver.build_reports_contract, every front loss reaching D at its place. -/
-  reports : ∀ cfg x, ∀ A ∈ (compile cfg x).shipped, ∀ s ∈ Run.named (compile cfg x).dFront A,
+  reports : ∀ cfg x, ∀ A ∈ (compile cfg x).shipped, ∀ s ∈ Run.named ((compile cfg x).dFront A) A,
     ∃ s' ∈ Run.named (compile cfg x).D A, Span.samePlace s' s = true
   /-- Driver.build_reports_contract, no loss reported twice at one place. -/
   once : ∀ cfg x, ∀ A ∈ (compile cfg x).shipped,
@@ -134,9 +143,9 @@ private theorem Rows.backend {σ : Type} {compile : Config → σ → Run} (rows
   | html => exact rows.page cfg x hA
   | md => exact rows.twin cfg x hA
 
-/-- Nothing is lost silently: each shipped artifact's text is its source's less the places its
-losses name, each once, its bytes well formed and read from no flag but the output, the boundary
-and the fonts. -/
+/-- Nothing is lost silently: each shipped artifact's text is its executed source's less the places
+its losses name, each once, the PDF passing the census, the page running only what it declares, and
+the bytes read from no flag but the output, the boundary and the fonts. -/
 public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Run)
     (rows : Rows compile) (cfg : Config) (x : σ) :
     let r := compile cfg x
@@ -144,38 +153,43 @@ public theorem compile_text_accounts {σ : Type} (compile : Config → σ → Ru
     (∀ A ∈ r.shipped,
       Text.view (Run.named r.D A) (r.text A) = Text.view (Run.named r.D A) (r.srcText A) ∧
       ((Run.lost r.D A).toList.map fun d => (d.kind, d.span.map Span.place)).Nodup) ∧
-    (.pdf ∈ r.shipped → (PdfCensus.census (r.bytes .pdf)).isOk) ∧
-    (.html ∈ r.shipped → r.bytes .html = r.html.toUTF8 ∧ ∀ x ∈ HtmlDoc.scripts r.html,
+    (.pdf ∈ r.shipped → (PdfCensus.census (r.bytes .pdf)).isOk ∧
+      PdfTextRead.structureText (r.bytes .pdf) = .ok (Run.chars (r.text .pdf))) ∧
+    (.html ∈ r.shipped → r.bytes .html = r.html.toUTF8 ∧
+      HtmlRead.pageText r.html = some (Run.chars (r.text .html)) ∧ ∀ x ∈ HtmlDoc.scripts r.html,
       x = .script (HtmlRead.trimWs HtmlDoc.deckScript.toList) ∨
         ∃ js, r.boundaryText = some js ∧ x = .script (HtmlRead.trimWs js.toList)) ∧
     ∀ cfg' : Config, cfg'.output = cfg.output → cfg'.mathBoundary = cfg.mathBoundary →
       cfg'.fontDirs = cfg.fontDirs → let r' := compile cfg' x
       ∀ A ∈ r.shipped, A ∈ r'.shipped → r'.bytes A = r.bytes A := by
   intro r
-  refine ⟨fun hs => rows.ships cfg x ((Diag.resolveAll_stops_exact _ _ _).mpr fun d hd hw =>
-    absurd hw (hs d hd)), fun A hA => ⟨?_, rows.once cfg x A hA⟩, fun hp => ?_, fun hh => ?_, ?_⟩
+  refine ⟨fun hs => rows.ships cfg x (fun d hd hr => hs d hd (Run.refusals_stop _ hr))
+    ((Diag.resolveAll_stops_exact _ _ _).mpr fun d hd hw => absurd hw (hs d hd)),
+    fun A hA => ⟨?_, rows.once cfg x A hA⟩, fun hp => ?_, fun hh => ?_, ?_⟩
   · have front := ((rows.knots cfg x A hA).trans (rows.passes cfg x A hA)).mono
-      (base' := Run.named r.dFront A) fun s hs => by simpa using hs
+      (base' := Run.named (r.dFront A) A) fun s hs => by simpa using hs
     refine ((front.trans (rows.backend cfg x A hA)).at_places _ fun s hs => ?_).symm
     rcases List.mem_append.mp hs with hs | hs
     · exact rows.reports cfg x A hA s hs
     · exact ⟨s, hs, Span.samePlace_self s⟩
-  · exact rows.census cfg x hp
-  · obtain ⟨⟨p, hp⟩, hhtml, hbytes, hbound, -⟩ := rows.writesPage cfg x hh
-    refine ⟨hbytes, fun y hy => ?_⟩
+  · exact ⟨rows.census cfg x hp, (rows.extracted cfg x).1 hp⟩
+  · obtain ⟨⟨p, hp⟩, hhtml, hbytes, hbound⟩ := rows.writesPage cfg x hh
+    refine ⟨hbytes, (rows.extracted cfg x).2 hh, fun y hy => ?_⟩
     rw [hhtml] at hy
     rw [hbound]
     exact (HtmlDoc.emitClosed_scripts_mem _ _ _ hp (rows.docOk cfg x hh)).2 y hy
   · intro cfg' ho hm hf _ A hA hA'
     exact rows.flagFree cfg cfg' x ho hm hf A hA hA'
 
-/-- Some compile meets every row: one shipping nothing. -/
+/-- Some compile shipping an artifact meets every row: one writing an empty twin. -/
 example : Rows fun (_ : Config) (_ : Unit) =>
-    ({ D := #[], allowed := #[], allowAll := false, dFront := #[], emitted := [], shipped := [],
-       srcText := fun _ => [],
+    ({ D := #[], allowed := #[], allowAll := false, dFront := fun _ => #[], emitted := [.md],
+       shipped := [.md], srcText := fun _ => [],
        elabText := fun _ => [], irText := fun _ => [], setText := [], text := fun _ => [],
        hcfg := {}, docH := {}, svgChecked := #[], html := "", boundaryText := none,
        bytes := fun _ => .empty } : Run) := by
-  constructor <;> intros <;> simp_all
+  have h0 : (Diag.forOutputs #[Diag.Output.md] (#[] : Array Diag)).toList = [] :=
+    List.eq_nil_iff_forall_not_mem.mpr fun d hd => by simp [Diag.forOutputs_mem] at hd
+  constructor <;> intros <;> simp_all [Text.ReadsAs, Run.named, Run.lost]
 
 end LeanTex.Cli
