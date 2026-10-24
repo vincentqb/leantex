@@ -765,7 +765,7 @@ public theorem DiagCode.censused_iff_ships (c : DiagCode) :
 /-- Whether a code's cause stops the writer: unreadable input, a missing or too deep `\input`, no
 usable font, an unwritable output, a failed `\assert`, an output name or a PDF the engine cannot
 write, or a refused publication. -/
-@[expose] public def DiagCode.stopsWriter : DiagCode → Bool
+public def DiagCode.stopsWriter : DiagCode → Bool
   | .E0001 | .E0501 | .E0502 | .E0401 | .E0402 | .E0004 | .E0330 => true
   | .E0003 | .E0005 | .E0006 | .E0606 => true
   | _ => false

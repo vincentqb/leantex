@@ -227,9 +227,9 @@ public theorem ReadsAs.trans {b₁ b₂ : List Span} {a b c : List (Char × Orig
   (h₁ named fun s hs => h s (List.mem_append_left _ hs)).trans
     (h₂ named fun s hs => h s (List.mem_append_right _ hs))
 
-public theorem ReadsAs.mono {base base' : List Span} {a b : List (Char × Origin)}
-    (hb : ∀ s ∈ base, s ∈ base') (h : ReadsAs base a b) : ReadsAs base' a b :=
-  fun named hn => h named fun s hs => hn s (hb s hs)
+public theorem ReadsAs.trans_same {base : List Span} {a b c : List (Char × Origin)}
+    (h₁ : ReadsAs base a b) (h₂ : ReadsAs base b c) : ReadsAs base a c := fun named h =>
+  (h₁ named h).trans (h₂ named h)
 
 /-- Excusing a place `named` already excuses changes nothing. -/
 public theorem keep_places (named extra : List Span)

@@ -74,16 +74,17 @@ theorem compile_text_accounts (compile : Config → σ → Run) (rows : Rows com
 -- compile. Each field of Rows states, for the runs compile presents, the theorem it names (what
 -- the driver ships and reports, the page's bytes, each stage's text, the census, the emitted
 -- tree's well-formedness, the flags read) or what an artifact's text is: the PDF reader's and the
--- page reader's characters, origins annotated. The shipping clause is composed with
--- Diag.resolveAll_stops_exact, the refusals the driver prints unresolved (Run.refusals) each
--- stopping the writer; the text and script clauses with the stages' readings and
--- HtmlDoc.emitClosed_scripts_mem; the Nodup, census, readers', page-bytes and flag clauses are
--- rows passed through. srcText, elabText, irText and setText are fields the rows relate to one
--- another, so the text clause is as strong as their definitions, owed (U111) as Parse.rawTextFor
--- and Ir.locatedBlocks over the run's raws and documents; the twin's reader, its text and bytes,
+-- page reader's characters, origins annotated. The text and script clauses are composed, from the
+-- stages' readings and HtmlDoc.emitClosed_scripts_mem; the shipping, Nodup, census, readers',
+-- page-bytes and flag clauses are rows passed through. srcText, elabText, irText and setText are
+-- fields the rows relate to one another, so the text clause is as strong as their definitions,
+-- owed (U111) as Parse.rawTextFor and Ir.locatedBlocks over the run's raws and documents, and
+-- setText as the fitted lines' located text with Layout.runFitted_text_accounts (U110); the twin's
+-- reader, its text and bytes,
 -- and every origin are the rows' to fix (U110). dFront is read per artifact, the page's from the
 -- re-elaboration docH comes from. A judge of an artifact's bytes reads them only where it ships;
--- an example compile shipping an empty twin meets every row.
+-- a compile shipping an empty twin meets every row (Cli.Rows.twin_witness), though none shipping
+-- a PDF or a page is exhibited.
 -- A result exists because every stage is total and terminates. Only dropped and pending losses
 -- excuse text (Diag.piece): an error or a warning the default run shows, a repeat its shown line
 -- counts (Diag.foldRepeats), or a loss the document accepts; no loss is reported twice at one
@@ -122,7 +123,7 @@ theorem compile_text_accounts (compile : Config → σ → Run) (rows : Rows com
 | Markdown twin | `rowLine_cells_exact`; the text escaper's spelling reads back under a model of the inline scan's markup: `MarkdownDoc.escape_read_id`; tested: `twinEscapeReadChecks`, that the markdown door reads it back alike, up to the typography and white space `Text.norm` reads alike; a picture the twin sets as its labels' words is named once, read off the walk that writes the twin (`MarkdownDoc.emitReport`); tested: `twinPictureChecks` | owed (U49): `MarkdownDoc.inlineText_read_id`, the inline spelling with the spaces it writes after an abbreviation and its line-start escapes; owed (U110): `MarkdownDoc.emit_text_accounts`, owing a markdown reader's text model with origins, irText over blocks (`Ir.locatedBlocks`, U111), and the twin's silent drops named: a picture in a table cell, a boundary picture's image |
 | Well formed | `parseVal_render_id`, `objTable_inj`, `objTable_covers`, `xrefEntries_index_exact`, `WritePlan.readback_exact`, `escapeText_no_lt`, `escapeAttr_no_quote`, `rawPayload_no_terminator`, `math_boundary_contract`; what the HTML parser finds a published page runs, its tree reading as a stack: `HtmlDoc.emit_scripts_mem`, `HtmlDoc.emitClosed_scripts_mem`; tested: `htmlContainedCorpusChecks`, `htmlContainedScriptLinkChecks` | owed (U113): `HtmlDoc.emitTree_docOk`, that every tree the emitter builds reads as a stack, tested on the corpus; owed (U113): `Pdf.writeChecked_census`, that the census reads every file the writer checks |
 | Document, fonts and name alone | `Host.record_replay_exact`, `Prog.runM_only_exact`; by unfolding: `artifact_flag_free`; the driver's reads, by a line scan: `undeclaredConfigRead` | owed (U112): `Driver.build_flag_free` |
-| The headline | the rows above, composed, from the statements of their owed theorems as the fields of Rows (`LeanTex/Cli/Headline.lean`), a run shipping every emitted artifact where none of its losses stops the writer through `Diag.resolveAll_stops_exact`, the page's scripts through `HtmlDoc.emitClosed_scripts_mem`, the once-only, census, page-bytes and flag clauses passed through: `compile_text_accounts`; the text stages chained, each reading as the next above its losses' places: `Text.ReadsAs.trans`, `Text.ReadsAs.at_places` | owed (U112): the driver as a host program whose run is the compile the headline quantifies over, and `Driver.build_written_exact`, the page it ships being the closed emission over the math boundary it read; owed (U111): srcText, elabText and irText defined over the run's raws and documents (`Parse.rawTextFor`, `Ir.locatedBlocks`), until which they are fields the rows only relate; owed (U110): `MarkdownDoc.emit_text_accounts`, with the markdown reader whose text the twin's is |
+| The headline | the rows above, composed, from the statements of their owed theorems as the fields of Rows (`LeanTex/Cli/Headline.lean`), the page's scripts through `HtmlDoc.emitClosed_scripts_mem`, the shipping, once-only, census, readers', page-bytes and flag clauses passed through: `compile_text_accounts`; the text stages chained, each reading as the next above its losses' places: `Text.ReadsAs.trans`, `Text.ReadsAs.trans_same`, `Text.ReadsAs.at_places`; the rows met by a compile shipping an empty twin: `Cli.Rows.twin_witness` | owed (U112): the driver as a host program whose run is the compile the headline quantifies over, and `Driver.build_written_exact`, the page it ships being the closed emission over the math boundary it read; owed (U111): srcText, elabText and irText defined over the run's raws and documents (`Parse.rawTextFor`, `Ir.locatedBlocks`), until which they are fields the rows only relate; owed (U110): setText defined as the fitted lines' located text, with `Layout.runFitted_text_accounts`; owed (U110): `MarkdownDoc.emit_text_accounts`, with the markdown reader whose text the twin's is |
 
 The composition is proved from the rows; three gaps keep their theorems, its hypotheses, open:
 
